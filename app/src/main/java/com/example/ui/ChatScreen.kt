@@ -116,6 +116,18 @@ fun ChatScreen(
         }
     }
 
+    // Typing sound feedback when recipient starts typing
+    val currentView = androidx.compose.ui.platform.LocalView.current
+    LaunchedEffect(isTyping) {
+        if (isTyping) {
+            try {
+                currentView.playSoundEffect(android.view.SoundEffectConstants.CLICK)
+            } catch (e: Exception) {
+                // Fallback gracefully
+            }
+        }
+    }
+
     // Scroll to bottom on new message
     LaunchedEffect(messages.size) {
         if (messages.isNotEmpty()) {

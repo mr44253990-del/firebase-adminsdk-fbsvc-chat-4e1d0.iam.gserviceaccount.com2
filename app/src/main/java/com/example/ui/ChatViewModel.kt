@@ -114,6 +114,13 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private val _isFirebaseConfigured = MutableStateFlow(true)
     val isFirebaseConfigured: StateFlow<Boolean> = _isFirebaseConfigured.asStateFlow()
 
+    private val _currentTabState = MutableStateFlow(0)
+    val currentTabState: StateFlow<Int> = _currentTabState.asStateFlow()
+
+    fun setCurrentTab(tab: Int) {
+        _currentTabState.value = tab
+    }
+
     private val defaultWebhookUrl = "https://rakibul.n8n-host.com/webhook/ra"
 
     private val _webhookUrl = MutableStateFlow(sharedPrefs.getString("webhook_url", defaultWebhookUrl).orEmpty().ifBlank { defaultWebhookUrl })
@@ -473,7 +480,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 }
 
                 if (snapshot != null) {
-                    val usersList = mutableListOf<User>()
+                    val allUsersList = mutableListOf<User>()
                     for (doc in snapshot.documents) {
                         val user = try {
                             doc.toObject(User::class.java)
@@ -494,24 +501,30 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                             }
                         }
                         if (user != null && user.uid != currentUid) {
-                            // Filter blocked users
-                            val myBlocked = _currentUserState.value?.blockedUsers ?: emptyList()
-                            if (!myBlocked.contains(user.uid) && !user.blockedUsers.contains(currentUid)) {
-                                usersList.add(user)
-                            }
+                            allUsersList.add(user)
                         }
                     }
-                    _usersState.value = usersList
-                    _filteredUsersState.value = usersList
+                    _usersState.value = allUsersList
+
+                    val myBlocked = _currentUserState.value?.blockedUsers ?: emptyList()
+                    val filteredList = allUsersList.filter { user ->
+                        !myBlocked.contains(user.uid) && !user.blockedUsers.contains(currentUid)
+                    }
+                    _filteredUsersState.value = filteredList
                 }
             }
     }
 
     fun searchUsers(query: String) {
+        val currentUid = FirebaseAuth.getInstance().currentUser?.uid ?: ""
+        val myBlocked = _currentUserState.value?.blockedUsers ?: emptyList()
+        val allowedUsers = _usersState.value.filter { user ->
+            !myBlocked.contains(user.uid) && !user.blockedUsers.contains(currentUid)
+        }
         if (query.isBlank()) {
-            _filteredUsersState.value = _usersState.value
+            _filteredUsersState.value = allowedUsers
         } else {
-            _filteredUsersState.value = _usersState.value.filter { user ->
+            _filteredUsersState.value = allowedUsers.filter { user ->
                 user.username.contains(query, ignoreCase = true) ||
                         user.name.contains(query, ignoreCase = true)
             }
@@ -1071,7 +1084,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         FirebaseFirestore.getInstance().collection("stories")
-            .orderBy("timestamp", Query.Direction.DESCENDING)
             .addSnapshotListener { snapshot, error ->
                 if (error != null) {
                     Log.e("FIRESTORE_STORIES", "Load failed: ${error.message}")
@@ -1119,6 +1131,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                             }
                         }
                     }
+                    // Sort locally
+                    list.sortByDescending { it.timestamp }
                     _storiesState.value = list
 
                     // Cache to Room Database
@@ -1219,7 +1233,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         FirebaseFirestore.getInstance().collection("posts")
-            .orderBy("timestamp", Query.Direction.DESCENDING)
             .addSnapshotListener { snapshot, error ->
                 if (error != null) {
                     Log.e("FIRESTORE_POSTS", "Load failed: ${error.message}")
@@ -1269,6 +1282,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                             Log.e("POST_PARSE", "Error parsing post: ${e.message}")
                         }
                     }
+                    // Sort locally
+                    list.sortByDescending { it.timestamp }
                     _postsState.value = list
 
                     // Cache to Room Database
@@ -1395,7 +1410,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         FirebaseFirestore.getInstance().collection("groups")
-            .orderBy("createdAt", Query.Direction.DESCENDING)
             .addSnapshotListener { snapshot, error ->
                 if (error != null) {
                     Log.e("FIRESTORE_GROUPS", "Load groups failed: ${error.message}")
@@ -1422,6 +1436,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                             }
                         } catch (e: Exception) {}
                     }
+                    // Sort locally
+                    list.sortByDescending { it.createdAt }
                     _groupsState.value = list
 
                     // Cache to local db
@@ -1490,7 +1506,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         FirebaseFirestore.getInstance().collection("groups").document(groupId)
-            .collection("messages").orderBy("timestamp", Query.Direction.ASCENDING)
+            .collection("messages")
             .addSnapshotListener { snapshot, error ->
                 if (error != null) {
                     Log.e("FIRESTORE_GROUP_MSGS", "Listen failed: ${error.message}")
@@ -1514,6 +1530,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                             messages.add(msg)
                         } catch (e: Exception) {}
                     }
+                    // Sort locally
+                    messages.sortBy { it.timestamp }
                     _groupMessagesState.value = messages
 
                     // Cache locally

@@ -35,6 +35,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
@@ -46,6 +50,8 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.compose.ui.res.painterResource
 import coil.compose.AsyncImage
+import androidx.compose.ui.viewinterop.AndroidView
+import android.widget.VideoView
 import com.example.R
 import com.example.data.Group
 import com.example.data.Post
@@ -76,7 +82,7 @@ fun HomeScreen(
     val currentTheme by viewModel.themeState.collectAsState()
 
     var searchQuery by remember { mutableStateOf("") }
-    var currentTab by remember { mutableStateOf(0) } // 0: Home/Social, 1: Chats, 2: Groups, 3: Service/Admin, 4: Profile/Settings
+    val currentTab by viewModel.currentTabState.collectAsState()
 
     // Dialog & Creation controllers
     var showCreatePostDialog by remember { mutableStateOf(false) }
@@ -149,7 +155,7 @@ fun HomeScreen(
                         }
                     },
                     actions = {
-                        IconButton(onClick = { currentTab = 4 }) {
+                        IconButton(onClick = { viewModel.setCurrentTab(4) }) {
                             Icon(Icons.Default.Settings, contentDescription = "Settings", tint = MaterialTheme.colorScheme.primary)
                         }
                         IconButton(onClick = { viewModel.logout { onSignOut() } }) {
@@ -172,19 +178,19 @@ fun HomeScreen(
             ) {
                 NavigationBarItem(
                     selected = currentTab == 0,
-                    onClick = { currentTab = 0 },
+                    onClick = { viewModel.setCurrentTab(0) },
                     icon = { Icon(Icons.Default.Home, contentDescription = "Home") },
                     label = { Text("Home", fontSize = 10.sp) }
                 )
                 NavigationBarItem(
                     selected = currentTab == 1,
-                    onClick = { currentTab = 1 },
+                    onClick = { viewModel.setCurrentTab(1) },
                     icon = { Icon(Icons.Default.Chat, contentDescription = "Chats") },
                     label = { Text("Chats", fontSize = 10.sp) }
                 )
                 NavigationBarItem(
                     selected = currentTab == 2,
-                    onClick = { currentTab = 2 },
+                    onClick = { viewModel.setCurrentTab(2) },
                     icon = { Icon(Icons.Default.Group, contentDescription = "Groups") },
                     label = { Text("Groups", fontSize = 10.sp) }
                 )
@@ -194,14 +200,14 @@ fun HomeScreen(
                 if (isAdmin) {
                     NavigationBarItem(
                         selected = currentTab == 3,
-                        onClick = { currentTab = 3 },
+                        onClick = { viewModel.setCurrentTab(3) },
                         icon = { Icon(Icons.Default.AdminPanelSettings, contentDescription = "Service") },
                         label = { Text("Service", fontSize = 10.sp) }
                     )
                 }
                 NavigationBarItem(
                     selected = currentTab == 4,
-                    onClick = { currentTab = 4 },
+                    onClick = { viewModel.setCurrentTab(4) },
                     icon = { Icon(Icons.Default.Person, contentDescription = "Profile") },
                     label = { Text("Profile", fontSize = 10.sp) }
                 )
@@ -768,6 +774,73 @@ fun HomeScreen(
                                 }
                             }
                         }
+
+                        // 3. Blocked Users Management
+                        val allUsers by viewModel.usersState.collectAsState()
+                        currentUser?.let { user ->
+                            val blockedUsersList = allUsers.filter { user.blockedUsers.contains(it.uid) }
+                            if (blockedUsersList.isNotEmpty()) {
+                                Spacer(modifier = Modifier.height(16.dp))
+                                Card(
+                                    shape = RoundedCornerShape(20.dp),
+                                    modifier = Modifier.fillMaxWidth(),
+                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.2f))
+                                ) {
+                                    Column(modifier = Modifier.padding(16.dp)) {
+                                        Text(
+                                            text = "Blocked Users (${blockedUsersList.size})",
+                                            style = MaterialTheme.typography.titleSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.error
+                                        )
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text(
+                                            text = "Manage your blocked contacts. Tap unblock to resume chatting.",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+
+                                        Spacer(modifier = Modifier.height(12.dp))
+
+                                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            blockedUsersList.forEach { blockedUser ->
+                                                Row(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(12.dp))
+                                                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.SpaceBetween
+                                                ) {
+                                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                                        AsyncImage(
+                                                            model = blockedUser.profileImageUrl.ifBlank { null },
+                                                            contentDescription = null,
+                                                            error = painterResource(id = R.drawable.ic_launcher_foreground),
+                                                            modifier = Modifier
+                                                                .size(36.dp)
+                                                                .clip(CircleShape)
+                                                        )
+                                                        Spacer(modifier = Modifier.width(10.dp))
+                                                        Text(blockedUser.name, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                                    }
+
+                                                    TextButton(
+                                                        onClick = {
+                                                            viewModel.unblockUser(blockedUser.uid) {
+                                                                Toast.makeText(context, "${blockedUser.name} Unblocked", Toast.LENGTH_SHORT).show()
+                                                            }
+                                                        }
+                                                    ) {
+                                                        Text("Unblock", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -819,6 +892,7 @@ fun HomeScreen(
     if (showCreatePostDialog) {
         var postText by remember { mutableStateOf("") }
         var postImageUrl by remember { mutableStateOf("") }
+        var postVideoUrl by remember { mutableStateOf("") }
         var isPrivateToggle by remember { mutableStateOf(false) }
         var isUploadingMedia by remember { mutableStateOf(false) }
 
@@ -853,6 +927,37 @@ fun HomeScreen(
             }
         }
 
+        val videoPicker = rememberLauncherForActivityResult(
+            contract = ActivityResultContracts.GetContent()
+        ) { uri: Uri? ->
+            if (uri != null) {
+                isUploadingMedia = true
+                try {
+                    val inputStream: InputStream? = context.contentResolver.openInputStream(uri)
+                    val bytes = inputStream?.readBytes()
+                    if (bytes != null) {
+                        viewModel.uploadFileToSupabase(
+                            bucket = "chat_images",
+                            fileName = "post_${System.currentTimeMillis()}.mp4",
+                            fileBytes = bytes,
+                            contentType = "video/mp4",
+                            onSuccess = { publicUrl ->
+                                isUploadingMedia = false
+                                postVideoUrl = publicUrl
+                                Toast.makeText(context, "Post video uploaded!", Toast.LENGTH_SHORT).show()
+                            },
+                            onFailure = { err ->
+                                isUploadingMedia = false
+                                Toast.makeText(context, "Upload failed: $err", Toast.LENGTH_SHORT).show()
+                            }
+                        )
+                    }
+                } catch (e: Exception) {
+                    isUploadingMedia = false
+                }
+            }
+        }
+
         AlertDialog(
             onDismissRequest = { showCreatePostDialog = false },
             title = { Text("Create Post (Create Post Bracket)", fontWeight = FontWeight.Bold) },
@@ -868,7 +973,7 @@ fun HomeScreen(
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         IconButton(
@@ -878,9 +983,23 @@ fun HomeScreen(
                             Icon(Icons.Default.AddPhotoAlternate, contentDescription = "Attach image")
                         }
 
-                        if (postImageUrl.isNotBlank()) {
-                            Text("Image Attached ✅", color = Color(0xFF4CAF50), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        IconButton(
+                            onClick = { videoPicker.launch("video/*") },
+                            modifier = Modifier.background(MaterialTheme.colorScheme.secondaryContainer, CircleShape)
+                        ) {
+                            Icon(Icons.Default.Videocam, contentDescription = "Attach video")
                         }
+
+                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            if (postImageUrl.isNotBlank()) {
+                                Text("Image Attached ✅", color = Color(0xFF4CAF50), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            }
+                            if (postVideoUrl.isNotBlank()) {
+                                Text("Video Attached ✅", color = Color(0xFF4CAF50), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.weight(1f))
 
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Checkbox(checked = isPrivateToggle, onCheckedChange = { isPrivateToggle = it })
@@ -896,8 +1015,8 @@ fun HomeScreen(
             confirmButton = {
                 Button(
                     onClick = {
-                        if (postText.isNotBlank() || postImageUrl.isNotBlank()) {
-                            viewModel.createPost(postText, postImageUrl, "", "", isPrivateToggle) {}
+                        if (postText.isNotBlank() || postImageUrl.isNotBlank() || postVideoUrl.isNotBlank()) {
+                            viewModel.createPost(postText, postImageUrl, "", postVideoUrl, isPrivateToggle) {}
                             showCreatePostDialog = false
                         }
                     },
@@ -1089,6 +1208,50 @@ fun HomeScreen(
                         )
                     }
 
+                    if (activeStory.videoUrl.isNotBlank()) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(180.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(Color.Black),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            var isPlaying by remember { mutableStateOf(true) }
+                            AndroidView(
+                                factory = { ctx ->
+                                    VideoView(ctx).apply {
+                                        setVideoPath(activeStory.videoUrl)
+                                        setOnPreparedListener { mediaPlayer ->
+                                            mediaPlayer.isLooping = true
+                                        }
+                                    }
+                                },
+                                modifier = Modifier.fillMaxSize(),
+                                update = { videoView ->
+                                    if (isPlaying) {
+                                        videoView.start()
+                                    } else {
+                                        videoView.pause()
+                                    }
+                                }
+                            )
+
+                            IconButton(
+                                onClick = { isPlaying = !isPlaying },
+                                modifier = Modifier
+                                    .background(Color.Black.copy(alpha = 0.5f), CircleShape)
+                                    .size(40.dp)
+                            ) {
+                                Icon(
+                                    imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                    contentDescription = if (isPlaying) "Pause" else "Play",
+                                    tint = Color.White
+                                )
+                            }
+                        }
+                    }
+
                     Text(
                         text = activeStory.text,
                         style = MaterialTheme.typography.bodyLarge,
@@ -1208,6 +1371,7 @@ fun StoriesHorizontalSection(
 ) {
     val context = LocalContext.current
     var isUploadingStoryMedia by remember { mutableStateOf(false) }
+    var showAddStoryDialog by remember { mutableStateOf(false) }
 
     val imagePicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
@@ -1241,6 +1405,68 @@ fun StoriesHorizontalSection(
         }
     }
 
+    val videoPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            isUploadingStoryMedia = true
+            try {
+                val inputStream: InputStream? = context.contentResolver.openInputStream(uri)
+                val bytes = inputStream?.readBytes()
+                if (bytes != null) {
+                    viewModel.uploadFileToSupabase(
+                        bucket = "chat_images",
+                        fileName = "story_${System.currentTimeMillis()}.mp4",
+                        fileBytes = bytes,
+                        contentType = "video/mp4",
+                        onSuccess = { publicUrl ->
+                            isUploadingStoryMedia = false
+                            viewModel.uploadStory(text = "My Story", imageUrl = "", videoUrl = publicUrl) {}
+                            Toast.makeText(context, "Video Story uploaded successfully!", Toast.LENGTH_SHORT).show()
+                        },
+                        onFailure = { err ->
+                            isUploadingStoryMedia = false
+                            Toast.makeText(context, "Upload failed: $err", Toast.LENGTH_SHORT).show()
+                        }
+                    )
+                }
+            } catch (e: Exception) {
+                isUploadingStoryMedia = false
+            }
+        }
+    }
+
+    if (showAddStoryDialog) {
+        AlertDialog(
+            onDismissRequest = { showAddStoryDialog = false },
+            title = { Text("Add Story", fontWeight = FontWeight.Bold) },
+            text = { Text("Choose what type of story you want to share:") },
+            confirmButton = {
+                Button(onClick = {
+                    showAddStoryDialog = false
+                    imagePicker.launch("image/*")
+                }) {
+                    Icon(Icons.Default.Photo, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("Photo Story")
+                }
+            },
+            dismissButton = {
+                Button(
+                    onClick = {
+                        showAddStoryDialog = false
+                        videoPicker.launch("video/*")
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)
+                ) {
+                    Icon(Icons.Default.Videocam, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("Video Story")
+                }
+            }
+        )
+    }
+
     LazyRow(
         horizontalArrangement = Arrangement.spacedBy(10.dp),
         contentPadding = PaddingValues(horizontal = 16.dp),
@@ -1252,7 +1478,7 @@ fun StoriesHorizontalSection(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier
                     .width(72.dp)
-                    .clickable { imagePicker.launch("image/*") }
+                    .clickable { showAddStoryDialog = true }
             ) {
                 Box(
                     modifier = Modifier
@@ -1380,6 +1606,52 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel) {
                 Spacer(modifier = Modifier.height(8.dp))
             }
 
+            // Post Content Video
+            if (post.videoUrl.isNotBlank()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(200.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Color.Black),
+                    contentAlignment = Alignment.Center
+                ) {
+                    var isPlaying by remember { mutableStateOf(false) }
+                    AndroidView(
+                        factory = { ctx ->
+                            VideoView(ctx).apply {
+                                setVideoPath(post.videoUrl)
+                                setOnPreparedListener { mediaPlayer ->
+                                    mediaPlayer.isLooping = true
+                                }
+                            }
+                        },
+                        modifier = Modifier.fillMaxSize(),
+                        update = { videoView ->
+                            if (isPlaying) {
+                                videoView.start()
+                            } else {
+                                videoView.pause()
+                            }
+                        }
+                    )
+
+                    IconButton(
+                        onClick = { isPlaying = !isPlaying },
+                        modifier = Modifier
+                            .background(Color.Black.copy(alpha = 0.5f), CircleShape)
+                            .size(48.dp)
+                    ) {
+                        Icon(
+                            imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                            contentDescription = if (isPlaying) "Pause" else "Play",
+                            tint = Color.White
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+
             // Views & Privacy info block
             Row(
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -1412,8 +1684,19 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel) {
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     emojiList.forEach { emoji ->
                         val hasReacted = post.reactions[currentUserId] == emoji
+                        val scale = animateFloatAsState(
+                            targetValue = if (hasReacted) 1.3f else 1.0f,
+                            animationSpec = spring(
+                                dampingRatio = Spring.DampingRatioHighBouncy,
+                                stiffness = Spring.StiffnessMedium
+                            )
+                        )
                         Box(
                             modifier = Modifier
+                                .graphicsLayer(
+                                    scaleX = scale.value,
+                                    scaleY = scale.value
+                                )
                                 .background(if (hasReacted) MaterialTheme.colorScheme.primaryContainer else Color.Transparent, CircleShape)
                                 .clickable { viewModel.reactToPost(post.id, emoji) }
                                 .padding(6.dp)
