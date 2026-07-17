@@ -2,9 +2,10 @@ package com.example.ui
 
 import android.app.DatePickerDialog
 import androidx.compose.animation.*
-import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -68,23 +69,42 @@ fun AuthScreen(
         calendar.get(Calendar.DAY_OF_MONTH)
     )
 
-    // Animated dynamic colors for a playful and modern interactive theme shift
-    val dynamicTopColor by animateColorAsState(
-        targetValue = if (isLoginMode) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)
-                      else MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.4f),
-        animationSpec = tween(durationMillis = 800),
-        label = "dynamicTopColor"
+    // Dynamic multi-color animated gradient that cycles beautifully
+    val infiniteTransition = rememberInfiniteTransition(label = "gradient_colors")
+    
+    val color1 by infiniteTransition.animateColor(
+        initialValue = Color(0xFF673AB7), // Deep Violet
+        targetValue = Color(0xFFE91E63),  // Warm Magenta
+        animationSpec = infiniteRepeatable(
+            animation = tween(4500, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "color1"
     )
-    val dynamicBottomColor by animateColorAsState(
-        targetValue = if (isLoginMode) MaterialTheme.colorScheme.surface
-                      else MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.2f),
-        animationSpec = tween(durationMillis = 800),
-        label = "dynamicBottomColor"
+    val color2 by infiniteTransition.animateColor(
+        initialValue = Color(0xFF00BCD4), // Neon Teal/Cyan
+        targetValue = Color(0xFFFF9800),  // Sunset Gold/Orange
+        animationSpec = infiniteRepeatable(
+            animation = tween(5500, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "color2"
     )
+    val color3 by infiniteTransition.animateColor(
+        initialValue = Color(0xFF3F51B5), // Indigo
+        targetValue = Color(0xFF9C27B0),  // Deep Purple
+        animationSpec = infiniteRepeatable(
+            animation = tween(6500, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "color3"
+    )
+
     val backgroundBrush = Brush.verticalGradient(
         colors = listOf(
-            dynamicTopColor,
-            dynamicBottomColor,
+            color1.copy(alpha = 0.25f),
+            color2.copy(alpha = 0.15f),
+            color3.copy(alpha = 0.20f),
             MaterialTheme.colorScheme.background
         )
     )
@@ -241,14 +261,22 @@ fun AuthScreen(
                 )
             }
 
-            // Input Fields Card
+            // Input Fields Card with neon animated border
             ElevatedCard(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .border(
+                        width = 2.dp,
+                        brush = Brush.linearGradient(
+                            colors = listOf(color1, color2, color3)
+                        ),
+                        shape = RoundedCornerShape(24.dp)
+                    ),
                 shape = RoundedCornerShape(24.dp),
                 colors = CardDefaults.elevatedCardColors(
-                    containerColor = MaterialTheme.colorScheme.surface
+                    containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f)
                 ),
-                elevation = CardDefaults.elevatedCardElevation(defaultElevation = 2.dp)
+                elevation = CardDefaults.elevatedCardElevation(defaultElevation = 8.dp)
             ) {
                 Column(
                     modifier = Modifier.padding(24.dp),
