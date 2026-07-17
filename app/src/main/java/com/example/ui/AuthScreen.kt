@@ -1,13 +1,19 @@
 package com.example.ui
 
 import android.app.DatePickerDialog
+import android.net.Uri
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -29,7 +35,9 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil.compose.AsyncImage
 import com.example.R
+import java.io.InputStream
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -49,6 +57,10 @@ fun AuthScreen(
     var password by remember { mutableStateOf("") }
     var name by remember { mutableStateOf("") }
     var dob by remember { mutableStateOf("") }
+    
+    // Profile Picture fields for Sign Up
+    var signupProfilePicUrl by remember { mutableStateOf("") }
+    var isUploadingPic by remember { mutableStateOf(false) }
 
     // Forgot Password states
     var showForgotPasswordDialog by remember { mutableStateOf(false) }
@@ -68,6 +80,44 @@ fun AuthScreen(
         calendar.get(Calendar.MONTH),
         calendar.get(Calendar.DAY_OF_MONTH)
     )
+
+    // Gallery Picker for Profile Pic
+    val galleryLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            isUploadingPic = true
+            try {
+                val inputStream: InputStream? = context.contentResolver.openInputStream(uri)
+                val bytes = inputStream?.readBytes()
+                if (bytes != null) {
+                    val fileExtension = "jpg"
+                    val tempFileName = "signup_${UUID.randomUUID()}_${System.currentTimeMillis()}.$fileExtension"
+                    
+                    viewModel.uploadFileToSupabase(
+                        bucket = "avatars",
+                        fileName = tempFileName,
+                        fileBytes = bytes,
+                        contentType = "image/jpeg",
+                        onSuccess = { publicUrl ->
+                            isUploadingPic = false
+                            signupProfilePicUrl = publicUrl
+                            Toast.makeText(context, "Profile picture selected successfully!", Toast.LENGTH_SHORT).show()
+                        },
+                        onFailure = { errorMsg ->
+                            isUploadingPic = false
+                            Toast.makeText(context, "Upload failed: $errorMsg", Toast.LENGTH_LONG).show()
+                        }
+                    )
+                } else {
+                    isUploadingPic = false
+                }
+            } catch (e: Exception) {
+                isUploadingPic = false
+                Toast.makeText(context, "Error reading image: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
 
     // Dynamic multi-color animated gradient that cycles beautifully
     val infiniteTransition = rememberInfiniteTransition(label = "gradient_colors")
@@ -287,7 +337,77 @@ fun AuthScreen(
                         enter = fadeIn() + expandVertically(),
                         exit = fadeOut() + shrinkVertically()
                     ) {
-                        Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                        Column(
+                            verticalArrangement = Arrangement.spacedBy(16.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                text = "Select Profile Picture (Bracket Label)",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            
+                            // (Profile Picture) selector bubble as requested
+                            Box(
+                                modifier = Modifier
+                                    .size(90.dp)
+                                    .clickable { galleryLauncher.launch("image/*") }
+                                    .border(2.dp, MaterialTheme.colorScheme.primary, CircleShape),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                if (signupProfilePicUrl.isNotBlank()) {
+                                    AsyncImage(
+                                        model = signupProfilePicUrl,
+                                        contentDescription = "(Profile Picture)",
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier
+                                            .size(86.dp)
+                                            .clip(CircleShape)
+                                    )
+                                } else {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(86.dp)
+                                            .clip(CircleShape)
+                                            .background(MaterialTheme.colorScheme.primaryContainer),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                            Icon(
+                                                imageVector = Icons.Default.AddAPhoto,
+                                                contentDescription = "(Profile Picture)",
+                                                tint = MaterialTheme.colorScheme.onPrimaryContainer
+                                            )
+                                            Text(
+                                                text = "(Profile Pic)",
+                                                fontSize = 10.sp,
+                                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+                                    }
+                                }
+                                
+                                if (isUploadingPic) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(86.dp)
+                                            .clip(CircleShape)
+                                            .background(Color.Black.copy(alpha = 0.6f)),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        CircularProgressIndicator(
+                                            color = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(24.dp)
+                                        )
+                                    }
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(4.dp))
+
                             // Sign up Name
                             OutlinedTextField(
                                 value = name,
@@ -413,7 +533,7 @@ fun AuthScreen(
                             if (isLoginMode) {
                                 viewModel.login(email, password, onAuthSuccess)
                             } else {
-                                viewModel.signup(email, name, dob, password, onAuthSuccess)
+                                viewModel.signup(email, name, dob, password, signupProfilePicUrl, onAuthSuccess)
                             }
                         },
                         modifier = Modifier
@@ -424,7 +544,7 @@ fun AuthScreen(
                         colors = ButtonDefaults.buttonColors(
                             containerColor = MaterialTheme.colorScheme.primary
                         ),
-                        enabled = !authLoading
+                        enabled = !authLoading && !isUploadingPic
                     ) {
                         if (authLoading) {
                             CircularProgressIndicator(
@@ -435,7 +555,7 @@ fun AuthScreen(
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.Center
-                            ) {
+                              ) {
                                 Text(
                                     text = if (isLoginMode) "Sign In" else "Sign Up & Register",
                                     fontWeight = FontWeight.Bold,

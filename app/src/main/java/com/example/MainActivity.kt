@@ -18,6 +18,7 @@ import com.example.ui.AuthScreen
 import com.example.ui.ChatScreen
 import com.example.ui.ChatViewModel
 import com.example.ui.HomeScreen
+import com.example.ui.GroupChatScreen
 import com.example.ui.OnboardingScreen
 import com.example.ui.isOnboardingCompleted
 import com.example.ui.theme.MyApplicationTheme
@@ -34,9 +35,12 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
 
         setContent {
-            MyApplicationTheme {
+            val currentTheme by viewModel.themeState.collectAsState()
+            
+            MyApplicationTheme(themeType = currentTheme) {
                 val navController = rememberNavController()
                 val activeRecipient by viewModel.activeRecipientUser.collectAsState()
+                val activeGroup by viewModel.activeGroup.collectAsState()
                 val context = LocalContext.current
 
                 // Check starting destination depending on whether onboarding has been completed and if a user is already signed in
@@ -93,6 +97,10 @@ class MainActivity : ComponentActivity() {
                                     viewModel.selectRecipient(recipient)
                                     navController.navigate("chat")
                                 },
+                                onGroupSelected = { group ->
+                                    viewModel.selectGroup(group)
+                                    navController.navigate("group_chat")
+                                },
                                 onSignOut = {
                                     navController.navigate("auth") {
                                         popUpTo("home") { inclusive = true }
@@ -108,6 +116,23 @@ class MainActivity : ComponentActivity() {
                                     recipient = recipient,
                                     onBack = {
                                         viewModel.selectRecipient(null)
+                                        navController.popBackStack()
+                                    }
+                                )
+                            } ?: run {
+                                LaunchedEffect(Unit) {
+                                    navController.popBackStack()
+                                }
+                            }
+                        }
+
+                        composable("group_chat") {
+                            activeGroup?.let { group ->
+                                GroupChatScreen(
+                                    viewModel = viewModel,
+                                    group = group,
+                                    onBack = {
+                                        viewModel.selectGroup(null)
                                         navController.popBackStack()
                                     }
                                 )

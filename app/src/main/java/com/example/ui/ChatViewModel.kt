@@ -4,27 +4,28 @@ import android.app.Application
 import android.content.Context
 import android.media.AudioManager
 import android.media.ToneGenerator
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.data.Message
-import com.example.data.User
+import com.example.data.*
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.database.DataSnapshot
 import com.google.firebase.database.DatabaseError
 import com.google.firebase.database.FirebaseDatabase
 import com.google.firebase.database.ValueEventListener
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.Query
 import com.google.firebase.messaging.FirebaseMessaging
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
 import java.text.SimpleDateFormat
@@ -40,6 +41,42 @@ data class InAppNotificationData(
 class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     private val sharedPrefs = application.getSharedPreferences("firechat_prefs", Context.MODE_PRIVATE)
+
+    // Offline Cache DB & Dao
+    private val appDb = AppDatabase.getDatabase(application)
+    private val cacheDao = appDb.cacheDao()
+
+    // Themes
+    private val _themeState = MutableStateFlow(sharedPrefs.getString("app_theme", "default") ?: "default")
+    val themeState: StateFlow<String> = _themeState.asStateFlow()
+
+    // Network tracking
+    private val _isNetworkAvailable = MutableStateFlow(isNetworkAvailable(application))
+    val isNetworkAvailable: StateFlow<Boolean> = _isNetworkAvailable.asStateFlow()
+
+    // Stories state
+    private val _storiesState = MutableStateFlow<List<Story>>(emptyList())
+    val storiesState: StateFlow<List<Story>> = _storiesState.asStateFlow()
+
+    // Social Feed Posts state
+    private val _postsState = MutableStateFlow<List<Post>>(emptyList())
+    val postsState: StateFlow<List<Post>> = _postsState.asStateFlow()
+
+    // Groups state
+    private val _groupsState = MutableStateFlow<List<Group>>(emptyList())
+    val groupsState: StateFlow<List<Group>> = _groupsState.asStateFlow()
+
+    // Active Group state
+    private val _activeGroup = MutableStateFlow<Group?>(null)
+    val activeGroup: StateFlow<Group?> = _activeGroup.asStateFlow()
+
+    // Group Messages state
+    private val _groupMessagesState = MutableStateFlow<List<GroupMessage>>(emptyList())
+    val groupMessagesState: StateFlow<List<GroupMessage>> = _groupMessagesState.asStateFlow()
+
+    // Admin state
+    private val _userIsAdmin = MutableStateFlow(false)
+    val userIsAdmin: StateFlow<Boolean> = _userIsAdmin.asStateFlow()
 
     // Observables for UI
     private val _currentUserState = MutableStateFlow<User?>(null)
@@ -215,7 +252,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun signup(email: String, name: String, dob: String, password: String, onSuccess: () -> Unit) {
+    fun signup(email: String, name: String, dob: String, password: String, profileImageUrl: String, onSuccess: () -> Unit) {
         if (!_isFirebaseConfigured.value) {
             _authError.value = "Firebase is not configured properly."
             return
@@ -247,6 +284,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                             name = name,
                             dob = dob,
                             username = generatedUsername,
+                            profileImageUrl = profileImageUrl,
                             createdAt = System.currentTimeMillis()
                         )
 
@@ -362,6 +400,15 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         }
                     }
                     _currentUserState.value = user
+                    
+                    // Identify admin by user email
+                    val auth = FirebaseAuth.getInstance()
+                    _userIsAdmin.value = auth.currentUser?.email == "mr4425390@gmail.com"
+
+                    // Load other channels
+                    loadStories()
+                    loadPosts()
+                    loadGroups()
                 }
             }
     }
@@ -872,4 +919,551 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
     }
+
+    // --- Dynamic Themes & Network ---
+
+    fun updateTheme(themeName: String) {
+        _themeState.value = themeName
+        sharedPrefs.edit().putString("app_theme", themeName).apply()
+    }
+
+    fun setNetworkStatus(online: Boolean) {
+        _isNetworkAvailable.value = online
+        if (online) {
+            // Automatically synchronize on reconnection
+            val uid = FirebaseAuth.getInstance().currentUser?.uid
+            if (uid != null) {
+                loadCurrentUserProfile(uid)
+                loadAllUsers()
+                loadStories()
+                loadPosts()
+                loadGroups()
+            }
+        } else {
+            // Collect from offline caches
+            viewModelScope.launch {
+                cacheDao.getAllStories().collect { cached ->
+                    _storiesState.value = cached.map { it.toStory() }
+                }
+            }
+            viewModelScope.launch {
+                cacheDao.getAllPosts().collect { cached ->
+                    _postsState.value = cached.map { it.toPost() }
+                }
+            }
+            viewModelScope.launch {
+                cacheDao.getAllGroups().collect { cached ->
+                    _groupsState.value = cached.map { it.toGroup() }
+                }
+            }
+        }
+    }
+
+    // --- Stories Logic ---
+
+    fun loadStories() {
+        if (!_isNetworkAvailable.value) {
+            viewModelScope.launch {
+                cacheDao.getAllStories().collect { cached ->
+                    val now = System.currentTimeMillis()
+                    // Filter 12-hour stories locally
+                    _storiesState.value = cached.map { it.toStory() }.filter { now - it.timestamp <= 12 * 60 * 60 * 1000 }
+                }
+            }
+            return
+        }
+
+        FirebaseFirestore.getInstance().collection("stories")
+            .orderBy("timestamp", Query.Direction.DESCENDING)
+            .addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    Log.e("FIRESTORE_STORIES", "Load failed: ${error.message}")
+                    return@addSnapshotListener
+                }
+                if (snapshot != null) {
+                    val list = mutableListOf<Story>()
+                    val now = System.currentTimeMillis()
+                    for (doc in snapshot.documents) {
+                        val story = try {
+                            val commentsList = (doc.get("comments") as? List<*>)?.mapNotNull { item ->
+                                val map = item as? Map<*, *> ?: return@mapNotNull null
+                                StoryComment(
+                                    commentId = map["commentId"] as? String ?: "",
+                                    senderId = map["senderId"] as? String ?: "",
+                                    senderName = map["senderName"] as? String ?: "",
+                                    text = map["text"] as? String ?: "",
+                                    timestamp = (map["timestamp"] as? Long) ?: 0L
+                                )
+                            } ?: emptyList()
+
+                            Story(
+                                id = doc.id,
+                                senderId = doc.getString("senderId") ?: "",
+                                senderName = doc.getString("senderName") ?: "",
+                                senderProfilePic = doc.getString("senderProfilePic") ?: "",
+                                imageUrl = doc.getString("imageUrl") ?: "",
+                                videoUrl = doc.getString("videoUrl") ?: "",
+                                text = doc.getString("text") ?: "",
+                                timestamp = doc.getLong("timestamp") ?: 0L,
+                                reactions = (doc.get("reactions") as? Map<*, *>)?.map { it.key.toString() to it.value.toString() }?.toMap() ?: emptyMap(),
+                                comments = commentsList
+                            )
+                        } catch (e: Exception) {
+                            null
+                        }
+
+                        if (story != null) {
+                            // 12 hours check (12h = 12 * 60 * 60 * 1000 ms)
+                            if (now - story.timestamp <= 12 * 60 * 60 * 1000) {
+                                list.add(story)
+                            } else {
+                                // Expired story: Auto-remove from DB to clean up
+                                FirebaseFirestore.getInstance().collection("stories").document(story.id).delete()
+                            }
+                        }
+                    }
+                    _storiesState.value = list
+
+                    // Cache to Room Database
+                    viewModelScope.launch(Dispatchers.IO) {
+                        cacheDao.insertStories(list.map { CachedStory.fromStory(it) })
+                    }
+                }
+            }
+    }
+
+    fun uploadStory(text: String, imageUrl: String, videoUrl: String, onComplete: () -> Unit) {
+        val user = _currentUserState.value ?: return
+        val storyId = UUID.randomUUID().toString()
+        val story = Story(
+            id = storyId,
+            senderId = user.uid,
+            senderName = user.name,
+            senderProfilePic = user.profileImageUrl,
+            imageUrl = imageUrl,
+            videoUrl = videoUrl,
+            text = text,
+            timestamp = System.currentTimeMillis()
+        )
+
+        FirebaseFirestore.getInstance().collection("stories").document(storyId)
+            .set(story)
+            .addOnSuccessListener {
+                onComplete()
+                loadStories()
+            }
+    }
+
+    fun reactToStory(storyId: String, reactionType: String) {
+        val user = _currentUserState.value ?: return
+        val storyRef = FirebaseFirestore.getInstance().collection("stories").document(storyId)
+        storyRef.get().addOnSuccessListener { doc ->
+            if (doc.exists()) {
+                val currentReactions = (doc.get("reactions") as? Map<*, *>)?.entries?.associate { it.key.toString() to it.value.toString() }?.toMutableMap() ?: mutableMapOf()
+                if (currentReactions[user.uid] == reactionType) {
+                    currentReactions.remove(user.uid) // Toggle reaction off
+                } else {
+                    currentReactions[user.uid] = reactionType
+                }
+                storyRef.update("reactions", currentReactions)
+            }
+        }
+    }
+
+    fun commentOnStory(storyId: String, text: String) {
+        val user = _currentUserState.value ?: return
+        val comment = StoryComment(
+            commentId = UUID.randomUUID().toString(),
+            senderId = user.uid,
+            senderName = user.name,
+            text = text,
+            timestamp = System.currentTimeMillis()
+        )
+        val storyRef = FirebaseFirestore.getInstance().collection("stories").document(storyId)
+        storyRef.get().addOnSuccessListener { doc ->
+            if (doc.exists()) {
+                val commentsList = (doc.get("comments") as? List<*>)?.mapNotNull { item ->
+                    val map = item as? Map<*, *> ?: return@mapNotNull null
+                    StoryComment(
+                        commentId = map["commentId"] as? String ?: "",
+                        senderId = map["senderId"] as? String ?: "",
+                        senderName = map["senderName"] as? String ?: "",
+                        text = map["text"] as? String ?: "",
+                        timestamp = (map["timestamp"] as? Long) ?: 0L
+                    )
+                }?.toMutableList() ?: mutableListOf()
+
+                commentsList.add(comment)
+                storyRef.update("comments", commentsList)
+            }
+        }
+    }
+
+    fun deleteStory(storyId: String) {
+        FirebaseFirestore.getInstance().collection("stories").document(storyId).delete()
+            .addOnSuccessListener {
+                viewModelScope.launch(Dispatchers.IO) {
+                    cacheDao.deleteStory(storyId)
+                }
+                loadStories()
+            }
+    }
+
+    // --- Social Posts Logic ---
+
+    fun loadPosts() {
+        if (!_isNetworkAvailable.value) {
+            viewModelScope.launch {
+                cacheDao.getAllPosts().collect { cached ->
+                    _postsState.value = cached.map { it.toPost() }
+                }
+            }
+            return
+        }
+
+        FirebaseFirestore.getInstance().collection("posts")
+            .orderBy("timestamp", Query.Direction.DESCENDING)
+            .addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    Log.e("FIRESTORE_POSTS", "Load failed: ${error.message}")
+                    return@addSnapshotListener
+                }
+                if (snapshot != null) {
+                    val list = mutableListOf<Post>()
+                    val currentUid = FirebaseAuth.getInstance().currentUser?.uid ?: ""
+                    val myBlocked = _currentUserState.value?.blockedUsers ?: emptyList()
+
+                    for (doc in snapshot.documents) {
+                        try {
+                            val commentsList = (doc.get("comments") as? List<*>)?.mapNotNull { item ->
+                                val map = item as? Map<*, *> ?: return@mapNotNull null
+                                PostComment(
+                                    commentId = map["commentId"] as? String ?: "",
+                                    senderId = map["senderId"] as? String ?: "",
+                                    senderName = map["senderName"] as? String ?: "",
+                                    text = map["text"] as? String ?: "",
+                                    timestamp = (map["timestamp"] as? Long) ?: 0L
+                                )
+                            } ?: emptyList()
+
+                            val post = Post(
+                                id = doc.id,
+                                senderId = doc.getString("senderId") ?: "",
+                                senderName = doc.getString("senderName") ?: "",
+                                senderProfilePic = doc.getString("senderProfilePic") ?: "",
+                                text = doc.getString("text") ?: "",
+                                imageUrl = doc.getString("imageUrl") ?: "",
+                                audioUrl = doc.getString("audioUrl") ?: "",
+                                videoUrl = doc.getString("videoUrl") ?: "",
+                                timestamp = doc.getLong("timestamp") ?: 0L,
+                                reactions = (doc.get("reactions") as? Map<*, *>)?.map { it.key.toString() to it.value.toString() }?.toMap() ?: emptyMap(),
+                                comments = commentsList,
+                                viewsCount = doc.getLong("viewsCount")?.toInt() ?: 0,
+                                isPrivate = doc.getBoolean("isPrivate") ?: false
+                            )
+
+                            // Apply privacy filters & blocked lists filters
+                            if (!myBlocked.contains(post.senderId)) {
+                                if (!post.isPrivate || post.senderId == currentUid) {
+                                    list.add(post)
+                                }
+                            }
+                        } catch (e: Exception) {
+                            Log.e("POST_PARSE", "Error parsing post: ${e.message}")
+                        }
+                    }
+                    _postsState.value = list
+
+                    // Cache to Room Database
+                    viewModelScope.launch(Dispatchers.IO) {
+                        cacheDao.insertPosts(list.map { CachedPost.fromPost(it) })
+                    }
+                }
+            }
+    }
+
+    fun createPost(text: String, imageUrl: String, audioUrl: String, videoUrl: String, isPrivate: Boolean, onComplete: () -> Unit) {
+        val user = _currentUserState.value ?: return
+        val postId = UUID.randomUUID().toString()
+        val post = Post(
+            id = postId,
+            senderId = user.uid,
+            senderName = user.name,
+            senderProfilePic = user.profileImageUrl,
+            text = text,
+            imageUrl = imageUrl,
+            audioUrl = audioUrl,
+            videoUrl = videoUrl,
+            timestamp = System.currentTimeMillis(),
+            isPrivate = isPrivate
+        )
+
+        // Webhook shouldn't be called according to instruction ("কোন পোস্ট করলে রিকোয়েস্ট যাবে না")
+        FirebaseFirestore.getInstance().collection("posts").document(postId)
+            .set(post)
+            .addOnSuccessListener {
+                onComplete()
+                loadPosts()
+            }
+    }
+
+    fun editPost(postId: String, text: String, isPrivate: Boolean, onComplete: () -> Unit) {
+        val postRef = FirebaseFirestore.getInstance().collection("posts").document(postId)
+        postRef.update(mapOf("text" to text, "isPrivate" to isPrivate))
+            .addOnSuccessListener {
+                onComplete()
+                loadPosts()
+            }
+    }
+
+    fun deletePost(postId: String) {
+        FirebaseFirestore.getInstance().collection("posts").document(postId).delete()
+            .addOnSuccessListener {
+                viewModelScope.launch(Dispatchers.IO) {
+                    cacheDao.deletePost(postId)
+                }
+                loadPosts()
+            }
+    }
+
+    fun reactToPost(postId: String, reactionType: String) {
+        val user = _currentUserState.value ?: return
+        val postRef = FirebaseFirestore.getInstance().collection("posts").document(postId)
+        postRef.get().addOnSuccessListener { doc ->
+            if (doc.exists()) {
+                val currentReactions = (doc.get("reactions") as? Map<*, *>)?.entries?.associate { it.key.toString() to it.value.toString() }?.toMutableMap() ?: mutableMapOf()
+                if (currentReactions[user.uid] == reactionType) {
+                    currentReactions.remove(user.uid)
+                } else {
+                    currentReactions[user.uid] = reactionType
+                }
+                postRef.update("reactions", currentReactions)
+            }
+        }
+    }
+
+    fun commentOnPost(postId: String, text: String) {
+        val user = _currentUserState.value ?: return
+        val comment = PostComment(
+            commentId = UUID.randomUUID().toString(),
+            senderId = user.uid,
+            senderName = user.name,
+            text = text,
+            timestamp = System.currentTimeMillis()
+        )
+        val postRef = FirebaseFirestore.getInstance().collection("posts").document(postId)
+        postRef.get().addOnSuccessListener { doc ->
+            if (doc.exists()) {
+                val commentsList = (doc.get("comments") as? List<*>)?.mapNotNull { item ->
+                    val map = item as? Map<*, *> ?: return@mapNotNull null
+                    PostComment(
+                        commentId = map["commentId"] as? String ?: "",
+                        senderId = map["senderId"] as? String ?: "",
+                        senderName = map["senderName"] as? String ?: "",
+                        text = map["text"] as? String ?: "",
+                        timestamp = (map["timestamp"] as? Long) ?: 0L
+                    )
+                }?.toMutableList() ?: mutableListOf()
+
+                commentsList.add(comment)
+                postRef.update("comments", commentsList)
+            }
+        }
+    }
+
+    fun incrementPostViews(postId: String) {
+        if (!_isNetworkAvailable.value) return
+        val postRef = FirebaseFirestore.getInstance().collection("posts").document(postId)
+        FirebaseFirestore.getInstance().runTransaction { transaction ->
+            val snapshot = transaction.get(postRef)
+            val currentViews = snapshot.getLong("viewsCount") ?: 0L
+            transaction.update(postRef, "viewsCount", currentViews + 1)
+        }.addOnSuccessListener {
+            Log.d("POSTS_VIEWS", "Post $postId views incremented.")
+        }.addOnFailureListener { e ->
+            Log.e("POSTS_VIEWS", "Failed to increment view: ${e.message}")
+        }
+    }
+
+    // --- Group Chats Logic ---
+
+    fun loadGroups() {
+        if (!_isNetworkAvailable.value) {
+            viewModelScope.launch {
+                cacheDao.getAllGroups().collect { cached ->
+                    _groupsState.value = cached.map { it.toGroup() }
+                }
+            }
+            return
+        }
+
+        FirebaseFirestore.getInstance().collection("groups")
+            .orderBy("createdAt", Query.Direction.DESCENDING)
+            .addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    Log.e("FIRESTORE_GROUPS", "Load groups failed: ${error.message}")
+                    return@addSnapshotListener
+                }
+                if (snapshot != null) {
+                    val list = mutableListOf<Group>()
+                    val currentUid = FirebaseAuth.getInstance().currentUser?.uid ?: ""
+
+                    for (doc in snapshot.documents) {
+                        try {
+                            val members = (doc.get("members") as? List<*>)?.mapNotNull { it as? String } ?: emptyList()
+                            if (members.contains(currentUid)) {
+                                val group = Group(
+                                    id = doc.id,
+                                    name = doc.getString("name") ?: "",
+                                    profileUrl = doc.getString("profileUrl") ?: "",
+                                    members = members,
+                                    createdAt = doc.getLong("createdAt") ?: 0L,
+                                    lastMessage = doc.getString("lastMessage") ?: "",
+                                    createdBy = doc.getString("createdBy") ?: ""
+                                )
+                                list.add(group)
+                            }
+                        } catch (e: Exception) {}
+                    }
+                    _groupsState.value = list
+
+                    // Cache to local db
+                    viewModelScope.launch(Dispatchers.IO) {
+                        cacheDao.insertGroups(list.map { CachedGroup.fromGroup(it) })
+                    }
+                }
+            }
+    }
+
+    fun createGroup(name: String, profileUrl: String, members: List<String>, onComplete: () -> Unit) {
+        val user = _currentUserState.value ?: return
+        val groupId = UUID.randomUUID().toString()
+        val allMembers = (members + user.uid).distinct()
+        
+        val group = Group(
+            id = groupId,
+            name = name,
+            profileUrl = profileUrl,
+            members = allMembers,
+            createdAt = System.currentTimeMillis(),
+            lastMessage = "Group created by ${user.name}",
+            createdBy = user.uid
+        )
+
+        // Webhook shouldn't be called for groups according to instruction ("গ্রুপের ভিতর কোন ওয়েব যাবে না")
+        FirebaseFirestore.getInstance().collection("groups").document(groupId)
+            .set(group)
+            .addOnSuccessListener {
+                // Add initial system action log message
+                val actionMessageId = UUID.randomUUID().toString()
+                val systemMsg = GroupMessage(
+                    messageId = actionMessageId,
+                    groupId = groupId,
+                    senderId = "system",
+                    senderName = "SYSTEM",
+                    text = "🔊 ${user.name} created the group \"$name\"",
+                    timestamp = System.currentTimeMillis()
+                )
+                FirebaseFirestore.getInstance().collection("groups").document(groupId)
+                    .collection("messages").document(actionMessageId).set(systemMsg)
+                    .addOnSuccessListener {
+                        onComplete()
+                        loadGroups()
+                    }
+            }
+    }
+
+    fun selectGroup(group: Group?) {
+        _activeGroup.value = group
+        if (group != null) {
+            startListeningToGroupMessages(group.id)
+        } else {
+            _groupMessagesState.value = emptyList()
+        }
+    }
+
+    private fun startListeningToGroupMessages(groupId: String) {
+        if (!_isNetworkAvailable.value) {
+            viewModelScope.launch {
+                cacheDao.getGroupMessages(groupId).collect { cached ->
+                    _groupMessagesState.value = cached.map { it.toGroupMessage() }
+                }
+            }
+            return
+        }
+
+        FirebaseFirestore.getInstance().collection("groups").document(groupId)
+            .collection("messages").orderBy("timestamp", Query.Direction.ASCENDING)
+            .addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    Log.e("FIRESTORE_GROUP_MSGS", "Listen failed: ${error.message}")
+                    return@addSnapshotListener
+                }
+                if (snapshot != null) {
+                    val messages = mutableListOf<GroupMessage>()
+                    for (doc in snapshot.documents) {
+                        try {
+                            val msg = GroupMessage(
+                                messageId = doc.id,
+                                groupId = groupId,
+                                senderId = doc.getString("senderId") ?: "",
+                                senderName = doc.getString("senderName") ?: "",
+                                text = doc.getString("text") ?: "",
+                                timestamp = doc.getLong("timestamp") ?: 0L,
+                                imageUrl = doc.getString("imageUrl"),
+                                voiceUrl = doc.getString("voiceUrl"),
+                                voiceDurationSec = doc.getLong("voiceDurationSec")?.toInt()
+                            )
+                            messages.add(msg)
+                        } catch (e: Exception) {}
+                    }
+                    _groupMessagesState.value = messages
+
+                    // Cache locally
+                    viewModelScope.launch(Dispatchers.IO) {
+                        cacheDao.insertGroupMessages(messages.map { CachedGroupMessage.fromGroupMessage(it) })
+                    }
+                }
+            }
+    }
+
+    fun sendGroupMessage(groupId: String, text: String, imageUrl: String? = null, voiceUrl: String? = null, voiceDurationSec: Int? = null) {
+        val user = _currentUserState.value ?: return
+        val messageId = UUID.randomUUID().toString()
+        val msg = GroupMessage(
+            messageId = messageId,
+            groupId = groupId,
+            senderId = user.uid,
+            senderName = user.name,
+            text = text,
+            timestamp = System.currentTimeMillis(),
+            imageUrl = imageUrl,
+            voiceUrl = voiceUrl,
+            voiceDurationSec = voiceDurationSec
+        )
+
+        // Webhooks strictly disabled for groups ("গ্রুপের ভিতর লগ এড করা যাবে এখানেও কোন ওয়েব যাবে না")
+        val groupRef = FirebaseFirestore.getInstance().collection("groups").document(groupId)
+        groupRef.collection("messages").document(messageId).set(msg)
+            .addOnSuccessListener {
+                val lastMsgText = if (voiceUrl != null) "🎙️ Voice message" else if (imageUrl != null) "📷 Image attachment" else text
+                groupRef.update("lastMessage", "${user.name}: $lastMsgText")
+            }
+    }
+
+    fun getLastMessageFlow(otherUserUid: String): Flow<Message?> {
+        val currentUid = FirebaseAuth.getInstance().currentUser?.uid ?: return flowOf(null)
+        val sorted = listOf(currentUid, otherUserUid).sorted()
+        val chatId = "${sorted[0]}_${sorted[1]}"
+        return cacheDao.getMessagesForChat(chatId).map { cachedList ->
+            cachedList.lastOrNull()?.toMessage()
+        }
+    }
+}
+
+// Global network check helper function
+private fun isNetworkAvailable(context: Context): Boolean {
+    val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager ?: return false
+    val capabilities = cm.getNetworkCapabilities(cm.activeNetwork) ?: return false
+    return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
 }
