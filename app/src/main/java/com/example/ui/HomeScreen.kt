@@ -1026,7 +1026,9 @@ fun HomeScreen(
                 Button(
                     onClick = {
                         if (groupName.isNotBlank()) {
-                            viewModel.createGroup(groupName, groupPicUrl, selectedMembers.toList()) {}
+                            viewModel.createGroup(groupName, groupPicUrl, selectedMembers.toList()) { newGroup ->
+                                onGroupSelected(newGroup)
+                            }
                             showCreateGroupDialog = false
                         }
                     },
@@ -1494,9 +1496,9 @@ fun ChatConversationUserItem(
     val lastMessageState by viewModel.getLastMessageFlow(user.uid).collectAsState(initial = null)
     
     val currentUserId = FirebaseAuth.getInstance().currentUser?.uid ?: ""
-    val hasUnread = lastMessageState != null && 
-                    !lastMessageState!!.seenByRecipient && 
-                    lastMessageState!!.senderId != currentUserId
+    val unreadCounts by viewModel.unreadCountsState.collectAsState()
+    val unreadCount = unreadCounts[user.uid] ?: 0
+    val hasUnread = unreadCount > 0
 
     Card(
         modifier = Modifier
@@ -1590,10 +1592,18 @@ fun ChatConversationUserItem(
                     if (hasUnread) {
                         Box(
                             modifier = Modifier
-                                .size(10.dp)
                                 .clip(CircleShape)
                                 .background(MaterialTheme.colorScheme.error)
-                        )
+                                .padding(horizontal = 6.dp, vertical = 2.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = unreadCount.toString(),
+                                color = MaterialTheme.colorScheme.onError,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
                     }
                 }
                 

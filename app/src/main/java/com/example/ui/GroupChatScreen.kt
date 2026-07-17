@@ -64,6 +64,17 @@ fun GroupChatScreen(
     var messageText by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
 
+    // Select the active group when entering this screen and clean up when leaving
+    LaunchedEffect(group.id) {
+        viewModel.selectGroup(group)
+    }
+
+    DisposableEffect(group.id) {
+        onDispose {
+            viewModel.selectGroup(null)
+        }
+    }
+
     // Voice recording states
     var isRecording by remember { mutableStateOf(false) }
     var mediaRecorder by remember { mutableStateOf<MediaRecorder?>(null) }
@@ -85,10 +96,10 @@ fun GroupChatScreen(
         }
     }
 
-    // Scroll to bottom on new message
+    // Scroll to bottom on new message instantly
     LaunchedEffect(messages.size) {
         if (messages.isNotEmpty()) {
-            listState.animateScrollToItem(messages.size - 1)
+            listState.scrollToItem(0)
         }
     }
 
@@ -317,9 +328,10 @@ fun GroupChatScreen(
                         .weight(1f)
                         .padding(horizontal = 14.dp),
                     contentPadding = PaddingValues(vertical = 12.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                    verticalArrangement = Arrangement.spacedBy(10.dp, Alignment.Bottom),
+                    reverseLayout = true
                 ) {
-                    items(messages) { msg ->
+                    items(messages.reversed(), key = { it.messageId }) { msg ->
                         if (msg.senderId == "system") {
                             // System Log message
                             Box(
@@ -344,7 +356,13 @@ fun GroupChatScreen(
                             }
                         } else {
                             val isSentByMe = msg.senderId == currentUserId
-                            GroupMessageBubbleItem(msg = msg, isSentByMe = isSentByMe)
+                            GroupMessageBubbleItem(
+                                msg = msg, 
+                                isSentByMe = isSentByMe,
+                                onDeleteSelect = {
+                                    viewModel.deleteGroupMessage(group.id, msg.messageId)
+                                }
+                            )
                         }
                     }
                 }
@@ -434,7 +452,8 @@ fun GroupChatScreen(
 }
 
 @Composable
-fun GroupMessageBubbleItem(msg: GroupMessage, isSentByMe: Boolean) {
+fun GroupMessageBubbleItem(msg: GroupMessage, isSentByMe: Boolean, onDeleteSelect: () -> Unit) {
+    var showMenu by remember { mutableStateOf(false) }
     val bubbleColor = if (isSentByMe) Color(0xFF4E3B33) else Color(0xFF382A24)
     val alignment = if (isSentByMe) Alignment.CenterEnd else Alignment.CenterStart
     val textColor = Color.White
@@ -474,7 +493,8 @@ fun GroupMessageBubbleItem(msg: GroupMessage, isSentByMe: Boolean) {
                     bottomStart = if (isSentByMe) 16.dp else 2.dp,
                     bottomEnd = if (isSentByMe) 2.dp else 16.dp
                 ),
-                border = BorderStroke(1.dp, Color(0xFF4E3B33))
+                border = BorderStroke(1.dp, Color(0xFF4E3B33)),
+                modifier = Modifier.clickable { if (isSentByMe) showMenu = true }
             ) {
                 Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
                     if (!msg.imageUrl.isNullOrBlank()) {
@@ -515,6 +535,22 @@ fun GroupMessageBubbleItem(msg: GroupMessage, isSentByMe: Boolean) {
                         )
                     }
                 }
+            }
+
+            // Dropdown Menu for deletion
+            DropdownMenu(
+                expanded = showMenu,
+                onDismissRequest = { showMenu = false },
+                modifier = Modifier.background(Color(0xFF4E3B33))
+            ) {
+                DropdownMenuItem(
+                    text = { Text("Delete Message", color = Color.Red) },
+                    leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null, tint = Color.Red) },
+                    onClick = {
+                        onDeleteSelect()
+                        showMenu = false
+                    }
+                )
             }
         }
     }

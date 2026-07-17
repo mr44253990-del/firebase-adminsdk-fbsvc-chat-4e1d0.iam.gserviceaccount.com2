@@ -5,6 +5,8 @@ import android.content.Context
 import android.media.AudioManager
 import android.media.ToneGenerator
 import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkRequest
 import android.net.NetworkCapabilities
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
@@ -94,6 +96,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private val _chatMessagesState = MutableStateFlow<List<Message>>(emptyList())
     val chatMessagesState: StateFlow<List<Message>> = _chatMessagesState.asStateFlow()
 
+    private val _unreadCountsState = MutableStateFlow<Map<String, Int>>(emptyMap())
+    val unreadCountsState: StateFlow<Map<String, Int>> = _unreadCountsState.asStateFlow()
+
     private val _isRecipientTyping = MutableStateFlow(false)
     val isRecipientTyping: StateFlow<Boolean> = _isRecipientTyping.asStateFlow()
 
@@ -136,11 +141,38 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     init {
         checkFirebaseConfiguration()
+        registerNetworkCallback(application)
+    }
+
+    private fun registerNetworkCallback(context: Context) {
+        val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+        if (cm != null) {
+            val request = NetworkRequest.Builder()
+                .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                .build()
+            try {
+                cm.registerNetworkCallback(request, object : ConnectivityManager.NetworkCallback() {
+                    override fun onAvailable(network: Network) {
+                        setNetworkStatus(true)
+                    }
+                    override fun onLost(network: Network) {
+                        setNetworkStatus(false)
+                    }
+                })
+            } catch (e: Exception) {
+                Log.e("NETWORK_CALLBACK", "Error registering network callback: ${e.message}")
+            }
+        }
     }
 
     fun selectRecipient(user: User?) {
         _activeRecipientUser.value = user
         if (user != null) {
+            val currentUid = FirebaseAuth.getInstance().currentUser?.uid
+            if (currentUid != null) {
+                getDatabaseInstance().getReference("unread_counts")
+                    .child(currentUid).child(user.uid).setValue(0)
+            }
             startListeningToChat(user.uid)
             startListeningToTyping(user.uid)
         } else {
@@ -409,8 +441,26 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     loadStories()
                     loadPosts()
                     loadGroups()
+                    listenToUnreadCounts()
                 }
             }
+    }
+
+    private fun listenToUnreadCounts() {
+        val currentUid = FirebaseAuth.getInstance().currentUser?.uid ?: return
+        getDatabaseInstance().getReference("unread_counts").child(currentUid)
+            .addValueEventListener(object : ValueEventListener {
+                override fun onDataChange(snapshot: DataSnapshot) {
+                    val counts = mutableMapOf<String, Int>()
+                    for (child in snapshot.children) {
+                        val senderId = child.key ?: continue
+                        val count = child.getValue(Int::class.java) ?: 0
+                        counts[senderId] = count
+                    }
+                    _unreadCountsState.value = counts
+                }
+                override fun onCancelled(error: DatabaseError) {}
+            })
     }
 
     private fun loadAllUsers() {
@@ -528,6 +578,15 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val chatId = "${sortedUids[0]}_${sortedUids[1]}"
         activeChatId = chatId
 
+        if (!_isNetworkAvailable.value) {
+            viewModelScope.launch {
+                cacheDao.getMessagesForChat(chatId).collect { cached ->
+                    _chatMessagesState.value = cached.map { it.toMessage() }
+                }
+            }
+            return
+        }
+
         val chatRef = getDatabaseInstance().getReference("chats")
             .child(chatId)
             .child("messages")
@@ -565,6 +624,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         }
                     }
                     _chatMessagesState.value = messages
+
+                    // Cache to Room local DB
+                    viewModelScope.launch(Dispatchers.IO) {
+                        cacheDao.insertMessages(messages.map { CachedMessage.fromMessage(it, chatId) })
+                    }
                 }
 
                 override fun onCancelled(error: DatabaseError) {}
@@ -712,6 +776,14 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
         chatRef.child(messageId).setValue(message)
             .addOnSuccessListener {
+                // Update unread count for recipient
+                val unreadRef = getDatabaseInstance().getReference("unread_counts")
+                    .child(recipientUser.uid).child(currentUser.uid)
+                unreadRef.get().addOnSuccessListener { snapshot ->
+                    val currentCount = snapshot.getValue(Int::class.java) ?: 0
+                    unreadRef.setValue(currentCount + 1)
+                }
+
                 // Instantly notify recipient under /notifications RTDB key
                 getDatabaseInstance().getReference("notifications").child(recipientUser.uid)
                     .setValue(mapOf(
@@ -744,6 +816,19 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
         messageRef.child("text").setValue(newText)
         messageRef.child("edited").setValue(true)
+    }
+
+    fun deleteMessage(recipientUid: String, messageId: String) {
+        val currentUid = FirebaseAuth.getInstance().currentUser?.uid ?: return
+        val sortedUids = listOf(currentUid, recipientUid).sorted()
+        val chatId = "${sortedUids[0]}_${sortedUids[1]}"
+
+        val messageRef = getDatabaseInstance().getReference("chats")
+            .child(chatId)
+            .child("messages")
+            .child(messageId)
+        
+        messageRef.removeValue()
     }
 
     fun addReaction(recipientUid: String, messageId: String, reaction: String) {
@@ -1347,7 +1432,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             }
     }
 
-    fun createGroup(name: String, profileUrl: String, members: List<String>, onComplete: () -> Unit) {
+    fun createGroup(name: String, profileUrl: String, members: List<String>, onComplete: (Group) -> Unit) {
         val user = _currentUserState.value ?: return
         val groupId = UUID.randomUUID().toString()
         val allMembers = (members + user.uid).distinct()
@@ -1379,7 +1464,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 FirebaseFirestore.getInstance().collection("groups").document(groupId)
                     .collection("messages").document(actionMessageId).set(systemMsg)
                     .addOnSuccessListener {
-                        onComplete()
+                        onComplete(group)
                         loadGroups()
                     }
             }
@@ -1461,6 +1546,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 val lastMsgText = if (voiceUrl != null) "🎙️ Voice message" else if (imageUrl != null) "📷 Image attachment" else text
                 groupRef.update("lastMessage", "${user.name}: $lastMsgText")
             }
+    }
+
+    fun deleteGroupMessage(groupId: String, messageId: String) {
+        val groupRef = FirebaseFirestore.getInstance().collection("groups").document(groupId)
+        groupRef.collection("messages").document(messageId).delete()
     }
 
     fun getLastMessageFlow(otherUserUid: String): Flow<Message?> {

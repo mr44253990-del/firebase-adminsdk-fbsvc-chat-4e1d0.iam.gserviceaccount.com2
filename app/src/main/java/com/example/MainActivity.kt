@@ -27,6 +27,10 @@ import com.example.ui.theme.MyApplicationTheme
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import com.example.data.User
+import coil.Coil
+import coil.ImageLoader
+import coil.disk.DiskCache
+import coil.memory.MemoryCache
 
 class MainActivity : ComponentActivity() {
 
@@ -35,6 +39,24 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
+        // Configure standard Coil cache so images (like profile pics) are cached aggressively offline
+        val imageLoader = ImageLoader.Builder(this)
+            .memoryCache {
+                MemoryCache.Builder(this)
+                    .maxSizePercent(0.25)
+                    .build()
+            }
+            .diskCache {
+                DiskCache.Builder()
+                    .directory(this.cacheDir.resolve("image_cache"))
+                    .maxSizePercent(0.10) // Use up to 10% of disk space for images
+                    .build()
+            }
+            .respectCacheHeaders(false) // Force caching regardless of server headers so offline mode works perfectly
+            .crossfade(true)
+            .build()
+        Coil.setImageLoader(imageLoader)
 
         setContent {
             val currentTheme by viewModel.themeState.collectAsState()

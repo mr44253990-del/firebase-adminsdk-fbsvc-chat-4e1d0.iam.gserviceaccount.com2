@@ -65,6 +65,9 @@ fun ChatScreen(
     val currentUserId = FirebaseAuth.getInstance().currentUser?.uid ?: ""
     val messages by viewModel.chatMessagesState.collectAsState()
     val isTyping by viewModel.isRecipientTyping.collectAsState()
+    
+    val users by viewModel.usersState.collectAsState()
+    val updatedRecipient = users.find { it.uid == recipient.uid } ?: recipient
 
     var messageText by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
@@ -116,7 +119,7 @@ fun ChatScreen(
     // Scroll to bottom on new message
     LaunchedEffect(messages.size) {
         if (messages.isNotEmpty()) {
-            listState.animateScrollToItem(messages.size - 1)
+            listState.scrollToItem(0)
         }
     }
 
@@ -267,10 +270,10 @@ fun ChatScreen(
                 title = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Box(contentAlignment = Alignment.BottomEnd) {
-                            if (recipient.profileImageUrl.isNotBlank()) {
+                            if (updatedRecipient.profileImageUrl.isNotBlank()) {
                                 AsyncImage(
-                                    model = recipient.profileImageUrl,
-                                    contentDescription = recipient.name,
+                                    model = updatedRecipient.profileImageUrl,
+                                    contentDescription = updatedRecipient.name,
                                     contentScale = ContentScale.Crop,
                                     modifier = Modifier
                                         .size(40.dp)
@@ -286,7 +289,7 @@ fun ChatScreen(
                                     contentAlignment = Alignment.Center
                                 ) {
                                     Text(
-                                        text = recipient.name.take(1).uppercase(),
+                                        text = updatedRecipient.name.take(1).uppercase(),
                                         style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Bold),
                                         color = GoldAccent
                                     )
@@ -304,7 +307,7 @@ fun ChatScreen(
                                     modifier = Modifier
                                         .fillMaxSize()
                                         .clip(CircleShape)
-                                        .background(if (recipient.isOnline) Color(0xFF4CAF50) else Color(0xFF9E9E9E))
+                                        .background(if (updatedRecipient.isOnline) Color(0xFF4CAF50) else Color(0xFF9E9E9E))
                                 )
                             }
                         }
@@ -313,7 +316,7 @@ fun ChatScreen(
 
                         Column {
                             Text(
-                                text = recipient.name,
+                                text = updatedRecipient.name,
                                 style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                                 color = WhiteText
                             )
@@ -325,9 +328,9 @@ fun ChatScreen(
                                 )
                             } else {
                                 Text(
-                                    text = if (recipient.isOnline) "Active Now" else "Offline",
+                                    text = if (updatedRecipient.isOnline) "Active Now" else "Offline",
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = if (recipient.isOnline) Color(0xFF81C784) else GrayText
+                                    color = if (updatedRecipient.isOnline) Color(0xFF81C784) else GrayText
                                 )
                             }
                         }
@@ -395,9 +398,10 @@ fun ChatScreen(
                         .weight(1f)
                         .padding(horizontal = 14.dp),
                     contentPadding = PaddingValues(vertical = 12.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                    verticalArrangement = Arrangement.spacedBy(10.dp, Alignment.Bottom),
+                    reverseLayout = true
                 ) {
-                    items(messages) { msg ->
+                    items(messages.reversed(), key = { it.messageId }) { msg ->
                         val isSentByMe = msg.senderId == currentUserId
                         MessageBubbleItem(
                             message = msg,
@@ -408,6 +412,9 @@ fun ChatScreen(
                                     editingMessage = msg
                                     messageText = msg.text
                                 }
+                            },
+                            onDeleteSelect = {
+                                viewModel.deleteMessage(recipient.uid, msg.messageId)
                             },
                             onReactSelect = { reaction ->
                                 viewModel.addReaction(recipient.uid, msg.messageId, reaction)
@@ -619,6 +626,7 @@ fun MessageBubbleItem(
     isSentByMe: Boolean,
     onReplySelect: () -> Unit,
     onEditSelect: () -> Unit,
+    onDeleteSelect: () -> Unit,
     onReactSelect: (String) -> Unit
 ) {
     var showMenu by remember { mutableStateOf(false) }
@@ -807,6 +815,16 @@ fun MessageBubbleItem(
                     leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null, tint = GoldAccent) },
                     onClick = {
                         onEditSelect()
+                        showMenu = false
+                    }
+                )
+            }
+            if (isSentByMe) {
+                DropdownMenuItem(
+                    text = { Text("Delete Message", color = Color.Red) },
+                    leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null, tint = Color.Red) },
+                    onClick = {
+                        onDeleteSelect()
                         showMenu = false
                     }
                 )
