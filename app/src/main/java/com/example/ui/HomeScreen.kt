@@ -779,29 +779,36 @@ fun HomeScreen(
                         val allUsers by viewModel.usersState.collectAsState()
                         currentUser?.let { user ->
                             val blockedUsersList = allUsers.filter { user.blockedUsers.contains(it.uid) }
-                            if (blockedUsersList.isNotEmpty()) {
-                                Spacer(modifier = Modifier.height(16.dp))
-                                Card(
-                                    shape = RoundedCornerShape(20.dp),
-                                    modifier = Modifier.fillMaxWidth(),
-                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.2f))
-                                ) {
-                                    Column(modifier = Modifier.padding(16.dp)) {
-                                        Text(
-                                            text = "Blocked Users (${blockedUsersList.size})",
-                                            style = MaterialTheme.typography.titleSmall,
-                                            fontWeight = FontWeight.Bold,
-                                            color = MaterialTheme.colorScheme.error
-                                        )
-                                        Spacer(modifier = Modifier.height(4.dp))
-                                        Text(
-                                            text = "Manage your blocked contacts. Tap unblock to resume chatting.",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
+                            Spacer(modifier = Modifier.height(16.dp))
+                            Card(
+                                shape = RoundedCornerShape(20.dp),
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
+                            ) {
+                                Column(modifier = Modifier.padding(16.dp)) {
+                                    Text(
+                                        text = "Blocked Contacts (${blockedUsersList.size})",
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = "Manage your blocked contacts. Tap unblock to resume chatting.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
 
-                                        Spacer(modifier = Modifier.height(12.dp))
+                                    Spacer(modifier = Modifier.height(12.dp))
 
+                                    if (blockedUsersList.isEmpty()) {
+                                        Text(
+                                            text = "No blocked contacts.",
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.padding(vertical = 8.dp)
+                                        )
+                                    } else {
                                         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                             blockedUsersList.forEach { blockedUser ->
                                                 Row(

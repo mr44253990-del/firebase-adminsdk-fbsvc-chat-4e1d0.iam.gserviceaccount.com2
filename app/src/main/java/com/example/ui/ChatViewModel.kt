@@ -52,8 +52,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private val _themeState = MutableStateFlow(sharedPrefs.getString("app_theme", "default") ?: "default")
     val themeState: StateFlow<String> = _themeState.asStateFlow()
 
-    // Network tracking
-    private val _isNetworkAvailable = MutableStateFlow(isNetworkAvailable(application))
+    // Network tracking (defaults to true for maximum compatibility on emulators)
+    private val _isNetworkAvailable = MutableStateFlow(true)
     val isNetworkAvailable: StateFlow<Boolean> = _isNetworkAvailable.asStateFlow()
 
     // Stories state
@@ -134,13 +134,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun getDatabaseInstance(): FirebaseDatabase {
         return try {
-            FirebaseDatabase.getInstance("https://chat-4e1d0-default-rtdb.asia-southeast1.firebasedatabase.app")
+            FirebaseDatabase.getInstance()
         } catch (e: Exception) {
-            Log.e("DATABASE", "Failed to get database with URL, trying default: ${e.message}")
             try {
-                FirebaseDatabase.getInstance()
+                FirebaseDatabase.getInstance("https://chat-4e1d0-default-rtdb.asia-southeast1.firebasedatabase.app")
             } catch (ex: Exception) {
-                Log.e("DATABASE", "Failed to get default database instance: ${ex.message}")
+                Log.e("DATABASE", "Failed to get default database or URL database: ${ex.message}")
                 throw ex
             }
         }
@@ -468,6 +467,20 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 override fun onCancelled(error: DatabaseError) {}
             })
+    }
+
+    private fun getCurrentUserOrFallback(): User? {
+        val currentLocal = _currentUserState.value
+        if (currentLocal != null) return currentLocal
+        val authUser = FirebaseAuth.getInstance().currentUser ?: return null
+        return User(
+            uid = authUser.uid,
+            name = authUser.displayName ?: authUser.email?.substringBefore("@") ?: "User",
+            dob = "",
+            username = authUser.email?.substringBefore("@") ?: "user",
+            profileImageUrl = authUser.photoUrl?.toString() ?: "",
+            createdAt = System.currentTimeMillis()
+        )
     }
 
     private fun loadAllUsers() {
@@ -1144,7 +1157,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun uploadStory(text: String, imageUrl: String, videoUrl: String, onComplete: () -> Unit) {
-        val user = _currentUserState.value ?: return
+        val user = getCurrentUserOrFallback() ?: return
         val storyId = UUID.randomUUID().toString()
         val story = Story(
             id = storyId,
@@ -1166,7 +1179,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun reactToStory(storyId: String, reactionType: String) {
-        val user = _currentUserState.value ?: return
+        val user = getCurrentUserOrFallback() ?: return
         val storyRef = FirebaseFirestore.getInstance().collection("stories").document(storyId)
         storyRef.get().addOnSuccessListener { doc ->
             if (doc.exists()) {
@@ -1182,7 +1195,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun commentOnStory(storyId: String, text: String) {
-        val user = _currentUserState.value ?: return
+        val user = getCurrentUserOrFallback() ?: return
         val comment = StoryComment(
             commentId = UUID.randomUUID().toString(),
             senderId = user.uid,
@@ -1295,7 +1308,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun createPost(text: String, imageUrl: String, audioUrl: String, videoUrl: String, isPrivate: Boolean, onComplete: () -> Unit) {
-        val user = _currentUserState.value ?: return
+        val user = getCurrentUserOrFallback() ?: return
         val postId = UUID.randomUUID().toString()
         val post = Post(
             id = postId,
@@ -1339,7 +1352,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun reactToPost(postId: String, reactionType: String) {
-        val user = _currentUserState.value ?: return
+        val user = getCurrentUserOrFallback() ?: return
         val postRef = FirebaseFirestore.getInstance().collection("posts").document(postId)
         postRef.get().addOnSuccessListener { doc ->
             if (doc.exists()) {
@@ -1355,7 +1368,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun commentOnPost(postId: String, text: String) {
-        val user = _currentUserState.value ?: return
+        val user = getCurrentUserOrFallback() ?: return
         val comment = PostComment(
             commentId = UUID.randomUUID().toString(),
             senderId = user.uid,
@@ -1449,7 +1462,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun createGroup(name: String, profileUrl: String, members: List<String>, onComplete: (Group) -> Unit) {
-        val user = _currentUserState.value ?: return
+        val user = getCurrentUserOrFallback() ?: return
         val groupId = UUID.randomUUID().toString()
         val allMembers = (members + user.uid).distinct()
         
@@ -1467,7 +1480,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         FirebaseFirestore.getInstance().collection("groups").document(groupId)
             .set(group)
             .addOnSuccessListener {
-                // Add initial system action log message
+                onComplete(group)
+                loadGroups()
+
+                // Add initial system action log message (fire-and-forget)
                 val actionMessageId = UUID.randomUUID().toString()
                 val systemMsg = GroupMessage(
                     messageId = actionMessageId,
@@ -1479,10 +1495,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 )
                 FirebaseFirestore.getInstance().collection("groups").document(groupId)
                     .collection("messages").document(actionMessageId).set(systemMsg)
-                    .addOnSuccessListener {
-                        onComplete(group)
-                        loadGroups()
-                    }
             }
     }
 
@@ -1543,7 +1555,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun sendGroupMessage(groupId: String, text: String, imageUrl: String? = null, voiceUrl: String? = null, voiceDurationSec: Int? = null) {
-        val user = _currentUserState.value ?: return
+        val user = getCurrentUserOrFallback() ?: return
         val messageId = UUID.randomUUID().toString()
         val msg = GroupMessage(
             messageId = messageId,
@@ -1583,7 +1595,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
 // Global network check helper function
 private fun isNetworkAvailable(context: Context): Boolean {
-    val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager ?: return false
-    val capabilities = cm.getNetworkCapabilities(cm.activeNetwork) ?: return false
-    return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+    return try {
+        val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return true
+        val activeNet = cm.activeNetwork ?: return true
+        val capabilities = cm.getNetworkCapabilities(activeNet) ?: return true
+        capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+    } catch (e: Exception) {
+        true
+    }
 }
