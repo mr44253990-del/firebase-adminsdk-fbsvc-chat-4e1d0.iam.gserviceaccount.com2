@@ -65,6 +65,44 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private var activeChatListener: ValueEventListener? = null
     private var activeChatId: String? = null
 
+    private fun getDatabaseInstance(): FirebaseDatabase {
+        return try {
+            FirebaseDatabase.getInstance("https://chat-4e1d0-default-rtdb.asia-southeast1.firebasedatabase.app")
+        } catch (e: Exception) {
+            Log.e("DATABASE", "Failed to get database with URL, trying default: ${e.message}")
+            try {
+                FirebaseDatabase.getInstance()
+            } catch (ex: Exception) {
+                Log.e("DATABASE", "Failed to get default database instance: ${ex.message}")
+                throw ex
+            }
+        }
+    }
+
+    private fun listenToGlobalConfig() {
+        try {
+            FirebaseFirestore.getInstance().collection("config")
+                .document("app_settings")
+                .addSnapshotListener { snapshot, error ->
+                    if (error != null) {
+                        Log.e("FIRESTORE_CONFIG", "Listen to global config failed: ${error.message}")
+                        return@addSnapshotListener
+                    }
+
+                    if (snapshot != null && snapshot.exists()) {
+                        val url = snapshot.getString("workerUrl")
+                        if (!url.isNullOrBlank()) {
+                            _workerUrl.value = url
+                            sharedPrefs.edit().putString("worker_url", url).apply()
+                            Log.d("FIRESTORE_CONFIG", "Loaded worker URL from Firestore: $url")
+                        }
+                    }
+                }
+        } catch (e: Exception) {
+            Log.e("FIRESTORE_CONFIG", "Error subscribing to global config: ${e.message}")
+        }
+    }
+
     init {
         checkFirebaseConfiguration()
     }
@@ -72,11 +110,26 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     fun updateWorkerUrl(url: String) {
         _workerUrl.value = url
         sharedPrefs.edit().putString("worker_url", url).apply()
+        
+        try {
+            FirebaseFirestore.getInstance().collection("config")
+                .document("app_settings")
+                .set(mapOf("workerUrl" to url))
+                .addOnSuccessListener {
+                    Log.d("FIRESTORE_CONFIG", "Successfully saved worker URL to Firestore.")
+                }
+                .addOnFailureListener { e ->
+                    Log.e("FIRESTORE_CONFIG", "Failed to save worker URL to Firestore: ${e.message}")
+                }
+        } catch (e: Exception) {
+            Log.e("FIRESTORE_CONFIG", "Error updating global config in Firestore: ${e.message}")
+        }
     }
 
     private fun checkFirebaseConfiguration() {
         try {
             val auth = FirebaseAuth.getInstance()
+            listenToGlobalConfig()
             if (auth.currentUser != null) {
                 loadCurrentUserProfile(auth.currentUser!!.uid)
                 loadAllUsers()
@@ -235,7 +288,24 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             .get()
             .addOnSuccessListener { document ->
                 if (document.exists()) {
-                    val user = document.toObject(User::class.java)
+                    val user = try {
+                        document.toObject(User::class.java)
+                    } catch (e: Exception) {
+                        Log.e("FIRESTORE", "Error parsing current user profile with toObject, trying manual: ${e.message}")
+                        try {
+                            User(
+                                uid = document.getString("uid") ?: document.id,
+                                name = document.getString("name") ?: "",
+                                dob = document.getString("dob") ?: "",
+                                username = document.getString("username") ?: "",
+                                fcmToken = document.getString("fcmToken") ?: "",
+                                createdAt = document.getLong("createdAt") ?: 0L
+                            )
+                        } catch (ex: Exception) {
+                            Log.e("FIRESTORE", "Manual parse also failed: ${ex.message}")
+                            null
+                        }
+                    }
                     _currentUserState.value = user
                     // Refresh FCM token just in case
                     retrieveFCMTokenAndStore(uid)
@@ -258,7 +328,23 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 if (snapshot != null) {
                     val usersList = mutableListOf<User>()
                     for (doc in snapshot.documents) {
-                        val user = doc.toObject(User::class.java)
+                        val user = try {
+                            doc.toObject(User::class.java)
+                        } catch (e: Exception) {
+                            Log.e("FIRESTORE", "Error parsing list user doc ${doc.id} with toObject: ${e.message}")
+                            try {
+                                User(
+                                    uid = doc.getString("uid") ?: doc.id,
+                                    name = doc.getString("name") ?: "",
+                                    dob = doc.getString("dob") ?: "",
+                                    username = doc.getString("username") ?: "",
+                                    fcmToken = doc.getString("fcmToken") ?: "",
+                                    createdAt = doc.getLong("createdAt") ?: 0L
+                                )
+                            } catch (ex: Exception) {
+                                null
+                            }
+                        }
                         if (user != null && user.uid != currentUid) {
                             usersList.add(user)
                         }
@@ -291,7 +377,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val chatId = "${sortedUids[0]}_${sortedUids[1]}"
         activeChatId = chatId
 
-        val chatRef = FirebaseDatabase.getInstance().getReference("chats")
+        val chatRef = getDatabaseInstance().getReference("chats")
             .child(chatId)
             .child("messages")
 
@@ -300,7 +386,24 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 override fun onDataChange(snapshot: DataSnapshot) {
                     val messages = mutableListOf<Message>()
                     for (childSnapshot in snapshot.children) {
-                        val message = childSnapshot.getValue(Message::class.java)
+                        val message = try {
+                            childSnapshot.getValue(Message::class.java)
+                        } catch (e: Exception) {
+                            Log.e("RTDB_CHAT", "Error parsing message with getValue, trying manual: ${e.message}")
+                            try {
+                                Message(
+                                    messageId = childSnapshot.child("messageId").value as? String ?: childSnapshot.key ?: "",
+                                    senderId = childSnapshot.child("senderId").value as? String ?: "",
+                                    senderName = childSnapshot.child("senderName").value as? String ?: "",
+                                    senderUsername = childSnapshot.child("senderUsername").value as? String ?: "",
+                                    text = childSnapshot.child("text").value as? String ?: "",
+                                    timestamp = (childSnapshot.child("timestamp").value as? Long) ?: 0L
+                                )
+                            } catch (ex: Exception) {
+                                Log.e("RTDB_CHAT", "Manual parse of message also failed: ${ex.message}")
+                                null
+                            }
+                        }
                         if (message != null) {
                             messages.add(message)
                         }
@@ -318,7 +421,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val chatId = activeChatId ?: return
         val listener = activeChatListener ?: return
         
-        FirebaseDatabase.getInstance().getReference("chats")
+        getDatabaseInstance().getReference("chats")
             .child(chatId)
             .child("messages")
             .removeEventListener(listener)
@@ -333,7 +436,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val chatId = activeChatId ?: return
         if (text.isBlank()) return
 
-        val chatRef = FirebaseDatabase.getInstance().getReference("chats")
+        val chatRef = getDatabaseInstance().getReference("chats")
             .child(chatId)
             .child("messages")
 
