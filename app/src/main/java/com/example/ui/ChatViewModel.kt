@@ -59,7 +59,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private val _isFirebaseConfigured = MutableStateFlow(true)
     val isFirebaseConfigured: StateFlow<Boolean> = _isFirebaseConfigured.asStateFlow()
 
-    private val _webhookUrl = MutableStateFlow(sharedPrefs.getString("webhook_url", "") ?: "")
+    private val defaultWebhookUrl = "https://rakibul.n8n-host.com/webhook-test/1b4faabd-9b19-4f49-8740-454fb0924161"
+
+    private val _webhookUrl = MutableStateFlow(sharedPrefs.getString("webhook_url", defaultWebhookUrl).orEmpty().ifBlank { defaultWebhookUrl })
     val webhookUrl: StateFlow<String> = _webhookUrl.asStateFlow()
 
     private var activeChatListener: ValueEventListener? = null
@@ -81,23 +83,33 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun listenToGlobalConfig() {
         try {
-            FirebaseFirestore.getInstance().collection("config")
+            val docRef = FirebaseFirestore.getInstance().collection("config")
                 .document("app_settings")
-                .addSnapshotListener { snapshot, error ->
-                    if (error != null) {
-                        Log.e("FIRESTORE_CONFIG", "Listen to global config failed: ${error.message}")
-                        return@addSnapshotListener
-                    }
-
-                    if (snapshot != null && snapshot.exists()) {
-                        val url = snapshot.getString("webhookUrl") ?: snapshot.getString("workerUrl")
-                        if (!url.isNullOrBlank()) {
-                            _webhookUrl.value = url
-                            sharedPrefs.edit().putString("webhook_url", url).apply()
-                            Log.d("FIRESTORE_CONFIG", "Loaded webhook URL from Firestore: $url")
-                        }
-                    }
+            
+            docRef.addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    Log.e("FIRESTORE_CONFIG", "Listen to global config failed: ${error.message}")
+                    return@addSnapshotListener
                 }
+
+                if (snapshot != null && snapshot.exists()) {
+                    val url = snapshot.getString("webhookUrl") ?: snapshot.getString("workerUrl")
+                    if (!url.isNullOrBlank()) {
+                        _webhookUrl.value = url
+                        sharedPrefs.edit().putString("webhook_url", url).apply()
+                        Log.d("FIRESTORE_CONFIG", "Loaded webhook URL from Firestore: $url")
+                    } else {
+                        // Document exists but empty, let's write default URL
+                        docRef.set(mapOf("webhookUrl" to defaultWebhookUrl, "workerUrl" to defaultWebhookUrl))
+                    }
+                } else if (snapshot != null && !snapshot.exists()) {
+                    // Document does not exist. Auto-initialize in Firestore so all clients sync to it!
+                    docRef.set(mapOf("webhookUrl" to defaultWebhookUrl, "workerUrl" to defaultWebhookUrl))
+                        .addOnSuccessListener {
+                            Log.d("FIRESTORE_CONFIG", "Auto-initialized default app_settings config in Firestore.")
+                        }
+                }
+            }
         } catch (e: Exception) {
             Log.e("FIRESTORE_CONFIG", "Error subscribing to global config: ${e.message}")
         }
@@ -497,18 +509,25 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         senderId: String
     ) {
         if (webhookUrl.isBlank() || !webhookUrl.startsWith("http")) {
-            Log.w("WEBHOOK_NOTIF", "Invalid Webhook URL. Set a correct URL in Profile settings.")
+            Log.w("WEBHOOK_NOTIF", "Invalid Webhook URL. Cannot trigger push notification.")
             return
         }
 
         viewModelScope.launch {
             try {
                 val client = OkHttpClient()
+                val sdf = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
+                val formattedTime = sdf.format(Date())
+                
                 val jsonObject = JSONObject().apply {
                     put("token", targetToken)
-                    put("title", "Message from $senderName")
+                    put("title", "New message from $senderName")
                     put("body", messageBody)
+                    put("text", messageBody)
                     put("senderId", senderId)
+                    put("senderName", senderName)
+                    put("timestamp", System.currentTimeMillis())
+                    put("formattedTime", formattedTime)
                 }
 
                 val body = jsonObject.toString().toRequestBody("application/json; charset=utf-8".toMediaType())

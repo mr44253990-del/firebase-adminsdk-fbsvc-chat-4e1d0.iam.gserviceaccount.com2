@@ -183,30 +183,37 @@ fun HomeScreen(
 
                             Spacer(modifier = Modifier.height(16.dp))
 
-                            // Webhook URL setup
-                            Text(
-                                text = "n8n Webhook URL (for Notifications)",
-                                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                                color = MaterialTheme.colorScheme.onSecondaryContainer
-                            )
-                            Spacer(modifier = Modifier.height(6.dp))
-                            OutlinedTextField(
-                                value = webhookUrl,
-                                onValueChange = { viewModel.updateWebhookUrl(it) },
-                                placeholder = { Text("https://primary-production.up.railway.app/webhook/...") },
-                                singleLine = true,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .testTag("webhook_url_input"),
+                            // Webhook Status Indicator
+                            Surface(
+                                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
                                 shape = RoundedCornerShape(12.dp),
-                                textStyle = MaterialTheme.typography.bodySmall
-                            )
-                            Text(
-                                text = "Updating this URL updates it globally for all active FireChat users instantly.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.7f),
-                                modifier = Modifier.padding(top = 4.dp)
-                            )
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(12.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.CheckCircle,
+                                        contentDescription = "Synced",
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(10.dp))
+                                    Column {
+                                        Text(
+                                            text = "Notification Service Active",
+                                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                                        )
+                                        Text(
+                                            text = "Synced automatically via Firebase dynamic settings.",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
+                                        )
+                                    }
+                                }
+                            }
                         }
                     }
                 }

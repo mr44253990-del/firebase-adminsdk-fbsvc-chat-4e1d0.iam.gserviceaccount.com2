@@ -13,10 +13,13 @@ import androidx.compose.ui.Modifier
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import androidx.compose.ui.platform.LocalContext
 import com.example.ui.AuthScreen
 import com.example.ui.ChatScreen
 import com.example.ui.ChatViewModel
 import com.example.ui.HomeScreen
+import com.example.ui.OnboardingScreen
+import com.example.ui.isOnboardingCompleted
 import com.example.ui.theme.MyApplicationTheme
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
@@ -34,11 +37,14 @@ class MainActivity : ComponentActivity() {
             MyApplicationTheme {
                 val navController = rememberNavController()
                 val activeRecipient by viewModel.activeRecipientUser.collectAsState()
+                val context = LocalContext.current
 
-                // Check starting destination depending on whether a user is already signed in
+                // Check starting destination depending on whether onboarding has been completed and if a user is already signed in
                 val startDestination = remember {
                     try {
-                        if (FirebaseAuth.getInstance().currentUser != null) {
+                        if (!isOnboardingCompleted(context)) {
+                            "onboarding"
+                        } else if (FirebaseAuth.getInstance().currentUser != null) {
                             "home"
                         } else {
                             "auth"
@@ -54,6 +60,21 @@ class MainActivity : ComponentActivity() {
                         startDestination = startDestination,
                         modifier = Modifier.padding(innerPadding)
                     ) {
+                        composable("onboarding") {
+                            OnboardingScreen(
+                                onFinished = {
+                                    val dest = try {
+                                        if (FirebaseAuth.getInstance().currentUser != null) "home" else "auth"
+                                    } catch (e: Exception) {
+                                        "auth"
+                                    }
+                                    navController.navigate(dest) {
+                                        popUpTo("onboarding") { inclusive = true }
+                                    }
+                                }
+                            )
+                        }
+
                         composable("auth") {
                             AuthScreen(
                                 viewModel = viewModel,

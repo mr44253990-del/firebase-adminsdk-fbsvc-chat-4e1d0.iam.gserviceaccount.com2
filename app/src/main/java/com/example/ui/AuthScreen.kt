@@ -1,9 +1,8 @@
 package com.example.ui
 
 import android.app.DatePickerDialog
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
+import androidx.compose.animation.*
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -69,11 +68,23 @@ fun AuthScreen(
         calendar.get(Calendar.DAY_OF_MONTH)
     )
 
-    // Deep modern theme gradients
+    // Animated dynamic colors for a playful and modern interactive theme shift
+    val dynamicTopColor by animateColorAsState(
+        targetValue = if (isLoginMode) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)
+                      else MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.4f),
+        animationSpec = tween(durationMillis = 800),
+        label = "dynamicTopColor"
+    )
+    val dynamicBottomColor by animateColorAsState(
+        targetValue = if (isLoginMode) MaterialTheme.colorScheme.surface
+                      else MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.2f),
+        animationSpec = tween(durationMillis = 800),
+        label = "dynamicBottomColor"
+    )
     val backgroundBrush = Brush.verticalGradient(
         colors = listOf(
-            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f),
-            MaterialTheme.colorScheme.surface,
+            dynamicTopColor,
+            dynamicBottomColor,
             MaterialTheme.colorScheme.background
         )
     )
@@ -243,40 +254,46 @@ fun AuthScreen(
                     modifier = Modifier.padding(24.dp),
                     verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
-                    if (!isLoginMode) {
-                        // Sign up Name
-                        OutlinedTextField(
-                            value = name,
-                            onValueChange = { name = it },
-                            label = { Text("Your Name") },
-                            placeholder = { Text("John Doe") },
-                            leadingIcon = { Icon(Icons.Default.Person, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
-                            singleLine = true,
-                            shape = RoundedCornerShape(14.dp),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .testTag("signup_name_input")
-                        )
+                    AnimatedVisibility(
+                        visible = !isLoginMode,
+                        enter = fadeIn() + expandVertically(),
+                        exit = fadeOut() + shrinkVertically()
+                    ) {
+                        Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                            // Sign up Name
+                            OutlinedTextField(
+                                value = name,
+                                onValueChange = { name = it },
+                                label = { Text("Your Name") },
+                                placeholder = { Text("John Doe") },
+                                leadingIcon = { Icon(Icons.Default.Person, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
+                                singleLine = true,
+                                shape = RoundedCornerShape(14.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("signup_name_input")
+                            )
 
-                        // Birth date button picker
-                        OutlinedTextField(
-                            value = dob,
-                            onValueChange = {},
-                            readOnly = true,
-                            label = { Text("Date of Birth (YYYY-MM-DD)") },
-                            placeholder = { Text("Select Date") },
-                            leadingIcon = { Icon(Icons.Default.DateRange, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
-                            trailingIcon = {
-                                IconButton(onClick = { datePickerDialog.show() }) {
-                                    Icon(Icons.Default.CalendarToday, contentDescription = "Pick Date", tint = MaterialTheme.colorScheme.primary)
-                                }
-                            },
-                            singleLine = true,
-                            shape = RoundedCornerShape(14.dp),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .testTag("signup_dob_input")
-                        )
+                            // Birth date button picker
+                            OutlinedTextField(
+                                value = dob,
+                                onValueChange = {},
+                                readOnly = true,
+                                label = { Text("Date of Birth (YYYY-MM-DD)") },
+                                placeholder = { Text("Select Date") },
+                                leadingIcon = { Icon(Icons.Default.DateRange, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
+                                trailingIcon = {
+                                    IconButton(onClick = { datePickerDialog.show() }) {
+                                        Icon(Icons.Default.CalendarToday, contentDescription = "Pick Date", tint = MaterialTheme.colorScheme.primary)
+                                    }
+                                },
+                                singleLine = true,
+                                shape = RoundedCornerShape(14.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("signup_dob_input")
+                            )
+                        }
                     }
 
                     // Email field (for both login and signup)
