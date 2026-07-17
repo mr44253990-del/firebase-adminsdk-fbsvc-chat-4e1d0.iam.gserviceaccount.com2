@@ -13,6 +13,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
+import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -49,6 +50,13 @@ fun AuthScreen(
     var name by remember { mutableStateOf("") }
     var dob by remember { mutableStateOf("") }
 
+    // Forgot Password states
+    var showForgotPasswordDialog by remember { mutableStateOf(false) }
+    var resetEmail by remember { mutableStateOf("") }
+    var resetLoading by remember { mutableStateOf(false) }
+    var resetMessage by remember { mutableStateOf<String?>(null) }
+    var resetError by remember { mutableStateOf<String?>(null) }
+
     val calendar = Calendar.getInstance()
     val datePickerDialog = DatePickerDialog(
         context,
@@ -61,11 +69,12 @@ fun AuthScreen(
         calendar.get(Calendar.DAY_OF_MONTH)
     )
 
-    // Deep theme gradients
+    // Deep modern theme gradients
     val backgroundBrush = Brush.verticalGradient(
         colors = listOf(
-            MaterialTheme.colorScheme.background,
-            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f),
+            MaterialTheme.colorScheme.surface,
+            MaterialTheme.colorScheme.background
         )
     )
 
@@ -82,13 +91,13 @@ fun AuthScreen(
                 .padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Hero Illustration
+            // Hero Illustration Container
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(200.dp)
-                    .clip(RoundedCornerShape(24.dp))
-                    .background(Color.Black.copy(alpha = 0.2f))
+                    .height(180.dp)
+                    .clip(RoundedCornerShape(28.dp))
+                    .background(Color.Black.copy(alpha = 0.1f))
             ) {
                 Image(
                     painter = painterResource(id = R.drawable.img_chat_banner),
@@ -102,32 +111,47 @@ fun AuthScreen(
                         .fillMaxSize()
                         .background(
                             Brush.verticalGradient(
-                                colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.6f))
+                                colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.5f))
                             )
                         )
                 )
+                // Brand tag over image
+                Surface(
+                    color = MaterialTheme.colorScheme.primaryContainer,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .padding(16.dp)
+                ) {
+                    Text(
+                        text = "🔒 Secure Chat",
+                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                    )
+                }
             }
 
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(20.dp))
 
             Text(
                 text = if (isLoginMode) "Welcome Back" else "Create Account",
-                style = MaterialTheme.typography.headlineLarge.copy(
-                    fontWeight = FontWeight.Bold,
+                style = MaterialTheme.typography.headlineMedium.copy(
+                    fontWeight = FontWeight.ExtraBold,
                     letterSpacing = (-0.5).sp
                 ),
                 color = MaterialTheme.colorScheme.onBackground
             )
 
             Text(
-                text = if (isLoginMode) "Sign in to continue your conversations" else "Fill in details to generate your profile and fcm token",
+                text = if (isLoginMode) "Sign in to continue your secure conversations" else "Join us to start chatting with verified profiles securely",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
             )
 
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(20.dp))
 
             // Firebase Configuration Warning banner
             if (!isFirebaseConfigured) {
@@ -164,25 +188,44 @@ fun AuthScreen(
                 }
             }
 
-            // Tabs for Login / Signup
+            // Custom Styled Tabs
             TabRow(
                 selectedTabIndex = if (isLoginMode) 0 else 1,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(12.dp))
+                    .clip(RoundedCornerShape(16.dp))
                     .padding(bottom = 16.dp),
-                containerColor = MaterialTheme.colorScheme.surfaceVariant
+                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                indicator = { tabPositions ->
+                    TabRowDefaults.SecondaryIndicator(
+                        modifier = Modifier.tabIndicatorOffset(tabPositions[if (isLoginMode) 0 else 1]),
+                        color = MaterialTheme.colorScheme.primary,
+                        height = 3.dp
+                    )
+                }
             ) {
                 Tab(
                     selected = isLoginMode,
                     onClick = { isLoginMode = true },
-                    text = { Text("Log In", fontWeight = FontWeight.Bold) },
+                    text = { 
+                        Text(
+                            text = "Log In", 
+                            fontWeight = if (isLoginMode) FontWeight.ExtraBold else FontWeight.Normal,
+                            fontSize = 15.sp
+                        ) 
+                    },
                     modifier = Modifier.testTag("login_tab")
                 )
                 Tab(
                     selected = !isLoginMode,
                     onClick = { isLoginMode = false },
-                    text = { Text("Sign Up", fontWeight = FontWeight.Bold) },
+                    text = { 
+                        Text(
+                            text = "Sign Up", 
+                            fontWeight = if (!isLoginMode) FontWeight.ExtraBold else FontWeight.Normal,
+                            fontSize = 15.sp
+                        ) 
+                    },
                     modifier = Modifier.testTag("signup_tab")
                 )
             }
@@ -193,21 +236,23 @@ fun AuthScreen(
                 shape = RoundedCornerShape(24.dp),
                 colors = CardDefaults.elevatedCardColors(
                     containerColor = MaterialTheme.colorScheme.surface
-                )
+                ),
+                elevation = CardDefaults.elevatedCardElevation(defaultElevation = 2.dp)
             ) {
                 Column(
                     modifier = Modifier.padding(24.dp),
                     verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
                     if (!isLoginMode) {
-                        // Sign up extra fields: Name
+                        // Sign up Name
                         OutlinedTextField(
                             value = name,
                             onValueChange = { name = it },
                             label = { Text("Your Name") },
-                            leadingIcon = { Icon(Icons.Default.Person, contentDescription = null) },
+                            placeholder = { Text("John Doe") },
+                            leadingIcon = { Icon(Icons.Default.Person, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
                             singleLine = true,
-                            shape = RoundedCornerShape(12.dp),
+                            shape = RoundedCornerShape(14.dp),
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .testTag("signup_name_input")
@@ -219,47 +264,75 @@ fun AuthScreen(
                             onValueChange = {},
                             readOnly = true,
                             label = { Text("Date of Birth (YYYY-MM-DD)") },
-                            leadingIcon = { Icon(Icons.Default.DateRange, contentDescription = null) },
+                            placeholder = { Text("Select Date") },
+                            leadingIcon = { Icon(Icons.Default.DateRange, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
                             trailingIcon = {
                                 IconButton(onClick = { datePickerDialog.show() }) {
-                                    Icon(Icons.Default.CalendarToday, contentDescription = "Pick Date")
+                                    Icon(Icons.Default.CalendarToday, contentDescription = "Pick Date", tint = MaterialTheme.colorScheme.primary)
                                 }
                             },
                             singleLine = true,
-                            shape = RoundedCornerShape(12.dp),
+                            shape = RoundedCornerShape(14.dp),
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .testTag("signup_dob_input")
                         )
                     }
 
-                    // Email field
+                    // Email field (for both login and signup)
                     OutlinedTextField(
                         value = email,
                         onValueChange = { email = it },
                         label = { Text("Email Address") },
-                        leadingIcon = { Icon(Icons.Default.Email, contentDescription = null) },
+                        placeholder = { Text("example@domain.com") },
+                        leadingIcon = { Icon(Icons.Default.Email, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
                         singleLine = true,
-                        shape = RoundedCornerShape(12.dp),
+                        shape = RoundedCornerShape(14.dp),
                         modifier = Modifier
                             .fillMaxWidth()
                             .testTag("email_input")
                     )
 
+                    // Password field (for both login and signup as requested)
+                    var passwordVisible by remember { mutableStateOf(false) }
+                    OutlinedTextField(
+                        value = password,
+                        onValueChange = { password = it },
+                        label = { Text(if (isLoginMode) "Password" else "Choose Password") },
+                        placeholder = { Text("At least 6 characters") },
+                        leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
+                        trailingIcon = {
+                            val image = if (passwordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff
+                            val description = if (passwordVisible) "Hide password" else "Show password"
+                            IconButton(onClick = { passwordVisible = !passwordVisible }) {
+                                Icon(imageVector = image, contentDescription = description, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        },
+                        visualTransformation = if (passwordVisible) androidx.compose.ui.text.input.VisualTransformation.None else PasswordVisualTransformation(),
+                        singleLine = true,
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("password_input")
+                    )
+
+                    // Forgot password trigger (only in login mode)
                     if (isLoginMode) {
-                        // Password field (only for login)
-                        OutlinedTextField(
-                            value = password,
-                            onValueChange = { password = it },
-                            label = { Text("Password") },
-                            leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) },
-                            visualTransformation = PasswordVisualTransformation(),
-                            singleLine = true,
-                            shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .testTag("password_input")
-                        )
+                        Box(
+                            modifier = Modifier.fillMaxWidth(),
+                            contentAlignment = Alignment.CenterEnd
+                        ) {
+                            TextButton(
+                                onClick = { showForgotPasswordDialog = true },
+                                modifier = Modifier.testTag("forgot_password_button")
+                            ) {
+                                Text(
+                                    text = "Forgot Password?",
+                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        }
                     }
 
                     // Error presentation
@@ -268,12 +341,25 @@ fun AuthScreen(
                         enter = fadeIn(),
                         exit = fadeOut()
                     ) {
-                        Text(
-                            text = authError ?: "",
-                            color = MaterialTheme.colorScheme.error,
-                            style = MaterialTheme.typography.bodySmall,
+                        Surface(
+                            color = MaterialTheme.colorScheme.errorContainer,
+                            shape = RoundedCornerShape(10.dp),
                             modifier = Modifier.fillMaxWidth()
-                        )
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(Icons.Default.Error, contentDescription = "Error", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = authError ?: "",
+                                    color = MaterialTheme.colorScheme.onErrorContainer,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontWeight = FontWeight.Medium
+                                )
+                            }
+                        }
                     }
 
                     // Submission Button
@@ -282,14 +368,14 @@ fun AuthScreen(
                             if (isLoginMode) {
                                 viewModel.login(email, password, onAuthSuccess)
                             } else {
-                                viewModel.signup(email, name, dob, onAuthSuccess)
+                                viewModel.signup(email, name, dob, password, onAuthSuccess)
                             }
                         },
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(54.dp)
                             .testTag("submit_button"),
-                        shape = RoundedCornerShape(14.dp),
+                        shape = RoundedCornerShape(16.dp),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = MaterialTheme.colorScheme.primary
                         ),
@@ -306,7 +392,7 @@ fun AuthScreen(
                                 horizontalArrangement = Arrangement.Center
                             ) {
                                 Text(
-                                    text = if (isLoginMode) "Sign In" else "Sign Up & Generate Token",
+                                    text = if (isLoginMode) "Sign In" else "Sign Up & Register",
                                     fontWeight = FontWeight.Bold,
                                     fontSize = 16.sp
                                 )
@@ -318,7 +404,7 @@ fun AuthScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(20.dp))
 
             // Switch Mode footer helper
             TextButton(
@@ -328,9 +414,123 @@ fun AuthScreen(
                 Text(
                     text = if (isLoginMode) "Don't have an account? Sign Up" else "Already have an account? Log In",
                     color = MaterialTheme.colorScheme.primary,
-                    fontWeight = FontWeight.Medium
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 15.sp
                 )
             }
         }
+    }
+
+    // Forgot Password Dialog
+    if (showForgotPasswordDialog) {
+        AlertDialog(
+            onDismissRequest = { 
+                showForgotPasswordDialog = false
+                resetEmail = ""
+                resetMessage = null
+                resetError = null
+            },
+            title = {
+                Text(
+                    text = "Reset Password",
+                    fontWeight = FontWeight.Bold,
+                    style = MaterialTheme.typography.titleLarge
+                )
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(
+                        text = "Enter your registered email address below, and we'll send you a link to reset your password.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    OutlinedTextField(
+                        value = resetEmail,
+                        onValueChange = { resetEmail = it },
+                        label = { Text("Email Address") },
+                        leadingIcon = { Icon(Icons.Default.Email, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
+                        singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    
+                    if (resetMessage != null) {
+                        Surface(
+                            color = MaterialTheme.colorScheme.primaryContainer,
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                text = resetMessage!!,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.Medium,
+                                modifier = Modifier.padding(8.dp)
+                            )
+                        }
+                    }
+                    if (resetError != null) {
+                        Surface(
+                            color = MaterialTheme.colorScheme.errorContainer,
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                text = resetError!!,
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.Medium,
+                                modifier = Modifier.padding(8.dp)
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        resetLoading = true
+                        resetError = null
+                        resetMessage = null
+                        viewModel.resetPassword(
+                            email = resetEmail,
+                            onSuccess = {
+                                resetLoading = false
+                                resetMessage = "Reset email sent! Please check your inbox."
+                            },
+                            onFailure = { error ->
+                                resetLoading = false
+                                resetError = error
+                            }
+                        )
+                    },
+                    enabled = !resetLoading && resetEmail.isNotBlank(),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    if (resetLoading) {
+                        CircularProgressIndicator(
+                            color = MaterialTheme.colorScheme.onPrimary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    } else {
+                        Text("Send Reset Link")
+                    }
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { 
+                        showForgotPasswordDialog = false
+                        resetEmail = ""
+                        resetMessage = null
+                        resetError = null
+                    }
+                ) {
+                    Text("Cancel")
+                }
+            },
+            shape = RoundedCornerShape(24.dp),
+            containerColor = MaterialTheme.colorScheme.surfaceColorAtElevation(6.dp)
+        )
     }
 }

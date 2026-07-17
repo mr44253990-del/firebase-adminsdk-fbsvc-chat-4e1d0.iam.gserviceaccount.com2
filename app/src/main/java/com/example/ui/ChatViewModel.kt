@@ -59,8 +59,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private val _isFirebaseConfigured = MutableStateFlow(true)
     val isFirebaseConfigured: StateFlow<Boolean> = _isFirebaseConfigured.asStateFlow()
 
-    private val _workerUrl = MutableStateFlow(sharedPrefs.getString("worker_url", "https://your-cloudflare-worker.workers.dev") ?: "")
-    val workerUrl: StateFlow<String> = _workerUrl.asStateFlow()
+    private val _webhookUrl = MutableStateFlow(sharedPrefs.getString("webhook_url", "") ?: "")
+    val webhookUrl: StateFlow<String> = _webhookUrl.asStateFlow()
 
     private var activeChatListener: ValueEventListener? = null
     private var activeChatId: String? = null
@@ -90,11 +90,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     }
 
                     if (snapshot != null && snapshot.exists()) {
-                        val url = snapshot.getString("workerUrl")
+                        val url = snapshot.getString("webhookUrl") ?: snapshot.getString("workerUrl")
                         if (!url.isNullOrBlank()) {
-                            _workerUrl.value = url
-                            sharedPrefs.edit().putString("worker_url", url).apply()
-                            Log.d("FIRESTORE_CONFIG", "Loaded worker URL from Firestore: $url")
+                            _webhookUrl.value = url
+                            sharedPrefs.edit().putString("webhook_url", url).apply()
+                            Log.d("FIRESTORE_CONFIG", "Loaded webhook URL from Firestore: $url")
                         }
                     }
                 }
@@ -107,19 +107,19 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         checkFirebaseConfiguration()
     }
 
-    fun updateWorkerUrl(url: String) {
-        _workerUrl.value = url
-        sharedPrefs.edit().putString("worker_url", url).apply()
+    fun updateWebhookUrl(url: String) {
+        _webhookUrl.value = url
+        sharedPrefs.edit().putString("webhook_url", url).apply()
         
         try {
             FirebaseFirestore.getInstance().collection("config")
                 .document("app_settings")
-                .set(mapOf("workerUrl" to url))
+                .set(mapOf("webhookUrl" to url, "workerUrl" to url))
                 .addOnSuccessListener {
-                    Log.d("FIRESTORE_CONFIG", "Successfully saved worker URL to Firestore.")
+                    Log.d("FIRESTORE_CONFIG", "Successfully saved webhook URL to Firestore.")
                 }
                 .addOnFailureListener { e ->
-                    Log.e("FIRESTORE_CONFIG", "Failed to save worker URL to Firestore: ${e.message}")
+                    Log.e("FIRESTORE_CONFIG", "Failed to save webhook URL to Firestore: ${e.message}")
                 }
         } catch (e: Exception) {
             Log.e("FIRESTORE_CONFIG", "Error updating global config in Firestore: ${e.message}")
@@ -175,29 +175,27 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun signup(email: String, name: String, dob: String, onSuccess: () -> Unit) {
+    fun signup(email: String, name: String, dob: String, password: String, onSuccess: () -> Unit) {
         if (!_isFirebaseConfigured.value) {
             _authError.value = "Firebase is not configured! Please upload a valid google-services.json file."
             return
         }
 
-        if (email.isBlank() || name.isBlank() || dob.isBlank()) {
+        if (email.isBlank() || name.isBlank() || dob.isBlank() || password.isBlank()) {
             _authError.value = "Please fill in all fields"
             return
         }
 
-        // Standard default password for quick signups on this prototype or generate a simple password.
-        // Or we can let them input one. Since DOB is private, let's generate a temporary password
-        // or ask them for password. Let's use DOB without dashes as a neat automatic password,
-        // or a default password "123456" for simpler prototyping, or DOB + name.
-        // Let's use a safe automatic password of 6+ characters: e.g. "pass_" + dob.replace("-", "")
-        val autoPassword = "pass_" + dob.replace("-", "").take(6).padEnd(6, 'x')
+        if (password.length < 6) {
+            _authError.value = "Password must be at least 6 characters"
+            return
+        }
 
         viewModelScope.launch {
             _authLoading.value = true
             _authError.value = null
             try {
-                FirebaseAuth.getInstance().createUserWithEmailAndPassword(email, autoPassword)
+                FirebaseAuth.getInstance().createUserWithEmailAndPassword(email, password)
                     .addOnSuccessListener { authResult ->
                         val uid = authResult.user?.uid ?: ""
                         
@@ -237,6 +235,26 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             } catch (e: Exception) {
                 _authError.value = e.localizedMessage ?: "Signup Error"
                 _authLoading.value = false
+            }
+        }
+    }
+
+    fun resetPassword(email: String, onSuccess: () -> Unit, onFailure: (String) -> Unit) {
+        if (email.isBlank()) {
+            onFailure("Please enter your email address")
+            return
+        }
+        viewModelScope.launch {
+            try {
+                FirebaseAuth.getInstance().sendPasswordResetEmail(email)
+                    .addOnSuccessListener {
+                        onSuccess()
+                    }
+                    .addOnFailureListener { e ->
+                        onFailure(e.localizedMessage ?: "Failed to send reset link")
+                    }
+            } catch (e: Exception) {
+                onFailure(e.localizedMessage ?: "Error sending reset link")
             }
         }
     }
@@ -453,17 +471,17 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         chatRef.child(messageId).setValue(message)
             .addOnSuccessListener {
                 Log.d("RTDB_CHAT", "Message sent successfully.")
-                // Send FCM trigger call through Cloudflare Worker
+                // Send FCM trigger call through Webhook
                 if (recipientUser.fcmToken.isNotBlank()) {
-                    triggerCloudflareWorkerNotification(
-                        workerUrl = _workerUrl.value,
+                    triggerN8NWebhookNotification(
+                        webhookUrl = _webhookUrl.value,
                         targetToken = recipientUser.fcmToken,
                         senderName = currentUser.name,
                         messageBody = text,
                         senderId = currentUser.uid
                     )
                 } else {
-                    Log.d("WORKER_NOTIF", "Recipient has no FCM token. Notification skipped.")
+                    Log.d("WEBHOOK_NOTIF", "Recipient has no FCM token. Notification skipped.")
                 }
             }
             .addOnFailureListener { e ->
@@ -471,15 +489,15 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             }
     }
 
-    private fun triggerCloudflareWorkerNotification(
-        workerUrl: String,
+    private fun triggerN8NWebhookNotification(
+        webhookUrl: String,
         targetToken: String,
         senderName: String,
         messageBody: String,
         senderId: String
     ) {
-        if (workerUrl.isBlank() || !workerUrl.startsWith("http")) {
-            Log.w("WORKER_NOTIF", "Invalid Cloudflare Worker URL. Set a correct URL in Profile settings.")
+        if (webhookUrl.isBlank() || !webhookUrl.startsWith("http")) {
+            Log.w("WEBHOOK_NOTIF", "Invalid Webhook URL. Set a correct URL in Profile settings.")
             return
         }
 
@@ -495,22 +513,22 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
                 val body = jsonObject.toString().toRequestBody("application/json; charset=utf-8".toMediaType())
                 val request = Request.Builder()
-                    .url(workerUrl)
+                    .url(webhookUrl)
                     .post(body)
                     .build()
 
                 client.newCall(request).enqueue(object : Callback {
                     override fun onFailure(call: Call, e: IOException) {
-                        Log.e("WORKER_NOTIF", "Failed to contact Cloudflare Worker: ${e.message}")
+                        Log.e("WEBHOOK_NOTIF", "Failed to contact Webhook: ${e.message}")
                     }
 
                     override fun onResponse(call: Call, response: Response) {
                         val respBody = response.body?.string() ?: ""
-                        Log.d("WORKER_NOTIF", "Worker Response [${response.code}]: $respBody")
+                        Log.d("WEBHOOK_NOTIF", "Webhook Response [${response.code}]: $respBody")
                     }
                 })
             } catch (e: Exception) {
-                Log.e("WORKER_NOTIF", "Exception during worker request setup: ${e.message}")
+                Log.e("WEBHOOK_NOTIF", "Exception during webhook request setup: ${e.message}")
             }
         }
     }

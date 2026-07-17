@@ -45,7 +45,7 @@ fun HomeScreen(
     val context = LocalContext.current
     val currentUser by viewModel.currentUserState.collectAsState()
     val users by viewModel.filteredUsersState.collectAsState()
-    val workerUrl by viewModel.workerUrl.collectAsState()
+    val webhookUrl by viewModel.webhookUrl.collectAsState()
 
     var searchQuery by remember { mutableStateOf("") }
     var showProfileConfig by remember { mutableStateOf(false) }
@@ -169,7 +169,7 @@ fun HomeScreen(
                                             fontWeight = FontWeight.SemiBold
                                         )
                                         Text(
-                                            text = "Username: ${user.username}",
+                                            text = "Username: @${user.username}",
                                             style = MaterialTheme.typography.bodySmall,
                                             color = MaterialTheme.colorScheme.primary
                                         )
@@ -179,72 +179,30 @@ fun HomeScreen(
                                         )
                                     }
                                 }
-
-                                Spacer(modifier = Modifier.height(12.dp))
-
-                                // FCM token copy helper
-                                Card(
-                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.5f)),
-                                    modifier = Modifier.fillMaxWidth(),
-                                    shape = RoundedCornerShape(10.dp)
-                                ) {
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(12.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.SpaceBetween
-                                    ) {
-                                        Column(modifier = Modifier.weight(1f)) {
-                                            Text(
-                                                text = "FCM Registration Token",
-                                                style = MaterialTheme.typography.labelSmall,
-                                                fontWeight = FontWeight.Bold
-                                            )
-                                            Text(
-                                                text = user.fcmToken.ifBlank { "Token generating..." },
-                                                style = MaterialTheme.typography.bodySmall,
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis
-                                            )
-                                        }
-                                        IconButton(
-                                            onClick = {
-                                                if (user.fcmToken.isNotBlank()) {
-                                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                                    val clip = ClipData.newPlainText("fcm_token", user.fcmToken)
-                                                    clipboard.setPrimaryClip(clip)
-                                                    Toast.makeText(context, "FCM Token copied to clipboard!", Toast.LENGTH_SHORT).show()
-                                                }
-                                            }
-                                        ) {
-                                            Icon(Icons.Default.ContentCopy, contentDescription = "Copy Token")
-                                        }
-                                    }
-                                }
                             }
 
-                            Spacer(modifier = Modifier.height(12.dp))
+                            Spacer(modifier = Modifier.height(16.dp))
 
-                            // Cloudflare Worker URL setup
+                            // Webhook URL setup
                             Text(
-                                text = "Cloudflare Worker URL (for Notifications)",
-                                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold)
+                                text = "n8n Webhook URL (for Notifications)",
+                                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                                color = MaterialTheme.colorScheme.onSecondaryContainer
                             )
-                            Spacer(modifier = Modifier.height(4.dp))
+                            Spacer(modifier = Modifier.height(6.dp))
                             OutlinedTextField(
-                                value = workerUrl,
-                                onValueChange = { viewModel.updateWorkerUrl(it) },
-                                placeholder = { Text("https://your-cloudflare-worker.workers.dev") },
+                                value = webhookUrl,
+                                onValueChange = { viewModel.updateWebhookUrl(it) },
+                                placeholder = { Text("https://primary-production.up.railway.app/webhook/...") },
                                 singleLine = true,
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .testTag("worker_url_input"),
+                                    .testTag("webhook_url_input"),
                                 shape = RoundedCornerShape(12.dp),
                                 textStyle = MaterialTheme.typography.bodySmall
                             )
                             Text(
-                                text = "This worker sends HTTP notification requests using FCM v1.",
+                                text = "Updating this URL updates it globally for all active FireChat users instantly.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.7f),
                                 modifier = Modifier.padding(top = 4.dp)

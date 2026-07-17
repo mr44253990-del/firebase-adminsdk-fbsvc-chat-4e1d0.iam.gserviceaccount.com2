@@ -1,6 +1,6 @@
 {
   "name": "FireChat",
-  "description": "Real-time chat with Firebase and Cloudflare Workers push notifications",
+  "description": "Real-time chat with Firebase and n8n webhook push notifications",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
