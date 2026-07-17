@@ -27,7 +27,8 @@ data class Message(
     val imageUrl: String? = null,
     val voiceUrl: String? = null,
     val voiceDurationSec: Int? = null,
-    val seenByRecipient: Boolean = false
+    val seenByRecipient: Boolean = false,
+    val reactions: Map<String, String> = emptyMap()
 )
 
 data class Story(

@@ -104,6 +104,7 @@ fun HomeScreen(
     val scaffoldBgColor = MaterialTheme.colorScheme.background
 
     Scaffold(
+        contentWindowInsets = androidx.compose.foundation.layout.WindowInsets(0, 0, 0, 0),
         topBar = {
             Column(modifier = Modifier.fillMaxWidth()) {
                 // WiFi Offline Mode indicator banner
@@ -187,12 +188,17 @@ fun HomeScreen(
                     icon = { Icon(Icons.Default.Group, contentDescription = "Groups") },
                     label = { Text("Groups", fontSize = 10.sp) }
                 )
-                NavigationBarItem(
-                    selected = currentTab == 3,
-                    onClick = { currentTab = 3 },
-                    icon = { Icon(Icons.Default.AdminPanelSettings, contentDescription = "Service") },
-                    label = { Text("Service", fontSize = 10.sp) }
-                )
+                val email = FirebaseAuth.getInstance().currentUser?.email ?: ""
+                val isAdmin = email.lowercase().trim() == "mr4425390@gmail.com"
+
+                if (isAdmin) {
+                    NavigationBarItem(
+                        selected = currentTab == 3,
+                        onClick = { currentTab = 3 },
+                        icon = { Icon(Icons.Default.AdminPanelSettings, contentDescription = "Service") },
+                        label = { Text("Service", fontSize = 10.sp) }
+                    )
+                }
                 NavigationBarItem(
                     selected = currentTab == 4,
                     onClick = { currentTab = 4 },
@@ -211,77 +217,82 @@ fun HomeScreen(
         ) {
             when (currentTab) {
                 0 -> {
-                    // SOCIAL HOME TAB: Stories Row + Feed Posts Scroll
+                    // SOCIAL HOME TAB: Tabbed view for Feed and Stories
+                    var homeTabIndex by remember { mutableStateOf(0) }
                     Column(modifier = Modifier.fillMaxSize()) {
-                        // Horizontal Stories row
-                        Text(
-                            text = "Stories (Stories Bracket)",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.padding(start = 16.dp, top = 12.dp, bottom = 6.dp)
-                        )
-                        StoriesHorizontalSection(
-                            viewModel = viewModel,
-                            stories = stories,
-                            onStorySelected = { showStoryViewer = it }
-                        )
-
-                        Divider(
-                            modifier = Modifier.padding(vertical = 8.dp),
-                            color = MaterialTheme.colorScheme.surfaceVariant
-                        )
-
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 16.dp, vertical = 4.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+                        TabRow(
+                            selectedTabIndex = homeTabIndex,
+                            containerColor = MaterialTheme.colorScheme.surfaceColorAtElevation(1.dp)
                         ) {
-                            Text(
-                                text = "Social Feed (Feed Bracket)",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.primary
+                            Tab(
+                                selected = homeTabIndex == 0,
+                                onClick = { homeTabIndex = 0 },
+                                text = { Text("Social Feed", fontWeight = FontWeight.Bold) }
                             )
-                            Button(
-                                onClick = { showCreatePostDialog = true },
-                                shape = RoundedCornerShape(12.dp),
-                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
-                            ) {
-                                Icon(Icons.Default.Add, contentDescription = "Create Post", modifier = Modifier.size(16.dp))
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("Create Post", fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                            }
+                            Tab(
+                                selected = homeTabIndex == 1,
+                                onClick = { homeTabIndex = 1 },
+                                text = { Text("Stories", fontWeight = FontWeight.Bold) }
+                            )
                         }
 
-                        // Scrollable Feed List
-                        if (posts.isEmpty()) {
-                            Box(
+                        if (homeTabIndex == 0) {
+                            // Feed Tab
+                            Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .weight(1f),
-                                contentAlignment = Alignment.Center
+                                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                                horizontalArrangement = Arrangement.End,
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                    Icon(Icons.Default.DynamicFeed, contentDescription = null, tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.4f), modifier = Modifier.size(60.dp))
-                                    Spacer(modifier = Modifier.height(10.dp))
-                                    Text("No posts available", fontWeight = FontWeight.Bold)
-                                    Text("Be the first to share a post in the community!", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Button(
+                                    onClick = { showCreatePostDialog = true },
+                                    shape = RoundedCornerShape(12.dp),
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+                                ) {
+                                    Icon(Icons.Default.Add, contentDescription = "Create Post", modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Create Post", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+
+                            if (posts.isEmpty()) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .weight(1f),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                        Icon(Icons.Default.DynamicFeed, contentDescription = null, tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.4f), modifier = Modifier.size(60.dp))
+                                        Spacer(modifier = Modifier.height(10.dp))
+                                        Text("No posts available", fontWeight = FontWeight.Bold)
+                                        Text("Be the first to share a post in the community!", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                }
+                            } else {
+                                LazyColumn(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .weight(1f)
+                                        .padding(horizontal = 14.dp),
+                                    contentPadding = PaddingValues(bottom = 16.dp),
+                                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                                ) {
+                                    items(posts) { post ->
+                                        SocialPostItem(post = post, viewModel = viewModel)
+                                    }
                                 }
                             }
                         } else {
-                            LazyColumn(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .weight(1f)
-                                    .padding(horizontal = 14.dp),
-                                contentPadding = PaddingValues(bottom = 16.dp),
-                                verticalArrangement = Arrangement.spacedBy(12.dp)
-                            ) {
-                                items(posts) { post ->
-                                    SocialPostItem(post = post, viewModel = viewModel)
+                            // Stories Tab
+                            Box(modifier = Modifier.fillMaxSize()) {
+                                Column(modifier = Modifier.fillMaxSize()) {
+                                    StoriesHorizontalSection(
+                                        viewModel = viewModel,
+                                        stories = stories,
+                                        onStorySelected = { showStoryViewer = it }
+                                    )
                                 }
                             }
                         }
@@ -331,9 +342,11 @@ fun HomeScreen(
                                 contentPadding = PaddingValues(bottom = 16.dp)
                             ) {
                                 items(users) { user ->
+                                    val hasActiveStory = stories.any { it.senderId == user.uid }
                                     ChatConversationUserItem(
                                         user = user,
                                         viewModel = viewModel,
+                                        hasActiveStory = hasActiveStory,
                                         onSelect = { onUserSelected(user) }
                                     )
                                 }
@@ -555,10 +568,10 @@ fun HomeScreen(
 
                                 val themes = listOf(
                                     "Default" to Color(0xFF673AB7),
-                                    "Chocolate Cosmic" to Color(0xFF382A24),
-                                    "Ocean Breeze" to Color(0xFF0288D1),
-                                    "Forest Emerald" to Color(0xFF2E7D32),
-                                    "Midnight Violet" to Color(0xFF4A148C)
+                                    "Chocolate" to Color(0xFF382A24),
+                                    "Ocean" to Color(0xFF0288D1),
+                                    "Forest" to Color(0xFF2E7D32),
+                                    "Midnight" to Color(0xFF4A148C)
                                 )
 
                                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -1474,6 +1487,7 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel) {
 fun ChatConversationUserItem(
     user: User,
     viewModel: ChatViewModel,
+    hasActiveStory: Boolean,
     onSelect: () -> Unit
 ) {
     // Collect the dynamic last message between currentUser and otherUser
@@ -1489,7 +1503,10 @@ fun ChatConversationUserItem(
             .fillMaxWidth()
             .clickable(onClick = onSelect),
         shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)),
+        colors = CardDefaults.cardColors(
+            containerColor = if (hasUnread) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
+                             else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+        ),
         border = BorderStroke(
             width = if (hasUnread) 2.dp else 1.dp,
             color = if (hasUnread) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
@@ -1503,20 +1520,27 @@ fun ChatConversationUserItem(
         ) {
             // User Avatar bubble with online indicator badge
             Box(contentAlignment = Alignment.BottomEnd) {
+                val storyModifier = if (hasActiveStory) {
+                    Modifier
+                        .size(54.dp)
+                        .border(3.dp, MaterialTheme.colorScheme.error, CircleShape)
+                        .padding(3.dp)
+                } else {
+                    Modifier
+                        .size(50.dp)
+                        .border(1.5.dp, MaterialTheme.colorScheme.primary, CircleShape)
+                }
+
                 if (user.profileImageUrl.isNotBlank()) {
                     AsyncImage(
                         model = user.profileImageUrl,
                         contentDescription = "(Profile Picture)",
                         contentScale = ContentScale.Crop,
-                        modifier = Modifier
-                            .size(50.dp)
-                            .clip(CircleShape)
-                            .border(1.5.dp, MaterialTheme.colorScheme.primary, CircleShape)
+                        modifier = storyModifier.clip(CircleShape)
                     )
                 } else {
                     Box(
-                        modifier = Modifier
-                            .size(50.dp)
+                        modifier = storyModifier
                             .clip(CircleShape)
                             .background(MaterialTheme.colorScheme.primaryContainer),
                         contentAlignment = Alignment.Center
@@ -1551,18 +1575,33 @@ fun ChatConversationUserItem(
 
             // Display name + LAST MESSAGE (bold highlighted if unread!)
             Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = user.name,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = if (hasUnread) FontWeight.ExtraBold else FontWeight.Bold,
-                    color = if (hasUnread) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = user.name,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = if (hasUnread) FontWeight.ExtraBold else FontWeight.Bold,
+                        color = if (hasUnread) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground
+                    )
+                    
+                    if (hasUnread) {
+                        Box(
+                            modifier = Modifier
+                                .size(10.dp)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.error)
+                        )
+                    }
+                }
                 
                 // Show last message text instead of username
                 val lastMsgText = if (lastMessageState != null) {
                     val m = lastMessageState!!
-                    if (m.imageUrl != null) "📷 [Photo Attachment]" 
-                    else if (m.voiceUrl != null) "🎙️ [Voice Note]"
+                    if (!m.imageUrl.isNullOrBlank()) "📷 [Photo Attachment]" 
+                    else if (!m.voiceUrl.isNullOrBlank()) "🎙️ [Voice Note]"
                     else m.text
                 } else {
                     "No messages yet. Say Hello!"

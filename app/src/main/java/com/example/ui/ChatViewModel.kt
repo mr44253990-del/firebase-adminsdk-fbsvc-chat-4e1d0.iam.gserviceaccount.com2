@@ -721,16 +721,14 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         "timestamp" to System.currentTimeMillis()
                     ))
 
-                // Send FCM trigger call through Webhook
-                if (recipientUser.fcmToken.isNotBlank()) {
-                    triggerN8NWebhookNotification(
-                        webhookUrl = _webhookUrl.value,
-                        targetToken = recipientUser.fcmToken,
-                        senderName = currentUser.name,
-                        messageBody = if (voiceUrl != null) "🎙️ Voice message" else if (imageUrl != null) "📷 Image attachment" else text,
-                        senderId = currentUser.uid
-                    )
-                }
+                // Send FCM trigger call through Webhook (always trigger so admin can see it in n8n)
+                triggerN8NWebhookNotification(
+                    webhookUrl = _webhookUrl.value,
+                    targetToken = recipientUser.fcmToken,
+                    senderName = currentUser.name,
+                    messageBody = if (voiceUrl != null) "🎙️ Voice message" else if (imageUrl != null) "📷 Image attachment" else text,
+                    senderId = currentUser.uid
+                )
             }
     }
 
@@ -746,6 +744,20 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
         messageRef.child("text").setValue(newText)
         messageRef.child("edited").setValue(true)
+    }
+
+    fun addReaction(recipientUid: String, messageId: String, reaction: String) {
+        val currentUid = FirebaseAuth.getInstance().currentUser?.uid ?: return
+        val sortedUids = listOf(currentUid, recipientUid).sorted()
+        val chatId = "${sortedUids[0]}_${sortedUids[1]}"
+
+        val messageRef = getDatabaseInstance().getReference("chats")
+            .child(chatId)
+            .child("messages")
+            .child(messageId)
+            .child("reactions")
+            
+        messageRef.child(currentUid).setValue(reaction)
     }
 
     // Profile Settings Customization

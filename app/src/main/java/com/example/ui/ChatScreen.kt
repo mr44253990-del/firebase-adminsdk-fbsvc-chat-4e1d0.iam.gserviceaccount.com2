@@ -261,6 +261,7 @@ fun ChatScreen(
     )
 
     Scaffold(
+        contentWindowInsets = androidx.compose.foundation.layout.WindowInsets(0, 0, 0, 0),
         topBar = {
             TopAppBar(
                 title = {
@@ -407,6 +408,9 @@ fun ChatScreen(
                                     editingMessage = msg
                                     messageText = msg.text
                                 }
+                            },
+                            onReactSelect = { reaction ->
+                                viewModel.addReaction(recipient.uid, msg.messageId, reaction)
                             }
                         )
                     }
@@ -614,7 +618,8 @@ fun MessageBubbleItem(
     message: Message,
     isSentByMe: Boolean,
     onReplySelect: () -> Unit,
-    onEditSelect: () -> Unit
+    onEditSelect: () -> Unit,
+    onReactSelect: (String) -> Unit
 ) {
     var showMenu by remember { mutableStateOf(false) }
 
@@ -741,6 +746,26 @@ fun MessageBubbleItem(
                     }
                 }
             }
+            
+            // Show Reactions
+            if (message.reactions.isNotEmpty()) {
+                Row(
+                    modifier = Modifier.padding(top = 2.dp, start = 8.dp, end = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    message.reactions.values.distinct().forEach { reaction ->
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(ChocolateMedium)
+                                .border(1.dp, ChocolateLight, RoundedCornerShape(12.dp))
+                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                        ) {
+                            Text(text = reaction, fontSize = 12.sp)
+                        }
+                    }
+                }
+            }
         }
 
         // Action context dropdown menu on click/long press
@@ -749,6 +774,25 @@ fun MessageBubbleItem(
             onDismissRequest = { showMenu = false },
             modifier = Modifier.background(ChocolateMedium)
         ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(8.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly
+            ) {
+                listOf("❤️", "😂", "😮", "😢", "👍").forEach { emoji ->
+                    Text(
+                        text = emoji,
+                        fontSize = 24.sp,
+                        modifier = Modifier
+                            .clickable {
+                                onReactSelect(emoji)
+                                showMenu = false
+                            }
+                            .padding(4.dp)
+                    )
+                }
+            }
             DropdownMenuItem(
                 text = { Text("Reply", color = WhiteText) },
                 leadingIcon = { Icon(Icons.Default.Reply, contentDescription = null, tint = GoldAccent) },

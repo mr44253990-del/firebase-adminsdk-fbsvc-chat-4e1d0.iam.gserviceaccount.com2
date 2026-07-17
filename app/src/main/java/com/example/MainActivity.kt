@@ -8,6 +8,8 @@ import androidx.activity.viewModels
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.navigation.compose.NavHost
@@ -58,11 +60,11 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
-                Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
+                Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                     NavHost(
                         navController = navController,
                         startDestination = startDestination,
-                        modifier = Modifier.padding(innerPadding)
+                        modifier = Modifier.fillMaxSize()
                     ) {
                         composable("onboarding") {
                             OnboardingScreen(
@@ -115,31 +117,20 @@ class MainActivity : ComponentActivity() {
                                     viewModel = viewModel,
                                     recipient = recipient,
                                     onBack = {
-                                        viewModel.selectRecipient(null)
                                         navController.popBackStack()
                                     }
                                 )
-                            } ?: run {
-                                LaunchedEffect(Unit) {
-                                    navController.popBackStack()
-                                }
                             }
                         }
-
                         composable("group_chat") {
                             activeGroup?.let { group ->
                                 GroupChatScreen(
                                     viewModel = viewModel,
                                     group = group,
                                     onBack = {
-                                        viewModel.selectGroup(null)
                                         navController.popBackStack()
                                     }
                                 )
-                            } ?: run {
-                                LaunchedEffect(Unit) {
-                                    navController.popBackStack()
-                                }
                             }
                         }
                     }
