@@ -1,0 +1,40 @@
+{
+  "project_info": {
+    "project_number": "404800892817",
+    "firebase_url": "https://chat-4e1d0-default-rtdb.asia-southeast1.firebasedatabase.app",
+    "project_id": "chat-4e1d0",
+    "storage_bucket": "chat-4e1d0.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:404800892817:android:f1c709e87a77543ee3b430",
+        "android_client_info": {
+          "package_name": "com.ebchat"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "404800892817-4ovh3uvpn9mhee3kgedub3sr1k00udg1.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAw1P7TLWfkLXS1f0qjrLUSwkfVEOhLxfk"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "404800892817-4ovh3uvpn9mhee3kgedub3sr1k00udg1.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
