@@ -989,7 +989,21 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             targetId = targetId,
             text = text,
             timestamp = System.currentTimeMillis()
-        )).addOnFailureListener { Log.e("ACTIVITY_CENTER", "Delivery failed: ${it.message}") }
+        )).addOnSuccessListener {
+            FirebaseFirestore.getInstance().collection("users").document(ownerId).get()
+                .addOnSuccessListener { owner ->
+                    val token = owner.getString("fcmToken").orEmpty()
+                    if (token.isNotBlank()) {
+                        triggerN8NWebhookNotification(
+                            webhookUrl = _webhookUrl.value,
+                            targetToken = token,
+                            senderName = actor.name,
+                            messageBody = text,
+                            senderId = actor.uid
+                        )
+                    }
+                }
+        }.addOnFailureListener { Log.e("ACTIVITY_CENTER", "Delivery failed: ${it.message}") }
     }
 
     fun markAllActivityRead() {

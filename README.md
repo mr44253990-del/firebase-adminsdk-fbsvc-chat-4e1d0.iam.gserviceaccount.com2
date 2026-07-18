@@ -12,6 +12,14 @@ The app now uses a unified **Glassmorphism + Material 3** design system across o
 
 Choose an appearance from **Profile & appearance → Choose Application Theme**.
 
+### Social system configuration
+
+1. Enable **Google** in Firebase Authentication → Sign-in providers and add the app's SHA-1/SHA-256 fingerprints.
+2. Replace/publish the included `firestore.rules` before testing activity notifications, friend requests, message requests, profiles, posts, stories, or groups.
+3. Notifications use Firestore as a short-lived delivery queue. The Android client writes each received item to Room and then deletes the remote notification document, keeping history locally without growing Firestore indefinitely.
+4. Friend and message request queries use a single `receiverId` equality filter, so no composite Firestore index is required.
+5. Google provides display name, email, and profile image. Birthday is not included in the standard Google ID token; users can complete it safely from **Profile & appearance**.
+
 স্বাগতম! **FireChat** হলো একটি রিয়েল-টাইম চ্যাটিং অ্যান্ড্রয়েড অ্যাপ্লিকেশন যা Jetpack Compose, Kotlin এবং Firebase (Authentication, Firestore, Realtime Database) ব্যবহার করে তৈরি করা হয়েছে। ব্যাকগ্রাউন্ডে এবং অ্যাপ বন্ধ থাকা অবস্থায়ও নোটিফিকেশন পাঠাতে এটি **Cloudflare Workers** এবং **Firebase Cloud Messaging (FCM) v1 API** এর সফল সংযোগ ব্যবহার করে।
 
 এই নির্দেশিকায় সম্পূর্ণ সেটআপ প্রসেস (ফায়ারবেস কনফিগারেশন থেকে শুরু করে ক্লাউডফ্লেয়ার ওয়ার্কার ডিপ্লয়মেন্ট) বিস্তারিত আলোচনা করা হলো।

@@ -103,6 +103,7 @@ fun HomeScreen(
     var searchQuery by remember { mutableStateOf("") }
     var showAccountMenu by remember { mutableStateOf(false) }
     var showActivityCenter by remember { mutableStateOf(false) }
+    var showGlobalSearch by remember { mutableStateOf(false) }
     val currentTab by viewModel.currentTabState.collectAsState()
 
     // Dialog & Creation controllers
@@ -177,8 +178,8 @@ fun HomeScreen(
                         }
                     },
                     actions = {
-                        IconButton(onClick = { viewModel.setCurrentTab(1) }) {
-                            Icon(Icons.Outlined.Search, contentDescription = "Search chats")
+                        IconButton(onClick = { showGlobalSearch = true }) {
+                            Icon(Icons.Outlined.Search, contentDescription = "Search people and media")
                         }
                         BadgedBox(
                             badge = {
@@ -1075,6 +1076,18 @@ fun HomeScreen(
         }
     }
 
+    if (showGlobalSearch) {
+        SmartSearchDialog(
+            users = allUsers,
+            posts = posts,
+            onProfileSelected = {
+                showGlobalSearch = false
+                onProfileSelected(it)
+            },
+            onDismiss = { showGlobalSearch = false }
+        )
+    }
+
     if (showActivityCenter) {
         ActivityCenterDialog(
             notifications = activityNotifications,
@@ -1434,6 +1447,111 @@ fun HomeScreen(
         )
     }
 
+}
+
+@Composable
+fun SmartSearchDialog(
+    users: List<User>,
+    posts: List<Post>,
+    onProfileSelected: (User) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var query by remember { mutableStateOf("") }
+    var fullScreenVideo by remember { mutableStateOf<String?>(null) }
+    val normalized = query.trim()
+    val matchedUsers = if (normalized.isBlank()) emptyList() else users.filter {
+        it.name.contains(normalized, true) || it.username.contains(normalized, true) || it.bio.contains(normalized, true)
+    }
+    val matchedPosts = if (normalized.isBlank()) emptyList() else posts.filter { post ->
+        post.title.contains(normalized, true) || post.text.contains(normalized, true) ||
+            post.feeling.contains(normalized, true) || post.tags.any { it.contains(normalized.removePrefix("#"), true) }
+    }
+    fullScreenVideo?.let { FullScreenVideoPlayer(it) { fullScreenVideo = null } }
+
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Surface(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing), color = MaterialTheme.colorScheme.background) {
+            Column {
+                Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedTextField(
+                        value = query,
+                        onValueChange = { query = it },
+                        modifier = Modifier.weight(1f),
+                        placeholder = { Text("Search people, posts, videos and photos") },
+                        leadingIcon = { Icon(Icons.Default.Search, null) },
+                        trailingIcon = {
+                            if (query.isNotEmpty()) IconButton(onClick = { query = "" }) { Icon(Icons.Default.Close, "Clear") }
+                        },
+                        singleLine = true,
+                        shape = CircleShape
+                    )
+                    IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, "Close search") }
+                }
+                if (normalized.isBlank()) {
+                    Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                        Icon(Icons.Outlined.ManageSearch, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(68.dp))
+                        Text("Search everything", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                        Text("People • Posts • Videos • Photos", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                } else {
+                    LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        if (matchedUsers.isNotEmpty()) {
+                            item { Text("People", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary) }
+                            items(matchedUsers, key = { "search_user_${it.uid}" }) { user ->
+                                Row(
+                                    Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).clickable { onProfileSelected(user) }
+                                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .45f)).padding(10.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    AsyncImage(user.profileImageUrl.ifBlank { null }, user.name, error = painterResource(R.drawable.img_app_logo), modifier = Modifier.size(46.dp).clip(CircleShape))
+                                    Spacer(Modifier.width(10.dp))
+                                    Column { Text(user.name, fontWeight = FontWeight.Bold); Text("@${user.username}", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                                }
+                            }
+                        }
+                        if (matchedPosts.isNotEmpty()) {
+                            item { Text("Posts & media", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary) }
+                            items(matchedPosts, key = { "search_post_${it.id}" }) { post ->
+                                Card(
+                                    onClick = { if (post.videoUrl.isNotBlank()) fullScreenVideo = post.videoUrl },
+                                    shape = RoundedCornerShape(22.dp)
+                                ) {
+                                    Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                                        when {
+                                            post.imageUrl.isNotBlank() -> AsyncImage(
+                                                post.imageUrl, "Photo result", contentScale = ContentScale.Crop,
+                                                modifier = Modifier.size(76.dp).clip(RoundedCornerShape(16.dp))
+                                            )
+                                            post.videoUrl.isNotBlank() -> Box(
+                                                Modifier.size(76.dp).clip(RoundedCornerShape(16.dp)).background(Color.Black),
+                                                contentAlignment = Alignment.Center
+                                            ) { Icon(Icons.Default.PlayArrow, null, tint = Color.White, modifier = Modifier.size(36.dp)) }
+                                            else -> Box(Modifier.size(76.dp).clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.primaryContainer), contentAlignment = Alignment.Center) {
+                                                Icon(Icons.Outlined.Article, null)
+                                            }
+                                        }
+                                        Spacer(Modifier.width(12.dp))
+                                        Column(Modifier.weight(1f)) {
+                                            Text(post.title.ifBlank { post.senderName }, fontWeight = FontWeight.Bold)
+                                            Text(post.text, maxLines = 2, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            if (post.videoUrl.isNotBlank()) Text("Video • tap to play", color = MaterialTheme.colorScheme.primary, fontSize = 11.sp)
+                                            else if (post.imageUrl.isNotBlank()) Text("Photo", color = MaterialTheme.colorScheme.primary, fontSize = 11.sp)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        if (matchedUsers.isEmpty() && matchedPosts.isEmpty()) {
+                            item {
+                                Box(Modifier.fillParentMaxHeight(.7f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                                    Text("No results for “$normalized”", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 @Composable
