@@ -823,7 +823,7 @@ fun HomeScreen(
                                                         AsyncImage(
                                                             model = blockedUser.profileImageUrl.ifBlank { null },
                                                             contentDescription = null,
-                                                            error = painterResource(id = R.drawable.ic_launcher_foreground),
+                                                            error = painterResource(id = R.drawable.img_app_logo),
                                                             modifier = Modifier
                                                                 .size(36.dp)
                                                                 .clip(CircleShape)
@@ -1183,7 +1183,7 @@ fun HomeScreen(
                     AsyncImage(
                         model = activeStory.senderProfilePic.ifBlank { null },
                         contentDescription = null,
-                        error = painterResource(id = R.drawable.ic_launcher_foreground),
+                        error = painterResource(id = R.drawable.img_app_logo),
                         modifier = Modifier
                             .size(36.dp)
                             .clip(CircleShape)
@@ -1522,7 +1522,7 @@ fun StoriesHorizontalSection(
                     AsyncImage(
                         model = story.senderProfilePic.ifBlank { null },
                         contentDescription = story.senderName,
-                        error = painterResource(id = R.drawable.ic_launcher_foreground),
+                        error = painterResource(id = R.drawable.img_app_logo),
                         modifier = Modifier
                             .size(50.dp)
                             .clip(CircleShape)
@@ -1567,7 +1567,7 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel) {
                     AsyncImage(
                         model = post.senderProfilePic.ifBlank { null },
                         contentDescription = post.senderName,
-                        error = painterResource(id = R.drawable.ic_launcher_foreground),
+                        error = painterResource(id = R.drawable.img_app_logo),
                         modifier = Modifier
                             .size(40.dp)
                             .clip(CircleShape)

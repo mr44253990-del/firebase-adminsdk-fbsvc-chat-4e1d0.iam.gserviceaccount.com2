@@ -336,6 +336,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                                 loadAllUsers()
                                 listenToAllPresences()
                                 listenForInAppNotifications()
+                                loadStories()
+                                loadPosts()
+                                loadGroups()
+                                listenToUnreadCounts()
                                 _authLoading.value = false
                                 onSuccess()
                             }
@@ -418,7 +422,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             .document(uid)
             .get()
             .addOnSuccessListener { document ->
-                if (document.exists()) {
+                if (document != null && document.exists()) {
                     val user = try {
                         document.toObject(User::class.java)
                     } catch (e: Exception) {
@@ -442,13 +446,21 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     // Identify admin by user email
                     val auth = FirebaseAuth.getInstance()
                     _userIsAdmin.value = auth.currentUser?.email == "mr4425390@gmail.com"
-
-                    // Load other channels
-                    loadStories()
-                    loadPosts()
-                    loadGroups()
-                    listenToUnreadCounts()
                 }
+                
+                // Load other channels unconditionally
+                loadStories()
+                loadPosts()
+                loadGroups()
+                listenToUnreadCounts()
+            }
+            .addOnFailureListener { e ->
+                Log.e("FIRESTORE_PROFILE", "Failed to load user profile: ${e.message}")
+                // Load channels unconditionally even on failure
+                loadStories()
+                loadPosts()
+                loadGroups()
+                listenToUnreadCounts()
             }
     }
 
@@ -588,7 +600,13 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     compareByDescending<User> { it.isOnline }.thenByDescending { it.lastActive }
                 )
                 _usersState.value = sortedUsers
-                _filteredUsersState.value = sortedUsers
+
+                val currentUid = FirebaseAuth.getInstance().currentUser?.uid ?: ""
+                val myBlocked = _currentUserState.value?.blockedUsers ?: emptyList()
+                val filteredList = sortedUsers.filter { user ->
+                    !myBlocked.contains(user.uid) && !user.blockedUsers.contains(currentUid)
+                }
+                _filteredUsersState.value = filteredList
             }
 
             override fun onCancelled(error: DatabaseError) {}
@@ -604,13 +622,17 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val chatId = "${sortedUids[0]}_${sortedUids[1]}"
         activeChatId = chatId
 
-        if (!_isNetworkAvailable.value) {
-            viewModelScope.launch {
-                cacheDao.getMessagesForChat(chatId).collect { cached ->
-                    _chatMessagesState.value = cached.map { it.toMessage() }
+        // Load initial local cache quickly (non-blocking)
+        viewModelScope.launch {
+            try {
+                cacheDao.getMessagesForChat(chatId).firstOrNull()?.let { cached ->
+                    if (_chatMessagesState.value.isEmpty()) {
+                        _chatMessagesState.value = cached.map { it.toMessage() }
+                    }
                 }
+            } catch (e: Exception) {
+                Log.e("CHAT_CACHE", "Failed to load cached messages: ${e.message}")
             }
-            return
         }
 
         val chatRef = getDatabaseInstance().getReference("chats")
@@ -904,35 +926,49 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     // Block/Unblock users
     fun blockUser(targetUid: String, onSuccess: () -> Unit) {
-        val currentUid = FirebaseAuth.getInstance().currentUser?.uid ?: return
-        val userRef = FirebaseFirestore.getInstance().collection("users").document(currentUid)
+        try {
+            val currentUid = FirebaseAuth.getInstance().currentUser?.uid ?: return
+            val userRef = FirebaseFirestore.getInstance().collection("users").document(currentUid)
 
-        val currentBlocked = _currentUserState.value?.blockedUsers?.toMutableList() ?: mutableListOf()
-        if (!currentBlocked.contains(targetUid)) {
-            currentBlocked.add(targetUid)
-        }
-
-        userRef.update("blockedUsers", currentBlocked)
-            .addOnSuccessListener {
-                _currentUserState.value = _currentUserState.value?.copy(blockedUsers = currentBlocked)
-                loadAllUsers()
-                onSuccess()
+            val currentBlocked = _currentUserState.value?.blockedUsers?.toMutableList() ?: mutableListOf()
+            if (!currentBlocked.contains(targetUid)) {
+                currentBlocked.add(targetUid)
             }
+
+            userRef.update("blockedUsers", currentBlocked)
+                .addOnSuccessListener {
+                    _currentUserState.value = _currentUserState.value?.copy(blockedUsers = currentBlocked)
+                    loadAllUsers()
+                    onSuccess()
+                }
+                .addOnFailureListener { e ->
+                    Log.e("BLOCK_USER", "Failed to block user: ${e.message}")
+                }
+        } catch (e: Exception) {
+            Log.e("BLOCK_USER", "Error blocking user: ${e.message}")
+        }
     }
 
     fun unblockUser(targetUid: String, onSuccess: () -> Unit) {
-        val currentUid = FirebaseAuth.getInstance().currentUser?.uid ?: return
-        val userRef = FirebaseFirestore.getInstance().collection("users").document(currentUid)
+        try {
+            val currentUid = FirebaseAuth.getInstance().currentUser?.uid ?: return
+            val userRef = FirebaseFirestore.getInstance().collection("users").document(currentUid)
 
-        val currentBlocked = _currentUserState.value?.blockedUsers?.toMutableList() ?: mutableListOf()
-        currentBlocked.remove(targetUid)
+            val currentBlocked = _currentUserState.value?.blockedUsers?.toMutableList() ?: mutableListOf()
+            currentBlocked.remove(targetUid)
 
-        userRef.update("blockedUsers", currentBlocked)
-            .addOnSuccessListener {
-                _currentUserState.value = _currentUserState.value?.copy(blockedUsers = currentBlocked)
-                loadAllUsers()
-                onSuccess()
-            }
+            userRef.update("blockedUsers", currentBlocked)
+                .addOnSuccessListener {
+                    _currentUserState.value = _currentUserState.value?.copy(blockedUsers = currentBlocked)
+                    loadAllUsers()
+                    onSuccess()
+                }
+                .addOnFailureListener { e ->
+                    Log.e("UNBLOCK_USER", "Failed to unblock user: ${e.message}")
+                }
+        } catch (e: Exception) {
+            Log.e("UNBLOCK_USER", "Error unblocking user: ${e.message}")
+        }
     }
 
     // General file upload helper to Supabase Storage via REST
@@ -1085,15 +1121,18 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     // --- Stories Logic ---
 
     fun loadStories() {
-        if (!_isNetworkAvailable.value) {
-            viewModelScope.launch {
-                cacheDao.getAllStories().collect { cached ->
-                    val now = System.currentTimeMillis()
-                    // Filter 12-hour stories locally
-                    _storiesState.value = cached.map { it.toStory() }.filter { now - it.timestamp <= 12 * 60 * 60 * 1000 }
+        // Quick initial load from local cache
+        viewModelScope.launch {
+            try {
+                cacheDao.getAllStories().firstOrNull()?.let { cached ->
+                    if (_storiesState.value.isEmpty()) {
+                        val now = System.currentTimeMillis()
+                        _storiesState.value = cached.map { it.toStory() }.filter { now - it.timestamp <= 12 * 60 * 60 * 1000 }
+                    }
                 }
+            } catch (e: Exception) {
+                Log.e("FIRESTORE_STORIES", "Cache load failed: ${e.message}")
             }
-            return
         }
 
         FirebaseFirestore.getInstance().collection("stories")
@@ -1236,13 +1275,17 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     // --- Social Posts Logic ---
 
     fun loadPosts() {
-        if (!_isNetworkAvailable.value) {
-            viewModelScope.launch {
-                cacheDao.getAllPosts().collect { cached ->
-                    _postsState.value = cached.map { it.toPost() }
+        // Quick initial load from local cache
+        viewModelScope.launch {
+            try {
+                cacheDao.getAllPosts().firstOrNull()?.let { cached ->
+                    if (_postsState.value.isEmpty()) {
+                        _postsState.value = cached.map { it.toPost() }
+                    }
                 }
+            } catch (e: Exception) {
+                Log.e("FIRESTORE_POSTS", "Cache load failed: ${e.message}")
             }
-            return
         }
 
         FirebaseFirestore.getInstance().collection("posts")
@@ -1397,29 +1440,36 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun incrementPostViews(postId: String) {
-        if (!_isNetworkAvailable.value) return
-        val postRef = FirebaseFirestore.getInstance().collection("posts").document(postId)
-        FirebaseFirestore.getInstance().runTransaction { transaction ->
-            val snapshot = transaction.get(postRef)
-            val currentViews = snapshot.getLong("viewsCount") ?: 0L
-            transaction.update(postRef, "viewsCount", currentViews + 1)
-        }.addOnSuccessListener {
-            Log.d("POSTS_VIEWS", "Post $postId views incremented.")
-        }.addOnFailureListener { e ->
-            Log.e("POSTS_VIEWS", "Failed to increment view: ${e.message}")
+        try {
+            val postRef = FirebaseFirestore.getInstance().collection("posts").document(postId)
+            FirebaseFirestore.getInstance().runTransaction { transaction ->
+                val snapshot = transaction.get(postRef)
+                val currentViews = snapshot.getLong("viewsCount") ?: 0L
+                transaction.update(postRef, "viewsCount", currentViews + 1)
+            }.addOnSuccessListener {
+                Log.d("POSTS_VIEWS", "Post $postId views incremented.")
+            }.addOnFailureListener { e ->
+                Log.e("POSTS_VIEWS", "Failed to increment view: ${e.message}")
+            }
+        } catch (e: Exception) {
+            Log.e("POSTS_VIEWS", "Error incrementing views: ${e.message}")
         }
     }
 
     // --- Group Chats Logic ---
 
     fun loadGroups() {
-        if (!_isNetworkAvailable.value) {
-            viewModelScope.launch {
-                cacheDao.getAllGroups().collect { cached ->
-                    _groupsState.value = cached.map { it.toGroup() }
+        // Quick initial load from local cache
+        viewModelScope.launch {
+            try {
+                cacheDao.getAllGroups().firstOrNull()?.let { cached ->
+                    if (_groupsState.value.isEmpty()) {
+                        _groupsState.value = cached.map { it.toGroup() }
+                    }
                 }
+            } catch (e: Exception) {
+                Log.e("FIRESTORE_GROUPS", "Cache load failed: ${e.message}")
             }
-            return
         }
 
         FirebaseFirestore.getInstance().collection("groups")
@@ -1508,13 +1558,17 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun startListeningToGroupMessages(groupId: String) {
-        if (!_isNetworkAvailable.value) {
-            viewModelScope.launch {
-                cacheDao.getGroupMessages(groupId).collect { cached ->
-                    _groupMessagesState.value = cached.map { it.toGroupMessage() }
+        // Quick initial load from local cache
+        viewModelScope.launch {
+            try {
+                cacheDao.getGroupMessages(groupId).firstOrNull()?.let { cached ->
+                    if (_groupMessagesState.value.isEmpty()) {
+                        _groupMessagesState.value = cached.map { it.toGroupMessage() }
+                    }
                 }
+            } catch (e: Exception) {
+                Log.e("FIRESTORE_GROUP_MSGS", "Cache load failed: ${e.message}")
             }
-            return
         }
 
         FirebaseFirestore.getInstance().collection("groups").document(groupId)
