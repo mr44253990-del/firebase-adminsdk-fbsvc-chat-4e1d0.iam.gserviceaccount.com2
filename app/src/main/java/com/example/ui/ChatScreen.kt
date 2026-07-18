@@ -66,6 +66,8 @@ fun ChatScreen(
     val currentUserId = FirebaseAuth.getInstance().currentUser?.uid ?: ""
     val messages by viewModel.chatMessagesState.collectAsState()
     val isTyping by viewModel.isRecipientTyping.collectAsState()
+    val chatTheme by viewModel.chatTheme.collectAsState()
+    var showThemePicker by remember { mutableStateOf(false) }
     
     val users by viewModel.usersState.collectAsState()
     val updatedRecipient = users.find { it.uid == recipient.uid } ?: recipient
@@ -273,11 +275,42 @@ fun ChatScreen(
     }
 
     val isDark = isSystemInDarkTheme()
-    val bgStart = MaterialTheme.colorScheme.background
-    val bgEnd = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-    val chatGradientBg = Brush.verticalGradient(
-        colors = listOf(bgStart, bgEnd)
-    )
+    val chatGradientBg = when (chatTheme) {
+        "Sunset" -> Brush.verticalGradient(listOf(Color(0xFF2B1025), Color(0xFF7B2D45), Color(0xFFFF8A5B).copy(alpha = .55f)))
+        "Ocean" -> Brush.verticalGradient(listOf(Color(0xFF001B2E), Color(0xFF004E64), Color(0xFF00A5CF).copy(alpha = .45f)))
+        "Forest" -> Brush.verticalGradient(listOf(Color(0xFF071A12), Color(0xFF174A35), Color(0xFF5BC88A).copy(alpha = .35f)))
+        "Midnight" -> Brush.verticalGradient(listOf(Color.Black, Color(0xFF171029), Color(0xFF35205E)))
+        else -> Brush.verticalGradient(listOf(MaterialTheme.colorScheme.background, MaterialTheme.colorScheme.primary.copy(alpha = .12f), MaterialTheme.colorScheme.surfaceVariant))
+    }
+
+    if (showThemePicker) {
+        AlertDialog(
+            onDismissRequest = { showThemePicker = false },
+            title = { Text("Choose chat theme", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf("Aurora", "Sunset", "Ocean", "Forest", "Midnight").forEach { theme ->
+                        Row(
+                            Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp))
+                                .background(if (chatTheme == theme) MaterialTheme.colorScheme.primaryContainer else Color.Transparent)
+                                .clickable {
+                                    viewModel.updateChatTheme(theme)
+                                    showThemePicker = false
+                                }.padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Default.Palette, null, tint = MaterialTheme.colorScheme.primary)
+                            Spacer(Modifier.width(10.dp))
+                            Text(theme, fontWeight = if (chatTheme == theme) FontWeight.Bold else FontWeight.Normal)
+                            Spacer(Modifier.weight(1f))
+                            if (chatTheme == theme) Icon(Icons.Default.Check, null)
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { showThemePicker = false }) { Text("Close") } }
+        )
+    }
 
     Scaffold(
         containerColor = Color.Transparent,
@@ -359,6 +392,9 @@ fun ChatScreen(
                     }
                 },
                 actions = {
+                    IconButton(onClick = { showThemePicker = true }) {
+                        Icon(Icons.Default.Palette, contentDescription = "Chat theme", tint = MaterialTheme.colorScheme.primary)
+                    }
                     IconButton(onClick = {
                         viewModel.blockUser(recipient.uid) {
                             Toast.makeText(context, "User Blocked", Toast.LENGTH_SHORT).show()

@@ -12,13 +12,17 @@ import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.*
+import com.google.firebase.auth.AuthCredential
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.database.DataSnapshot
 import com.google.firebase.database.DatabaseError
 import com.google.firebase.database.FirebaseDatabase
 import com.google.firebase.database.ValueEventListener
+import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.ListenerRegistration
 import com.google.firebase.firestore.Query
+import com.google.firebase.firestore.SetOptions
 import com.google.firebase.messaging.FirebaseMessaging
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
@@ -51,6 +55,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     // Themes
     private val _themeState = MutableStateFlow(sharedPrefs.getString("app_theme", "default") ?: "default")
     val themeState: StateFlow<String> = _themeState.asStateFlow()
+
+    private val _notificationSoundsEnabled = MutableStateFlow(sharedPrefs.getBoolean("notification_sounds", true))
+    val notificationSoundsEnabled: StateFlow<Boolean> = _notificationSoundsEnabled.asStateFlow()
+    private val _typingSoundsEnabled = MutableStateFlow(sharedPrefs.getBoolean("typing_sounds", true))
+    val typingSoundsEnabled: StateFlow<Boolean> = _typingSoundsEnabled.asStateFlow()
 
     // Network tracking (defaults to true for maximum compatibility on emulators)
     private val _isNetworkAvailable = MutableStateFlow(true)
@@ -102,8 +111,23 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private val _isRecipientTyping = MutableStateFlow(false)
     val isRecipientTyping: StateFlow<Boolean> = _isRecipientTyping.asStateFlow()
 
+    private val _chatTheme = MutableStateFlow("Aurora")
+    val chatTheme: StateFlow<String> = _chatTheme.asStateFlow()
+
     private val _inAppNotification = MutableStateFlow<InAppNotificationData?>(null)
     val inAppNotification: StateFlow<InAppNotificationData?> = _inAppNotification.asStateFlow()
+
+    private val _activityNotifications = MutableStateFlow<List<ActivityNotification>>(emptyList())
+    val activityNotifications: StateFlow<List<ActivityNotification>> = _activityNotifications.asStateFlow()
+
+    private val _friendRequests = MutableStateFlow<List<FriendRequest>>(emptyList())
+    val friendRequests: StateFlow<List<FriendRequest>> = _friendRequests.asStateFlow()
+
+    private val _messageRequests = MutableStateFlow<List<MessageRequest>>(emptyList())
+    val messageRequests: StateFlow<List<MessageRequest>> = _messageRequests.asStateFlow()
+
+    private val _selectedProfile = MutableStateFlow<User?>(null)
+    val selectedProfile: StateFlow<User?> = _selectedProfile.asStateFlow()
 
     private val _authLoading = MutableStateFlow(false)
     val authLoading: StateFlow<Boolean> = _authLoading.asStateFlow()
@@ -129,8 +153,13 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private var activeChatListener: ValueEventListener? = null
     private var activeChatId: String? = null
     private var activeTypingListener: ValueEventListener? = null
+    private var activeChatThemeListener: ValueEventListener? = null
     private var globalNotificationListener: ValueEventListener? = null
     private var presenceListener: ValueEventListener? = null
+    private var activityNotificationListener: ListenerRegistration? = null
+    private var friendRequestListener: ListenerRegistration? = null
+    private var messageRequestListener: ListenerRegistration? = null
+    private var notificationCacheJob: kotlinx.coroutines.Job? = null
 
     private fun getDatabaseInstance(): FirebaseDatabase {
         return try {
@@ -181,6 +210,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             }
             startListeningToChat(user.uid)
             startListeningToTyping(user.uid)
+            startListeningToChatTheme()
         } else {
             stopListeningToChat()
             stopListeningToTyping()
@@ -288,6 +318,51 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 _authLoading.value = false
             }
         }
+    }
+
+    fun signInWithGoogleCredential(credential: AuthCredential, onSuccess: () -> Unit) {
+        _authLoading.value = true
+        _authError.value = null
+        FirebaseAuth.getInstance().signInWithCredential(credential)
+            .addOnSuccessListener { result ->
+                val authUser = result.user
+                if (authUser == null) {
+                    _authLoading.value = false
+                    _authError.value = "Google account could not be loaded"
+                    return@addOnSuccessListener
+                }
+                val usernameBase = (authUser.email?.substringBefore("@") ?: authUser.displayName ?: "user")
+                    .lowercase().replace("[^a-z0-9_]".toRegex(), "")
+                val profile = User(
+                    uid = authUser.uid,
+                    name = authUser.displayName ?: usernameBase,
+                    username = usernameBase,
+                    profileImageUrl = authUser.photoUrl?.toString() ?: "",
+                    createdAt = authUser.metadata?.creationTimestamp ?: System.currentTimeMillis()
+                )
+                FirebaseFirestore.getInstance().collection("users").document(authUser.uid)
+                    .set(mapOf(
+                        "uid" to profile.uid,
+                        "name" to profile.name,
+                        "username" to profile.username,
+                        "profileImageUrl" to profile.profileImageUrl,
+                        "createdAt" to profile.createdAt
+                    ), SetOptions.merge())
+                    .addOnCompleteListener {
+                        retrieveFCMTokenAndStore(authUser.uid)
+                        loadCurrentUserProfile(authUser.uid)
+                        setupPresence(authUser.uid)
+                        loadAllUsers()
+                        listenToAllPresences()
+                        listenForInAppNotifications()
+                        _authLoading.value = false
+                        onSuccess()
+                    }
+            }
+            .addOnFailureListener {
+                _authLoading.value = false
+                _authError.value = it.localizedMessage ?: "Google sign-in failed"
+            }
     }
 
     fun signup(email: String, name: String, dob: String, password: String, profileImageUrl: String, onSuccess: () -> Unit) {
@@ -442,6 +517,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         }
                     }
                     _currentUserState.value = user
+                    listenToActivityCenter(uid)
                     
                     // Identify admin by user email
                     val auth = FirebaseAuth.getInstance()
@@ -737,8 +813,35 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         _isRecipientTyping.value = false
     }
 
+    private fun startListeningToChatTheme() {
+        val chatId = activeChatId ?: return
+        activeChatThemeListener?.let {
+            getDatabaseInstance().getReference("chat_settings").child(chatId).child("theme").removeEventListener(it)
+        }
+        val ref = getDatabaseInstance().getReference("chat_settings").child(chatId).child("theme")
+        activeChatThemeListener = ref.addValueEventListener(object : ValueEventListener {
+            override fun onDataChange(snapshot: DataSnapshot) {
+                _chatTheme.value = snapshot.getValue(String::class.java) ?: "Aurora"
+            }
+            override fun onCancelled(error: DatabaseError) { _chatTheme.value = "Aurora" }
+        })
+    }
+
+    fun updateChatTheme(theme: String) {
+        val chatId = activeChatId ?: return
+        getDatabaseInstance().getReference("chat_settings").child(chatId).child("theme").setValue(theme)
+    }
+
     // Sound effect players
+    fun updateSoundPreferences(notificationSounds: Boolean, typingSounds: Boolean) {
+        _notificationSoundsEnabled.value = notificationSounds
+        _typingSoundsEnabled.value = typingSounds
+        sharedPrefs.edit().putBoolean("notification_sounds", notificationSounds)
+            .putBoolean("typing_sounds", typingSounds).apply()
+    }
+
     fun playNotificationSound() {
+        if (!_notificationSoundsEnabled.value) return
         try {
             val toneG = ToneGenerator(AudioManager.STREAM_NOTIFICATION, 80)
             toneG.startTone(ToneGenerator.TONE_PROP_BEEP, 120)
@@ -748,6 +851,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun playTypingSound() {
+        if (!_typingSoundsEnabled.value) return
         try {
             val toneG = ToneGenerator(AudioManager.STREAM_SYSTEM, 35)
             toneG.startTone(ToneGenerator.TONE_PROP_PROMPT, 50)
@@ -786,6 +890,182 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         _inAppNotification.value = null
     }
 
+    /**
+     * Firestore is used only as a delivery queue. Every received item is first persisted
+     * in Room and only then acknowledged by deleting the remote document.
+     */
+    private fun listenToActivityCenter(uid: String) {
+        activityNotificationListener?.remove()
+        friendRequestListener?.remove()
+        notificationCacheJob?.cancel()
+
+        notificationCacheJob = viewModelScope.launch {
+            cacheDao.getNotifications(uid).collect { cached ->
+                _activityNotifications.value = cached.map { it.toModel() }
+            }
+        }
+
+        val inbox = FirebaseFirestore.getInstance().collection("users")
+            .document(uid).collection("notifications")
+        activityNotificationListener = inbox.addSnapshotListener { snapshot, error ->
+            if (error != null || snapshot == null) return@addSnapshotListener
+            snapshot.documents.forEach { doc ->
+                val item = try {
+                    ActivityNotification(
+                        id = doc.id,
+                        ownerId = doc.getString("ownerId") ?: uid,
+                        actorId = doc.getString("actorId") ?: "",
+                        actorName = doc.getString("actorName") ?: "Someone",
+                        actorImageUrl = doc.getString("actorImageUrl") ?: "",
+                        type = doc.getString("type") ?: "activity",
+                        targetId = doc.getString("targetId") ?: "",
+                        text = doc.getString("text") ?: "New activity",
+                        timestamp = doc.getLong("timestamp") ?: System.currentTimeMillis()
+                    )
+                } catch (_: Exception) { null }
+                if (item != null) {
+                    viewModelScope.launch(Dispatchers.IO) {
+                        try {
+                            cacheDao.insertNotification(CachedActivityNotification.fromModel(item))
+                            doc.reference.delete()
+                        } catch (e: Exception) {
+                            Log.e("ACTIVITY_CENTER", "Notification cache failed: ${e.message}")
+                        }
+                    }
+                }
+            }
+        }
+
+        friendRequestListener = FirebaseFirestore.getInstance().collection("friend_requests")
+            .whereEqualTo("receiverId", uid)
+            .addSnapshotListener { snapshot, _ ->
+                _friendRequests.value = snapshot?.documents?.mapNotNull { doc ->
+                    try {
+                        FriendRequest(
+                            id = doc.id,
+                            senderId = doc.getString("senderId") ?: return@mapNotNull null,
+                            receiverId = uid,
+                            senderName = doc.getString("senderName") ?: "User",
+                            senderImageUrl = doc.getString("senderImageUrl") ?: "",
+                            status = doc.getString("status") ?: "pending",
+                            timestamp = doc.getLong("timestamp") ?: 0L
+                        )
+                    } catch (_: Exception) { null }
+                }?.filter { it.status == "pending" }?.sortedByDescending { it.timestamp } ?: emptyList()
+            }
+
+        messageRequestListener?.remove()
+        messageRequestListener = FirebaseFirestore.getInstance().collection("message_requests")
+            .whereEqualTo("receiverId", uid)
+            .addSnapshotListener { snapshot, _ ->
+                _messageRequests.value = snapshot?.documents?.mapNotNull { doc ->
+                    try {
+                        MessageRequest(
+                            id = doc.id,
+                            senderId = doc.getString("senderId") ?: return@mapNotNull null,
+                            receiverId = uid,
+                            senderName = doc.getString("senderName") ?: "User",
+                            preview = doc.getString("preview") ?: "Message request",
+                            status = doc.getString("status") ?: "pending",
+                            timestamp = doc.getLong("timestamp") ?: 0L
+                        )
+                    } catch (_: Exception) { null }
+                }?.filter { it.status == "pending" }?.sortedByDescending { it.timestamp } ?: emptyList()
+            }
+    }
+
+    private fun createActivityNotification(ownerId: String, type: String, targetId: String, text: String) {
+        val actor = getCurrentUserOrFallback() ?: return
+        if (ownerId.isBlank() || ownerId == actor.uid) return
+        val ref = FirebaseFirestore.getInstance().collection("users")
+            .document(ownerId).collection("notifications").document()
+        ref.set(ActivityNotification(
+            id = ref.id,
+            ownerId = ownerId,
+            actorId = actor.uid,
+            actorName = actor.name,
+            actorImageUrl = actor.profileImageUrl,
+            type = type,
+            targetId = targetId,
+            text = text,
+            timestamp = System.currentTimeMillis()
+        )).addOnFailureListener { Log.e("ACTIVITY_CENTER", "Delivery failed: ${it.message}") }
+    }
+
+    fun markAllActivityRead() {
+        val uid = FirebaseAuth.getInstance().currentUser?.uid ?: return
+        viewModelScope.launch(Dispatchers.IO) { cacheDao.markAllNotificationsRead(uid) }
+    }
+
+    fun markActivityRead(id: String) {
+        viewModelScope.launch(Dispatchers.IO) { cacheDao.markNotificationRead(id) }
+    }
+
+    fun selectProfile(user: User?) { _selectedProfile.value = user }
+
+    fun sendFriendRequest(target: User, onResult: (Boolean, String) -> Unit = { _, _ -> }) {
+        val me = getCurrentUserOrFallback() ?: return onResult(false, "Please sign in again")
+        if (target.uid == me.uid || me.friends.contains(target.uid)) return onResult(false, "Already connected")
+        val requestId = "${me.uid}_${target.uid}"
+        val request = FriendRequest(requestId, me.uid, target.uid, me.name, me.profileImageUrl, "pending", System.currentTimeMillis())
+        FirebaseFirestore.getInstance().collection("friend_requests").document(requestId).set(request)
+            .addOnSuccessListener {
+                createActivityNotification(target.uid, "friend_request", requestId, "sent you a friend request")
+                onResult(true, "Friend request sent")
+            }.addOnFailureListener { onResult(false, it.localizedMessage ?: "Request failed") }
+    }
+
+    fun respondToFriendRequest(request: FriendRequest, accept: Boolean) {
+        val myUid = FirebaseAuth.getInstance().currentUser?.uid ?: return
+        val firestore = FirebaseFirestore.getInstance()
+        if (accept) {
+            val batch = firestore.batch()
+            batch.update(firestore.collection("users").document(myUid), "friends", FieldValue.arrayUnion(request.senderId))
+            batch.update(firestore.collection("users").document(request.senderId), "friends", FieldValue.arrayUnion(myUid))
+            batch.delete(firestore.collection("friend_requests").document(request.id))
+            batch.commit().addOnSuccessListener {
+                _currentUserState.value = _currentUserState.value?.copy(
+                    friends = (_currentUserState.value?.friends.orEmpty() + request.senderId).distinct()
+                )
+                createActivityNotification(request.senderId, "friend_accepted", myUid, "accepted your friend request")
+            }
+        } else {
+            firestore.collection("friend_requests").document(request.id).delete()
+        }
+    }
+
+    fun respondToMessageRequest(request: MessageRequest, accept: Boolean) {
+        val myUid = FirebaseAuth.getInstance().currentUser?.uid ?: return
+        val ref = FirebaseFirestore.getInstance().collection("message_requests").document(request.id)
+        if (!accept) {
+            ref.delete()
+            return
+        }
+        val chatId = listOf(myUid, request.senderId).sorted().joinToString("_")
+        val messageRef = getDatabaseInstance().getReference("chats").child(chatId).child("messages")
+        val messageId = messageRef.push().key ?: UUID.randomUUID().toString()
+        val message = Message(
+            messageId = messageId,
+            senderId = request.senderId,
+            senderName = request.senderName,
+            text = request.preview,
+            timestamp = request.timestamp
+        )
+        messageRef.child(messageId).setValue(message).addOnSuccessListener {
+            ref.delete()
+            createActivityNotification(request.senderId, "message_accepted", myUid, "accepted your message request")
+        }
+    }
+
+    fun recordStoryView(story: Story) {
+        val me = getCurrentUserOrFallback() ?: return
+        if (story.senderId == me.uid || story.viewers.contains(me.uid)) return
+        val ref = FirebaseFirestore.getInstance().collection("stories").document(story.id)
+        ref.update("viewers", FieldValue.arrayUnion(me.uid)).addOnSuccessListener {
+            createActivityNotification(story.senderId, "story_view", story.id, "viewed your story")
+        }
+    }
+
     // Sending, editing, and replying to messages
     fun sendMessage(
         recipientUser: User,
@@ -800,6 +1080,23 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val currentUser = _currentUserState.value ?: return
         val chatId = activeChatId ?: return
         if (text.isBlank() && imageUrl == null && voiceUrl == null) return
+
+        val isEstablishedConversation = currentUser.friends.contains(recipientUser.uid) || _chatMessagesState.value.isNotEmpty()
+        if (!isEstablishedConversation) {
+            val preview = when {
+                text.isNotBlank() -> text.trim()
+                imageUrl != null -> "📷 Photo request"
+                voiceUrl != null -> "🎙️ Voice request"
+                else -> "Message request"
+            }
+            val requestId = "${currentUser.uid}_${recipientUser.uid}"
+            FirebaseFirestore.getInstance().collection("message_requests").document(requestId)
+                .set(MessageRequest(requestId, currentUser.uid, recipientUser.uid, currentUser.name, preview, "pending", System.currentTimeMillis()))
+                .addOnSuccessListener {
+                    createActivityNotification(recipientUser.uid, "message_request", requestId, "sent you a message request")
+                }
+            return
+        }
 
         val chatRef = getDatabaseInstance().getReference("chats")
             .child(chatId)
@@ -898,24 +1195,31 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         name: String,
         dob: String,
         profileImageUrl: String,
+        bio: String? = null,
+        coverImageUrl: String? = null,
         onSuccess: () -> Unit,
         onFailure: (String) -> Unit
     ) {
         val currentUid = FirebaseAuth.getInstance().currentUser?.uid ?: return
         val userRef = FirebaseFirestore.getInstance().collection("users").document(currentUid)
 
-        val updates = mapOf(
+        val updates = mutableMapOf<String, Any>(
             "name" to name,
             "dob" to dob,
             "profileImageUrl" to profileImageUrl
-        )
+        ).apply {
+            bio?.let { put("bio", it) }
+            coverImageUrl?.let { put("coverImageUrl", it) }
+        }
 
         userRef.update(updates)
             .addOnSuccessListener {
                 _currentUserState.value = _currentUserState.value?.copy(
                     name = name,
                     dob = dob,
-                    profileImageUrl = profileImageUrl
+                    profileImageUrl = profileImageUrl,
+                    bio = bio ?: _currentUserState.value?.bio.orEmpty(),
+                    coverImageUrl = coverImageUrl ?: _currentUserState.value?.coverImageUrl.orEmpty()
                 )
                 onSuccess()
             }
@@ -1167,7 +1471,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                                 text = doc.getString("text") ?: "",
                                 timestamp = doc.getLong("timestamp") ?: 0L,
                                 reactions = (doc.get("reactions") as? Map<*, *>)?.map { it.key.toString() to it.value.toString() }?.toMap() ?: emptyMap(),
-                                comments = commentsList
+                                comments = commentsList,
+                                viewers = (doc.get("viewers") as? List<*>)?.mapNotNull { it as? String } ?: emptyList()
                             )
                         } catch (e: Exception) {
                             null
@@ -1228,7 +1533,14 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 } else {
                     currentReactions[user.uid] = reactionType
                 }
-                storyRef.update("reactions", currentReactions)
+                storyRef.update("reactions", currentReactions).addOnSuccessListener {
+                    if (currentReactions[user.uid] == reactionType) {
+                        createActivityNotification(
+                            doc.getString("senderId") ?: "", "story_reaction", storyId,
+                            "reacted $reactionType to your story"
+                        )
+                    }
+                }
             }
         }
     }
@@ -1257,7 +1569,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 }?.toMutableList() ?: mutableListOf()
 
                 commentsList.add(comment)
-                storyRef.update("comments", commentsList)
+                storyRef.update("comments", commentsList).addOnSuccessListener {
+                    createActivityNotification(
+                        doc.getString("senderId") ?: "", "story_comment", storyId,
+                        "commented on your story"
+                    )
+                }
             }
         }
     }
@@ -1325,7 +1642,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                                 reactions = (doc.get("reactions") as? Map<*, *>)?.map { it.key.toString() to it.value.toString() }?.toMap() ?: emptyMap(),
                                 comments = commentsList,
                                 viewsCount = doc.getLong("viewsCount")?.toInt() ?: 0,
-                                isPrivate = doc.getBoolean("isPrivate") ?: false
+                                isPrivate = doc.getBoolean("isPrivate") ?: false,
+                                title = doc.getString("title") ?: "",
+                                tags = (doc.get("tags") as? List<*>)?.mapNotNull { it as? String } ?: emptyList(),
+                                taggedUserIds = (doc.get("taggedUserIds") as? List<*>)?.mapNotNull { it as? String } ?: emptyList(),
+                                feeling = doc.getString("feeling") ?: ""
                             )
 
                             // Apply privacy filters & blocked lists filters
@@ -1350,7 +1671,18 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             }
     }
 
-    fun createPost(text: String, imageUrl: String, audioUrl: String, videoUrl: String, isPrivate: Boolean, onComplete: () -> Unit) {
+    fun createPost(
+        text: String,
+        imageUrl: String,
+        audioUrl: String,
+        videoUrl: String,
+        isPrivate: Boolean,
+        onComplete: () -> Unit,
+        title: String = "",
+        tags: List<String> = emptyList(),
+        taggedUserIds: List<String> = emptyList(),
+        feeling: String = ""
+    ) {
         val user = getCurrentUserOrFallback() ?: return
         val postId = UUID.randomUUID().toString()
         val post = Post(
@@ -1363,7 +1695,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             audioUrl = audioUrl,
             videoUrl = videoUrl,
             timestamp = System.currentTimeMillis(),
-            isPrivate = isPrivate
+            isPrivate = isPrivate,
+            title = title,
+            tags = tags,
+            taggedUserIds = taggedUserIds,
+            feeling = feeling
         )
 
         // Webhook shouldn't be called according to instruction ("কোন পোস্ট করলে রিকোয়েস্ট যাবে না")
@@ -1405,7 +1741,14 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 } else {
                     currentReactions[user.uid] = reactionType
                 }
-                postRef.update("reactions", currentReactions)
+                postRef.update("reactions", currentReactions).addOnSuccessListener {
+                    if (currentReactions[user.uid] == reactionType) {
+                        createActivityNotification(
+                            doc.getString("senderId") ?: "", "post_reaction", postId,
+                            "reacted $reactionType to your post"
+                        )
+                    }
+                }
             }
         }
     }
@@ -1434,7 +1777,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 }?.toMutableList() ?: mutableListOf()
 
                 commentsList.add(comment)
-                postRef.update("comments", commentsList)
+                postRef.update("comments", commentsList).addOnSuccessListener {
+                    createActivityNotification(
+                        doc.getString("senderId") ?: "", "post_comment", postId,
+                        "commented on your post"
+                    )
+                }
             }
         }
     }
@@ -1546,6 +1894,27 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 FirebaseFirestore.getInstance().collection("groups").document(groupId)
                     .collection("messages").document(actionMessageId).set(systemMsg)
             }
+    }
+
+    fun addGroupMembers(group: Group, memberIds: List<String>, onComplete: (Boolean) -> Unit = {}) {
+        val actor = getCurrentUserOrFallback() ?: return onComplete(false)
+        val newMembers = (group.members + memberIds).distinct()
+        val ref = FirebaseFirestore.getInstance().collection("groups").document(group.id)
+        ref.update("members", newMembers).addOnSuccessListener {
+            val messageId = UUID.randomUUID().toString()
+            ref.collection("messages").document(messageId).set(
+                GroupMessage(
+                    messageId = messageId,
+                    groupId = group.id,
+                    senderId = "system",
+                    senderName = "SYSTEM",
+                    text = "${actor.name} added ${memberIds.size} member(s)",
+                    timestamp = System.currentTimeMillis()
+                )
+            )
+            _activeGroup.value = group.copy(members = newMembers)
+            onComplete(true)
+        }.addOnFailureListener { onComplete(false) }
     }
 
     fun selectGroup(group: Group?) {

@@ -21,6 +21,9 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.runtime.*
+import androidx.credentials.CredentialManager
+import androidx.credentials.CustomCredential
+import androidx.credentials.GetCredentialRequest
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -37,6 +40,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.example.R
+import com.google.android.libraries.identity.googleid.GetGoogleIdOption
+import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
+import com.google.firebase.auth.GoogleAuthProvider
+import kotlinx.coroutines.launch
 import java.io.InputStream
 import java.text.SimpleDateFormat
 import java.util.*
@@ -48,6 +55,8 @@ fun AuthScreen(
     onAuthSuccess: () -> Unit
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val credentialManager = remember { CredentialManager.create(context) }
     val authLoading by viewModel.authLoading.collectAsState()
     val authError by viewModel.authError.collectAsState()
     val isFirebaseConfigured by viewModel.isFirebaseConfigured.collectAsState()
@@ -565,6 +574,49 @@ fun AuthScreen(
                                 Icon(Icons.Default.ArrowForward, contentDescription = null)
                             }
                         }
+                    }
+
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        HorizontalDivider(Modifier.weight(1f))
+                        Text("  OR  ", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
+                        HorizontalDivider(Modifier.weight(1f))
+                    }
+
+                    OutlinedButton(
+                        onClick = {
+                            scope.launch {
+                                try {
+                                    val googleOption = GetGoogleIdOption.Builder()
+                                        .setFilterByAuthorizedAccounts(false)
+                                        .setServerClientId(context.getString(R.string.default_web_client_id))
+                                        .setAutoSelectEnabled(false)
+                                        .build()
+                                    val request = GetCredentialRequest.Builder()
+                                        .addCredentialOption(googleOption)
+                                        .build()
+                                    val result = credentialManager.getCredential(context, request)
+                                    val credential = result.credential
+                                    if (credential is CustomCredential && credential.type == GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
+                                        val googleToken = GoogleIdTokenCredential.createFrom(credential.data)
+                                        viewModel.signInWithGoogleCredential(
+                                            GoogleAuthProvider.getCredential(googleToken.idToken, null),
+                                            onAuthSuccess
+                                        )
+                                    } else {
+                                        Toast.makeText(context, "Unsupported Google credential", Toast.LENGTH_SHORT).show()
+                                    }
+                                } catch (e: Exception) {
+                                    Toast.makeText(context, e.localizedMessage ?: "Google sign-in cancelled", Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        },
+                        enabled = !authLoading,
+                        modifier = Modifier.fillMaxWidth().height(54.dp),
+                        shape = CircleShape
+                    ) {
+                        Text("G", fontWeight = FontWeight.ExtraBold, color = Color(0xFF4285F4), fontSize = 19.sp)
+                        Spacer(Modifier.width(12.dp))
+                        Text(if (isLoginMode) "Continue with Google" else "Sign up with Google", fontWeight = FontWeight.Bold)
                     }
                 }
             }

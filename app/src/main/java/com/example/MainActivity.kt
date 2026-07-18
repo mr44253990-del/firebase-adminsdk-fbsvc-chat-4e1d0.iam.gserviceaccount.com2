@@ -22,6 +22,8 @@ import com.example.ui.ChatViewModel
 import com.example.ui.HomeScreen
 import com.example.ui.GroupChatScreen
 import com.example.ui.OnboardingScreen
+import com.example.ui.SplashScreen
+import com.example.ui.UserProfileScreen
 import com.example.ui.isOnboardingCompleted
 import com.example.ui.theme.MyApplicationTheme
 import com.example.ui.theme.PremiumBackground
@@ -66,10 +68,11 @@ class MainActivity : ComponentActivity() {
                 val navController = rememberNavController()
                 val activeRecipient by viewModel.activeRecipientUser.collectAsState()
                 val activeGroup by viewModel.activeGroup.collectAsState()
+                val selectedProfile by viewModel.selectedProfile.collectAsState()
                 val context = LocalContext.current
 
                 // Check starting destination depending on whether onboarding has been completed and if a user is already signed in
-                val startDestination = remember {
+                val destinationAfterSplash = remember {
                     try {
                         if (!isOnboardingCompleted(context)) {
                             "onboarding"
@@ -86,9 +89,17 @@ class MainActivity : ComponentActivity() {
                 PremiumBackground {
                     NavHost(
                         navController = navController,
-                        startDestination = startDestination,
+                        startDestination = "splash",
                         modifier = Modifier.fillMaxSize()
                     ) {
+                        composable("splash") {
+                            SplashScreen {
+                                navController.navigate(destinationAfterSplash) {
+                                    popUpTo("splash") { inclusive = true }
+                                }
+                            }
+                        }
+
                         composable("onboarding") {
                             OnboardingScreen(
                                 onFinished = {
@@ -122,6 +133,10 @@ class MainActivity : ComponentActivity() {
                                     viewModel.selectRecipient(recipient)
                                     navController.navigate("chat")
                                 },
+                                onProfileSelected = { user ->
+                                    viewModel.selectProfile(user)
+                                    navController.navigate("profile")
+                                },
                                 onGroupSelected = { group ->
                                     viewModel.selectGroup(group)
                                     navController.navigate("group_chat")
@@ -132,6 +147,20 @@ class MainActivity : ComponentActivity() {
                                     }
                                 }
                             )
+                        }
+
+                        composable("profile") {
+                            selectedProfile?.let { profile ->
+                                UserProfileScreen(
+                                    viewModel = viewModel,
+                                    user = profile,
+                                    onBack = { navController.popBackStack() },
+                                    onMessage = {
+                                        viewModel.selectRecipient(profile)
+                                        navController.navigate("chat")
+                                    }
+                                )
+                            }
                         }
 
                         composable("chat") {

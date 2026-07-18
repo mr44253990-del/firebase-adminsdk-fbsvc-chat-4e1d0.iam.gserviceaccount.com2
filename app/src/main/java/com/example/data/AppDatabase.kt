@@ -19,7 +19,10 @@ data class CachedUser(
     val isOnline: Boolean,
     val lastActive: Long,
     val blockedUsersJson: String, // JSON Array of UIDs
-    val createdAt: Long
+    val createdAt: Long,
+    val friendsJson: String,
+    val bio: String,
+    val coverImageUrl: String
 ) {
     fun toUser(): User {
         val blockedList = mutableListOf<String>()
@@ -29,7 +32,12 @@ data class CachedUser(
                 blockedList.add(array.getString(i))
             }
         } catch (e: Exception) {}
-        return User(uid, name, dob, username, fcmToken, profileImageUrl, isOnline, lastActive, blockedList, createdAt)
+        val friendList = mutableListOf<String>()
+        try {
+            val array = JSONArray(friendsJson)
+            for (i in 0 until array.length()) friendList.add(array.getString(i))
+        } catch (_: Exception) {}
+        return User(uid, name, dob, username, fcmToken, profileImageUrl, isOnline, lastActive, blockedList, createdAt, friendList, bio, coverImageUrl)
     }
 
     companion object {
@@ -38,7 +46,7 @@ data class CachedUser(
             return CachedUser(
                 user.uid, user.name, user.dob, user.username, user.fcmToken,
                 user.profileImageUrl, user.isOnline, user.lastActive,
-                jsonArray.toString(), user.createdAt
+                jsonArray.toString(), user.createdAt, JSONArray(user.friends).toString(), user.bio, user.coverImageUrl
             )
         }
     }
@@ -91,7 +99,8 @@ data class CachedStory(
     val text: String,
     val timestamp: Long,
     val reactionsJson: String, // Map<String, String> as JSON
-    val commentsJson: String   // List<StoryComment> as JSON
+    val commentsJson: String,  // List<StoryComment> as JSON
+    val viewersJson: String
 ) {
     fun toStory(): Story {
         val reactionsMap = mutableMapOf<String, String>()
@@ -121,7 +130,13 @@ data class CachedStory(
             }
         } catch (e: Exception) {}
 
-        return Story(id, senderId, senderName, senderProfilePic, imageUrl, videoUrl, text, timestamp, reactionsMap, commentList)
+        val viewerList = mutableListOf<String>()
+        try {
+            val array = JSONArray(viewersJson)
+            for (i in 0 until array.length()) viewerList.add(array.getString(i))
+        } catch (_: Exception) {}
+
+        return Story(id, senderId, senderName, senderProfilePic, imageUrl, videoUrl, text, timestamp, reactionsMap, commentList, viewerList)
     }
 
     companion object {
@@ -144,7 +159,7 @@ data class CachedStory(
             return CachedStory(
                 story.id, story.senderId, story.senderName, story.senderProfilePic,
                 story.imageUrl, story.videoUrl, story.text, story.timestamp,
-                reactionsObj.toString(), commentsArr.toString()
+                reactionsObj.toString(), commentsArr.toString(), JSONArray(story.viewers).toString()
             )
         }
     }
@@ -164,7 +179,11 @@ data class CachedPost(
     val reactionsJson: String, // Map<String, String> as JSON
     val commentsJson: String,  // List<PostComment> as JSON
     val viewsCount: Int,
-    val isPrivate: Boolean
+    val isPrivate: Boolean,
+    val title: String,
+    val tagsJson: String,
+    val taggedUserIdsJson: String,
+    val feeling: String
 ) {
     fun toPost(): Post {
         val reactionsMap = mutableMapOf<String, String>()
@@ -196,7 +215,11 @@ data class CachedPost(
 
         return Post(
             id, senderId, senderName, senderProfilePic, text, imageUrl, audioUrl, videoUrl,
-            timestamp, reactionsMap, commentList, viewsCount, isPrivate
+            timestamp, reactionsMap, commentList, viewsCount, isPrivate,
+            title,
+            try { JSONArray(tagsJson).let { array -> (0 until array.length()).map { array.getString(it) } } } catch (_: Exception) { emptyList() },
+            try { JSONArray(taggedUserIdsJson).let { array -> (0 until array.length()).map { array.getString(it) } } } catch (_: Exception) { emptyList() },
+            feeling
         )
     }
 
@@ -220,7 +243,8 @@ data class CachedPost(
             return CachedPost(
                 post.id, post.senderId, post.senderName, post.senderProfilePic,
                 post.text, post.imageUrl, post.audioUrl, post.videoUrl, post.timestamp,
-                reactionsObj.toString(), commentsArr.toString(), post.viewsCount, post.isPrivate
+                reactionsObj.toString(), commentsArr.toString(), post.viewsCount, post.isPrivate,
+                post.title, JSONArray(post.tags).toString(), JSONArray(post.taggedUserIds).toString(), post.feeling
             )
         }
     }
@@ -281,6 +305,33 @@ data class CachedGroupMessage(
     }
 }
 
+
+@Entity(tableName = "activity_notifications")
+data class CachedActivityNotification(
+    @PrimaryKey val id: String,
+    val ownerId: String,
+    val actorId: String,
+    val actorName: String,
+    val actorImageUrl: String,
+    val type: String,
+    val targetId: String,
+    val text: String,
+    val timestamp: Long,
+    val isRead: Boolean
+) {
+    fun toModel() = ActivityNotification(
+        id, ownerId, actorId, actorName, actorImageUrl, type,
+        targetId, text, timestamp, isRead
+    )
+
+    companion object {
+        fun fromModel(item: ActivityNotification) = CachedActivityNotification(
+            item.id, item.ownerId, item.actorId, item.actorName,
+            item.actorImageUrl, item.type, item.targetId, item.text,
+            item.timestamp, item.isRead
+        )
+    }
+}
 
 // Room DAO
 
@@ -353,6 +404,18 @@ interface CacheDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertGroupMessages(msgs: List<CachedGroupMessage>)
+
+    @Query("SELECT * FROM activity_notifications WHERE ownerId = :ownerId ORDER BY timestamp DESC")
+    fun getNotifications(ownerId: String): Flow<List<CachedActivityNotification>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertNotification(notification: CachedActivityNotification)
+
+    @Query("UPDATE activity_notifications SET isRead = 1 WHERE id = :notificationId")
+    suspend fun markNotificationRead(notificationId: String)
+
+    @Query("UPDATE activity_notifications SET isRead = 1 WHERE ownerId = :ownerId")
+    suspend fun markAllNotificationsRead(ownerId: String)
 }
 
 // Room Database Definition
@@ -364,9 +427,10 @@ interface CacheDao {
         CachedStory::class,
         CachedPost::class,
         CachedGroup::class,
-        CachedGroupMessage::class
+        CachedGroupMessage::class,
+        CachedActivityNotification::class
     ],
-    version = 1,
+    version = 2,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {

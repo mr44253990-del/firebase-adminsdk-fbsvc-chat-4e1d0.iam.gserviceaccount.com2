@@ -62,6 +62,8 @@ fun GroupChatScreen(
     val context = LocalContext.current
     val currentUserId = FirebaseAuth.getInstance().currentUser?.uid ?: ""
     val messages by viewModel.groupMessagesState.collectAsState()
+    val allUsers by viewModel.usersState.collectAsState()
+    var showAddMembers by remember { mutableStateOf(false) }
 
     var messageText by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
@@ -288,6 +290,11 @@ fun GroupChatScreen(
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = MaterialTheme.colorScheme.primary)
                     }
                 },
+                actions = {
+                    IconButton(onClick = { showAddMembers = true }) {
+                        Icon(Icons.Default.PersonAdd, contentDescription = "Add members", tint = MaterialTheme.colorScheme.primary)
+                    }
+                },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f)
                 ),
@@ -467,6 +474,50 @@ fun GroupChatScreen(
             }
         }
     }
+
+    if (showAddMembers) {
+        val selectable = allUsers.filterNot { group.members.contains(it.uid) }
+        val selected = remember { mutableStateListOf<String>() }
+        AlertDialog(
+            onDismissRequest = { showAddMembers = false },
+            title = { Text("Add group members", fontWeight = FontWeight.Bold) },
+            text = {
+                if (selectable.isEmpty()) {
+                    Text("Everyone is already in this group.")
+                } else {
+                    LazyColumn(Modifier.heightIn(max = 380.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        items(selectable, key = { it.uid }) { user ->
+                            val checked = selected.contains(user.uid)
+                            Row(
+                                Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp))
+                                    .clickable { if (checked) selected.remove(user.uid) else selected.add(user.uid) }
+                                    .background(if (checked) MaterialTheme.colorScheme.primaryContainer else Color.Transparent)
+                                    .padding(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Checkbox(checked, null)
+                                Spacer(Modifier.width(8.dp))
+                                Text(user.name)
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        viewModel.addGroupMembers(group, selected.toList()) { ok ->
+                            Toast.makeText(context, if (ok) "Members added" else "Could not add members", Toast.LENGTH_SHORT).show()
+                        }
+                        showAddMembers = false
+                    },
+                    enabled = selected.isNotEmpty()
+                ) { Text("Add") }
+            },
+            dismissButton = { TextButton(onClick = { showAddMembers = false }) { Text("Cancel") } }
+        )
+    }
+
 }
 
 @Composable

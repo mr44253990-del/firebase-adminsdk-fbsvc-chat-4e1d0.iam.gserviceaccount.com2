@@ -62,7 +62,10 @@ import coil.compose.AsyncImage
 import androidx.compose.ui.viewinterop.AndroidView
 import android.widget.VideoView
 import com.example.R
+import com.example.data.ActivityNotification
+import com.example.data.FriendRequest
 import com.example.data.Group
+import com.example.data.MessageRequest
 import com.example.data.Post
 import com.example.data.Story
 import com.example.data.User
@@ -76,6 +79,7 @@ import java.util.*
 fun HomeScreen(
     viewModel: ChatViewModel,
     onUserSelected: (User) -> Unit,
+    onProfileSelected: (User) -> Unit,
     onGroupSelected: (Group) -> Unit,
     onSignOut: () -> Unit
 ) {
@@ -88,11 +92,17 @@ fun HomeScreen(
     val posts by viewModel.postsState.collectAsState()
     val webhookUrl by viewModel.webhookUrl.collectAsState()
     val inAppNotification by viewModel.inAppNotification.collectAsState()
+    val activityNotifications by viewModel.activityNotifications.collectAsState()
+    val friendRequests by viewModel.friendRequests.collectAsState()
+    val messageRequests by viewModel.messageRequests.collectAsState()
     val currentTheme by viewModel.themeState.collectAsState()
+    val notificationSounds by viewModel.notificationSoundsEnabled.collectAsState()
+    val typingSounds by viewModel.typingSoundsEnabled.collectAsState()
     val allUsers by viewModel.usersState.collectAsState()
 
     var searchQuery by remember { mutableStateOf("") }
     var showAccountMenu by remember { mutableStateOf(false) }
+    var showActivityCenter by remember { mutableStateOf(false) }
     val currentTab by viewModel.currentTabState.collectAsState()
 
     // Dialog & Creation controllers
@@ -172,10 +182,15 @@ fun HomeScreen(
                         }
                         BadgedBox(
                             badge = {
-                                if (inAppNotification != null) Badge()
+                                val unread = activityNotifications.count { !it.isRead } + friendRequests.size + messageRequests.size
+                                if (unread > 0) Badge { Text(unread.coerceAtMost(99).toString()) }
                             }
                         ) {
-                            IconButton(onClick = { viewModel.dismissInAppNotification() }) {
+                            IconButton(onClick = {
+                                showActivityCenter = true
+                                viewModel.dismissInAppNotification()
+                                viewModel.markAllActivityRead()
+                            }) {
                                 Icon(Icons.Outlined.Notifications, contentDescription = "Notifications")
                             }
                         }
@@ -256,6 +271,12 @@ fun HomeScreen(
                     )
                 }
                 NavigationBarItem(
+                    selected = currentTab == 5,
+                    onClick = { viewModel.setCurrentTab(5) },
+                    icon = { Icon(Icons.Default.PersonAdd, contentDescription = "People") },
+                    label = { Text("People", fontSize = 10.sp) }
+                )
+                NavigationBarItem(
                     selected = currentTab == 4,
                     onClick = { viewModel.setCurrentTab(4) },
                     icon = { Icon(Icons.Default.Person, contentDescription = "Profile") },
@@ -273,85 +294,77 @@ fun HomeScreen(
         ) {
             when (currentTab) {
                 0 -> {
-                    // Stories live directly above the feed, matching modern social apps.
-                    Column(modifier = Modifier.fillMaxSize()) {
-                        StoriesHorizontalSection(
-                            viewModel = viewModel,
-                            stories = stories,
-                            onStorySelected = { story ->
-                                selectedStoryIndex = stories.indexOfFirst { it.id == story.id }.takeIf { it >= 0 }
-                            }
-                        )
-
-                        // Compact glass composer inspired by the supplied reference.
-                        Card(
-                            onClick = { showCreatePostDialog = true },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 16.dp, vertical = 10.dp),
-                            shape = RoundedCornerShape(28.dp),
-                            colors = CardDefaults.cardColors(
-                                containerColor = MaterialTheme.colorScheme.surface.copy(alpha = .70f)
-                            ),
-                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = .65f))
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
-                                verticalAlignment = Alignment.CenterVertically
+                    // One continuous list: stories/composer/filters naturally collapse while scrolling
+                    // and return when the user reaches the top, leaving maximum room for media.
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(bottom = 14.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        item(key = "stories") {
+                            StoriesHorizontalSection(
+                                viewModel = viewModel,
+                                stories = stories,
+                                onStorySelected = { story ->
+                                    viewModel.recordStoryView(story)
+                                    selectedStoryIndex = stories.indexOfFirst { it.id == story.id }.takeIf { it >= 0 }
+                                }
+                            )
+                        }
+                        item(key = "composer") {
+                            Card(
+                                onClick = { showCreatePostDialog = true },
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                                shape = RoundedCornerShape(28.dp),
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = .70f)),
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = .65f))
                             ) {
-                                AsyncImage(
-                                    model = currentUser?.profileImageUrl?.ifBlank { null },
-                                    contentDescription = "Your profile",
-                                    error = painterResource(id = R.drawable.img_app_logo),
-                                    modifier = Modifier.size(44.dp).clip(CircleShape)
-                                )
-                                Spacer(Modifier.width(12.dp))
-                                Text(
-                                    "What's on your mind?",
-                                    modifier = Modifier.weight(1f),
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    fontSize = 15.sp
-                                )
-                                Icon(Icons.Outlined.Image, contentDescription = "Add photo", tint = MaterialTheme.colorScheme.primary)
-                                Spacer(Modifier.width(12.dp))
-                                Icon(Icons.Outlined.Videocam, contentDescription = "Add video", tint = MaterialTheme.colorScheme.secondary)
-                                Spacer(Modifier.width(10.dp))
-                                Surface(
-                                    color = MaterialTheme.colorScheme.primary,
-                                    shape = CircleShape
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Text(
-                                        "Post",
-                                        modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp),
-                                        color = MaterialTheme.colorScheme.onPrimary,
-                                        fontWeight = FontWeight.Bold
+                                    AsyncImage(
+                                        model = currentUser?.profileImageUrl?.ifBlank { null },
+                                        contentDescription = "Your profile",
+                                        error = painterResource(id = R.drawable.img_app_logo),
+                                        modifier = Modifier.size(44.dp).clip(CircleShape)
+                                    )
+                                    Spacer(Modifier.width(12.dp))
+                                    Text("What's on your mind?", Modifier.weight(1f), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 15.sp)
+                                    Icon(Icons.Outlined.Image, "Add photo", tint = MaterialTheme.colorScheme.primary)
+                                    Spacer(Modifier.width(12.dp))
+                                    Icon(Icons.Outlined.Videocam, "Add video", tint = MaterialTheme.colorScheme.secondary)
+                                    Spacer(Modifier.width(10.dp))
+                                    Surface(color = MaterialTheme.colorScheme.primary, shape = CircleShape) {
+                                        Text("Post", Modifier.padding(horizontal = 18.dp, vertical = 10.dp), color = MaterialTheme.colorScheme.onPrimary, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+                            }
+                        }
+                        item(key = "filters") {
+                            LazyRow(
+                                modifier = Modifier.fillMaxWidth(),
+                                contentPadding = PaddingValues(horizontal = 16.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                items(listOf("All Posts", "Friends", "Groups", "Following")) { label ->
+                                    FilterChip(
+                                        selected = label == "All Posts",
+                                        onClick = { },
+                                        label = { Text(label) },
+                                        leadingIcon = if (label == "All Posts") { { Icon(Icons.Outlined.DynamicFeed, null, Modifier.size(17.dp)) } } else null,
+                                        shape = CircleShape
                                     )
                                 }
                             }
                         }
-
-                        LazyRow(
-                            modifier = Modifier.fillMaxWidth(),
-                            contentPadding = PaddingValues(horizontal = 16.dp),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            items(listOf("All Posts", "Friends", "Groups", "Following")) { label ->
-                                FilterChip(
-                                    selected = label == "All Posts",
-                                    onClick = { },
-                                    label = { Text(label) },
-                                    leadingIcon = if (label == "All Posts") {
-                                        { Icon(Icons.Outlined.DynamicFeed, null, Modifier.size(17.dp)) }
-                                    } else null,
-                                    shape = CircleShape
-                                )
-                            }
-                        }
-
-                        Spacer(Modifier.height(8.dp))
                         if (posts.isEmpty()) {
-                            Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
-                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            item(key = "empty") {
+                                Column(
+                                    modifier = Modifier.fillParentMaxHeight(.62f).fillMaxWidth(),
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.Center
+                                ) {
                                     Icon(Icons.Outlined.DynamicFeed, null, tint = MaterialTheme.colorScheme.primary.copy(alpha = .45f), modifier = Modifier.size(60.dp))
                                     Spacer(Modifier.height(10.dp))
                                     Text("No posts yet", fontWeight = FontWeight.Bold)
@@ -359,13 +372,9 @@ fun HomeScreen(
                                 }
                             }
                         } else {
-                            LazyColumn(
-                                modifier = Modifier.fillMaxWidth().weight(1f),
-                                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
-                                verticalArrangement = Arrangement.spacedBy(14.dp)
-                            ) {
-                                items(posts, key = { it.id }) { post ->
-                                    SocialPostItem(post = post, viewModel = viewModel)
+                            items(posts, key = { it.id }) { post ->
+                                Box(Modifier.padding(horizontal = 14.dp)) {
+                                    SocialPostItem(post = post, viewModel = viewModel, onProfileSelected = onProfileSelected)
                                 }
                             }
                         }
@@ -691,6 +700,8 @@ fun HomeScreen(
                         currentUser?.let { user ->
                             var inputName by remember { mutableStateOf(user.name) }
                             var inputDob by remember { mutableStateOf(user.dob) }
+                            var inputBio by remember { mutableStateOf(user.bio) }
+                            var inputCoverUrl by remember { mutableStateOf(user.coverImageUrl) }
                             var inputProfileUrl by remember { mutableStateOf(user.profileImageUrl) }
                             var isUploadingAvatar by remember { mutableStateOf(false) }
 
@@ -820,6 +831,25 @@ fun HomeScreen(
                                         shape = RoundedCornerShape(18.dp)
                                     )
 
+                                    Spacer(modifier = Modifier.height(10.dp))
+                                    OutlinedTextField(
+                                        value = inputBio,
+                                        onValueChange = { inputBio = it },
+                                        label = { Text("Bio") },
+                                        placeholder = { Text("Tell people about yourself") },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        maxLines = 3,
+                                        shape = RoundedCornerShape(18.dp)
+                                    )
+                                    Spacer(modifier = Modifier.height(10.dp))
+                                    OutlinedTextField(
+                                        value = inputCoverUrl,
+                                        onValueChange = { inputCoverUrl = it },
+                                        label = { Text("Cover image URL") },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        singleLine = true,
+                                        shape = RoundedCornerShape(18.dp)
+                                    )
                                     Spacer(modifier = Modifier.height(14.dp))
 
                                     Button(
@@ -828,7 +858,12 @@ fun HomeScreen(
                                                 Toast.makeText(context, "Name cannot be empty", Toast.LENGTH_SHORT).show()
                                                 return@Button
                                             }
-                                            viewModel.updateUserProfile(inputName, inputDob, inputProfileUrl,
+                                            viewModel.updateUserProfile(
+                                                name = inputName,
+                                                dob = inputDob,
+                                                profileImageUrl = inputProfileUrl,
+                                                bio = inputBio,
+                                                coverImageUrl = inputCoverUrl,
                                                 onSuccess = {
                                                     Toast.makeText(context, "Profile details updated!", Toast.LENGTH_SHORT).show()
                                                 },
@@ -841,6 +876,29 @@ fun HomeScreen(
                                     ) {
                                         Text("Save Changes", fontWeight = FontWeight.Bold)
                                     }
+                                }
+                            }
+                        }
+
+                        Card(shape = RoundedCornerShape(28.dp), modifier = Modifier.fillMaxWidth()) {
+                            Column(Modifier.padding(16.dp)) {
+                                Text("Sounds & activity", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                                Text("Control notification and live typing feedback.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Icons.Outlined.NotificationsActive, null, tint = MaterialTheme.colorScheme.primary)
+                                    Text("Notification sounds", Modifier.padding(start = 12.dp).weight(1f))
+                                    Switch(
+                                        checked = notificationSounds,
+                                        onCheckedChange = { viewModel.updateSoundPreferences(it, typingSounds) }
+                                    )
+                                }
+                                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Icons.Outlined.Keyboard, null, tint = MaterialTheme.colorScheme.primary)
+                                    Text("Typing indicator sound", Modifier.padding(start = 12.dp).weight(1f))
+                                    Switch(
+                                        checked = typingSounds,
+                                        onCheckedChange = { viewModel.updateSoundPreferences(notificationSounds, it) }
+                                    )
                                 }
                             }
                         }
@@ -920,6 +978,58 @@ fun HomeScreen(
                         }
                     }
                 }
+                5 -> {
+                    var peopleQuery by remember { mutableStateOf("") }
+                    val visiblePeople = allUsers.filter {
+                        peopleQuery.isBlank() || it.name.contains(peopleQuery, true) || it.username.contains(peopleQuery, true)
+                    }.sortedByDescending { it.createdAt }
+                    Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
+                        Spacer(Modifier.height(12.dp))
+                        Text("Discover people", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                        Text("Find new accounts and build your circle.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Spacer(Modifier.height(12.dp))
+                        OutlinedTextField(
+                            value = peopleQuery,
+                            onValueChange = { peopleQuery = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            leadingIcon = { Icon(Icons.Default.Search, null) },
+                            placeholder = { Text("Search people") },
+                            singleLine = true,
+                            shape = CircleShape
+                        )
+                        Spacer(Modifier.height(12.dp))
+                        LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            items(visiblePeople, key = { it.uid }) { person ->
+                                val isFriend = currentUser?.friends?.contains(person.uid) == true
+                                Card(shape = RoundedCornerShape(24.dp)) {
+                                    Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                                        AsyncImage(
+                                            model = person.profileImageUrl.ifBlank { null },
+                                            contentDescription = person.name,
+                                            error = painterResource(R.drawable.img_app_logo),
+                                            modifier = Modifier.size(54.dp).clip(CircleShape).clickable { onProfileSelected(person) }
+                                        )
+                                        Spacer(Modifier.width(12.dp))
+                                        Column(Modifier.weight(1f)) {
+                                            Text(person.name, fontWeight = FontWeight.Bold)
+                                            Text("@${person.username}", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+                                            Text("${person.friends.size} friends", color = MaterialTheme.colorScheme.primary, fontSize = 11.sp)
+                                        }
+                                        if (isFriend) {
+                                            AssistChip(onClick = { onUserSelected(person) }, label = { Text("Message") })
+                                        } else {
+                                            Button(onClick = {
+                                                viewModel.sendFriendRequest(person) { _, message ->
+                                                    Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+                                                }
+                                            }) { Text("Add") }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
 
             // In-app floating overlay notifications alert
@@ -965,9 +1075,26 @@ fun HomeScreen(
         }
     }
 
+    if (showActivityCenter) {
+        ActivityCenterDialog(
+            notifications = activityNotifications,
+            requests = friendRequests,
+            messageRequests = messageRequests,
+            onDismiss = { showActivityCenter = false },
+            onAccept = { viewModel.respondToFriendRequest(it, true) },
+            onReject = { viewModel.respondToFriendRequest(it, false) },
+            onAcceptMessage = { viewModel.respondToMessageRequest(it, true) },
+            onRejectMessage = { viewModel.respondToMessageRequest(it, false) }
+        )
+    }
+
     // CREATE POST DIALOG
     if (showCreatePostDialog) {
+        var postTitle by remember { mutableStateOf("") }
         var postText by remember { mutableStateOf("") }
+        var postTags by remember { mutableStateOf("") }
+        var taggedPeople by remember { mutableStateOf("") }
+        var postFeeling by remember { mutableStateOf("") }
         var postImageUrl by remember { mutableStateOf("") }
         var postVideoUrl by remember { mutableStateOf("") }
         var isPrivateToggle by remember { mutableStateOf(false) }
@@ -1039,13 +1166,45 @@ fun HomeScreen(
             onDismissRequest = { showCreatePostDialog = false },
             title = { Text("Create a post", fontWeight = FontWeight.Bold) },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedTextField(
+                        value = postTitle,
+                        onValueChange = { postTitle = it },
+                        label = { Text("Title") },
+                        placeholder = { Text("Give your post a title") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true
+                    )
                     OutlinedTextField(
                         value = postText,
                         onValueChange = { postText = it },
                         placeholder = { Text("What's on your mind?") },
                         modifier = Modifier.fillMaxWidth(),
                         maxLines = 5
+                    )
+                    OutlinedTextField(
+                        value = postFeeling,
+                        onValueChange = { postFeeling = it },
+                        label = { Text("Feeling / activity") },
+                        placeholder = { Text("Happy, excited, traveling…") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true
+                    )
+                    OutlinedTextField(
+                        value = postTags,
+                        onValueChange = { postTags = it },
+                        label = { Text("Hashtags") },
+                        placeholder = { Text("travel, friends, firechat") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true
+                    )
+                    OutlinedTextField(
+                        value = taggedPeople,
+                        onValueChange = { taggedPeople = it },
+                        label = { Text("Tag people") },
+                        placeholder = { Text("username1, username2") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true
                     )
 
                     Row(
@@ -1092,8 +1251,22 @@ fun HomeScreen(
             confirmButton = {
                 Button(
                     onClick = {
-                        if (postText.isNotBlank() || postImageUrl.isNotBlank() || postVideoUrl.isNotBlank()) {
-                            viewModel.createPost(postText, postImageUrl, "", postVideoUrl, isPrivateToggle) {}
+                        if (postTitle.isNotBlank() || postText.isNotBlank() || postImageUrl.isNotBlank() || postVideoUrl.isNotBlank()) {
+                            val tags = postTags.split(",", " ").map { it.trim().removePrefix("#") }.filter { it.isNotBlank() }.distinct()
+                            val usernames = taggedPeople.split(",").map { it.trim().removePrefix("@") }.filter { it.isNotBlank() }
+                            val taggedIds = allUsers.filter { person -> usernames.any { it.equals(person.username, true) } }.map { it.uid }
+                            viewModel.createPost(
+                                text = postText,
+                                imageUrl = postImageUrl,
+                                audioUrl = "",
+                                videoUrl = postVideoUrl,
+                                isPrivate = isPrivateToggle,
+                                onComplete = {},
+                                title = postTitle,
+                                tags = tags,
+                                taggedUserIds = taggedIds,
+                                feeling = postFeeling
+                            )
                             showCreatePostDialog = false
                         }
                     },
@@ -1246,7 +1419,11 @@ fun HomeScreen(
             stories = stories,
             storyIndex = index,
             onPrevious = { selectedStoryIndex = (index - 1).coerceAtLeast(0) },
-            onNext = { selectedStoryIndex = (index + 1).coerceAtMost(stories.size) },
+            onNext = {
+                val next = (index + 1).coerceAtMost(stories.size)
+                stories.getOrNull(next)?.let(viewModel::recordStoryView)
+                selectedStoryIndex = next
+            },
             onDismiss = { selectedStoryIndex = null },
             onReact = { story, emoji -> viewModel.reactToStory(story.id, emoji) },
             onComment = { story, text -> viewModel.commentOnStory(story.id, text) },
@@ -1257,6 +1434,136 @@ fun HomeScreen(
         )
     }
 
+}
+
+@Composable
+fun ActivityCenterDialog(
+    notifications: List<ActivityNotification>,
+    requests: List<FriendRequest>,
+    messageRequests: List<MessageRequest>,
+    onDismiss: () -> Unit,
+    onAccept: (FriendRequest) -> Unit,
+    onReject: (FriendRequest) -> Unit,
+    onAcceptMessage: (MessageRequest) -> Unit,
+    onRejectMessage: (MessageRequest) -> Unit
+) {
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing),
+            color = MaterialTheme.colorScheme.background,
+            shape = RoundedCornerShape(0.dp)
+        ) {
+            Column {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Activity", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                    IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, "Close") }
+                }
+                if (notifications.isEmpty() && requests.isEmpty() && messageRequests.isEmpty()) {
+                    Column(
+                        Modifier.fillMaxSize(),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        Icon(Icons.Outlined.NotificationsNone, null, Modifier.size(64.dp), tint = MaterialTheme.colorScheme.primary.copy(alpha = .5f))
+                        Spacer(Modifier.height(12.dp))
+                        Text("No activity yet", fontWeight = FontWeight.Bold)
+                        Text("Likes, comments, views and requests appear here.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                } else {
+                    LazyColumn(
+                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        if (requests.isNotEmpty()) {
+                            item { Text("Friend requests", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary) }
+                            items(requests, key = { "request_${it.id}" }) { request ->
+                                Card(shape = RoundedCornerShape(24.dp)) {
+                                    Column(Modifier.padding(14.dp)) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            AsyncImage(
+                                                model = request.senderImageUrl.ifBlank { null },
+                                                contentDescription = request.senderName,
+                                                error = painterResource(R.drawable.img_app_logo),
+                                                modifier = Modifier.size(48.dp).clip(CircleShape)
+                                            )
+                                            Spacer(Modifier.width(12.dp))
+                                            Column(Modifier.weight(1f)) {
+                                                Text(request.senderName, fontWeight = FontWeight.Bold)
+                                                Text("sent you a friend request", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            }
+                                        }
+                                        Spacer(Modifier.height(10.dp))
+                                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            Button(onClick = { onAccept(request) }, modifier = Modifier.weight(1f)) { Text("Accept") }
+                                            OutlinedButton(onClick = { onReject(request) }, modifier = Modifier.weight(1f)) { Text("Delete") }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        if (messageRequests.isNotEmpty()) {
+                            item { Text("Message requests", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary) }
+                            items(messageRequests, key = { "message_request_${it.id}" }) { request ->
+                                Card(shape = RoundedCornerShape(24.dp)) {
+                                    Column(Modifier.padding(14.dp)) {
+                                        Text(request.senderName, fontWeight = FontWeight.Bold)
+                                        Text(request.preview, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2)
+                                        Spacer(Modifier.height(10.dp))
+                                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            Button(onClick = { onAcceptMessage(request) }, modifier = Modifier.weight(1f)) { Text("Accept") }
+                                            OutlinedButton(onClick = { onRejectMessage(request) }, modifier = Modifier.weight(1f)) { Text("Delete") }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        if (notifications.isNotEmpty()) {
+                            item { Text("Recent activity", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary) }
+                            items(notifications, key = { "activity_${it.id}" }) { item ->
+                                val icon = when (item.type) {
+                                    "post_reaction", "story_reaction" -> Icons.Outlined.Favorite
+                                    "post_comment", "story_comment" -> Icons.Outlined.ChatBubbleOutline
+                                    "story_view" -> Icons.Outlined.Visibility
+                                    "friend_accepted", "friend_request" -> Icons.Outlined.PersonAdd
+                                    else -> Icons.Outlined.Notifications
+                                }
+                                Row(
+                                    Modifier.fillMaxWidth().clip(RoundedCornerShape(22.dp))
+                                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .45f))
+                                        .padding(12.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    AsyncImage(
+                                        model = item.actorImageUrl.ifBlank { null },
+                                        contentDescription = item.actorName,
+                                        error = painterResource(R.drawable.img_app_logo),
+                                        modifier = Modifier.size(46.dp).clip(CircleShape)
+                                    )
+                                    Spacer(Modifier.width(12.dp))
+                                    Column(Modifier.weight(1f)) {
+                                        Text(item.actorName, fontWeight = FontWeight.Bold)
+                                        Text(item.text, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text(
+                                            SimpleDateFormat("dd MMM • hh:mm a", Locale.getDefault()).format(Date(item.timestamp)),
+                                            fontSize = 10.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = .65f)
+                                        )
+                                    }
+                                    Icon(icon, null, tint = MaterialTheme.colorScheme.primary)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 @Composable
@@ -1680,7 +1987,7 @@ fun StoriesHorizontalSection(
 }
 
 @Composable
-fun SocialPostItem(post: Post, viewModel: ChatViewModel) {
+fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (User) -> Unit = {}) {
     var isCommentsExpanded by remember { mutableStateOf(false) }
     var commentInputText by remember { mutableStateOf("") }
     var showFullscreenVideo by remember(post.id) { mutableStateOf(false) }
@@ -1700,6 +2007,7 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel) {
     val allUsers by viewModel.usersState.collectAsState()
     val currentUserProfile = allUsers.find { it.uid == currentUserId }
     val currentUserPic = currentUserProfile?.profileImageUrl ?: ""
+    val postOwner = allUsers.find { it.uid == post.senderId }
 
     Box(
         modifier = Modifier
@@ -1724,6 +2032,7 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel) {
                         modifier = Modifier
                             .size(40.dp)
                             .clip(CircleShape)
+                            .clickable { postOwner?.let(onProfileSelected) }
                             .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.3f), CircleShape)
                     )
                     Spacer(modifier = Modifier.width(10.dp))
@@ -1768,6 +2077,15 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel) {
 
             Spacer(modifier = Modifier.height(12.dp))
 
+            if (post.title.isNotBlank()) {
+                Text(post.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(6.dp))
+            }
+            if (post.feeling.isNotBlank()) {
+                AssistChip(onClick = {}, label = { Text("Feeling ${post.feeling}") }, leadingIcon = { Text("✨") })
+                Spacer(Modifier.height(6.dp))
+            }
+
             // Post Content Text
             if (post.text.isNotBlank()) {
                 Text(
@@ -1777,6 +2095,10 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel) {
                     lineHeight = 20.sp
                 )
                 Spacer(modifier = Modifier.height(10.dp))
+            }
+            if (post.tags.isNotEmpty()) {
+                Text(post.tags.joinToString("  ") { "#$it" }, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(8.dp))
             }
 
             // Post Content Image
@@ -1812,7 +2134,7 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel) {
                                 setVideoPath(post.videoUrl)
                                 setOnPreparedListener { player ->
                                     player.isLooping = true
-                                    player.setVolume(0f, 0f)
+                                    player.setVolume(1f, 1f)
                                     start()
                                 }
                             }
@@ -1829,7 +2151,7 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel) {
                             .padding(horizontal = 10.dp, vertical = 6.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(Icons.Default.VolumeOff, null, tint = Color.White, modifier = Modifier.size(16.dp))
+                        Icon(Icons.Default.VolumeUp, null, tint = Color.White, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(6.dp))
                         Icon(Icons.Default.Fullscreen, "Open full screen", tint = Color.White, modifier = Modifier.size(20.dp))
                     }

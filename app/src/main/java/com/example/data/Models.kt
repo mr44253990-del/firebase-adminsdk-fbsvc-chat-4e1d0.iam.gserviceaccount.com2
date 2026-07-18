@@ -10,7 +10,10 @@ data class User(
     val isOnline: Boolean = false,
     val lastActive: Long = 0L,
     val blockedUsers: List<String> = emptyList(),
-    val createdAt: Long = 0L
+    val createdAt: Long = 0L,
+    val friends: List<String> = emptyList(),
+    val bio: String = "",
+    val coverImageUrl: String = ""
 )
 
 data class Message(
@@ -41,7 +44,8 @@ data class Story(
     val text: String = "",
     val timestamp: Long = 0L,
     val reactions: Map<String, String> = emptyMap(), // userId to reaction symbol (like, love, etc)
-    val comments: List<StoryComment> = emptyList()
+    val comments: List<StoryComment> = emptyList(),
+    val viewers: List<String> = emptyList()
 )
 
 data class StoryComment(
@@ -65,7 +69,11 @@ data class Post(
     val reactions: Map<String, String> = emptyMap(), // userId -> reaction type
     val comments: List<PostComment> = emptyList(),
     val viewsCount: Int = 0,
-    val isPrivate: Boolean = false
+    val isPrivate: Boolean = false,
+    val title: String = "",
+    val tags: List<String> = emptyList(),
+    val taggedUserIds: List<String> = emptyList(),
+    val feeling: String = ""
 )
 
 data class PostComment(
