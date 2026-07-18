@@ -8,18 +8,31 @@ import androidx.compose.ui.unit.sp
 
 private val AppFont = FontFamily.SansSerif
 
+private fun premiumTextStyle(
+    weight: FontWeight,
+    size: Int,
+    lineHeight: Int,
+    letterSpacing: Float
+) = TextStyle(
+    fontFamily = AppFont,
+    fontWeight = weight,
+    fontSize = size.sp,
+    lineHeight = lineHeight.sp,
+    letterSpacing = letterSpacing.sp
+)
+
 val Typography = Typography(
-    displaySmall = TextStyle(AppFont, FontWeight.Bold, 36.sp, 42.sp, (-0.7).sp),
-    headlineLarge = TextStyle(AppFont, FontWeight.Bold, 32.sp, 38.sp, (-0.6).sp),
-    headlineMedium = TextStyle(AppFont, FontWeight.Bold, 28.sp, 34.sp, (-0.4).sp),
-    headlineSmall = TextStyle(AppFont, FontWeight.SemiBold, 24.sp, 30.sp, (-0.2).sp),
-    titleLarge = TextStyle(AppFont, FontWeight.SemiBold, 22.sp, 28.sp, (-0.1).sp),
-    titleMedium = TextStyle(AppFont, FontWeight.SemiBold, 16.sp, 22.sp, 0.sp),
-    titleSmall = TextStyle(AppFont, FontWeight.SemiBold, 14.sp, 20.sp, 0.1.sp),
-    bodyLarge = TextStyle(AppFont, FontWeight.Normal, 16.sp, 24.sp, 0.1.sp),
-    bodyMedium = TextStyle(AppFont, FontWeight.Normal, 14.sp, 21.sp, 0.1.sp),
-    bodySmall = TextStyle(AppFont, FontWeight.Normal, 12.sp, 18.sp, 0.2.sp),
-    labelLarge = TextStyle(AppFont, FontWeight.SemiBold, 14.sp, 20.sp, 0.1.sp),
-    labelMedium = TextStyle(AppFont, FontWeight.SemiBold, 12.sp, 16.sp, 0.3.sp),
-    labelSmall = TextStyle(AppFont, FontWeight.Medium, 11.sp, 16.sp, 0.4.sp)
+    displaySmall = premiumTextStyle(FontWeight.Bold, 36, 42, -0.7f),
+    headlineLarge = premiumTextStyle(FontWeight.Bold, 32, 38, -0.6f),
+    headlineMedium = premiumTextStyle(FontWeight.Bold, 28, 34, -0.4f),
+    headlineSmall = premiumTextStyle(FontWeight.SemiBold, 24, 30, -0.2f),
+    titleLarge = premiumTextStyle(FontWeight.SemiBold, 22, 28, -0.1f),
+    titleMedium = premiumTextStyle(FontWeight.SemiBold, 16, 22, 0f),
+    titleSmall = premiumTextStyle(FontWeight.SemiBold, 14, 20, 0.1f),
+    bodyLarge = premiumTextStyle(FontWeight.Normal, 16, 24, 0.1f),
+    bodyMedium = premiumTextStyle(FontWeight.Normal, 14, 21, 0.1f),
+    bodySmall = premiumTextStyle(FontWeight.Normal, 12, 18, 0.2f),
+    labelLarge = premiumTextStyle(FontWeight.SemiBold, 14, 20, 0.1f),
+    labelMedium = premiumTextStyle(FontWeight.SemiBold, 12, 16, 0.3f),
+    labelSmall = premiumTextStyle(FontWeight.Medium, 11, 16, 0.4f)
 )
