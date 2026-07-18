@@ -199,7 +199,7 @@ fun AuthScreen(
                 // Brand tag over image
                 Surface(
                     color = MaterialTheme.colorScheme.primaryContainer,
-                    shape = RoundedCornerShape(12.dp),
+                    shape = RoundedCornerShape(18.dp),
                     modifier = Modifier
                         .align(Alignment.BottomStart)
                         .padding(16.dp)
@@ -241,7 +241,7 @@ fun AuthScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(bottom = 16.dp),
-                    shape = RoundedCornerShape(16.dp)
+                    shape = RoundedCornerShape(24.dp)
                 ) {
                     Row(
                         modifier = Modifier.padding(16.dp),
@@ -274,7 +274,7 @@ fun AuthScreen(
                 selectedTabIndex = if (isLoginMode) 0 else 1,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(16.dp))
+                    .clip(RoundedCornerShape(24.dp))
                     .padding(bottom = 16.dp),
                 containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
                 indicator = { tabPositions ->
@@ -343,13 +343,13 @@ fun AuthScreen(
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Text(
-                                text = "Select Profile Picture (Bracket Label)",
+                                text = "Add a profile photo",
                                 style = MaterialTheme.typography.titleSmall,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.primary
                             )
                             
-                            // (Profile Picture) selector bubble as requested
+                            // Profile picture selector bubble as requested
                             Box(
                                 modifier = Modifier
                                     .size(90.dp)
@@ -360,7 +360,7 @@ fun AuthScreen(
                                 if (signupProfilePicUrl.isNotBlank()) {
                                     AsyncImage(
                                         model = signupProfilePicUrl,
-                                        contentDescription = "(Profile Picture)",
+                                        contentDescription = "Profile picture",
                                         contentScale = ContentScale.Crop,
                                         modifier = Modifier
                                             .size(86.dp)
@@ -377,11 +377,11 @@ fun AuthScreen(
                                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                             Icon(
                                                 imageVector = Icons.Default.AddAPhoto,
-                                                contentDescription = "(Profile Picture)",
+                                                contentDescription = "Profile picture",
                                                 tint = MaterialTheme.colorScheme.onPrimaryContainer
                                             )
                                             Text(
-                                                text = "(Profile Pic)",
+                                                text = "Add photo",
                                                 fontSize = 10.sp,
                                                 color = MaterialTheme.colorScheme.onPrimaryContainer,
                                                 fontWeight = FontWeight.Bold
@@ -416,7 +416,7 @@ fun AuthScreen(
                                 placeholder = { Text("John Doe") },
                                 leadingIcon = { Icon(Icons.Default.Person, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
                                 singleLine = true,
-                                shape = RoundedCornerShape(14.dp),
+                                shape = RoundedCornerShape(22.dp),
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .testTag("signup_name_input")
@@ -436,7 +436,7 @@ fun AuthScreen(
                                     }
                                 },
                                 singleLine = true,
-                                shape = RoundedCornerShape(14.dp),
+                                shape = RoundedCornerShape(22.dp),
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .testTag("signup_dob_input")
@@ -452,7 +452,7 @@ fun AuthScreen(
                         placeholder = { Text("example@domain.com") },
                         leadingIcon = { Icon(Icons.Default.Email, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
                         singleLine = true,
-                        shape = RoundedCornerShape(14.dp),
+                        shape = RoundedCornerShape(22.dp),
                         modifier = Modifier
                             .fillMaxWidth()
                             .testTag("email_input")
@@ -475,7 +475,7 @@ fun AuthScreen(
                         },
                         visualTransformation = if (passwordVisible) androidx.compose.ui.text.input.VisualTransformation.None else PasswordVisualTransformation(),
                         singleLine = true,
-                        shape = RoundedCornerShape(14.dp),
+                        shape = RoundedCornerShape(22.dp),
                         modifier = Modifier
                             .fillMaxWidth()
                             .testTag("password_input")
@@ -508,7 +508,7 @@ fun AuthScreen(
                     ) {
                         Surface(
                             color = MaterialTheme.colorScheme.errorContainer,
-                            shape = RoundedCornerShape(10.dp),
+                            shape = RoundedCornerShape(16.dp),
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Row(
@@ -540,7 +540,7 @@ fun AuthScreen(
                             .fillMaxWidth()
                             .height(54.dp)
                             .testTag("submit_button"),
-                        shape = RoundedCornerShape(16.dp),
+                        shape = RoundedCornerShape(24.dp),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = MaterialTheme.colorScheme.primary
                         ),
@@ -615,14 +615,14 @@ fun AuthScreen(
                         label = { Text("Email Address") },
                         leadingIcon = { Icon(Icons.Default.Email, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
                         singleLine = true,
-                        shape = RoundedCornerShape(12.dp),
+                        shape = RoundedCornerShape(18.dp),
                         modifier = Modifier.fillMaxWidth()
                     )
                     
                     if (resetMessage != null) {
                         Surface(
                             color = MaterialTheme.colorScheme.primaryContainer,
-                            shape = RoundedCornerShape(8.dp),
+                            shape = RoundedCornerShape(14.dp),
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Text(
@@ -637,7 +637,7 @@ fun AuthScreen(
                     if (resetError != null) {
                         Surface(
                             color = MaterialTheme.colorScheme.errorContainer,
-                            shape = RoundedCornerShape(8.dp),
+                            shape = RoundedCornerShape(14.dp),
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Text(
@@ -670,7 +670,7 @@ fun AuthScreen(
                         )
                     },
                     enabled = !resetLoading && resetEmail.isNotBlank(),
-                    shape = RoundedCornerShape(10.dp)
+                    shape = RoundedCornerShape(16.dp)
                 ) {
                     if (resetLoading) {
                         CircularProgressIndicator(

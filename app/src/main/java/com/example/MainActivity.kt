@@ -24,6 +24,7 @@ import com.example.ui.GroupChatScreen
 import com.example.ui.OnboardingScreen
 import com.example.ui.isOnboardingCompleted
 import com.example.ui.theme.MyApplicationTheme
+import com.example.ui.theme.PremiumBackground
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import com.example.data.User
@@ -82,7 +83,7 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
-                Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+                PremiumBackground {
                     NavHost(
                         navController = navController,
                         startDestination = startDestination,

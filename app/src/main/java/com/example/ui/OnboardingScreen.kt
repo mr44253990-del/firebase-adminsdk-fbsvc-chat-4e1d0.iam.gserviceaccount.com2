@@ -110,7 +110,7 @@ fun OnboardingScreen(
             // Visual Badge
             Surface(
                 color = activePage.accentColor.copy(alpha = 0.15f),
-                shape = RoundedCornerShape(12.dp),
+                shape = RoundedCornerShape(18.dp),
                 modifier = Modifier.padding(bottom = 24.dp)
             ) {
                 Text(
@@ -218,7 +218,7 @@ fun OnboardingScreen(
                     .fillMaxWidth()
                     .height(54.dp)
                     .testTag("onboarding_next"),
-                shape = RoundedCornerShape(16.dp),
+                shape = RoundedCornerShape(24.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = activePage.accentColor
                 )

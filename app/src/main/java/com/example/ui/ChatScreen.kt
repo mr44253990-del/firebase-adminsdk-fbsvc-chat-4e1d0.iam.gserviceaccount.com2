@@ -280,6 +280,7 @@ fun ChatScreen(
     )
 
     Scaffold(
+        containerColor = Color.Transparent,
         contentWindowInsets = androidx.compose.foundation.layout.WindowInsets(0, 0, 0, 0),
         topBar = {
             TopAppBar(
@@ -590,7 +591,7 @@ fun ChatScreen(
                             .weight(1f)
                             .testTag("chat_input_text_field"),
                         maxLines = 4,
-                        shape = RoundedCornerShape(20.dp),
+                        shape = RoundedCornerShape(28.dp),
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedTextColor = MaterialTheme.colorScheme.onSurface,
                             unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
@@ -700,7 +701,7 @@ fun MessageBubbleItem(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(bottom = 2.dp)
-                        .clip(RoundedCornerShape(8.dp))
+                        .clip(RoundedCornerShape(14.dp))
                         .glassmorphic(isDark = isDark, backgroundColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.4f))
                         .padding(6.dp)
                 ) {
@@ -754,7 +755,7 @@ fun MessageBubbleItem(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(160.dp)
-                                .clip(RoundedCornerShape(12.dp))
+                                .clip(RoundedCornerShape(18.dp))
                                 .background(MaterialTheme.colorScheme.surface)
                         )
                         Spacer(modifier = Modifier.height(6.dp))
@@ -806,7 +807,7 @@ fun MessageBubbleItem(
                     message.reactions.values.distinct().forEach { reaction ->
                         Box(
                             modifier = Modifier
-                                .clip(RoundedCornerShape(12.dp))
+                                .clip(RoundedCornerShape(18.dp))
                                 .glassmorphic(isDark = isDark, backgroundColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
                                 .padding(horizontal = 6.dp, vertical = 2.dp)
                         ) {
@@ -895,7 +896,7 @@ fun VoicePlayerBubble(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
+            .clip(RoundedCornerShape(18.dp))
             .glassmorphic(isDark = isDark, backgroundColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
             .padding(10.dp),
         verticalAlignment = Alignment.CenterVertically

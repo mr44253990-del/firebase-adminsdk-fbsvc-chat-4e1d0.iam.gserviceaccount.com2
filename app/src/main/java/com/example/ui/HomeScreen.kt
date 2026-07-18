@@ -115,9 +115,10 @@ fun HomeScreen(
         }
     }
 
-    val scaffoldBgColor = MaterialTheme.colorScheme.background
+    val scaffoldBgColor = Color.Transparent
 
     Scaffold(
+        containerColor = Color.Transparent,
         contentWindowInsets = androidx.compose.foundation.layout.WindowInsets(0, 0, 0, 0),
         topBar = {
             Column(modifier = Modifier.fillMaxWidth()) {
@@ -149,7 +150,7 @@ fun HomeScreen(
                     title = {
                         Column {
                             Text(
-                                text = "FireChat App",
+                                text = "FireChat",
                                 fontWeight = FontWeight.ExtraBold,
                                 fontSize = 22.sp,
                                 color = MaterialTheme.colorScheme.primary,
@@ -171,18 +172,18 @@ fun HomeScreen(
                         }
                     },
                     colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceColorAtElevation(3.dp)
+                        containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.72f)
                     )
                 )
             }
         },
         bottomBar = {
             NavigationBar(
-                containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                tonalElevation = 8.dp,
+                containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.82f),
+                tonalElevation = 0.dp,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp))
+                    .clip(RoundedCornerShape(topStart = 30.dp, topEnd = 30.dp))
             ) {
                 NavigationBarItem(
                     selected = currentTab == 0,
@@ -261,7 +262,7 @@ fun HomeScreen(
                             ) {
                                 Button(
                                     onClick = { showCreatePostDialog = true },
-                                    shape = RoundedCornerShape(12.dp),
+                                    shape = RoundedCornerShape(18.dp),
                                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
                                 ) {
                                     Icon(Icons.Default.Add, contentDescription = "Create Post", modifier = Modifier.size(16.dp))
@@ -332,13 +333,13 @@ fun HomeScreen(
                             leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
                             modifier = Modifier.fillMaxWidth(),
                             singleLine = true,
-                            shape = RoundedCornerShape(14.dp)
+                            shape = RoundedCornerShape(22.dp)
                         )
 
                         Spacer(modifier = Modifier.height(14.dp))
 
                         Text(
-                            text = "Direct Conversations (Chats Bracket)",
+                            text = "Messages",
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.primary,
@@ -383,14 +384,14 @@ fun HomeScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = "Group Chatrooms (Groups Bracket)",
+                                text = "Your groups",
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.primary
                             )
                             Button(
                                 onClick = { showCreateGroupDialog = true },
-                                shape = RoundedCornerShape(12.dp),
+                                shape = RoundedCornerShape(18.dp),
                                 colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)
                             ) {
                                 Icon(Icons.Default.GroupAdd, contentDescription = "(Create Group)", modifier = Modifier.size(16.dp))
@@ -435,7 +436,7 @@ fun HomeScreen(
                         ) {
                             Card(
                                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
-                                shape = RoundedCornerShape(20.dp),
+                                shape = RoundedCornerShape(28.dp),
                                 modifier = Modifier.fillMaxWidth()
                             ) {
                                 Column(
@@ -445,7 +446,7 @@ fun HomeScreen(
                                     Icon(Icons.Default.Block, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(60.dp))
                                     Spacer(modifier = Modifier.height(14.dp))
                                     Text(
-                                        text = "Admin ONLY (Admin Bracket)",
+                                        text = "Admin access only",
                                         style = MaterialTheme.typography.titleMedium,
                                         fontWeight = FontWeight.ExtraBold,
                                         color = MaterialTheme.colorScheme.onErrorContainer,
@@ -471,7 +472,7 @@ fun HomeScreen(
                             verticalArrangement = Arrangement.spacedBy(16.dp)
                         ) {
                             Text(
-                                text = "Admin Control Panel (Admin Bracket)",
+                                text = "Admin control center",
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.primary
@@ -480,7 +481,7 @@ fun HomeScreen(
                             var adminUrlInput by remember { mutableStateOf(webhookUrl) }
 
                             Card(
-                                shape = RoundedCornerShape(20.dp),
+                                shape = RoundedCornerShape(28.dp),
                                 modifier = Modifier.fillMaxWidth()
                             ) {
                                 Column(modifier = Modifier.padding(20.dp)) {
@@ -504,7 +505,7 @@ fun HomeScreen(
                                         placeholder = { Text("https://rakibul.n8n-host.com/webhook/ra") },
                                         modifier = Modifier.fillMaxWidth(),
                                         singleLine = true,
-                                        shape = RoundedCornerShape(12.dp)
+                                        shape = RoundedCornerShape(18.dp)
                                     )
 
                                     Spacer(modifier = Modifier.height(12.dp))
@@ -523,7 +524,7 @@ fun HomeScreen(
 
                             Card(
                                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
-                                shape = RoundedCornerShape(16.dp),
+                                shape = RoundedCornerShape(24.dp),
                                 modifier = Modifier.fillMaxWidth()
                             ) {
                                 Row(
@@ -552,7 +553,7 @@ fun HomeScreen(
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         Text(
-                            text = "Settings & Preferences (Profile Bracket)",
+                            text = "Profile & appearance",
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.primary,
@@ -561,7 +562,7 @@ fun HomeScreen(
 
                         // 1. Theme selection block
                         Card(
-                            shape = RoundedCornerShape(20.dp),
+                            shape = RoundedCornerShape(28.dp),
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Column(modifier = Modifier.padding(16.dp)) {
@@ -581,8 +582,11 @@ fun HomeScreen(
                                 Spacer(modifier = Modifier.height(14.dp))
 
                                 val themes = listOf(
-                                    "Default" to Color(0xFF673AB7),
-                                    "Chocolate" to Color(0xFF382A24),
+                                    "Dynamic" to Color(0xFF7C5CFC),
+                                    "Light" to Color(0xFFF0F2FA),
+                                    "Dark" to Color(0xFF171A24),
+                                    "AMOLED" to Color.Black,
+                                    "Chocolate" to Color(0xFF6D4C41),
                                     "Ocean" to Color(0xFF0288D1),
                                     "Forest" to Color(0xFF2E7D32),
                                     "Midnight" to Color(0xFF4A148C)
@@ -593,7 +597,7 @@ fun HomeScreen(
                                         Row(
                                             modifier = Modifier
                                                 .fillMaxWidth()
-                                                .clip(RoundedCornerShape(10.dp))
+                                                .clip(RoundedCornerShape(16.dp))
                                                 .background(if (currentTheme == themeName) MaterialTheme.colorScheme.primaryContainer else Color.Transparent)
                                                 .clickable {
                                                     viewModel.updateTheme(themeName)
@@ -675,7 +679,7 @@ fun HomeScreen(
                             }
 
                             Card(
-                                shape = RoundedCornerShape(20.dp),
+                                shape = RoundedCornerShape(28.dp),
                                 modifier = Modifier.fillMaxWidth()
                             ) {
                                 Column(
@@ -701,7 +705,7 @@ fun HomeScreen(
                                         if (inputProfileUrl.isNotBlank()) {
                                             AsyncImage(
                                                 model = inputProfileUrl,
-                                                contentDescription = "(Profile Picture)",
+                                                contentDescription = "Profile picture",
                                                 contentScale = ContentScale.Crop,
                                                 modifier = Modifier
                                                     .size(86.dp)
@@ -739,7 +743,7 @@ fun HomeScreen(
                                         onValueChange = { inputName = it },
                                         label = { Text("Your Name") },
                                         modifier = Modifier.fillMaxWidth(),
-                                        shape = RoundedCornerShape(12.dp)
+                                        shape = RoundedCornerShape(18.dp)
                                     )
 
                                     Spacer(modifier = Modifier.height(10.dp))
@@ -755,7 +759,7 @@ fun HomeScreen(
                                             }
                                         },
                                         modifier = Modifier.fillMaxWidth(),
-                                        shape = RoundedCornerShape(12.dp)
+                                        shape = RoundedCornerShape(18.dp)
                                     )
 
                                     Spacer(modifier = Modifier.height(14.dp))
@@ -789,7 +793,7 @@ fun HomeScreen(
                             val blockedUsersList = allUsers.filter { user.blockedUsers.contains(it.uid) }
                             Spacer(modifier = Modifier.height(16.dp))
                             Card(
-                                shape = RoundedCornerShape(20.dp),
+                                shape = RoundedCornerShape(28.dp),
                                 modifier = Modifier.fillMaxWidth(),
                                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
                             ) {
@@ -822,7 +826,7 @@ fun HomeScreen(
                                                 Row(
                                                     modifier = Modifier
                                                         .fillMaxWidth()
-                                                        .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(12.dp))
+                                                        .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(18.dp))
                                                         .padding(horizontal = 12.dp, vertical = 8.dp),
                                                     verticalAlignment = Alignment.CenterVertically,
                                                     horizontalArrangement = Arrangement.SpaceBetween
@@ -871,7 +875,7 @@ fun HomeScreen(
             ) {
                 inAppNotification?.let { notif ->
                     Card(
-                        shape = RoundedCornerShape(16.dp),
+                        shape = RoundedCornerShape(24.dp),
                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
                         modifier = Modifier
                             .fillMaxWidth()
@@ -975,7 +979,7 @@ fun HomeScreen(
 
         AlertDialog(
             onDismissRequest = { showCreatePostDialog = false },
-            title = { Text("Create Post (Create Post Bracket)", fontWeight = FontWeight.Bold) },
+            title = { Text("Create a post", fontWeight = FontWeight.Bold) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     OutlinedTextField(
@@ -1088,7 +1092,7 @@ fun HomeScreen(
 
         AlertDialog(
             onDismissRequest = { showCreateGroupDialog = false },
-            title = { Text("Create Group (Create Group Bracket)", fontWeight = FontWeight.Bold) },
+            title = { Text("Create a group", fontWeight = FontWeight.Bold) },
             text = {
                 Column(
                     modifier = Modifier
@@ -1136,7 +1140,7 @@ fun HomeScreen(
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clip(RoundedCornerShape(8.dp))
+                                    .clip(RoundedCornerShape(14.dp))
                                     .background(if (isSelected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent)
                                     .clickable {
                                         if (isSelected) {
@@ -1219,7 +1223,7 @@ fun HomeScreen(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(180.dp)
-                                .clip(RoundedCornerShape(12.dp))
+                                .clip(RoundedCornerShape(18.dp))
                         )
                     }
 
@@ -1228,7 +1232,7 @@ fun HomeScreen(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(180.dp)
-                                .clip(RoundedCornerShape(12.dp))
+                                .clip(RoundedCornerShape(18.dp))
                                 .background(Color.Black),
                             contentAlignment = Alignment.Center
                         ) {
@@ -1346,7 +1350,7 @@ fun HomeScreen(
                                             isDark = isDark,
                                             backgroundColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
                                             borderColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.04f),
-                                            shape = RoundedCornerShape(16.dp)
+                                            shape = RoundedCornerShape(24.dp)
                                         )
                                         .padding(horizontal = 12.dp, vertical = 8.dp)
                                 ) {
@@ -1748,8 +1752,8 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel) {
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(220.dp)
-                        .clip(RoundedCornerShape(16.dp))
-                        .border(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f), RoundedCornerShape(16.dp))
+                        .clip(RoundedCornerShape(24.dp))
+                        .border(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f), RoundedCornerShape(24.dp))
                 )
                 Spacer(modifier = Modifier.height(10.dp))
             }
@@ -1760,8 +1764,8 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel) {
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(220.dp)
-                        .clip(RoundedCornerShape(16.dp))
-                        .border(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f), RoundedCornerShape(16.dp))
+                        .clip(RoundedCornerShape(24.dp))
+                        .border(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f), RoundedCornerShape(24.dp))
                         .background(Color.Black),
                     contentAlignment = Alignment.Center
                 ) {
@@ -1866,7 +1870,7 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel) {
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier
                             .graphicsLayer(scaleX = scaleBtn.value, scaleY = scaleBtn.value)
-                            .clip(RoundedCornerShape(12.dp))
+                            .clip(RoundedCornerShape(18.dp))
                             .background(
                                 if (myReaction != null) MaterialTheme.colorScheme.primary.copy(alpha = 0.08f)
                                 else Color.Transparent
@@ -1960,7 +1964,7 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
-                        .clip(RoundedCornerShape(12.dp))
+                        .clip(RoundedCornerShape(18.dp))
                         .clickable { isCommentsExpanded = !isCommentsExpanded }
                         .padding(horizontal = 12.dp, vertical = 8.dp)
                 ) {
@@ -1984,7 +1988,7 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
-                        .clip(RoundedCornerShape(12.dp))
+                        .clip(RoundedCornerShape(18.dp))
                         .clickable {
                             val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                             val clip = ClipData.newPlainText("Post Link", "https://ais-pre-rmbon56osx2tjzuwdbosiw-734111311118.asia-southeast1.run.app/post/${post.id}")
@@ -2045,7 +2049,7 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel) {
                                             isDark = isDark,
                                             backgroundColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
                                             borderColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.04f),
-                                            shape = RoundedCornerShape(16.dp)
+                                            shape = RoundedCornerShape(24.dp)
                                         )
                                         .padding(horizontal = 12.dp, vertical = 8.dp)
                                 ) {
@@ -2177,7 +2181,7 @@ fun ChatConversationUserItem(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onSelect),
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(28.dp),
         colors = CardDefaults.cardColors(
             containerColor = if (hasUnread) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
                              else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
@@ -2209,7 +2213,7 @@ fun ChatConversationUserItem(
                 if (user.profileImageUrl.isNotBlank()) {
                     AsyncImage(
                         model = user.profileImageUrl,
-                        contentDescription = "(Profile Picture)",
+                        contentDescription = "Profile picture",
                         contentScale = ContentScale.Crop,
                         modifier = storyModifier.clip(CircleShape)
                     )
@@ -2331,7 +2335,7 @@ fun GroupItemCard(group: Group, onClick: () -> Unit) {
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick),
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(28.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f))
     ) {
         Row(

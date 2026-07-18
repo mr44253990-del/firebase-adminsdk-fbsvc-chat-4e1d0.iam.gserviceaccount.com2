@@ -1,5 +1,17 @@
 # FireChat (ফায়ারচ্যাট) Setup & Configuration Guide
 
+## Premium Aurora UI
+
+The app now uses a unified **Glassmorphism + Material 3** design system across onboarding, authentication, feed, stories, direct chat, group chat, admin, profile, dialogs, cards, and navigation.
+
+- Aurora gradient canvas with translucent glass surfaces and soft ambient depth
+- Large 24–32dp corners, pill controls, refined type hierarchy, and accessible touch targets
+- Material You wallpaper colors on Android 12+ through the **Dynamic** appearance mode
+- Explicit **Light**, **Dark**, and true **AMOLED** appearance modes plus themed palettes
+- Edge-to-edge layouts, animated state transitions, premium loading/disabled states, and consistent component styling
+
+Choose an appearance from **Profile & appearance → Choose Application Theme**.
+
 স্বাগতম! **FireChat** হলো একটি রিয়েল-টাইম চ্যাটিং অ্যান্ড্রয়েড অ্যাপ্লিকেশন যা Jetpack Compose, Kotlin এবং Firebase (Authentication, Firestore, Realtime Database) ব্যবহার করে তৈরি করা হয়েছে। ব্যাকগ্রাউন্ডে এবং অ্যাপ বন্ধ থাকা অবস্থায়ও নোটিফিকেশন পাঠাতে এটি **Cloudflare Workers** এবং **Firebase Cloud Messaging (FCM) v1 API** এর সফল সংযোগ ব্যবহার করে।
 
 এই নির্দেশিকায় সম্পূর্ণ সেটআপ প্রসেস (ফায়ারবেস কনফিগারেশন থেকে শুরু করে ক্লাউডফ্লেয়ার ওয়ার্কার ডিপ্লয়মেন্ট) বিস্তারিত আলোচনা করা হলো।
