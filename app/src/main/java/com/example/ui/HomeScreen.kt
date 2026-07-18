@@ -21,6 +21,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
 import androidx.compose.foundation.layout.*
@@ -90,12 +92,13 @@ fun HomeScreen(
     val allUsers by viewModel.usersState.collectAsState()
 
     var searchQuery by remember { mutableStateOf("") }
+    var showAccountMenu by remember { mutableStateOf(false) }
     val currentTab by viewModel.currentTabState.collectAsState()
 
     // Dialog & Creation controllers
     var showCreatePostDialog by remember { mutableStateOf(false) }
     var showCreateGroupDialog by remember { mutableStateOf(false) }
-    var showStoryViewer by remember { mutableStateOf<Story?>(null) }
+    var selectedStoryIndex by remember { mutableStateOf<Int?>(null) }
 
     // Run Android 13+ Notification Permission Checks
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -164,11 +167,49 @@ fun HomeScreen(
                         }
                     },
                     actions = {
-                        IconButton(onClick = { viewModel.setCurrentTab(4) }) {
-                            Icon(Icons.Default.Settings, contentDescription = "Settings", tint = MaterialTheme.colorScheme.primary)
+                        IconButton(onClick = { viewModel.setCurrentTab(1) }) {
+                            Icon(Icons.Outlined.Search, contentDescription = "Search chats")
                         }
-                        IconButton(onClick = { viewModel.logout { onSignOut() } }) {
-                            Icon(Icons.Default.ExitToApp, contentDescription = "Sign Out", tint = MaterialTheme.colorScheme.error)
+                        BadgedBox(
+                            badge = {
+                                if (inAppNotification != null) Badge()
+                            }
+                        ) {
+                            IconButton(onClick = { viewModel.dismissInAppNotification() }) {
+                                Icon(Icons.Outlined.Notifications, contentDescription = "Notifications")
+                            }
+                        }
+                        Box {
+                            IconButton(onClick = { showAccountMenu = true }) {
+                                AsyncImage(
+                                    model = currentUser?.profileImageUrl?.ifBlank { null },
+                                    contentDescription = "Account",
+                                    error = painterResource(R.drawable.img_app_logo),
+                                    modifier = Modifier.size(36.dp).clip(CircleShape)
+                                        .border(2.dp, MaterialTheme.colorScheme.primary.copy(alpha = .65f), CircleShape)
+                                )
+                            }
+                            DropdownMenu(
+                                expanded = showAccountMenu,
+                                onDismissRequest = { showAccountMenu = false }
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text("Profile & appearance") },
+                                    leadingIcon = { Icon(Icons.Outlined.Person, null) },
+                                    onClick = {
+                                        showAccountMenu = false
+                                        viewModel.setCurrentTab(4)
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Sign out", color = MaterialTheme.colorScheme.error) },
+                                    leadingIcon = { Icon(Icons.Outlined.Logout, null, tint = MaterialTheme.colorScheme.error) },
+                                    onClick = {
+                                        showAccountMenu = false
+                                        viewModel.logout { onSignOut() }
+                                    }
+                                )
+                            }
                         }
                     },
                     colors = TopAppBarDefaults.topAppBarColors(
@@ -232,82 +273,99 @@ fun HomeScreen(
         ) {
             when (currentTab) {
                 0 -> {
-                    // SOCIAL HOME TAB: Tabbed view for Feed and Stories
-                    var homeTabIndex by remember { mutableStateOf(0) }
+                    // Stories live directly above the feed, matching modern social apps.
                     Column(modifier = Modifier.fillMaxSize()) {
-                        TabRow(
-                            selectedTabIndex = homeTabIndex,
-                            containerColor = MaterialTheme.colorScheme.surfaceColorAtElevation(1.dp)
-                        ) {
-                            Tab(
-                                selected = homeTabIndex == 0,
-                                onClick = { homeTabIndex = 0 },
-                                text = { Text("Social Feed", fontWeight = FontWeight.Bold) }
-                            )
-                            Tab(
-                                selected = homeTabIndex == 1,
-                                onClick = { homeTabIndex = 1 },
-                                text = { Text("Stories", fontWeight = FontWeight.Bold) }
-                            )
-                        }
+                        StoriesHorizontalSection(
+                            viewModel = viewModel,
+                            stories = stories,
+                            onStorySelected = { story ->
+                                selectedStoryIndex = stories.indexOfFirst { it.id == story.id }.takeIf { it >= 0 }
+                            }
+                        )
 
-                        if (homeTabIndex == 0) {
-                            // Feed Tab
+                        // Compact glass composer inspired by the supplied reference.
+                        Card(
+                            onClick = { showCreatePostDialog = true },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 10.dp),
+                            shape = RoundedCornerShape(28.dp),
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.surface.copy(alpha = .70f)
+                            ),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = .65f))
+                        ) {
                             Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 16.dp, vertical = 8.dp),
-                                horizontalArrangement = Arrangement.End,
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Button(
-                                    onClick = { showCreatePostDialog = true },
-                                    shape = RoundedCornerShape(18.dp),
-                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+                                AsyncImage(
+                                    model = currentUser?.profileImageUrl?.ifBlank { null },
+                                    contentDescription = "Your profile",
+                                    error = painterResource(id = R.drawable.img_app_logo),
+                                    modifier = Modifier.size(44.dp).clip(CircleShape)
+                                )
+                                Spacer(Modifier.width(12.dp))
+                                Text(
+                                    "What's on your mind?",
+                                    modifier = Modifier.weight(1f),
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontSize = 15.sp
+                                )
+                                Icon(Icons.Outlined.Image, contentDescription = "Add photo", tint = MaterialTheme.colorScheme.primary)
+                                Spacer(Modifier.width(12.dp))
+                                Icon(Icons.Outlined.Videocam, contentDescription = "Add video", tint = MaterialTheme.colorScheme.secondary)
+                                Spacer(Modifier.width(10.dp))
+                                Surface(
+                                    color = MaterialTheme.colorScheme.primary,
+                                    shape = CircleShape
                                 ) {
-                                    Icon(Icons.Default.Add, contentDescription = "Create Post", modifier = Modifier.size(16.dp))
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text("Create Post", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                    Text(
+                                        "Post",
+                                        modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp),
+                                        color = MaterialTheme.colorScheme.onPrimary,
+                                        fontWeight = FontWeight.Bold
+                                    )
                                 }
                             }
+                        }
 
-                            if (posts.isEmpty()) {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .weight(1f),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                        Icon(Icons.Default.DynamicFeed, contentDescription = null, tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.4f), modifier = Modifier.size(60.dp))
-                                        Spacer(modifier = Modifier.height(10.dp))
-                                        Text("No posts available", fontWeight = FontWeight.Bold)
-                                        Text("Be the first to share a post in the community!", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    }
-                                }
-                            } else {
-                                LazyColumn(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .weight(1f)
-                                        .padding(horizontal = 14.dp),
-                                    contentPadding = PaddingValues(bottom = 16.dp),
-                                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                                ) {
-                                    items(posts) { post ->
-                                        SocialPostItem(post = post, viewModel = viewModel)
-                                    }
+                        LazyRow(
+                            modifier = Modifier.fillMaxWidth(),
+                            contentPadding = PaddingValues(horizontal = 16.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            items(listOf("All Posts", "Friends", "Groups", "Following")) { label ->
+                                FilterChip(
+                                    selected = label == "All Posts",
+                                    onClick = { },
+                                    label = { Text(label) },
+                                    leadingIcon = if (label == "All Posts") {
+                                        { Icon(Icons.Outlined.DynamicFeed, null, Modifier.size(17.dp)) }
+                                    } else null,
+                                    shape = CircleShape
+                                )
+                            }
+                        }
+
+                        Spacer(Modifier.height(8.dp))
+                        if (posts.isEmpty()) {
+                            Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Icon(Icons.Outlined.DynamicFeed, null, tint = MaterialTheme.colorScheme.primary.copy(alpha = .45f), modifier = Modifier.size(60.dp))
+                                    Spacer(Modifier.height(10.dp))
+                                    Text("No posts yet", fontWeight = FontWeight.Bold)
+                                    Text("Share the first update with your community.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
                             }
                         } else {
-                            // Stories Tab
-                            Box(modifier = Modifier.fillMaxSize()) {
-                                Column(modifier = Modifier.fillMaxSize()) {
-                                    StoriesHorizontalSection(
-                                        viewModel = viewModel,
-                                        stories = stories,
-                                        onStorySelected = { showStoryViewer = it }
-                                    )
+                            LazyColumn(
+                                modifier = Modifier.fillMaxWidth().weight(1f),
+                                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+                                verticalArrangement = Arrangement.spacedBy(14.dp)
+                            ) {
+                                items(posts, key = { it.id }) { post ->
+                                    SocialPostItem(post = post, viewModel = viewModel)
                                 }
                             }
                         }
@@ -1183,298 +1241,270 @@ fun HomeScreen(
         )
     }
 
-    // STORY VIEWER DIALOG
-    if (showStoryViewer != null) {
-        val activeStory = showStoryViewer!!
-        var commentText by remember { mutableStateOf("") }
+    selectedStoryIndex?.let { index ->
+        FullScreenStoryViewer(
+            stories = stories,
+            storyIndex = index,
+            onPrevious = { selectedStoryIndex = (index - 1).coerceAtLeast(0) },
+            onNext = { selectedStoryIndex = (index + 1).coerceAtMost(stories.size) },
+            onDismiss = { selectedStoryIndex = null },
+            onReact = { story, emoji -> viewModel.reactToStory(story.id, emoji) },
+            onComment = { story, text -> viewModel.commentOnStory(story.id, text) },
+            onDelete = { story ->
+                viewModel.deleteStory(story.id)
+                selectedStoryIndex = null
+            }
+        )
+    }
 
-        AlertDialog(
-            onDismissRequest = { showStoryViewer = null },
-            title = {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    AsyncImage(
-                        model = activeStory.senderProfilePic.ifBlank { null },
-                        contentDescription = null,
-                        error = painterResource(id = R.drawable.img_app_logo),
-                        modifier = Modifier
-                            .size(36.dp)
-                            .clip(CircleShape)
-                    )
-                    Spacer(modifier = Modifier.width(10.dp))
-                    Column {
-                        Text(activeStory.senderName, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                        Text("Story Details", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+}
+
+@Composable
+fun FullScreenStoryViewer(
+    stories: List<Story>,
+    storyIndex: Int,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit,
+    onDismiss: () -> Unit,
+    onReact: (Story, String) -> Unit,
+    onComment: (Story, String) -> Unit,
+    onDelete: (Story) -> Unit
+) {
+    var replyText by remember(storyIndex) { mutableStateOf("") }
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            decorFitsSystemWindows = false
+        )
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black)
+        ) {
+            if (stories.isEmpty() || storyIndex >= stories.size) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .clickable(onClick = onPrevious),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    Icon(Icons.Outlined.CheckCircle, null, tint = Color.White, modifier = Modifier.size(64.dp))
+                    Spacer(Modifier.height(16.dp))
+                    Text("No more stories", color = Color.White, style = MaterialTheme.typography.headlineSmall)
+                    Spacer(Modifier.height(8.dp))
+                    Text("Tap to view the previous story", color = Color.White.copy(alpha = .65f))
+                }
+                IconButton(
+                    onClick = onDismiss,
+                    modifier = Modifier.align(Alignment.TopEnd).windowInsetsPadding(WindowInsets.statusBars).padding(12.dp)
+                ) {
+                    Icon(Icons.Default.Close, "Close", tint = Color.White)
+                }
+            } else {
+                val story = stories[storyIndex]
+                key(story.id) {
+                    when {
+                        story.videoUrl.isNotBlank() -> AndroidView(
+                            factory = { context ->
+                                VideoView(context).apply {
+                                    setVideoPath(story.videoUrl)
+                                    setOnPreparedListener { player ->
+                                        player.isLooping = false
+                                        start()
+                                    }
+                                    setOnCompletionListener { onNext() }
+                                }
+                            },
+                            update = { video -> if (!video.isPlaying) video.start() },
+                            modifier = Modifier.fillMaxSize()
+                        )
+                        story.imageUrl.isNotBlank() -> AsyncImage(
+                            model = story.imageUrl,
+                            contentDescription = "${story.senderName}'s story",
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                        else -> Box(
+                            Modifier.fillMaxSize().background(
+                                Brush.verticalGradient(listOf(MaterialTheme.colorScheme.primary, Color(0xFF111327)))
+                            ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                story.text,
+                                color = Color.White,
+                                style = MaterialTheme.typography.headlineMedium,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.padding(32.dp)
+                            )
+                        }
                     }
                 }
-            },
-            text = {
+
+                Box(
+                    Modifier.fillMaxSize().background(
+                        Brush.verticalGradient(
+                            0f to Color.Black.copy(alpha = .62f),
+                            .28f to Color.Transparent,
+                            .68f to Color.Transparent,
+                            1f to Color.Black.copy(alpha = .78f)
+                        )
+                    )
+                )
+
+                // Invisible left/right navigation zones provide familiar story physics.
+                Row(Modifier.fillMaxSize()) {
+                    Box(Modifier.weight(1f).fillMaxHeight().clickable(onClick = onPrevious))
+                    Box(Modifier.weight(1f).fillMaxHeight().clickable(onClick = onNext))
+                }
+
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(max = 420.dp)
-                        .verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                        .align(Alignment.TopCenter)
+                        .windowInsetsPadding(WindowInsets.statusBars)
+                        .padding(horizontal = 12.dp, vertical = 8.dp)
                 ) {
-                    if (activeStory.imageUrl.isNotBlank()) {
-                        AsyncImage(
-                            model = activeStory.imageUrl,
-                            contentDescription = "Story Media",
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(180.dp)
-                                .clip(RoundedCornerShape(18.dp))
-                        )
-                    }
-
-                    if (activeStory.videoUrl.isNotBlank()) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(180.dp)
-                                .clip(RoundedCornerShape(18.dp))
-                                .background(Color.Black),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            var isPlaying by remember { mutableStateOf(true) }
-                            AndroidView(
-                                factory = { ctx ->
-                                    VideoView(ctx).apply {
-                                        setVideoPath(activeStory.videoUrl)
-                                        setOnPreparedListener { mediaPlayer ->
-                                            mediaPlayer.isLooping = true
-                                        }
-                                    }
-                                },
-                                modifier = Modifier.fillMaxSize(),
-                                update = { videoView ->
-                                    if (isPlaying) {
-                                        videoView.start()
-                                    } else {
-                                        videoView.pause()
-                                    }
-                                }
-                            )
-
-                            IconButton(
-                                onClick = { isPlaying = !isPlaying },
-                                modifier = Modifier
-                                    .background(Color.Black.copy(alpha = 0.5f), CircleShape)
-                                    .size(40.dp)
-                            ) {
-                                Icon(
-                                    imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                                    contentDescription = if (isPlaying) "Pause" else "Play",
-                                    tint = Color.White
-                                )
-                            }
-                        }
-                    }
-
-                    Text(
-                        text = activeStory.text,
-                        style = MaterialTheme.typography.bodyLarge,
-                        modifier = Modifier.padding(vertical = 4.dp)
-                    )
-
-                    // React to Story Buttons
-                    Text("Reactions:", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleSmall)
                     Row(
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        modifier = Modifier.fillMaxWidth()
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
-                        val reactions = listOf("👍", "❤️", "😂", "😮", "😢", "😡")
-                        reactions.forEach { emoji ->
-                            Box(
-                                modifier = Modifier
-                                    .size(36.dp)
-                                    .background(MaterialTheme.colorScheme.surfaceVariant, CircleShape)
-                                    .clickable {
-                                        viewModel.reactToStory(activeStory.id, emoji)
-                                        // Update local preview state
-                                        val currentUserId = FirebaseAuth.getInstance().currentUser?.uid ?: ""
-                                        val updatedMap = activeStory.reactions.toMutableMap()
-                                        updatedMap[currentUserId] = emoji
-                                        showStoryViewer = activeStory.copy(reactions = updatedMap)
-                                    },
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(emoji, fontSize = 16.sp)
-                            }
+                        stories.forEachIndexed { index, _ ->
+                            LinearProgressIndicator(
+                                progress = { if (index <= storyIndex) 1f else 0f },
+                                modifier = Modifier.weight(1f).height(3.dp).clip(CircleShape),
+                                color = Color.White,
+                                trackColor = Color.White.copy(alpha = .25f)
+                            )
                         }
                     }
+                    Spacer(Modifier.height(12.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        AsyncImage(
+                            model = story.senderProfilePic.ifBlank { null },
+                            contentDescription = story.senderName,
+                            error = painterResource(R.drawable.img_app_logo),
+                            modifier = Modifier.size(42.dp).clip(CircleShape).border(2.dp, Color.White, CircleShape)
+                        )
+                        Spacer(Modifier.width(10.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(story.senderName, color = Color.White, fontWeight = FontWeight.Bold)
+                            Text(
+                                SimpleDateFormat("hh:mm a", Locale.getDefault()).format(Date(story.timestamp)),
+                                color = Color.White.copy(alpha = .68f),
+                                fontSize = 11.sp
+                            )
+                        }
+                        if (story.senderId == FirebaseAuth.getInstance().currentUser?.uid) {
+                            IconButton(onClick = { onDelete(story) }) {
+                                Icon(Icons.Outlined.Delete, "Delete story", tint = Color.White)
+                            }
+                        }
+                        IconButton(onClick = onDismiss) {
+                            Icon(Icons.Default.Close, "Close", tint = Color.White)
+                        }
+                    }
+                }
 
-                    // Display reactions list count
-                    if (activeStory.reactions.isNotEmpty()) {
+                Column(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                        .windowInsetsPadding(WindowInsets.navigationBars)
+                        .padding(20.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    if (story.text.isNotBlank() && (story.imageUrl.isNotBlank() || story.videoUrl.isNotBlank())) {
                         Text(
-                            text = "Active Reactions: ${activeStory.reactions.values.groupBy { it }.map { "${it.key} x${it.value.size}" }.joinToString(", ")}",
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.primary
+                            story.text,
+                            color = Color.White,
+                            textAlign = TextAlign.Center,
+                            style = MaterialTheme.typography.titleMedium
                         )
+                        Spacer(Modifier.height(14.dp))
                     }
-
-                    Divider(color = MaterialTheme.colorScheme.surfaceVariant)
-
-                    // Comments block
-                    val isDark = isSystemInDarkTheme()
-                    val currentUserId = FirebaseAuth.getInstance().currentUser?.uid ?: ""
-                    val currentUserProfile = allUsers.find { it.uid == currentUserId }
-                    val currentUserPic = currentUserProfile?.profileImageUrl ?: ""
-
-                    Text("Comments:", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurface)
-                    
-                    activeStory.comments.forEach { c ->
-                        val commenter = allUsers.find { it.uid == c.senderId }
-                        val avatarUrl = commenter?.profileImageUrl ?: ""
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.Top
-                        ) {
-                            AsyncImage(
-                                model = avatarUrl.ifBlank { null },
-                                contentDescription = c.senderName,
-                                error = painterResource(id = R.drawable.img_app_logo),
-                                modifier = Modifier
-                                    .size(32.dp)
-                                    .clip(CircleShape)
-                                    .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.15f), CircleShape)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Column {
-                                // Rounded bubble container
-                                Box(
-                                    modifier = Modifier
-                                        .glassmorphic(
-                                            isDark = isDark,
-                                            backgroundColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
-                                            borderColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.04f),
-                                            shape = RoundedCornerShape(24.dp)
-                                        )
-                                        .padding(horizontal = 12.dp, vertical = 8.dp)
-                                ) {
-                                    Column {
-                                        Text(
-                                            text = c.senderName,
-                                            fontWeight = FontWeight.Bold,
-                                            fontSize = 11.sp,
-                                            color = MaterialTheme.colorScheme.primary
-                                        )
-                                        Spacer(modifier = Modifier.height(2.dp))
-                                        Text(
-                                            text = c.text,
-                                            fontSize = 13.sp,
-                                            color = MaterialTheme.colorScheme.onSurface
-                                        )
-                                    }
-                                }
-                                
-                                // Comment action buttons and time below the bubble
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier.padding(start = 6.dp, top = 2.dp)
-                                ) {
-                                    val cTime = try {
-                                        SimpleDateFormat("hh:mm a", Locale.getDefault()).apply {
-                                            timeZone = TimeZone.getTimeZone("Asia/Dhaka")
-                                        }.format(Date(c.timestamp))
-                                    } catch (e: Exception) {
-                                        ""
-                                    }
-                                    Text(
-                                        text = cTime,
-                                        fontSize = 10.sp,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-                                    )
-                                    Spacer(modifier = Modifier.width(12.dp))
-                                    Text(
-                                        text = "Like",
-                                        fontSize = 10.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                                        modifier = Modifier.clickable { }
-                                    )
-                                    Spacer(modifier = Modifier.width(12.dp))
-                                    Text(
-                                        text = "Reply",
-                                        fontSize = 10.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                                        modifier = Modifier.clickable { }
-                                    )
-                                }
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        listOf("👍", "❤️", "😂", "😮", "😢").forEach { emoji ->
+                            Surface(
+                                onClick = { onReact(story, emoji) },
+                                color = Color.White.copy(alpha = .13f),
+                                border = BorderStroke(1.dp, Color.White.copy(alpha = .18f)),
+                                shape = CircleShape
+                            ) {
+                                Text(emoji, fontSize = 18.sp, modifier = Modifier.padding(9.dp))
                             }
                         }
                     }
-
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        AsyncImage(
-                            model = currentUserPic.ifBlank { null },
-                            contentDescription = "Me",
-                            error = painterResource(id = R.drawable.img_app_logo),
-                            modifier = Modifier
-                                .size(32.dp)
-                                .clip(CircleShape)
-                                .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.15f), CircleShape)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
+                    Spacer(Modifier.height(12.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
                         OutlinedTextField(
-                            value = commentText,
-                            onValueChange = { commentText = it },
-                            placeholder = { Text("Write comment...", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)) },
+                            value = replyText,
+                            onValueChange = { replyText = it },
+                            placeholder = { Text("Reply to story…", color = Color.White.copy(alpha = .7f)) },
                             modifier = Modifier.weight(1f),
-                            shape = RoundedCornerShape(24.dp),
-                            maxLines = 3,
+                            singleLine = true,
+                            shape = CircleShape,
                             colors = OutlinedTextFieldDefaults.colors(
-                                focusedTextColor = MaterialTheme.colorScheme.onSurface,
-                                unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
-                                focusedBorderColor = MaterialTheme.colorScheme.primary,
-                                unfocusedBorderColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f),
-                                focusedContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.5f),
-                                unfocusedContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.3f)
+                                focusedTextColor = Color.White,
+                                unfocusedTextColor = Color.White,
+                                focusedBorderColor = Color.White.copy(alpha = .75f),
+                                unfocusedBorderColor = Color.White.copy(alpha = .35f),
+                                focusedContainerColor = Color.Black.copy(alpha = .25f),
+                                unfocusedContainerColor = Color.Black.copy(alpha = .25f)
                             )
                         )
-                        Spacer(modifier = Modifier.width(6.dp))
                         IconButton(
                             onClick = {
-                                if (commentText.isNotBlank()) {
-                                    viewModel.commentOnStory(activeStory.id, commentText)
-                                    commentText = ""
-                                    showStoryViewer = null // close and refresh
+                                if (replyText.isNotBlank()) {
+                                    onComment(story, replyText.trim())
+                                    replyText = ""
                                 }
-                            }
-                        ) {
-                            Icon(Icons.Default.Send, contentDescription = "Post Comment", tint = MaterialTheme.colorScheme.primary)
-                        }
-                    }
-
-                    // Allowed deletion if owned by current user
-                    if (activeStory.senderId == currentUserId) {
-                        Button(
-                            onClick = {
-                                viewModel.deleteStory(activeStory.id)
-                                showStoryViewer = null
                             },
-                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
-                            modifier = Modifier.fillMaxWidth()
+                            modifier = Modifier.padding(start = 8.dp).background(Color.White, CircleShape)
                         ) {
-                            Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("Delete Story")
+                            Icon(Icons.Default.Send, "Send reply", tint = Color.Black)
                         }
                     }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { showStoryViewer = null }) {
-                    Text("Close")
                 }
             }
-        )
+        }
+    }
+}
+
+@Composable
+fun FullScreenVideoPlayer(videoUrl: String, onDismiss: () -> Unit) {
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)
+    ) {
+        Box(Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
+            AndroidView(
+                factory = { context ->
+                    VideoView(context).apply {
+                        setVideoPath(videoUrl)
+                        setOnPreparedListener { player ->
+                            player.isLooping = true
+                            start()
+                        }
+                    }
+                },
+                update = { video -> if (!video.isPlaying) video.start() },
+                modifier = Modifier.fillMaxSize()
+            )
+            IconButton(
+                onClick = onDismiss,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .windowInsetsPadding(WindowInsets.statusBars)
+                    .padding(16.dp)
+                    .background(Color.Black.copy(alpha = .45f), CircleShape)
+            ) {
+                Icon(Icons.Default.Close, "Close full screen video", tint = Color.White)
+            }
+        }
     }
 }
 
@@ -1584,7 +1614,7 @@ fun StoriesHorizontalSection(
 
     LazyRow(
         horizontalArrangement = Arrangement.spacedBy(10.dp),
-        contentPadding = PaddingValues(horizontal = 16.dp),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
         modifier = Modifier.fillMaxWidth()
     ) {
         // "Add Story" first card bubble
@@ -1592,24 +1622,24 @@ fun StoriesHorizontalSection(
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier
-                    .width(72.dp)
+                    .width(82.dp)
                     .clickable { showAddStoryDialog = true }
             ) {
                 Box(
                     modifier = Modifier
-                        .size(56.dp)
+                        .size(68.dp)
                         .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.primaryContainer),
+                        .background(Brush.linearGradient(listOf(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.secondary))),
                     contentAlignment = Alignment.Center
                 ) {
                     if (isUploadingStoryMedia) {
                         CircularProgressIndicator(modifier = Modifier.size(24.dp))
                     } else {
-                        Icon(Icons.Default.Add, contentDescription = "(Add Story)", tint = MaterialTheme.colorScheme.onPrimaryContainer)
+                        Icon(Icons.Default.Add, contentDescription = "Add story", tint = Color.White)
                     }
                 }
                 Spacer(modifier = Modifier.height(4.dp))
-                Text("Add Story", fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                Text("Your Story", fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1)
             }
         }
 
@@ -1617,22 +1647,23 @@ fun StoriesHorizontalSection(
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier
-                    .width(72.dp)
+                    .width(82.dp)
                     .clickable { onStorySelected(story) }
             ) {
                 Box(
                     modifier = Modifier
-                        .size(56.dp)
+                        .size(68.dp)
                         .clip(CircleShape)
-                        .border(2.dp, MaterialTheme.colorScheme.primary, CircleShape),
+                        .border(3.dp, Brush.sweepGradient(listOf(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.tertiary, MaterialTheme.colorScheme.secondary, MaterialTheme.colorScheme.primary)), CircleShape),
                     contentAlignment = Alignment.Center
                 ) {
                     AsyncImage(
                         model = story.senderProfilePic.ifBlank { null },
                         contentDescription = story.senderName,
                         error = painterResource(id = R.drawable.img_app_logo),
+                        contentScale = ContentScale.Crop,
                         modifier = Modifier
-                            .size(50.dp)
+                            .size(60.dp)
                             .clip(CircleShape)
                     )
                 }
@@ -1652,8 +1683,13 @@ fun StoriesHorizontalSection(
 fun SocialPostItem(post: Post, viewModel: ChatViewModel) {
     var isCommentsExpanded by remember { mutableStateOf(false) }
     var commentInputText by remember { mutableStateOf("") }
+    var showFullscreenVideo by remember(post.id) { mutableStateOf(false) }
     val currentUserId = FirebaseAuth.getInstance().currentUser?.uid ?: ""
     val isDark = isSystemInDarkTheme()
+
+    if (showFullscreenVideo && post.videoUrl.isNotBlank()) {
+        FullScreenVideoPlayer(post.videoUrl) { showFullscreenVideo = false }
+    }
 
     // Register simple visual view count increment on render
     LaunchedEffect(post.id) {
@@ -1758,48 +1794,44 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel) {
                 Spacer(modifier = Modifier.height(10.dp))
             }
 
-            // Post Content Video
+            // Post videos autoplay silently in-feed; tapping opens immersive portrait playback.
             if (post.videoUrl.isNotBlank()) {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(220.dp)
+                        .height(240.dp)
                         .clip(RoundedCornerShape(24.dp))
-                        .border(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f), RoundedCornerShape(24.dp))
-                        .background(Color.Black),
+                        .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(24.dp))
+                        .background(Color.Black)
+                        .clickable { showFullscreenVideo = true },
                     contentAlignment = Alignment.Center
                 ) {
-                    var isPlaying by remember { mutableStateOf(false) }
                     AndroidView(
-                        factory = { ctx ->
-                            VideoView(ctx).apply {
+                        factory = { context ->
+                            VideoView(context).apply {
                                 setVideoPath(post.videoUrl)
-                                setOnPreparedListener { mediaPlayer ->
-                                    mediaPlayer.isLooping = true
+                                setOnPreparedListener { player ->
+                                    player.isLooping = true
+                                    player.setVolume(0f, 0f)
+                                    start()
                                 }
                             }
                         },
-                        modifier = Modifier.fillMaxSize(),
-                        update = { videoView ->
-                            if (isPlaying) {
-                                videoView.start()
-                            } else {
-                                videoView.pause()
-                            }
-                        }
+                        update = { video -> if (!video.isPlaying) video.start() },
+                        modifier = Modifier.fillMaxSize()
                     )
-
-                    IconButton(
-                        onClick = { isPlaying = !isPlaying },
+                    Box(Modifier.fillMaxSize().clickable { showFullscreenVideo = true })
+                    Row(
                         modifier = Modifier
-                            .background(Color.Black.copy(alpha = 0.5f), CircleShape)
-                            .size(48.dp)
+                            .align(Alignment.BottomEnd)
+                            .padding(12.dp)
+                            .background(Color.Black.copy(alpha = .55f), CircleShape)
+                            .padding(horizontal = 10.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(
-                            imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                            contentDescription = if (isPlaying) "Pause" else "Play",
-                            tint = Color.White
-                        )
+                        Icon(Icons.Default.VolumeOff, null, tint = Color.White, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Icon(Icons.Default.Fullscreen, "Open full screen", tint = Color.White, modifier = Modifier.size(20.dp))
                     }
                 }
                 Spacer(modifier = Modifier.height(10.dp))
