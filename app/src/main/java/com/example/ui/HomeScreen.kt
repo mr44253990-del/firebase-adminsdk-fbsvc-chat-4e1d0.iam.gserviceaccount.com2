@@ -3,6 +3,8 @@ package com.example.ui
 import android.Manifest
 import android.app.DatePickerDialog
 import android.content.Context
+import android.content.ClipboardManager
+import android.content.ClipData
 import android.content.pm.PackageManager
 import android.media.MediaPlayer
 import android.net.Uri
@@ -16,6 +18,11 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupProperties
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -80,6 +87,7 @@ fun HomeScreen(
     val webhookUrl by viewModel.webhookUrl.collectAsState()
     val inAppNotification by viewModel.inAppNotification.collectAsState()
     val currentTheme by viewModel.themeState.collectAsState()
+    val allUsers by viewModel.usersState.collectAsState()
 
     var searchQuery by remember { mutableStateOf("") }
     val currentTab by viewModel.currentTabState.collectAsState()
@@ -1305,16 +1313,94 @@ fun HomeScreen(
                     Divider(color = MaterialTheme.colorScheme.surfaceVariant)
 
                     // Comments block
-                    Text("Comments:", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleSmall)
+                    val isDark = isSystemInDarkTheme()
+                    val currentUserId = FirebaseAuth.getInstance().currentUser?.uid ?: ""
+                    val currentUserProfile = allUsers.find { it.uid == currentUserId }
+                    val currentUserPic = currentUserProfile?.profileImageUrl ?: ""
+
+                    Text("Comments:", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurface)
+                    
                     activeStory.comments.forEach { c ->
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f), RoundedCornerShape(8.dp))
-                                .padding(8.dp)
+                        val commenter = allUsers.find { it.uid == c.senderId }
+                        val avatarUrl = commenter?.profileImageUrl ?: ""
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.Top
                         ) {
-                            Text(c.senderName, fontWeight = FontWeight.Bold, fontSize = 11.sp)
-                            Text(c.text, fontSize = 13.sp)
+                            AsyncImage(
+                                model = avatarUrl.ifBlank { null },
+                                contentDescription = c.senderName,
+                                error = painterResource(id = R.drawable.img_app_logo),
+                                modifier = Modifier
+                                    .size(32.dp)
+                                    .clip(CircleShape)
+                                    .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.15f), CircleShape)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Column {
+                                // Rounded bubble container
+                                Box(
+                                    modifier = Modifier
+                                        .glassmorphic(
+                                            isDark = isDark,
+                                            backgroundColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                                            borderColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.04f),
+                                            shape = RoundedCornerShape(16.dp)
+                                        )
+                                        .padding(horizontal = 12.dp, vertical = 8.dp)
+                                ) {
+                                    Column {
+                                        Text(
+                                            text = c.senderName,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 11.sp,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                        Spacer(modifier = Modifier.height(2.dp))
+                                        Text(
+                                            text = c.text,
+                                            fontSize = 13.sp,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                    }
+                                }
+                                
+                                // Comment action buttons and time below the bubble
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(start = 6.dp, top = 2.dp)
+                                ) {
+                                    val cTime = try {
+                                        SimpleDateFormat("hh:mm a", Locale.getDefault()).apply {
+                                            timeZone = TimeZone.getTimeZone("Asia/Dhaka")
+                                        }.format(Date(c.timestamp))
+                                    } catch (e: Exception) {
+                                        ""
+                                    }
+                                    Text(
+                                        text = cTime,
+                                        fontSize = 10.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                                    )
+                                    Spacer(modifier = Modifier.width(12.dp))
+                                    Text(
+                                        text = "Like",
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                                        modifier = Modifier.clickable { }
+                                    )
+                                    Spacer(modifier = Modifier.width(12.dp))
+                                    Text(
+                                        text = "Reply",
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                                        modifier = Modifier.clickable { }
+                                    )
+                                }
+                            }
                         }
                     }
 
@@ -1322,12 +1408,31 @@ fun HomeScreen(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.fillMaxWidth()
                     ) {
+                        AsyncImage(
+                            model = currentUserPic.ifBlank { null },
+                            contentDescription = "Me",
+                            error = painterResource(id = R.drawable.img_app_logo),
+                            modifier = Modifier
+                                .size(32.dp)
+                                .clip(CircleShape)
+                                .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.15f), CircleShape)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
                         OutlinedTextField(
                             value = commentText,
                             onValueChange = { commentText = it },
-                            placeholder = { Text("Write comment...", fontSize = 12.sp) },
+                            placeholder = { Text("Write comment...", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)) },
                             modifier = Modifier.weight(1f),
-                            shape = RoundedCornerShape(12.dp)
+                            shape = RoundedCornerShape(24.dp),
+                            maxLines = 3,
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                                unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+                                focusedBorderColor = MaterialTheme.colorScheme.primary,
+                                unfocusedBorderColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f),
+                                focusedContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.5f),
+                                unfocusedContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.3f)
+                            )
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         IconButton(
@@ -1339,12 +1444,11 @@ fun HomeScreen(
                                 }
                             }
                         ) {
-                            Icon(Icons.Default.Send, contentDescription = "Post Comment")
+                            Icon(Icons.Default.Send, contentDescription = "Post Comment", tint = MaterialTheme.colorScheme.primary)
                         }
                     }
 
                     // Allowed deletion if owned by current user
-                    val currentUserId = FirebaseAuth.getInstance().currentUser?.uid ?: ""
                     if (activeStory.senderId == currentUserId) {
                         Button(
                             onClick = {
@@ -1545,18 +1649,27 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel) {
     var isCommentsExpanded by remember { mutableStateOf(false) }
     var commentInputText by remember { mutableStateOf("") }
     val currentUserId = FirebaseAuth.getInstance().currentUser?.uid ?: ""
+    val isDark = isSystemInDarkTheme()
 
     // Register simple visual view count increment on render
     LaunchedEffect(post.id) {
         viewModel.incrementPostViews(post.id)
     }
 
-    Card(
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
-        modifier = Modifier.fillMaxWidth()
+    // Get commenters' profiles
+    val allUsers by viewModel.usersState.collectAsState()
+    val currentUserProfile = allUsers.find { it.uid == currentUserId }
+    val currentUserPic = currentUserProfile?.profileImageUrl ?: ""
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .glassmorphic(
+                isDark = isDark,
+                shape = RoundedCornerShape(24.dp)
+            )
     ) {
-        Column(modifier = Modifier.padding(14.dp)) {
+        Column(modifier = Modifier.padding(16.dp)) {
             // Sender top row
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -1571,15 +1684,37 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel) {
                         modifier = Modifier
                             .size(40.dp)
                             .clip(CircleShape)
+                            .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.3f), CircleShape)
                     )
                     Spacer(modifier = Modifier.width(10.dp))
                     Column {
-                        Text(post.senderName, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                         Text(
-                            text = if (post.isPrivate) "🔒 Private" else "🌐 Public",
-                            fontSize = 11.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            post.senderName, 
+                            fontWeight = FontWeight.Bold, 
+                            fontSize = 14.sp,
+                            color = MaterialTheme.colorScheme.onSurface
                         )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = if (post.isPrivate) "🔒 Private" else "🌐 Public",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "•",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = SimpleDateFormat("hh:mm a", Locale.getDefault()).apply {
+                                    timeZone = TimeZone.getTimeZone("Asia/Dhaka")
+                                }.format(Date(post.timestamp)),
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                            )
+                        }
                     }
                 }
 
@@ -1591,12 +1726,17 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel) {
                 }
             }
 
-            Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
             // Post Content Text
             if (post.text.isNotBlank()) {
-                Text(text = post.text, style = MaterialTheme.typography.bodyMedium)
-                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = post.text, 
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    lineHeight = 20.sp
+                )
+                Spacer(modifier = Modifier.height(10.dp))
             }
 
             // Post Content Image
@@ -1607,10 +1747,11 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel) {
                     contentScale = ContentScale.Crop,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(200.dp)
-                        .clip(RoundedCornerShape(12.dp))
+                        .height(220.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .border(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f), RoundedCornerShape(16.dp))
                 )
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(10.dp))
             }
 
             // Post Content Video
@@ -1618,8 +1759,9 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel) {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(200.dp)
-                        .clip(RoundedCornerShape(12.dp))
+                        .height(220.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .border(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f), RoundedCornerShape(16.dp))
                         .background(Color.Black),
                     contentAlignment = Alignment.Center
                 ) {
@@ -1656,106 +1798,343 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel) {
                         )
                     }
                 }
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(10.dp))
             }
 
-            // Views & Privacy info block
-            Row(
-                horizontalArrangement = Arrangement.SpaceBetween,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text(
-                    text = "👁️ ${post.viewsCount} Views",
-                    fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.primary,
-                    fontWeight = FontWeight.Bold
-                )
-                Text(
-                    text = SimpleDateFormat("hh:mm a", Locale.getDefault()).apply {
-                        timeZone = TimeZone.getTimeZone("Asia/Dhaka")
-                    }.format(Date(post.timestamp)),
-                    fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
+            // 1. Reactions & Comments Summary Row (Facebook style)
+            val reactionCount = post.reactions.size
+            val uniqueReactions = post.reactions.values.distinct().take(3)
 
-            Divider(modifier = Modifier.padding(vertical = 10.dp), color = MaterialTheme.colorScheme.surfaceVariant)
-
-            // Reactions selector Row
             Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth()
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                val emojiList = listOf("👍", "❤️", "😂", "😮", "😢", "😡")
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    emojiList.forEach { emoji ->
-                        val hasReacted = post.reactions[currentUserId] == emoji
-                        val scale = animateFloatAsState(
-                            targetValue = if (hasReacted) 1.3f else 1.0f,
-                            animationSpec = spring(
-                                dampingRatio = Spring.DampingRatioHighBouncy,
-                                stiffness = Spring.StiffnessMedium
-                            )
+                // Left side: Overlapping emojis & count
+                if (reactionCount > 0) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy((-4).dp)
+                    ) {
+                        uniqueReactions.forEach { emoji ->
+                            Text(text = emoji, fontSize = 14.sp)
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = if (reactionCount == 1) "1 person" else "$reactionCount people",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.primary
                         )
-                        Box(
-                            modifier = Modifier
-                                .graphicsLayer(
-                                    scaleX = scale.value,
-                                    scaleY = scale.value
+                    }
+                } else {
+                    Text(
+                        text = "Be the first to react",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                    )
+                }
+
+                // Right side: Comment & Views count
+                Text(
+                    text = "${post.comments.size} comments • ${post.viewsCount} views",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                )
+            }
+
+            Divider(
+                modifier = Modifier.padding(vertical = 8.dp), 
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)
+            )
+
+            // 2. Interactive Action Buttons (Like / Comment / Share)
+            var showReactionPicker by remember { mutableStateOf(false) }
+            val myReaction = post.reactions[currentUserId]
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Like / React Button
+                Box {
+                    val scaleBtn = animateFloatAsState(targetValue = if (myReaction != null) 1.15f else 1.0f)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .graphicsLayer(scaleX = scaleBtn.value, scaleY = scaleBtn.value)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(
+                                if (myReaction != null) MaterialTheme.colorScheme.primary.copy(alpha = 0.08f)
+                                else Color.Transparent
+                            )
+                            .pointerInput(Unit) {
+                                detectTapGestures(
+                                    onTap = {
+                                        if (myReaction != null) {
+                                            viewModel.reactToPost(post.id, myReaction)
+                                        } else {
+                                            viewModel.reactToPost(post.id, "👍")
+                                        }
+                                    },
+                                    onLongPress = {
+                                        showReactionPicker = true
+                                    }
                                 )
-                                .background(if (hasReacted) MaterialTheme.colorScheme.primaryContainer else Color.Transparent, CircleShape)
-                                .clickable { viewModel.reactToPost(post.id, emoji) }
-                                .padding(6.dp)
+                            }
+                            .padding(horizontal = 12.dp, vertical = 8.dp)
+                    ) {
+                        if (myReaction != null) {
+                            Text(text = myReaction, fontSize = 16.sp)
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = when (myReaction) {
+                                    "👍" -> "Like"
+                                    "❤️" -> "Love"
+                                    "😂" -> "Haha"
+                                    "😮" -> "Wow"
+                                    "😢" -> "Sad"
+                                    "😡" -> "Angry"
+                                    else -> "Reacted"
+                                },
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 12.sp
+                            )
+                        } else {
+                            Icon(
+                                imageVector = Icons.Outlined.ThumbUp,
+                                contentDescription = "Like",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "Like",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontSize = 12.sp
+                            )
+                        }
+                    }
+
+                    // Floating Reaction Picker Card (Glassmorphic Popup)
+                    if (showReactionPicker) {
+                        Popup(
+                            alignment = Alignment.TopCenter,
+                            onDismissRequest = { showReactionPicker = false },
+                            properties = PopupProperties(focusable = true)
                         ) {
-                            Text(emoji, fontSize = 16.sp)
+                            Box(
+                                modifier = Modifier
+                                    .padding(bottom = 12.dp)
+                                    .glassmorphic(isDark = isDark, shape = RoundedCornerShape(32.dp))
+                                    .padding(horizontal = 12.dp, vertical = 6.dp)
+                            ) {
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    val emojis = listOf("👍", "❤️", "😂", "😮", "😢", "😡")
+                                    emojis.forEach { emoji ->
+                                        Text(
+                                            text = emoji,
+                                            fontSize = 24.sp,
+                                            modifier = Modifier
+                                                .clickable {
+                                                    viewModel.reactToPost(post.id, emoji)
+                                                    showReactionPicker = false
+                                                }
+                                                .padding(2.dp)
+                                        )
+                                    }
+                                }
+                            }
                         }
                     }
                 }
 
-                // Comments expander text indicator
-                Text(
-                    text = "${post.comments.size} Comments",
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.clickable { isCommentsExpanded = !isCommentsExpanded }
-                )
+                // Comment Trigger Button
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(12.dp))
+                        .clickable { isCommentsExpanded = !isCommentsExpanded }
+                        .padding(horizontal = 12.dp, vertical = 8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.ChatBubbleOutline,
+                        contentDescription = "Comment",
+                        tint = if (isCommentsExpanded) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "Comment",
+                        color = if (isCommentsExpanded) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 12.sp,
+                        fontWeight = if (isCommentsExpanded) FontWeight.Bold else FontWeight.Normal
+                    )
+                }
+
+                // Share link Button
+                val context = LocalContext.current
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(12.dp))
+                        .clickable {
+                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                            val clip = ClipData.newPlainText("Post Link", "https://ais-pre-rmbon56osx2tjzuwdbosiw-734111311118.asia-southeast1.run.app/post/${post.id}")
+                            clipboard.setPrimaryClip(clip)
+                            Toast.makeText(context, "Post link copied to clipboard!", Toast.LENGTH_SHORT).show()
+                        }
+                        .padding(horizontal = 12.dp, vertical = 8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.Share,
+                        contentDescription = "Share",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "Share",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 12.sp
+                    )
+                }
             }
 
-            // Expanded comments block
+            // Expanded comments block (Facebook dense bubble style)
             AnimatedVisibility(visible = isCommentsExpanded) {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(top = 10.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                        .padding(top = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Divider(color = MaterialTheme.colorScheme.surfaceVariant)
-                    
+                    Divider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+
+                    // Facebook dense style comment items
                     post.comments.forEach { c ->
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
-                                .padding(8.dp)
+                        val commenter = allUsers.find { it.uid == c.senderId }
+                        val avatarUrl = commenter?.profileImageUrl ?: ""
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.Top
                         ) {
-                            Text(c.senderName, fontWeight = FontWeight.Bold, fontSize = 11.sp)
-                            Text(c.text, fontSize = 13.sp)
+                            AsyncImage(
+                                model = avatarUrl.ifBlank { null },
+                                contentDescription = c.senderName,
+                                error = painterResource(id = R.drawable.img_app_logo),
+                                modifier = Modifier
+                                    .size(32.dp)
+                                    .clip(CircleShape)
+                                    .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.15f), CircleShape)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Column {
+                                // Rounded bubble container
+                                Box(
+                                    modifier = Modifier
+                                        .glassmorphic(
+                                            isDark = isDark,
+                                            backgroundColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                                            borderColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.04f),
+                                            shape = RoundedCornerShape(16.dp)
+                                        )
+                                        .padding(horizontal = 12.dp, vertical = 8.dp)
+                                ) {
+                                    Column {
+                                        Text(
+                                            text = c.senderName,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 11.sp,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                        Spacer(modifier = Modifier.height(2.dp))
+                                        Text(
+                                            text = c.text,
+                                            fontSize = 13.sp,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                    }
+                                }
+                                
+                                // Comment action buttons and time below the bubble
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(start = 6.dp, top = 2.dp)
+                                ) {
+                                    val cTime = try {
+                                        SimpleDateFormat("hh:mm a", Locale.getDefault()).apply {
+                                            timeZone = TimeZone.getTimeZone("Asia/Dhaka")
+                                        }.format(Date(c.timestamp))
+                                    } catch (e: Exception) {
+                                        ""
+                                    }
+                                    Text(
+                                        text = cTime,
+                                        fontSize = 10.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                                    )
+                                    Spacer(modifier = Modifier.width(12.dp))
+                                    Text(
+                                        text = "Like",
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                                        modifier = Modifier.clickable { }
+                                    )
+                                    Spacer(modifier = Modifier.width(12.dp))
+                                    Text(
+                                        text = "Reply",
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                                        modifier = Modifier.clickable { }
+                                    )
+                                }
+                            }
                         }
                     }
 
-                    // Add comment text row
+                    // Add comment text row (Facebook-like style)
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 4.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
+                        AsyncImage(
+                            model = currentUserPic.ifBlank { null },
+                            contentDescription = "Me",
+                            error = painterResource(id = R.drawable.img_app_logo),
+                            modifier = Modifier
+                                .size(32.dp)
+                                .clip(CircleShape)
+                                .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.15f), CircleShape)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
                         OutlinedTextField(
                             value = commentInputText,
                             onValueChange = { commentInputText = it },
-                            placeholder = { Text("Write comment...", fontSize = 12.sp) },
+                            placeholder = { Text("Write comment...", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)) },
                             modifier = Modifier.weight(1f),
-                            shape = RoundedCornerShape(12.dp)
+                            shape = RoundedCornerShape(24.dp),
+                            maxLines = 3,
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                                unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+                                focusedBorderColor = MaterialTheme.colorScheme.primary,
+                                unfocusedBorderColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f),
+                                focusedContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.5f),
+                                unfocusedContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.3f)
+                            )
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         IconButton(
@@ -1766,7 +2145,11 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel) {
                                 }
                             }
                         ) {
-                            Icon(Icons.Default.Send, contentDescription = "Send Comment")
+                            Icon(
+                                imageVector = Icons.Default.Send, 
+                                contentDescription = "Send Comment",
+                                tint = MaterialTheme.colorScheme.primary
+                            )
                         }
                     }
                 }

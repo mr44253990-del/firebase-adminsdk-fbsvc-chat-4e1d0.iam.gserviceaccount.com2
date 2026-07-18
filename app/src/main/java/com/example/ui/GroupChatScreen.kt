@@ -12,11 +12,13 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import com.example.ui.theme.glassmorphic
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -229,8 +231,11 @@ fun GroupChatScreen(
         }
     }
 
+    val isDark = isSystemInDarkTheme()
+    val bgStart = MaterialTheme.colorScheme.background
+    val bgEnd = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
     val chatGradientBg = Brush.verticalGradient(
-        colors = listOf(Color(0xFF261C18), Color(0xFF382A24))
+        colors = listOf(bgStart, bgEnd)
     )
 
     Scaffold(
@@ -247,17 +252,17 @@ fun GroupChatScreen(
                                 modifier = Modifier
                                     .size(40.dp)
                                     .clip(CircleShape)
-                                    .border(1.5.dp, Color(0xFFDFBBA3), CircleShape)
+                                    .border(1.5.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f), CircleShape)
                             )
                         } else {
                             Box(
                                 modifier = Modifier
                                     .size(40.dp)
                                     .clip(CircleShape)
-                                    .background(Color(0xFF4E3B33)),
+                                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Icon(Icons.Default.Group, contentDescription = null, tint = Color(0xFFDFBBA3))
+                                Icon(Icons.Default.Group, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                             }
                         }
 
@@ -267,24 +272,25 @@ fun GroupChatScreen(
                             Text(
                                 text = group.name,
                                 style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                                color = Color.White
+                                color = MaterialTheme.colorScheme.onSurface
                             )
                             Text(
                                 text = "${group.members.size} Members",
                                 style = MaterialTheme.typography.bodySmall,
-                                color = Color(0xFFBCAAA4)
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
                             )
                         }
                     }
                 },
                 navigationIcon = {
                     IconButton(onClick = onBack, modifier = Modifier.testTag("group_chat_back_button")) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color(0xFFDFBBA3))
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = MaterialTheme.colorScheme.primary)
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color(0xFF382A24)
-                )
+                    containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f)
+                ),
+                modifier = Modifier.border(0.dp, Color.Transparent) // clean glass look
             )
         },
         modifier = Modifier.fillMaxSize()
@@ -304,17 +310,22 @@ fun GroupChatScreen(
                     contentAlignment = Alignment.Center
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(Icons.Default.Group, contentDescription = null, tint = Color(0xFFDFBBA3).copy(alpha = 0.4f), modifier = Modifier.size(64.dp))
+                        Icon(
+                            Icons.Default.Group,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.4f),
+                            modifier = Modifier.size(64.dp)
+                        )
                         Spacer(modifier = Modifier.height(10.dp))
                         Text(
                             text = "Welcome to ${group.name}",
                             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                            color = Color.White
+                            color = MaterialTheme.colorScheme.onSurface
                         )
                         Text(
-                            text = "Send a message or a voice note to get started! (No Webhooks triggered)",
+                            text = "Send a message or a voice note to get started!",
                             style = MaterialTheme.typography.bodySmall,
-                            color = Color(0xFFBCAAA4),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                             textAlign = TextAlign.Center,
                             modifier = Modifier.padding(horizontal = 24.dp, vertical = 4.dp)
                         )
@@ -341,12 +352,12 @@ fun GroupChatScreen(
                                 contentAlignment = Alignment.Center
                             ) {
                                 Surface(
-                                    color = Color.White.copy(alpha = 0.08f),
+                                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.08f),
                                     shape = RoundedCornerShape(12.dp)
                                 ) {
                                     Text(
                                         text = msg.text,
-                                        color = Color(0xFFDFBBA3),
+                                        color = MaterialTheme.colorScheme.primary,
                                         fontSize = 12.sp,
                                         fontWeight = FontWeight.Medium,
                                         modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
@@ -370,26 +381,32 @@ fun GroupChatScreen(
 
             // Input fields bar
             Surface(
-                color = Color(0xFF382A24),
+                color = Color.Transparent,
                 tonalElevation = 8.dp,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp))
-                    .border(1.dp, Color(0xFF4E3B33), RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp))
+                    .glassmorphic(
+                        isDark = isDark,
+                        shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
+                    )
             ) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                        .padding(horizontal = 14.dp, vertical = 12.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     IconButton(
                         onClick = { photoPickerLauncher.launch("image/*") },
                         modifier = Modifier
                             .size(42.dp)
-                            .background(Color(0xFF4E3B33), CircleShape)
+                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f), CircleShape)
                     ) {
-                        Icon(Icons.Default.AddPhotoAlternate, contentDescription = "Attach image", tint = Color(0xFFDFBBA3))
+                        Icon(
+                            Icons.Default.AddPhotoAlternate,
+                            contentDescription = "Attach image",
+                            tint = MaterialTheme.colorScheme.primary
+                        )
                     }
 
                     Spacer(modifier = Modifier.width(8.dp))
@@ -397,19 +414,19 @@ fun GroupChatScreen(
                     OutlinedTextField(
                         value = messageText,
                         onValueChange = { messageText = it },
-                        placeholder = { Text("Write a message to group...", color = Color(0xFFBCAAA4)) },
+                        placeholder = { Text("Write a message to group...", color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)) },
                         modifier = Modifier
                             .weight(1f)
                             .testTag("group_message_input"),
                         shape = RoundedCornerShape(20.dp),
                         maxLines = 4,
                         colors = OutlinedTextFieldDefaults.colors(
-                            focusedTextColor = Color.White,
-                            unfocusedTextColor = Color.White,
-                            focusedBorderColor = Color(0xFFDFBBA3),
-                            unfocusedBorderColor = Color(0xFF4E3B33),
-                            focusedContainerColor = Color(0xFF261C18),
-                            unfocusedContainerColor = Color(0xFF261C18)
+                            focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                            unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+                            focusedBorderColor = MaterialTheme.colorScheme.primary,
+                            unfocusedBorderColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f),
+                            focusedContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.5f),
+                            unfocusedContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.3f)
                         )
                     )
 
@@ -421,12 +438,12 @@ fun GroupChatScreen(
                             onClick = { if (isRecording) stopAndSendVoice() else startRecording() },
                             modifier = Modifier
                                 .size(44.dp)
-                                .background(if (isRecording) Color(0xFFEF5350) else Color(0xFFDFBBA3), CircleShape)
+                                .background(if (isRecording) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary, CircleShape)
                         ) {
                             Icon(
                                 imageVector = if (isRecording) Icons.Default.Stop else Icons.Default.Mic,
                                 contentDescription = "Record Audio",
-                                tint = if (isRecording) Color.White else Color(0xFF261C18)
+                                tint = if (isRecording) Color.White else MaterialTheme.colorScheme.onPrimary
                             )
                         }
                     } else {
@@ -440,9 +457,9 @@ fun GroupChatScreen(
                             },
                             modifier = Modifier
                                 .size(44.dp)
-                                .background(Color(0xFFDFBBA3), CircleShape)
+                                .background(MaterialTheme.colorScheme.primary, CircleShape)
                         ) {
-                            Icon(Icons.Default.Send, contentDescription = "Send", tint = Color(0xFF261C18))
+                            Icon(Icons.Default.Send, contentDescription = "Send", tint = MaterialTheme.colorScheme.onPrimary)
                         }
                     }
                 }
@@ -454,9 +471,23 @@ fun GroupChatScreen(
 @Composable
 fun GroupMessageBubbleItem(msg: GroupMessage, isSentByMe: Boolean, onDeleteSelect: () -> Unit) {
     var showMenu by remember { mutableStateOf(false) }
-    val bubbleColor = if (isSentByMe) Color(0xFF4E3B33) else Color(0xFF382A24)
+    val isDark = isSystemInDarkTheme()
+    
+    val bubbleBg = if (isSentByMe) {
+        MaterialTheme.colorScheme.primary.copy(alpha = if (isDark) 0.3f else 0.85f)
+    } else {
+        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = if (isDark) 0.45f else 0.9f)
+    }
+    
+    val bubbleBorder = if (isSentByMe) {
+        MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)
+    } else {
+        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)
+    }
+
     val alignment = if (isSentByMe) Alignment.CenterEnd else Alignment.CenterStart
-    val textColor = Color.White
+    val textColor = if (isSentByMe && !isDark) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
+    
     val timeString = try {
         val sdf = SimpleDateFormat("hh:mm a", Locale.getDefault()).apply {
             timeZone = TimeZone.getTimeZone("Asia/Dhaka")
@@ -480,21 +511,32 @@ fun GroupMessageBubbleItem(msg: GroupMessage, isSentByMe: Boolean, onDeleteSelec
                     text = msg.senderName,
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Bold,
-                    color = Color(0xFFDFBBA3),
+                    color = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.padding(start = 6.dp, bottom = 2.dp)
                 )
             }
 
             Surface(
-                color = bubbleColor,
+                color = Color.Transparent,
                 shape = RoundedCornerShape(
                     topStart = 16.dp,
                     topEnd = 16.dp,
                     bottomStart = if (isSentByMe) 16.dp else 2.dp,
                     bottomEnd = if (isSentByMe) 2.dp else 16.dp
                 ),
-                border = BorderStroke(1.dp, Color(0xFF4E3B33)),
-                modifier = Modifier.clickable { if (isSentByMe) showMenu = true }
+                modifier = Modifier
+                    .glassmorphic(
+                        isDark = isDark,
+                        backgroundColor = bubbleBg,
+                        borderColor = bubbleBorder,
+                        shape = RoundedCornerShape(
+                            topStart = 16.dp,
+                            topEnd = 16.dp,
+                            bottomStart = if (isSentByMe) 16.dp else 2.dp,
+                            bottomEnd = if (isSentByMe) 2.dp else 16.dp
+                        )
+                    )
+                    .clickable { if (isSentByMe) showMenu = true }
             ) {
                 Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
                     if (!msg.imageUrl.isNullOrBlank()) {
@@ -531,7 +573,7 @@ fun GroupMessageBubbleItem(msg: GroupMessage, isSentByMe: Boolean, onDeleteSelec
                         Text(
                             text = timeString,
                             fontSize = 9.sp,
-                            color = Color(0xFFBCAAA4).copy(alpha = 0.8f)
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
                         )
                     }
                 }
@@ -541,11 +583,11 @@ fun GroupMessageBubbleItem(msg: GroupMessage, isSentByMe: Boolean, onDeleteSelec
             DropdownMenu(
                 expanded = showMenu,
                 onDismissRequest = { showMenu = false },
-                modifier = Modifier.background(Color(0xFF4E3B33))
+                modifier = Modifier.background(MaterialTheme.colorScheme.surface)
             ) {
                 DropdownMenuItem(
-                    text = { Text("Delete Message", color = Color.Red) },
-                    leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null, tint = Color.Red) },
+                    text = { Text("Delete Message", color = MaterialTheme.colorScheme.error) },
+                    leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
                     onClick = {
                         onDeleteSelect()
                         showMenu = false
@@ -571,7 +613,7 @@ fun GroupAudioPlayerItem(voiceUrl: String, durationSec: Int) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
-            .background(Color.Black.copy(alpha = 0.2f), RoundedCornerShape(10.dp))
+            .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f), RoundedCornerShape(10.dp))
             .padding(horizontal = 10.dp, vertical = 6.dp)
     ) {
         IconButton(
@@ -605,7 +647,7 @@ fun GroupAudioPlayerItem(voiceUrl: String, durationSec: Int) {
             Icon(
                 imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
                 contentDescription = if (isPlaying) "Pause" else "Play",
-                tint = Color(0xFFDFBBA3)
+                tint = MaterialTheme.colorScheme.primary
             )
         }
 
@@ -616,12 +658,12 @@ fun GroupAudioPlayerItem(voiceUrl: String, durationSec: Int) {
                 text = "🎙️ Voice Note",
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Bold,
-                color = Color.White
+                color = MaterialTheme.colorScheme.onSurface
             )
             Text(
                 text = "${durationSec}s",
                 fontSize = 10.sp,
-                color = Color(0xFFBCAAA4)
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
             )
         }
     }
