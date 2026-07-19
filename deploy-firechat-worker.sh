@@ -55,6 +55,12 @@ if [[ -n "${TURN_TOKEN_ID:-}" && -n "${TURN_API_TOKEN:-}" ]]; then
 else
   echo "TURN secrets not set; audio calling health will report turnConfigured=false" >&2
 fi
+if [[ -n "${CALLS_APP_ID:-}" && -n "${CALLS_APP_TOKEN:-}" ]]; then
+  put_secret CALLS_APP_ID "$CALLS_APP_ID"
+  put_secret CALLS_APP_TOKEN "$CALLS_APP_TOKEN"
+else
+  echo "SFU secrets not set; group calling health will report sfuConfigured=false" >&2
+fi
 
 echo "Testing ${WORKER_URL}..."
 curl -fsS "${WORKER_URL}" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps(d,indent=2)); assert d.get("ok") is True, "Worker health check failed"'

@@ -64,7 +64,11 @@ Create fresh Cloudflare secrets (rotate every value ever pasted into chat):
 ```text
 TURN_TOKEN_ID=<fresh TURN key ID>
 TURN_API_TOKEN=<fresh TURN API token>
+CALLS_APP_ID=<fresh Cloudflare Realtime SFU app ID>
+CALLS_APP_TOKEN=<fresh Cloudflare Realtime SFU API token>
 ```
+
+Worker `4.1.0` exposes authenticated SFU proxy routes for session creation, local/remote tracks, renegotiation, and track closing. The health endpoint reports `sfuConfigured`; no long-lived Calls/TURN token is embedded in Android. Incoming-call sound uses an explicit single ringtone controller and the silent `firechat_calls_v3` channel, preventing both lock-screen silence and ringtone continuing after Accept/Decline.
 
 Deploy with:
 

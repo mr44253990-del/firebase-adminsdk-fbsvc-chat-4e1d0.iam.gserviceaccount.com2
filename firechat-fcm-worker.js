@@ -34,10 +34,11 @@ export default {
       return new Response(JSON.stringify({
         ok: serviceAccountConfigured,
         service: "FireChat Direct FCM Gateway",
-        version: "4.0.0",
+        version: "4.1.0",
         projectId,
         serviceAccountConfigured,
         turnConfigured: Boolean(env.TURN_TOKEN_ID && env.TURN_API_TOKEN),
+        sfuConfigured: Boolean(env.CALLS_APP_ID && env.CALLS_APP_TOKEN),
         authenticatedCallsRequired: true,
         timestamp: Date.now()
       }), {
@@ -106,6 +107,39 @@ export default {
         const turnResult = await turnResponse.json();
         return new Response(JSON.stringify(turnResult), {
           status: turnResponse.status,
+          headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*", "Cache-Control": "no-store" }
+        });
+      }
+
+      if (path.startsWith("/sfu/")) {
+        if (!env.CALLS_APP_ID || !env.CALLS_APP_TOKEN) {
+          return new Response(JSON.stringify({ error: "CALLS_APP_ID or CALLS_APP_TOKEN secret is missing" }), {
+            status: 503,
+            headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
+          });
+        }
+        const relative = path.slice(4); // remove /sfu
+        const allowed = [
+          { pattern: /^\/sessions\/new$/, method: "POST" },
+          { pattern: /^\/sessions\/[^/]+\/tracks\/new$/, method: "POST" },
+          { pattern: /^\/sessions\/[^/]+\/renegotiate$/, method: "PUT" },
+          { pattern: /^\/sessions\/[^/]+\/tracks\/close$/, method: "PUT" }
+        ];
+        const route = allowed.find(item => item.pattern.test(relative));
+        if (!route) {
+          return new Response(JSON.stringify({ error: "Unsupported SFU operation" }), {
+            status: 404,
+            headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
+          });
+        }
+        const upstream = await fetch(`https://rtc.live.cloudflare.com/v1/apps/${env.CALLS_APP_ID}${relative}`, {
+          method: route.method,
+          headers: { "Authorization": `Bearer ${env.CALLS_APP_TOKEN}`, "Content-Type": "application/json" },
+          body: JSON.stringify(payload.sfu || {})
+        });
+        const result = await upstream.text();
+        return new Response(result, {
+          status: upstream.status,
           headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*", "Cache-Control": "no-store" }
         });
       }

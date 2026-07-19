@@ -2,7 +2,6 @@ package com.example.call
 
 import android.Manifest
 import android.app.Activity
-import android.app.NotificationManager
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
@@ -40,6 +39,7 @@ import androidx.core.content.ContextCompat
 import coil.compose.AsyncImage
 import com.example.R
 import com.example.ui.theme.MyApplicationTheme
+import com.example.service.CallRingtoneController
 import org.webrtc.SurfaceViewRenderer
 
 class IncomingCallActivity : ComponentActivity() {
@@ -52,7 +52,6 @@ class IncomingCallActivity : ComponentActivity() {
             window.addFlags(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON)
         }
         val callId = intent.getStringExtra("callId").orEmpty()
-        (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).cancel(callId.hashCode())
         val callerId = intent.getStringExtra("callerId").orEmpty()
         val callerName = intent.getStringExtra("callerName") ?: "FireChat user"
         val callerImage = intent.getStringExtra("callerImage").orEmpty()
@@ -60,8 +59,14 @@ class IncomingCallActivity : ComponentActivity() {
         val canRecord = ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
         val canUseMedia = canRecord && (!videoCall || ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED)
         when (intent.action) {
-            "com.ebchat.DECLINE_CALL" -> { CallEngine.decline(callId); finish(); return }
-            "com.ebchat.ACCEPT_CALL" -> if (canUseMedia) CallEngine.acceptIncoming(this, callId, callerId, callerName, callerImage, videoCall)
+            "com.ebchat.DECLINE_CALL" -> {
+                CallRingtoneController.stop(this, callId)
+                CallEngine.decline(callId); finish(); return
+            }
+            "com.ebchat.ACCEPT_CALL" -> {
+                CallRingtoneController.stop(this, callId)
+                if (canUseMedia) CallEngine.acceptIncoming(this, callId, callerId, callerName, callerImage, videoCall)
+            }
         }
         setContent {
             MyApplicationTheme {
@@ -114,6 +119,7 @@ fun CallScreen(
         val granted = results[Manifest.permission.RECORD_AUDIO] == true && (!effectiveVideo || results[Manifest.permission.CAMERA] == true)
         if (granted && pendingAccept) {
             pendingAccept = false; accepted = true
+            CallRingtoneController.stop(context, callId)
             CallEngine.acceptIncoming(context, callId, remoteUid, remoteName, remoteImage, effectiveVideo)
         } else pendingAccept = false
     }
@@ -165,11 +171,12 @@ fun CallScreen(
             Spacer(Modifier.weight(1f))
             if (!accepted && incoming) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-                    CallCircleButton(Color(0xFFE53935), Icons.Default.CallEnd, "Decline") { CallEngine.decline(callId); onClose() }
+                    CallCircleButton(Color(0xFFE53935), Icons.Default.CallEnd, "Decline") { CallRingtoneController.stop(context, callId); CallEngine.decline(callId); onClose() }
                     CallCircleButton(Color(0xFF36C76C), Icons.Default.Call, "Accept") {
                         val micGranted = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
                         val cameraGranted = !effectiveVideo || ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
                         if (micGranted && cameraGranted) {
+                            CallRingtoneController.stop(context, callId)
                             accepted = true; CallEngine.acceptIncoming(context, callId, remoteUid, remoteName, remoteImage, effectiveVideo)
                         } else {
                             pendingAccept = true

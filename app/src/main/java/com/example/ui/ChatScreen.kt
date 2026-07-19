@@ -900,7 +900,14 @@ fun MessageBubbleItem(
                 }
                 .combinedClickable(
                     onClick = { showMenu = !showMenu },
-                    onLongClick = { showMenu = true }
+                    onLongClick = { showMenu = true },
+                    onDoubleClick = {
+                        if (message.text.isNotBlank()) {
+                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                            clipboard.setPrimaryClip(ClipData.newPlainText("FireChat message", message.text))
+                            Toast.makeText(context, "Message copied", Toast.LENGTH_SHORT).show()
+                        }
+                    }
                 ),
             horizontalAlignment = if (isSentByMe) Alignment.End else Alignment.Start
         ) {

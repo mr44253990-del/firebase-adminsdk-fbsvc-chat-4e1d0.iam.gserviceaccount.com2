@@ -7,8 +7,6 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import android.media.AudioAttributes
-import android.media.RingtoneManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -73,7 +71,7 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
 
         if (notificationType == "call_cancelled") {
             if (targetId.isNotBlank()) {
-                (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).cancel(targetId.hashCode())
+                CallRingtoneController.stop(this, targetId, cancelNotification = true)
                 FirebaseDatabase.getInstance().getReference("calls").child(targetId).child("status").setValue("ended")
             }
             return
@@ -144,20 +142,15 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         val personBuilder = Person.Builder().setName(callerName).setImportant(true)
         if (avatar != null) personBuilder.setIcon(IconCompat.createWithBitmap(avatar))
         val person = personBuilder.build()
-        // New channel ID is intentional: Android channel sound settings are immutable
-        // after first creation, so v2 repairs devices that cached a silent v1 channel.
-        val channelId = "firechat_calls_v2"
-        val ringtone = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
-        val callAudio = AudioAttributes.Builder()
-            .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
-            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-            .build()
+        // v3 is intentionally silent at channel level. CallRingtoneController owns
+        // ringtone/vibration so full-screen launch cannot stop it and accept cannot double-play it.
+        val channelId = "firechat_calls_v3"
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             manager.createNotificationChannel(NotificationChannel(channelId, "FireChat Incoming Calls", NotificationManager.IMPORTANCE_HIGH).apply {
-                description = "Ringtone and vibration for incoming FireChat calls"
-                setSound(ringtone, callAudio)
-                enableVibration(true); vibrationPattern = longArrayOf(0, 700, 350, 700, 350, 700)
+                description = "Full-screen incoming FireChat calls"
+                setSound(null, null)
+                enableVibration(false)
                 lockscreenVisibility = NotificationCompat.VISIBILITY_PUBLIC
                 setShowBadge(true)
             })
@@ -168,14 +161,14 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
             .setContentText(callerName)
             .setCategory(NotificationCompat.CATEGORY_CALL)
             .setPriority(NotificationCompat.PRIORITY_MAX)
-            .setSound(ringtone)
-            .setVibrate(longArrayOf(0, 700, 350, 700, 350, 700))
+            .setSilent(true)
             .setDefaults(NotificationCompat.DEFAULT_LIGHTS)
             .setOngoing(true).setAutoCancel(false).setTimeoutAfter(30_000)
             .setStyle(NotificationCompat.CallStyle.forIncomingCall(person, decline, answer))
             .setContentIntent(fullScreen)
         if (Build.VERSION.SDK_INT < 34 || manager.canUseFullScreenIntent()) builder.setFullScreenIntent(fullScreen, true)
         manager.notify(callId.hashCode(), builder.build())
+        CallRingtoneController.start(this, callId)
     }
 
     private fun sendNotification(
