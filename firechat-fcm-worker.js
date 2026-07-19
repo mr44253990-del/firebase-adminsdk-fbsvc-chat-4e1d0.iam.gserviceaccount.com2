@@ -151,9 +151,14 @@ export default {
 
       const fcmResult = await fcmResponse.json();
 
+      const fcmError = fcmResult?.error;
       return new Response(JSON.stringify({
         success: fcmResponse.ok,
         status: fcmResponse.status,
+        messageId: fcmResponse.ok ? fcmResult?.name : null,
+        error: fcmResponse.ok ? null : (fcmError?.message || "FCM rejected the request"),
+        errorStatus: fcmError?.status || null,
+        requiredPermission: fcmResponse.status === 403 ? "cloudmessaging.messages.create" : null,
         response: fcmResult
       }), {
         status: fcmResponse.status,
