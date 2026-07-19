@@ -111,6 +111,8 @@ fun HomeScreen(
     val notificationSounds by viewModel.notificationSoundsEnabled.collectAsState()
     val typingSounds by viewModel.typingSoundsEnabled.collectAsState()
     val allUsers by viewModel.usersState.collectAsState()
+    val conversationUserIds by viewModel.conversationUserIds.collectAsState()
+    val unreadCounts by viewModel.unreadCountsState.collectAsState()
 
     var searchQuery by remember { mutableStateOf("") }
     var showAccountMenu by remember { mutableStateOf(false) }
@@ -401,7 +403,15 @@ fun HomeScreen(
                     }
                 }
                 1 -> {
-                    // CHATS TAB (Direct private chats list with bold highlights, unread badges, and last messages instead of username)
+                    val myUid = currentUser?.uid.orEmpty()
+                    val sentRequestTargets = sentFriendRequests.mapNotNull { id -> id.removePrefix("${myUid}_").takeIf { it != id } }.toSet()
+                    val chatUsers = if (searchQuery.isNotBlank()) users else users.filter { user ->
+                        currentUser?.friends?.contains(user.uid) == true ||
+                            conversationUserIds.contains(user.uid) ||
+                            unreadCounts.containsKey(user.uid) ||
+                            sentRequestTargets.contains(user.uid)
+                    }
+                    // Only friends, requests and real conversations appear until the user searches.
                     Column(
                         modifier = Modifier
                             .fillMaxSize()
@@ -433,9 +443,9 @@ fun HomeScreen(
                             modifier = Modifier.padding(bottom = 8.dp)
                         )
 
-                        if (users.isEmpty()) {
+                        if (chatUsers.isEmpty()) {
                             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                Text("No users found", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("No conversations yet — search to find people", color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         } else {
                             LazyColumn(
@@ -443,7 +453,7 @@ fun HomeScreen(
                                 verticalArrangement = Arrangement.spacedBy(10.dp),
                                 contentPadding = PaddingValues(bottom = 16.dp)
                             ) {
-                                items(users) { user ->
+                                items(chatUsers) { user ->
                                     val hasActiveStory = stories.any { it.senderId == user.uid }
                                     ChatConversationUserItem(
                                         user = user,

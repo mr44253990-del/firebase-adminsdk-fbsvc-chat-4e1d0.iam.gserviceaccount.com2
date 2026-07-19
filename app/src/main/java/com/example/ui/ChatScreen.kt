@@ -2,6 +2,8 @@ package com.example.ui
 
 import android.Manifest
 import android.app.DownloadManager
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.pm.PackageManager
 import android.media.MediaPlayer
@@ -14,9 +16,7 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
-import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -27,6 +27,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.text.ClickableText
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -34,6 +35,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Forward
 import androidx.compose.material.icons.automirrored.filled.Reply
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -48,9 +50,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -98,6 +104,7 @@ fun ChatScreen(
     // Message edit, reply, and block helper states
     var replyingToMessage by remember { mutableStateOf<Message?>(null) }
     var editingMessage by remember { mutableStateOf<Message?>(null) }
+    var forwardingMessage by remember { mutableStateOf<Message?>(null) }
 
     // Voice recording states
     var isRecording by remember { mutableStateOf(false) }
@@ -450,19 +457,11 @@ fun ChatScreen(
                                 style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                                 color = MaterialTheme.colorScheme.onSurface
                             )
-                            if (isTyping) {
-                                Text(
-                                    text = "✍️ Typing...",
-                                    style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold),
-                                    color = Color(0xFF4CAF50)
-                                )
-                            } else {
-                                Text(
-                                    text = if (updatedRecipient.isOnline) "Active now" else formatLastSeen(updatedRecipient.lastActive),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = if (updatedRecipient.isOnline) Color(0xFF4CAF50) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
-                                )
-                            }
+                            Text(
+                                text = if (updatedRecipient.isOnline) "Active now" else formatLastSeen(updatedRecipient.lastActive),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (updatedRecipient.isOnline) Color(0xFF4CAF50) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                            )
                         }
                     }
                 },
@@ -567,10 +566,19 @@ fun ChatScreen(
                             },
                             onVoicePlayed = {
                                 viewModel.acknowledgeVoicePlayed(msg.messageId, msg.remoteVoiceUrl)
-                            }
+                            },
+                            onForward = { forwardingMessage = msg }
                         )
                     }
                 }
+            }
+
+            AnimatedVisibility(
+                visible = isTyping,
+                enter = fadeIn() + expandVertically(),
+                exit = fadeOut() + shrinkVertically()
+            ) {
+                TypingGlassIndicator(updatedRecipient.name)
             }
 
             // Replying to preview banner
@@ -748,6 +756,7 @@ fun ChatScreen(
                                     )
                                     replyingToMessage = null
                                 }
+                                viewModel.playSendSound()
                                 messageText = ""
                             }
                         },
@@ -770,6 +779,57 @@ fun ChatScreen(
             }
         }
     }
+
+    forwardingMessage?.let { original ->
+        AlertDialog(
+            onDismissRequest = { forwardingMessage = null },
+            title = { Text("Forward message", fontWeight = FontWeight.Bold) },
+            text = {
+                LazyColumn(Modifier.heightIn(max = 420.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    items(users, key = { it.uid }) { target ->
+                        ListItem(
+                            headlineContent = { Text(target.name, fontWeight = FontWeight.Bold) },
+                            supportingContent = { Text("@${target.username}") },
+                            leadingContent = {
+                                AsyncImage(target.profileImageUrl.ifBlank { null }, target.name, modifier = Modifier.size(42.dp).clip(CircleShape))
+                            },
+                            modifier = Modifier.clip(RoundedCornerShape(18.dp)).clickable {
+                                viewModel.forwardMessage(target, original)
+                                viewModel.playSendSound()
+                                Toast.makeText(context, "Forwarded to ${target.name}", Toast.LENGTH_SHORT).show()
+                                forwardingMessage = null
+                            }
+                        )
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { forwardingMessage = null }) { Text("Cancel") } }
+        )
+    }
+
+}
+
+@Composable
+private fun TypingGlassIndicator(name: String) {
+    val motion = rememberInfiniteTransition(label = "typing_dots")
+    val phases = listOf(0, 140, 280).mapIndexed { index, delay ->
+        motion.animateFloat(
+            initialValue = .35f, targetValue = 1f,
+            animationSpec = infiniteRepeatable(tween(420, delayMillis = delay, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+            label = "dot_$index"
+        )
+    }
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 5.dp)
+            .glassmorphic(isDark = isSystemInDarkTheme(), shape = RoundedCornerShape(22.dp)).padding(horizontal = 14.dp, vertical = 9.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text("$name is typing", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+        Spacer(Modifier.width(8.dp))
+        phases.forEach { alpha ->
+            Box(Modifier.padding(horizontal = 2.dp).size(6.dp).graphicsLayer(alpha = alpha.value, scaleX = alpha.value, scaleY = alpha.value).background(MaterialTheme.colorScheme.primary, CircleShape))
+        }
+    }
 }
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -781,13 +841,15 @@ fun MessageBubbleItem(
     onEditSelect: () -> Unit,
     onDeleteSelect: () -> Unit,
     onReactSelect: (String) -> Unit,
-    onVoicePlayed: () -> Unit
+    onVoicePlayed: () -> Unit,
+    onForward: () -> Unit
 ) {
     var showMenu by remember { mutableStateOf(false) }
     var showImageViewer by remember { mutableStateOf(false) }
     var dragOffset by remember { mutableFloatStateOf(0f) }
     val animatedDrag by animateFloatAsState(dragOffset, spring(stiffness = Spring.StiffnessMedium), label = "swipe_reply")
     val isDark = isSystemInDarkTheme()
+    val context = LocalContext.current
 
     val shape = if (isSentByMe) {
         RoundedCornerShape(16.dp, 16.dp, 0.dp, 16.dp)
@@ -917,11 +979,7 @@ fun MessageBubbleItem(
 
                     // Render text message if present
                     if (message.text.isNotBlank()) {
-                        Text(
-                            text = message.text,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = textColor
-                        )
+                        LinkifiedChatText(message.text, textColor)
                     }
 
                     Row(
@@ -1015,6 +1073,22 @@ fun MessageBubbleItem(
                     onReplySelect()
                     showMenu = false
                 }
+            )
+            if (message.text.isNotBlank()) {
+                DropdownMenuItem(
+                    text = { Text("Copy text") },
+                    leadingIcon = { Icon(Icons.Default.ContentCopy, null) },
+                    onClick = {
+                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                        clipboard.setPrimaryClip(ClipData.newPlainText("FireChat message", message.text))
+                        showMenu = false
+                    }
+                )
+            }
+            DropdownMenuItem(
+                text = { Text("Forward") },
+                leadingIcon = { Icon(Icons.AutoMirrored.Filled.Forward, null) },
+                onClick = { showMenu = false; onForward() }
             )
             if (isSentByMe && message.text.isNotBlank()) {
                 DropdownMenuItem(
@@ -1172,6 +1246,51 @@ private fun FullScreenChatImage(imageUrl: String, onDismiss: () -> Unit) {
                 }
             }
             Text("Pinch to zoom • drag to move", color = Color.White.copy(alpha = .65f), modifier = Modifier.align(Alignment.BottomCenter).windowInsetsPadding(WindowInsets.navigationBars).padding(18.dp))
+        }
+    }
+}
+
+@Composable
+private fun LinkifiedChatText(text: String, color: Color) {
+    val uriHandler = LocalUriHandler.current
+    val urlRegex = remember { Regex("https?://[^\\s]+", RegexOption.IGNORE_CASE) }
+    val firstUrl = remember(text) { urlRegex.find(text)?.value }
+    val annotated = remember(text) {
+        buildAnnotatedString {
+            var cursor = 0
+            urlRegex.findAll(text).forEach { match ->
+                append(text.substring(cursor, match.range.first))
+                pushStringAnnotation("URL", match.value)
+                pushStyle(SpanStyle(color = Color(0xFF71C7FF), textDecoration = TextDecoration.Underline, fontWeight = FontWeight.SemiBold))
+                append(match.value)
+                pop(); pop(); cursor = match.range.last + 1
+            }
+            append(text.substring(cursor))
+        }
+    }
+    Column {
+        ClickableText(
+            text = annotated,
+            style = MaterialTheme.typography.bodyMedium.copy(color = color),
+            onClick = { offset -> annotated.getStringAnnotations("URL", offset, offset).firstOrNull()?.let { runCatching { uriHandler.openUri(it.item) } } }
+        )
+        firstUrl?.let { url ->
+            Spacer(Modifier.height(7.dp))
+            Surface(
+                onClick = { runCatching { uriHandler.openUri(url) } },
+                color = MaterialTheme.colorScheme.surface.copy(alpha = .32f),
+                border = BorderStroke(1.dp, Color.White.copy(alpha = .15f)),
+                shape = RoundedCornerShape(14.dp)
+            ) {
+                Row(Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Link, null, tint = Color(0xFF71C7FF), modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Column {
+                        Text(runCatching { Uri.parse(url).host }.getOrNull() ?: "Open link", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        Text("Tap to preview in browser", fontSize = 10.sp, color = color.copy(alpha = .7f))
+                    }
+                }
+            }
         }
     }
 }

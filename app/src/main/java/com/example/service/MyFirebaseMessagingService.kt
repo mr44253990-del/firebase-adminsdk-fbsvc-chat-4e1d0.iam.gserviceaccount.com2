@@ -7,6 +7,7 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.media.AudioAttributes
 import android.media.RingtoneManager
 import android.os.Build
 import android.os.Handler
@@ -143,14 +144,22 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         val personBuilder = Person.Builder().setName(callerName).setImportant(true)
         if (avatar != null) personBuilder.setIcon(IconCompat.createWithBitmap(avatar))
         val person = personBuilder.build()
-        val channelId = "firechat_calls_v1"
+        // New channel ID is intentional: Android channel sound settings are immutable
+        // after first creation, so v2 repairs devices that cached a silent v1 channel.
+        val channelId = "firechat_calls_v2"
+        val ringtone = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
+        val callAudio = AudioAttributes.Builder()
+            .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
+            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+            .build()
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            manager.createNotificationChannel(NotificationChannel(channelId, "FireChat Calls", NotificationManager.IMPORTANCE_HIGH).apply {
-                description = "Incoming FireChat audio calls"
-                setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE), null)
-                enableVibration(true); vibrationPattern = longArrayOf(0, 500, 300, 500)
+            manager.createNotificationChannel(NotificationChannel(channelId, "FireChat Incoming Calls", NotificationManager.IMPORTANCE_HIGH).apply {
+                description = "Ringtone and vibration for incoming FireChat calls"
+                setSound(ringtone, callAudio)
+                enableVibration(true); vibrationPattern = longArrayOf(0, 700, 350, 700, 350, 700)
                 lockscreenVisibility = NotificationCompat.VISIBILITY_PUBLIC
+                setShowBadge(true)
             })
         }
         val builder = NotificationCompat.Builder(this, channelId)
@@ -159,6 +168,9 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
             .setContentText(callerName)
             .setCategory(NotificationCompat.CATEGORY_CALL)
             .setPriority(NotificationCompat.PRIORITY_MAX)
+            .setSound(ringtone)
+            .setVibrate(longArrayOf(0, 700, 350, 700, 350, 700))
+            .setDefaults(NotificationCompat.DEFAULT_LIGHTS)
             .setOngoing(true).setAutoCancel(false).setTimeoutAfter(30_000)
             .setStyle(NotificationCompat.CallStyle.forIncomingCall(person, decline, answer))
             .setContentIntent(fullScreen)

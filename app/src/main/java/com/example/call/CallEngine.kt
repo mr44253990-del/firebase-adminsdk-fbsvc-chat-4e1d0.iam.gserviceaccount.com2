@@ -231,8 +231,11 @@ object CallEngine {
             val videoSource = factory?.createVideoSource(false) ?: throw IllegalStateException("Could not create video source")
             videoCapturer?.initialize(surfaceTextureHelper, context, videoSource.capturerObserver)
             videoCapturer?.startCapture(720, 1280, 24)
-            localVideoTrack = factory?.createVideoTrack("firechat_video_$myUid", videoSource)?.also {
-                peer?.addTrack(it, listOf("firechat"))
+            localVideoTrack = factory?.createVideoTrack("firechat_video_$myUid", videoSource)?.also { track ->
+                peer?.addTrack(track, listOf("firechat"))
+                // Receiver UI may create its preview renderer before permissions/TURN finish.
+                // Attach the track when it actually becomes available.
+                localRenderer?.let(track::addSink)
             } ?: throw IllegalStateException("Could not create video track")
         }
         true

@@ -366,6 +366,9 @@ interface CacheDao {
     @Query("SELECT * FROM cached_messages WHERE chatId = :chatId ORDER BY timestamp ASC")
     fun getMessagesForChat(chatId: String): Flow<List<CachedMessage>>
 
+    @Query("SELECT DISTINCT chatId FROM cached_messages")
+    fun getConversationChatIds(): Flow<List<String>>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertMessage(msg: CachedMessage)
 

@@ -11,6 +11,7 @@ import android.net.NetworkCapabilities
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.R
 import com.example.data.*
 import com.example.call.CallEngine
 import com.google.firebase.auth.AuthCredential
@@ -121,6 +122,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private val _unreadCountsState = MutableStateFlow<Map<String, Int>>(emptyMap())
     val unreadCountsState: StateFlow<Map<String, Int>> = _unreadCountsState.asStateFlow()
 
+    private val _conversationUserIds = MutableStateFlow<Set<String>>(emptySet())
+    val conversationUserIds: StateFlow<Set<String>> = _conversationUserIds.asStateFlow()
+
     private val _isRecipientTyping = MutableStateFlow(false)
     val isRecipientTyping: StateFlow<Boolean> = _isRecipientTyping.asStateFlow()
 
@@ -187,6 +191,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private var sentFriendRequestListener: ListenerRegistration? = null
     private var messageRequestListener: ListenerRegistration? = null
     private var notificationCacheJob: kotlinx.coroutines.Job? = null
+    private var conversationIdsJob: kotlinx.coroutines.Job? = null
 
     private fun getDatabaseInstance(): FirebaseDatabase {
         return try {
@@ -635,6 +640,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun loadCurrentUserProfile(uid: String) {
+        conversationIdsJob?.cancel()
+        conversationIdsJob = viewModelScope.launch {
+            cacheDao.getConversationChatIds().collect { chatIds ->
+                _conversationUserIds.value = chatIds.flatMap { it.split("_") }.filter { it != uid }.toSet()
+            }
+        }
         val profileRef = FirebaseFirestore.getInstance().collection("users").document(uid)
         currentUserProfileListener?.remove()
         currentUserProfileListener = profileRef.addSnapshotListener { document, error ->
@@ -1104,10 +1115,24 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     fun playTypingSound() {
         if (!_typingSoundsEnabled.value) return
         try {
-            val toneG = ToneGenerator(AudioManager.STREAM_SYSTEM, 35)
-            toneG.startTone(ToneGenerator.TONE_PROP_PROMPT, 50)
+            android.media.MediaPlayer.create(getApplication(), R.raw.typing_soft)?.apply {
+                setVolume(.35f, .35f)
+                setOnCompletionListener { it.release() }
+                start()
+            }
         } catch (e: Exception) {
-            Log.e("SOUND", "Error playing typing click: ${e.message}")
+            Log.e("SOUND", "Error playing typing sound: ${e.message}")
+        }
+    }
+
+    fun playSendSound() {
+        if (!_notificationSoundsEnabled.value) return
+        runCatching {
+            android.media.MediaPlayer.create(getApplication(), R.raw.message_sent)?.apply {
+                setVolume(.45f, .45f)
+                setOnCompletionListener { it.release() }
+                start()
+            }
         }
     }
 
@@ -1464,6 +1489,38 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     )
                 }
             }
+    }
+
+    fun forwardMessage(target: User, original: Message) {
+        val sender = getCurrentUserOrFallback() ?: return
+        val chatId = listOf(sender.uid, target.uid).sorted().joinToString("_")
+        val ref = getDatabaseInstance().getReference("chats").child(chatId).child("messages")
+        val id = ref.push().key ?: UUID.randomUUID().toString()
+        val forwardImage = original.imageUrl?.takeIf { it.startsWith("http") }
+        val forwardVoice = (original.remoteVoiceUrl ?: original.voiceUrl)?.takeIf { it.startsWith("http") }
+        val text = when {
+            original.text.isNotBlank() -> original.text
+            forwardImage != null -> "📷 Forwarded photo"
+            forwardVoice != null -> "🎙️ Forwarded voice note"
+            else -> "Forwarded attachment is only available on the original device"
+        }
+        val message = Message(
+            messageId = id, senderId = sender.uid, senderName = sender.name,
+            senderUsername = sender.username, text = text, timestamp = System.currentTimeMillis(),
+            imageUrl = forwardImage, voiceUrl = forwardVoice, voiceDurationSec = original.voiceDurationSec,
+            deliveredToRecipient = target.isOnline
+        )
+        ref.child(id).setValue(message).addOnSuccessListener {
+            viewModelScope.launch(Dispatchers.IO) { cacheDao.insertMessage(CachedMessage.fromMessage(message, chatId)) }
+            withUserFcmToken(target.uid, target.fcmToken) { token ->
+                triggerFcmGatewayNotification(
+                    gatewayUrl = _webhookUrl.value, targetToken = token,
+                    senderName = sender.name, messageBody = "Forwarded: $text",
+                    senderId = sender.uid, senderProfileUrl = sender.profileImageUrl,
+                    notificationType = "message", targetId = id
+                )
+            }
+        }
     }
 
     fun editMessage(recipientUid: String, messageId: String, newText: String) {
