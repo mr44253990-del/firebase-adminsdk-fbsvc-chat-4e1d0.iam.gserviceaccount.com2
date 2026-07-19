@@ -34,7 +34,7 @@ export default {
       return new Response(JSON.stringify({
         ok: serviceAccountConfigured,
         service: "FireChat Direct FCM Gateway",
-        version: "3.0.0",
+        version: "3.1.0",
         projectId,
         serviceAccountConfigured,
         authenticatedCallsRequired: true,
