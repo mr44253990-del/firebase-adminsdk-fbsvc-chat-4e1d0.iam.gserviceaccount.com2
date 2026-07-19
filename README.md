@@ -29,7 +29,18 @@ FireChat no longer requires an n8n webhook. The Android client calls the include
 2. Generate a fresh Firebase service-account JSON key.
 3. In Cloudflare Worker → Settings → Variables, create an **encrypted secret** named `FIREBASE_SERVICE_ACCOUNT` and paste the fresh JSON there. Never place it in Android resources, BuildConfig, `.env`, `google-services.json`, or Git.
 4. Deploy the current `cloudflare-worker.js`. It sends data-only high-priority messages so Android applies separate Message, Request, and Activity channels with custom vibration and profile imagery.
-5. In FireChat's admin Service panel, save the Worker HTTPS URL as the **Direct FCM Gateway**.
+5. FireChat defaults to `https://solitary-hill-dcdc.mr44253990.workers.dev/`. The Admin Service panel can run `/health`, save a replacement URL, and send a self-test notification.
+
+A safe deployment helper is included:
+
+```bash
+export CLOUDFLARE_ACCOUNT_ID='your-account-id'
+export CLOUDFLARE_API_TOKEN='a Workers Scripts:Edit token'
+export FIREBASE_SERVICE_ACCOUNT_FILE='/absolute/path/to/a-fresh-service-account.json'
+./deploy-firechat-worker.sh
+```
+
+The new `firechat-fcm-worker.js` supports public health diagnostics and authenticated POST delivery. Use `./test-firechat-worker.sh` for cURL-based health/authenticated tests. Never put either credential in these scripts.
 
 The explicit Google button uses `GetSignInWithGoogleOption`, which always requests the account chooser. Ensure Firebase Authentication → Google is enabled, the correct Web OAuth client exists, and debug/release SHA-1 and SHA-256 fingerprints are registered before downloading a fresh `google-services.json`.
 

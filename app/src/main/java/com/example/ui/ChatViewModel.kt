@@ -33,9 +33,12 @@ import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
 import java.io.IOException
 import java.text.SimpleDateFormat
 import java.util.*
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.TimeUnit
 
 data class InAppNotificationData(
     val senderId: String = "",
@@ -44,9 +47,18 @@ data class InAppNotificationData(
     val timestamp: Long = 0L
 )
 
+data class GatewayHealth(
+    val checking: Boolean = false,
+    val configured: Boolean = false,
+    val message: String = "Not checked",
+    val projectId: String = "",
+    val version: String = ""
+)
+
 class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     private val sharedPrefs = application.getSharedPreferences("firechat_prefs", Context.MODE_PRIVATE)
+    private val localUploadFiles = ConcurrentHashMap<String, String>()
 
     // Offline Cache DB & Dao
     private val appDb = AppDatabase.getDatabase(application)
@@ -149,10 +161,17 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         _currentTabState.value = tab
     }
 
-    private val defaultWebhookUrl = ""
+    private val defaultWebhookUrl = "https://solitary-hill-dcdc.mr44253990.workers.dev/"
 
-    private val _webhookUrl = MutableStateFlow(sharedPrefs.getString("webhook_url", defaultWebhookUrl).orEmpty().ifBlank { defaultWebhookUrl })
+    private val storedGatewayUrl = sharedPrefs.getString("webhook_url", null).orEmpty()
+    private val _webhookUrl = MutableStateFlow(
+        storedGatewayUrl.takeIf { it.startsWith("https://") && !it.contains("n8n", ignoreCase = true) }
+            ?: defaultWebhookUrl
+    )
     val webhookUrl: StateFlow<String> = _webhookUrl.asStateFlow()
+
+    private val _gatewayHealth = MutableStateFlow(GatewayHealth())
+    val gatewayHealth: StateFlow<GatewayHealth> = _gatewayHealth.asStateFlow()
 
     private var activeChatListener: ValueEventListener? = null
     private var activeChatId: String? = null
@@ -240,6 +259,56 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         } catch (e: Exception) {
             Log.e("RTDB_CONFIG", "Error updating global config in RTDB: ${e.message}")
         }
+        testFcmGateway(url)
+    }
+
+    fun testFcmGateway(url: String = _webhookUrl.value) {
+        if (!url.startsWith("https://")) {
+            _gatewayHealth.value = GatewayHealth(message = "A valid HTTPS Worker URL is required")
+            return
+        }
+        _gatewayHealth.value = GatewayHealth(checking = true, message = "Checking gateway…")
+        val request = Request.Builder().url(url).get().build()
+        OkHttpClient.Builder().callTimeout(12, TimeUnit.SECONDS).build()
+            .newCall(request).enqueue(object : Callback {
+                override fun onFailure(call: Call, e: IOException) {
+                    _gatewayHealth.value = GatewayHealth(message = "Gateway unreachable: ${e.localizedMessage}")
+                }
+                override fun onResponse(call: Call, response: Response) {
+                    response.use {
+                        val body = it.body?.string().orEmpty()
+                        val json = try { JSONObject(body) } catch (_: Exception) { JSONObject() }
+                        val configured = it.isSuccessful && json.optBoolean("serviceAccountConfigured", false)
+                        _gatewayHealth.value = GatewayHealth(
+                            configured = configured,
+                            message = when {
+                                configured -> "Direct FCM gateway is ready"
+                                it.code == 405 -> "Worker is online but outdated—deploy the new worker file"
+                                else -> json.optString("error", "Worker secret is missing or invalid")
+                            },
+                            projectId = json.optString("projectId"),
+                            version = json.optString("version")
+                        )
+                    }
+                }
+            })
+    }
+
+    fun sendAdminTestNotification() {
+        val admin = getCurrentUserOrFallback() ?: run {
+            _gatewayHealth.value = GatewayHealth(message = "Admin session is not authenticated")
+            return
+        }
+        triggerFcmGatewayNotification(
+            gatewayUrl = _webhookUrl.value,
+            targetUid = admin.uid,
+            senderName = "FireChat Diagnostics",
+            messageBody = "Direct FCM gateway test completed successfully",
+            senderId = admin.uid,
+            senderProfileUrl = admin.profileImageUrl,
+            notificationType = "gateway_test",
+            targetId = "test_${System.currentTimeMillis()}"
+        )
     }
 
     private fun listenToGlobalConfig() {
@@ -248,15 +317,17 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             configRef.addValueEventListener(object : ValueEventListener {
                 override fun onDataChange(snapshot: DataSnapshot) {
                     if (snapshot.exists()) {
-                        val url = snapshot.child("webhookUrl").value as? String 
-                                  ?: snapshot.child("workerUrl").value as? String
-                        if (!url.isNullOrBlank()) {
-                            _webhookUrl.value = url
-                            sharedPrefs.edit().putString("webhook_url", url).apply()
-                            Log.d("RTDB_CONFIG", "Loaded webhook URL from RTDB: $url")
-                        } else {
-                            configRef.setValue(mapOf("webhookUrl" to defaultWebhookUrl, "workerUrl" to defaultWebhookUrl))
+                        val configured = (snapshot.child("workerUrl").value as? String)
+                            ?: (snapshot.child("webhookUrl").value as? String)
+                        val url = configured?.takeIf {
+                            it.startsWith("https://") && !it.contains("n8n", ignoreCase = true)
+                        } ?: defaultWebhookUrl
+                        _webhookUrl.value = url
+                        sharedPrefs.edit().putString("webhook_url", url).apply()
+                        if (configured != url) {
+                            configRef.updateChildren(mapOf("webhookUrl" to url, "workerUrl" to url))
                         }
+                        Log.d("RTDB_CONFIG", "Loaded direct FCM gateway URL: $url")
                     } else {
                         configRef.setValue(mapOf("webhookUrl" to defaultWebhookUrl, "workerUrl" to defaultWebhookUrl))
                     }
@@ -697,6 +768,54 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         })
     }
 
+    private fun localizeIncomingMedia(message: Message, chatId: String): Message {
+        fun download(url: String?, suffix: String): String? {
+            if (url.isNullOrBlank() || !url.startsWith("http")) return url
+            return try {
+                val extension = url.substringBefore('?').substringAfterLast('.', "bin").take(5)
+                val directory = File(getApplication<Application>().filesDir, "received_media/$chatId").apply { mkdirs() }
+                val file = File(directory, "${message.messageId}_${suffix}.$extension")
+                if (!file.exists() || file.length() == 0L) {
+                    val response = OkHttpClient().newCall(Request.Builder().url(url).get().build()).execute()
+                    response.use {
+                        if (!it.isSuccessful) return url
+                        val bytes = it.body?.bytes() ?: return url
+                        file.writeBytes(bytes)
+                    }
+                }
+                if (file.exists() && file.length() > 0L) {
+                    deleteSupabaseObject(url)
+                    file.toURI().toString()
+                } else url
+            } catch (e: Exception) {
+                Log.w("MEDIA_CACHE", "Incoming media download failed: ${e.message}")
+                url
+            }
+        }
+        return message.copy(
+            imageUrl = download(message.imageUrl, "image"),
+            voiceUrl = download(message.voiceUrl, "voice")
+        )
+    }
+
+    private fun deleteSupabaseObject(publicUrl: String): Boolean {
+        val marker = "/storage/v1/object/public/"
+        val objectPath = publicUrl.substringAfter(marker, "")
+        if (objectPath.isBlank()) return false
+        return try {
+            val request = Request.Builder()
+                .url("https://srfztgcdejfaesrvkarg.supabase.co/storage/v1/object/$objectPath")
+                .header("apikey", "sb_publishable_BcH2xwywnUCVG48LYjPOLQ_8-y2InGA")
+                .header("Authorization", "Bearer sb_publishable_BcH2xwywnUCVG48LYjPOLQ_8-y2InGA")
+                .delete()
+                .build()
+            OkHttpClient().newCall(request).execute().use { it.isSuccessful || it.code == 404 }
+        } catch (e: Exception) {
+            Log.w("SUPABASE_DELETE", "Object cleanup failed: ${e.message}")
+            false
+        }
+    }
+
     // Chat Message Streams
     fun startListeningToChat(recipientUid: String) {
         val currentUid = FirebaseAuth.getInstance().currentUser?.uid ?: return
@@ -764,8 +883,14 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     // Persist before acknowledgement. Incoming RTDB payload is removed only after
                     // Room confirms the durable local copy; a tiny receipt remains for the sender.
                     viewModelScope.launch(Dispatchers.IO) {
-                        cacheDao.insertMessages(messages.map { CachedMessage.fromMessage(it, chatId) })
-                        messages.filter { it.senderId != currentUid }.forEach { incoming ->
+                        val localized = messages.map { remote ->
+                            if (remote.senderId != currentUid) localizeIncomingMedia(remote, chatId)
+                            else _chatMessagesState.value.find { it.messageId == remote.messageId } ?: remote
+                        }
+                        cacheDao.insertMessages(localized.map { CachedMessage.fromMessage(it, chatId) })
+                        _chatMessagesState.value = (_chatMessagesState.value + localized)
+                            .associateBy { it.messageId }.values.sortedBy { it.timestamp }
+                        localized.filter { it.senderId != currentUid }.forEach { incoming ->
                             getDatabaseInstance().getReference("delivery_receipts")
                                 .child(incoming.senderId).child(chatId).child(incoming.messageId)
                                 .setValue(mapOf("seen" to true, "seenAt" to System.currentTimeMillis()))
@@ -1187,11 +1312,15 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             deliveredToRecipient = recipientUser.isOnline
         )
 
-        // Sender owns an immediate durable copy; the RTDB entry is only a delivery envelope.
+        // Sender owns an immediate durable copy; uploaded media points to the app-private file.
+        val localMessage = message.copy(
+            imageUrl = imageUrl?.let { localUploadFiles[it] ?: it },
+            voiceUrl = voiceUrl?.let { localUploadFiles[it] ?: it }
+        )
         viewModelScope.launch(Dispatchers.IO) {
-            cacheDao.insertMessage(CachedMessage.fromMessage(message, chatId))
+            cacheDao.insertMessage(CachedMessage.fromMessage(localMessage, chatId))
         }
-        _chatMessagesState.value = (_chatMessagesState.value + message).distinctBy { it.messageId }.sortedBy { it.timestamp }
+        _chatMessagesState.value = (_chatMessagesState.value + localMessage).distinctBy { it.messageId }.sortedBy { it.timestamp }
 
         chatRef.child(messageId).setValue(message)
             .addOnSuccessListener {
@@ -1352,6 +1481,18 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private fun cacheOutgoingMedia(publicUrl: String, fileName: String, bytes: ByteArray) {
+        try {
+            val directory = File(getApplication<Application>().filesDir, "sent_media").apply { mkdirs() }
+            val safeName = fileName.substringAfterLast('/').replace("[^A-Za-z0-9._-]".toRegex(), "_")
+            val file = File(directory, safeName)
+            file.writeBytes(bytes)
+            localUploadFiles[publicUrl] = file.toURI().toString()
+        } catch (e: Exception) {
+            Log.w("MEDIA_CACHE", "Could not preserve outgoing media: ${e.message}")
+        }
+    }
+
     // General file upload helper to Supabase Storage via REST
     fun uploadFileToSupabase(
         bucket: String,
@@ -1377,6 +1518,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 client.newCall(request).execute().use { response ->
                     if (response.isSuccessful) {
                         val publicUrl = "https://srfztgcdejfaesrvkarg.supabase.co/storage/v1/object/public/$bucket/$fileName"
+                        cacheOutgoingMedia(publicUrl, fileName, fileBytes)
                         withContext(Dispatchers.Main) {
                             onSuccess(publicUrl)
                         }
@@ -1386,6 +1528,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         // If file already exists, return the public url directly
                         if (response.code == 400 && bodyStr.contains("Duplicate")) {
                             val publicUrl = "https://srfztgcdejfaesrvkarg.supabase.co/storage/v1/object/public/$bucket/$fileName"
+                            cacheOutgoingMedia(publicUrl, fileName, fileBytes)
                             withContext(Dispatchers.Main) {
                                 onSuccess(publicUrl)
                             }
@@ -1456,12 +1599,22 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
                 client.newCall(request).enqueue(object : Callback {
                     override fun onFailure(call: Call, e: IOException) {
-                        Log.e("FCM_GATEWAY", "Failed to contact Webhook: ${e.message}")
+                        Log.e("FCM_GATEWAY", "Gateway request failed: ${e.message}")
+                        _gatewayHealth.value = GatewayHealth(message = "Notification gateway error: ${e.localizedMessage}")
                     }
 
                     override fun onResponse(call: Call, response: Response) {
                         val respBody = response.body?.string() ?: ""
                         Log.d("FCM_GATEWAY", "FCM gateway response [${response.code}]: $respBody")
+                        if (response.isSuccessful) {
+                            _gatewayHealth.value = _gatewayHealth.value.copy(
+                                configured = true,
+                                message = if (notificationType == "gateway_test") "Test notification accepted by FCM" else "Direct FCM gateway is ready"
+                            )
+                        } else {
+                            val error = try { JSONObject(respBody).optString("error") } catch (_: Exception) { "HTTP ${response.code}" }
+                            _gatewayHealth.value = GatewayHealth(message = "FCM delivery failed: $error")
+                        }
                     }
                 })
                 } catch (e: Exception) {
@@ -1812,13 +1965,25 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun deletePost(postId: String) {
-        FirebaseFirestore.getInstance().collection("posts").document(postId).delete()
-            .addOnSuccessListener {
-                viewModelScope.launch(Dispatchers.IO) {
-                    cacheDao.deletePost(postId)
+        val postRef = FirebaseFirestore.getInstance().collection("posts").document(postId)
+        postRef.get().addOnSuccessListener { document ->
+            val mediaUrls = listOfNotNull(
+                document.getString("imageUrl"),
+                document.getString("videoUrl"),
+                document.getString("audioUrl")
+            ).filter { it.isNotBlank() }
+            viewModelScope.launch(Dispatchers.IO) {
+                mediaUrls.forEach { url ->
+                    deleteSupabaseObject(url)
+                    localUploadFiles.remove(url)?.let { localUri ->
+                        try { File(java.net.URI(localUri)).delete() } catch (_: Exception) {}
+                    }
                 }
-                loadPosts()
+                cacheDao.deletePost(postId)
+                postRef.delete().addOnSuccessListener { loadPosts() }
+                    .addOnFailureListener { Log.e("POST_DELETE", "Firestore delete failed: ${it.message}") }
             }
+        }.addOnFailureListener { Log.e("POST_DELETE", "Could not load post metadata: ${it.message}") }
     }
 
     fun reactToPost(postId: String, reactionType: String) {

@@ -94,6 +94,7 @@ fun HomeScreen(
     val stories by viewModel.storiesState.collectAsState()
     val posts by viewModel.postsState.collectAsState()
     val webhookUrl by viewModel.webhookUrl.collectAsState()
+    val gatewayHealth by viewModel.gatewayHealth.collectAsState()
     val inAppNotification by viewModel.inAppNotification.collectAsState()
     val activityNotifications by viewModel.activityNotifications.collectAsState()
     val openActivitySignal by viewModel.openActivityCenterSignal.collectAsState()
@@ -544,6 +545,7 @@ fun HomeScreen(
                         }
                     } else {
                         // Admin Dashboard
+                        LaunchedEffect(webhookUrl) { viewModel.testFcmGateway(webhookUrl) }
                         Column(
                             modifier = Modifier
                                 .fillMaxSize()
@@ -582,7 +584,7 @@ fun HomeScreen(
                                     OutlinedTextField(
                                         value = adminUrlInput,
                                         onValueChange = { adminUrlInput = it },
-                                        placeholder = { Text("https://firechat-fcm.your-subdomain.workers.dev") },
+                                        placeholder = { Text("https://solitary-hill-dcdc.mr44253990.workers.dev/") },
                                         modifier = Modifier.fillMaxWidth(),
                                         singleLine = true,
                                         shape = RoundedCornerShape(18.dp)
@@ -598,6 +600,47 @@ fun HomeScreen(
                                         modifier = Modifier.fillMaxWidth()
                                     ) {
                                         Text("Save FCM Gateway", fontWeight = FontWeight.Bold)
+                                    }
+                                    Spacer(Modifier.height(8.dp))
+                                    OutlinedButton(
+                                        onClick = { viewModel.testFcmGateway(adminUrlInput) },
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        if (gatewayHealth.checking) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                                        else Icon(Icons.Outlined.HealthAndSafety, null)
+                                        Spacer(Modifier.width(8.dp))
+                                        Text("Test gateway")
+                                    }
+                                    Spacer(Modifier.height(8.dp))
+                                    Button(
+                                        onClick = { viewModel.sendAdminTestNotification() },
+                                        enabled = gatewayHealth.configured,
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Icon(Icons.Outlined.SendToMobile, null)
+                                        Spacer(Modifier.width(8.dp))
+                                        Text("Send test notification to this device")
+                                    }
+                                    Spacer(Modifier.height(10.dp))
+                                    Surface(
+                                        color = if (gatewayHealth.configured) Color(0xFF1F7A4D).copy(alpha = .16f) else MaterialTheme.colorScheme.errorContainer,
+                                        shape = RoundedCornerShape(16.dp),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                                            Icon(
+                                                if (gatewayHealth.configured) Icons.Default.CheckCircle else Icons.Default.Warning,
+                                                null,
+                                                tint = if (gatewayHealth.configured) Color(0xFF45D483) else MaterialTheme.colorScheme.error
+                                            )
+                                            Spacer(Modifier.width(9.dp))
+                                            Column {
+                                                Text(gatewayHealth.message, fontWeight = FontWeight.Bold)
+                                                if (gatewayHealth.projectId.isNotBlank()) {
+                                                    Text("Project: ${gatewayHealth.projectId} • Worker ${gatewayHealth.version}", fontSize = 11.sp)
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                             }
