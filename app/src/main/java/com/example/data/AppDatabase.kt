@@ -68,12 +68,17 @@ data class CachedMessage(
     val voiceUrl: String?,
     val voiceDurationSec: Int?,
     val seenByRecipient: Boolean,
+    val deliveredToRecipient: Boolean,
     val chatId: String // to query messages per conversation
 ) {
     fun toMessage(): Message {
         return Message(
-            messageId, senderId, senderName, senderUsername, text, timestamp,
-            edited, replyToId, replyToText, replyToSenderName, imageUrl, voiceUrl, voiceDurationSec, seenByRecipient
+            messageId = messageId, senderId = senderId, senderName = senderName,
+            senderUsername = senderUsername, text = text, timestamp = timestamp,
+            edited = edited, replyToId = replyToId, replyToText = replyToText,
+            replyToSenderName = replyToSenderName, imageUrl = imageUrl,
+            voiceUrl = voiceUrl, voiceDurationSec = voiceDurationSec,
+            seenByRecipient = seenByRecipient, deliveredToRecipient = deliveredToRecipient
         )
     }
 
@@ -82,7 +87,8 @@ data class CachedMessage(
             return CachedMessage(
                 msg.messageId, msg.senderId, msg.senderName, msg.senderUsername,
                 msg.text, msg.timestamp, msg.edited, msg.replyToId, msg.replyToText,
-                msg.replyToSenderName, msg.imageUrl, msg.voiceUrl, msg.voiceDurationSec, msg.seenByRecipient, chatId
+                msg.replyToSenderName, msg.imageUrl, msg.voiceUrl, msg.voiceDurationSec,
+                msg.seenByRecipient, msg.deliveredToRecipient, chatId
             )
         }
     }
@@ -359,6 +365,9 @@ interface CacheDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertMessages(msgs: List<CachedMessage>)
 
+    @Query("UPDATE cached_messages SET seenByRecipient = 1, deliveredToRecipient = 1 WHERE messageId = :messageId")
+    suspend fun markMessageSeen(messageId: String)
+
 
     @Query("SELECT * FROM cached_stories ORDER BY timestamp DESC")
     fun getAllStories(): Flow<List<CachedStory>>
@@ -430,7 +439,7 @@ interface CacheDao {
         CachedGroupMessage::class,
         CachedActivityNotification::class
     ],
-    version = 2,
+    version = 3,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {

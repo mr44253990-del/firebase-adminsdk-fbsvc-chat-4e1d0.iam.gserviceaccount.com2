@@ -170,6 +170,10 @@ class MainActivity : ComponentActivity() {
                                     recipient = recipient,
                                     onBack = {
                                         navController.popBackStack()
+                                    },
+                                    onProfile = {
+                                        viewModel.selectProfile(recipient)
+                                        navController.navigate("profile")
                                     }
                                 )
                             }
@@ -190,8 +194,12 @@ class MainActivity : ComponentActivity() {
 
                 // Process deep link if launched via push notification click
                 LaunchedEffect(intent) {
+                    val notificationType = intent?.getStringExtra("notificationType") ?: "message"
                     val senderId = intent?.getStringExtra("senderId")
-                    if (!senderId.isNullOrBlank()) {
+                    if (notificationType != "message") {
+                        viewModel.requestOpenActivityCenter()
+                        navController.navigate("home") { launchSingleTop = true }
+                    } else if (!senderId.isNullOrBlank()) {
                         // Fetch recipient user profile from Firestore and open chat
                         FirebaseFirestore.getInstance().collection("users")
                             .document(senderId)

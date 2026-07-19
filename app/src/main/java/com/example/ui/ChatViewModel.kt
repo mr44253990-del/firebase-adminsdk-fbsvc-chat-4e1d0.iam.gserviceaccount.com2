@@ -119,9 +119,13 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _activityNotifications = MutableStateFlow<List<ActivityNotification>>(emptyList())
     val activityNotifications: StateFlow<List<ActivityNotification>> = _activityNotifications.asStateFlow()
+    private val _openActivityCenterSignal = MutableStateFlow(0L)
+    val openActivityCenterSignal: StateFlow<Long> = _openActivityCenterSignal.asStateFlow()
 
     private val _friendRequests = MutableStateFlow<List<FriendRequest>>(emptyList())
     val friendRequests: StateFlow<List<FriendRequest>> = _friendRequests.asStateFlow()
+    private val _sentFriendRequestIds = MutableStateFlow<Set<String>>(emptySet())
+    val sentFriendRequestIds: StateFlow<Set<String>> = _sentFriendRequestIds.asStateFlow()
 
     private val _messageRequests = MutableStateFlow<List<MessageRequest>>(emptyList())
     val messageRequests: StateFlow<List<MessageRequest>> = _messageRequests.asStateFlow()
@@ -154,10 +158,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private var activeChatId: String? = null
     private var activeTypingListener: ValueEventListener? = null
     private var activeChatThemeListener: ValueEventListener? = null
+    private var activeReceiptListener: ValueEventListener? = null
     private var globalNotificationListener: ValueEventListener? = null
     private var presenceListener: ValueEventListener? = null
     private var activityNotificationListener: ListenerRegistration? = null
     private var friendRequestListener: ListenerRegistration? = null
+    private var sentFriendRequestListener: ListenerRegistration? = null
     private var messageRequestListener: ListenerRegistration? = null
     private var notificationCacheJob: kotlinx.coroutines.Job? = null
 
@@ -737,7 +743,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                                     replyToSenderName = childSnapshot.child("replyToSenderName").value as? String,
                                     imageUrl = childSnapshot.child("imageUrl").value as? String,
                                     voiceUrl = childSnapshot.child("voiceUrl").value as? String,
-                                    voiceDurationSec = (childSnapshot.child("voiceDurationSec").value as? Long)?.toInt()
+                                    voiceDurationSec = (childSnapshot.child("voiceDurationSec").value as? Long)?.toInt(),
+                                    seenByRecipient = childSnapshot.child("seenByRecipient").value as? Boolean ?: false,
+                                    deliveredToRecipient = childSnapshot.child("deliveredToRecipient").value as? Boolean ?: false
                                 )
                             } catch (ex: Exception) {
                                 null
@@ -747,28 +755,57 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                             messages.add(message)
                         }
                     }
-                    _chatMessagesState.value = messages
+                    val merged = (_chatMessagesState.value + messages)
+                        .associateBy { it.messageId }.values.sortedBy { it.timestamp }
+                    _chatMessagesState.value = merged
 
-                    // Cache to Room local DB
+                    // Persist before acknowledgement. Incoming RTDB payload is removed only after
+                    // Room confirms the durable local copy; a tiny receipt remains for the sender.
                     viewModelScope.launch(Dispatchers.IO) {
                         cacheDao.insertMessages(messages.map { CachedMessage.fromMessage(it, chatId) })
+                        messages.filter { it.senderId != currentUid }.forEach { incoming ->
+                            getDatabaseInstance().getReference("delivery_receipts")
+                                .child(incoming.senderId).child(chatId).child(incoming.messageId)
+                                .setValue(mapOf("seen" to true, "seenAt" to System.currentTimeMillis()))
+                                .addOnSuccessListener { chatRef.child(incoming.messageId).removeValue() }
+                        }
                     }
                 }
 
                 override fun onCancelled(error: DatabaseError) {}
             })
+
+        val receiptRef = getDatabaseInstance().getReference("delivery_receipts").child(currentUid).child(chatId)
+        activeReceiptListener = receiptRef.addValueEventListener(object : ValueEventListener {
+            override fun onDataChange(snapshot: DataSnapshot) {
+                snapshot.children.forEach { receipt ->
+                    val messageId = receipt.key ?: return@forEach
+                    viewModelScope.launch(Dispatchers.IO) { cacheDao.markMessageSeen(messageId) }
+                    _chatMessagesState.value = _chatMessagesState.value.map {
+                        if (it.messageId == messageId) it.copy(seenByRecipient = true, deliveredToRecipient = true) else it
+                    }
+                    receipt.ref.removeValue()
+                }
+            }
+            override fun onCancelled(error: DatabaseError) {}
+        })
     }
 
     fun stopListeningToChat() {
-        val chatId = activeChatId ?: return
-        val listener = activeChatListener ?: return
-        getDatabaseInstance().getReference("chats")
-            .child(chatId)
-            .child("messages")
-            .removeEventListener(listener)
-
+        val chatId = activeChatId
+        if (chatId != null) {
+            activeChatListener?.let {
+                getDatabaseInstance().getReference("chats").child(chatId).child("messages").removeEventListener(it)
+            }
+            activeReceiptListener?.let {
+                val uid = FirebaseAuth.getInstance().currentUser?.uid.orEmpty()
+                getDatabaseInstance().getReference("delivery_receipts").child(uid).child(chatId).removeEventListener(it)
+            }
+        }
         _chatMessagesState.value = emptyList()
         activeChatListener = null
+        activeReceiptListener = null
+        activeChatId = null
     }
 
     // Typing Status Handling
@@ -954,6 +991,15 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 }?.filter { it.status == "pending" }?.sortedByDescending { it.timestamp } ?: emptyList()
             }
 
+        sentFriendRequestListener?.remove()
+        sentFriendRequestListener = FirebaseFirestore.getInstance().collection("friend_requests")
+            .whereEqualTo("senderId", uid)
+            .addSnapshotListener { snapshot, _ ->
+                _sentFriendRequestIds.value = snapshot?.documents
+                    ?.filter { (it.getString("status") ?: "pending") == "pending" }
+                    ?.map { it.id }?.toSet() ?: emptySet()
+            }
+
         messageRequestListener?.remove()
         messageRequestListener = FirebaseFirestore.getInstance().collection("message_requests")
             .whereEqualTo("receiverId", uid)
@@ -999,12 +1045,17 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                             targetToken = token,
                             senderName = actor.name,
                             messageBody = text,
-                            senderId = actor.uid
+                            senderId = actor.uid,
+                            senderProfileUrl = actor.profileImageUrl,
+                            notificationType = type,
+                            targetId = targetId
                         )
                     }
                 }
         }.addOnFailureListener { Log.e("ACTIVITY_CENTER", "Delivery failed: ${it.message}") }
     }
+
+    fun requestOpenActivityCenter() { _openActivityCenterSignal.value = System.currentTimeMillis() }
 
     fun markAllActivityRead() {
         val uid = FirebaseAuth.getInstance().currentUser?.uid ?: return
@@ -1027,6 +1078,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 createActivityNotification(target.uid, "friend_request", requestId, "sent you a friend request")
                 onResult(true, "Friend request sent")
             }.addOnFailureListener { onResult(false, it.localizedMessage ?: "Request failed") }
+    }
+
+    fun cancelFriendRequest(targetUid: String, onComplete: (Boolean) -> Unit = {}) {
+        val myUid = FirebaseAuth.getInstance().currentUser?.uid ?: return onComplete(false)
+        FirebaseFirestore.getInstance().collection("friend_requests").document("${myUid}_${targetUid}")
+            .delete().addOnSuccessListener { onComplete(true) }.addOnFailureListener { onComplete(false) }
     }
 
     fun respondToFriendRequest(request: FriendRequest, accept: Boolean) {
@@ -1130,8 +1187,15 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             replyToSenderName = replyToSenderName,
             imageUrl = imageUrl,
             voiceUrl = voiceUrl,
-            voiceDurationSec = voiceDurationSec
+            voiceDurationSec = voiceDurationSec,
+            deliveredToRecipient = recipientUser.isOnline
         )
+
+        // Sender owns an immediate durable copy; the RTDB entry is only a delivery envelope.
+        viewModelScope.launch(Dispatchers.IO) {
+            cacheDao.insertMessage(CachedMessage.fromMessage(message, chatId))
+        }
+        _chatMessagesState.value = (_chatMessagesState.value + message).distinctBy { it.messageId }.sortedBy { it.timestamp }
 
         chatRef.child(messageId).setValue(message)
             .addOnSuccessListener {
@@ -1347,7 +1411,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         targetToken: String,
         senderName: String,
         messageBody: String,
-        senderId: String
+        senderId: String,
+        senderProfileUrl: String = "",
+        notificationType: String = "message",
+        targetId: String = ""
     ) {
         if (webhookUrl.isBlank() || !webhookUrl.startsWith("http")) {
             Log.w("WEBHOOK_NOTIF", "Invalid Webhook URL. Cannot trigger push notification.")
@@ -1366,11 +1433,14 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
                 val jsonObject = JSONObject().apply {
                     put("token", targetToken)
-                    put("title", "New message from $senderName")
+                    put("title", if (notificationType == "message") "New message from $senderName" else "$senderName • FireChat")
                     put("body", messageBody)
                     put("text", messageBody)
                     put("senderId", senderId)
                     put("senderName", senderName)
+                    put("senderProfileUrl", senderProfileUrl)
+                    put("notificationType", notificationType)
+                    put("targetId", targetId)
                     put("timestamp", System.currentTimeMillis())
                     put("formattedTime", formattedTime)
                 }
@@ -1720,6 +1790,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         FirebaseFirestore.getInstance().collection("posts").document(postId)
             .set(post)
             .addOnSuccessListener {
+                taggedUserIds.forEach { taggedUid ->
+                    createActivityNotification(taggedUid, "post_tag", postId, "tagged you in a post${if (title.isNotBlank()) ": $title" else ""}")
+                }
                 onComplete()
                 loadPosts()
             }

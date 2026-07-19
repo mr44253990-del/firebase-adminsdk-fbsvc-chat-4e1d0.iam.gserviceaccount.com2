@@ -40,9 +40,11 @@ fun UserProfileScreen(
     val allUsers by viewModel.usersState.collectAsState()
     val currentUser by viewModel.currentUserState.collectAsState()
     val posts by viewModel.postsState.collectAsState()
+    val sentRequests by viewModel.sentFriendRequestIds.collectAsState()
     val liveUser = allUsers.find { it.uid == user.uid } ?: user
     val userPosts = posts.filter { it.senderId == liveUser.uid }
     val isFriend = currentUser?.friends?.contains(liveUser.uid) == true
+    val isRequested = sentRequests.contains("${currentUser?.uid}_${liveUser.uid}")
 
     Scaffold(
         containerColor = Color.Transparent,
@@ -109,17 +111,28 @@ fun UserProfileScreen(
                         horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         if (!isFriend) {
-                            Button(
-                                onClick = {
-                                    viewModel.sendFriendRequest(liveUser) { _, message ->
-                                        Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
-                                    }
-                                },
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Icon(Icons.Outlined.PersonAdd, null)
-                                Spacer(Modifier.width(6.dp))
-                                Text("Add friend")
+                            if (isRequested) {
+                                OutlinedButton(
+                                    onClick = {
+                                        viewModel.cancelFriendRequest(liveUser.uid) { ok ->
+                                            Toast.makeText(context, if (ok) "Request cancelled" else "Could not cancel", Toast.LENGTH_SHORT).show()
+                                        }
+                                    },
+                                    modifier = Modifier.weight(1f)
+                                ) { Text("Cancel request") }
+                            } else {
+                                Button(
+                                    onClick = {
+                                        viewModel.sendFriendRequest(liveUser) { _, message ->
+                                            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+                                        }
+                                    },
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Icon(Icons.Outlined.PersonAdd, null)
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("Add friend")
+                                }
                             }
                         }
                         OutlinedButton(onClick = onMessage, modifier = Modifier.weight(1f)) {

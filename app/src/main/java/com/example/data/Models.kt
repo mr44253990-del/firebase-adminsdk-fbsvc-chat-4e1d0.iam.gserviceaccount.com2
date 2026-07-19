@@ -31,6 +31,7 @@ data class Message(
     val voiceUrl: String? = null,
     val voiceDurationSec: Int? = null,
     val seenByRecipient: Boolean = false,
+    val deliveredToRecipient: Boolean = false,
     val reactions: Map<String, String> = emptyMap()
 )
 

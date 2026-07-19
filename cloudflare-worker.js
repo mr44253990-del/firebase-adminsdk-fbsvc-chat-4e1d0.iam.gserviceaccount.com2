@@ -32,7 +32,7 @@ export default {
 
     try {
       const payload = await request.json();
-      const { token, title, body, senderId } = payload;
+      const { token, title, body, senderId, senderName, senderProfileUrl, notificationType, targetId } = payload;
 
       if (!token || !title || !body) {
         return new Response(JSON.stringify({ error: "Missing required fields: token, title, body" }), {
@@ -75,7 +75,11 @@ export default {
             body: body
           },
           data: {
-            senderId: senderId || ""
+            senderId: senderId || "",
+            senderName: senderName || "",
+            senderProfileUrl: senderProfileUrl || "",
+            notificationType: notificationType || "message",
+            targetId: targetId || ""
           },
           android: {
             priority: "high",

@@ -43,25 +43,32 @@ fun OnboardingScreen(
 
     val pages = listOf(
         OnboardingPage(
-            title = "Real-Time Chatting",
-            description = "Experience lightning-fast instant messaging. Chat with anyone around the globe securely, instantly, and with elegant visual ripples.",
+            title = "আপনার মানুষ, আপনার জগৎ",
+            description = "রিয়েল-টাইম চ্যাট, ভয়েস নোট, ছবি, গ্রুপ, টাইপিং ইন্ডিকেটর এবং ব্যক্তিগত চ্যাট থিম—সবকিছু একটি দ্রুত ও আধুনিক অভিজ্ঞতায়।",
             icon = Icons.Outlined.ChatBubbleOutline,
             accentColor = MaterialTheme.colorScheme.primary,
-            featureBadge = "⚡ Real-time"
+            featureBadge = "⚡ স্মার্ট রিয়েল-টাইম চ্যাট"
         ),
         OnboardingPage(
-            title = "Sync Notifications via Webhooks",
-            description = "Get notified instantly. FireChat syncs and publishes your push notification triggers dynamically through n8n webhooks and Firestore without manual setups.",
+            title = "স্টোরি, পোস্ট ও ভিডিও",
+            description = "স্টোরি শেয়ার করুন, অনুভূতি ও বন্ধু ট্যাগ করুন, ভিডিও ফিড দেখুন এবং লাইক-কমেন্টের প্রতিটি আপডেট Activity Center-এ পান।",
             icon = Icons.Outlined.Send,
             accentColor = MaterialTheme.colorScheme.tertiary,
-            featureBadge = "🔗 Webhook Native"
+            featureBadge = "✨ সম্পূর্ণ সোশ্যাল অভিজ্ঞতা"
         ),
         OnboardingPage(
-            title = "Privacy & Encryption first",
-            description = "All conversations and accounts are protected securely. Experience direct profile creation with dynamic password auth, and password recovery tools.",
+            title = "গোপনীয়তা ও অফলাইন সুরক্ষা",
+            description = "Firebase delivery, নিরাপদ friend ও message request, Room offline cache এবং নিয়ন্ত্রিত notification settings আপনার তথ্যকে রাখে দ্রুত ও সুরক্ষিত।",
             icon = Icons.Outlined.Lock,
             accentColor = MaterialTheme.colorScheme.secondary,
-            featureBadge = "🔒 Secure Profile"
+            featureBadge = "🔒 Privacy First"
+        ),
+        OnboardingPage(
+            title = "রাকিবুল ইসলামের FireChat",
+            description = "মানুষকে আরও সুন্দর, দ্রুত ও নিরাপদভাবে যুক্ত করার লক্ষ্য নিয়ে রাকিবুল ইসলাম FireChat তৈরি করেছেন। এটি চ্যাট, প্রোফাইল, বন্ধু, গ্রুপ, স্টোরি ও মিডিয়া—সবকিছুর একটি সমন্বিত প্ল্যাটফর্ম।",
+            icon = Icons.Outlined.ChatBubbleOutline,
+            accentColor = MaterialTheme.colorScheme.primary,
+            featureBadge = "🚀 নির্মাতা • রাকিবুল ইসলাম"
         )
     )
 
@@ -94,7 +101,7 @@ fun OnboardingScreen(
                 .testTag("onboarding_skip")
         ) {
             Text(
-                text = "Skip",
+                text = "এড়িয়ে যান",
                 style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
                 color = MaterialTheme.colorScheme.primary
             )
@@ -228,7 +235,7 @@ fun OnboardingScreen(
                     horizontalArrangement = Arrangement.Center
                 ) {
                     Text(
-                        text = if (currentPageIndex == pages.size - 1) "Get Started" else "Continue",
+                        text = if (currentPageIndex == pages.size - 1) "শুরু করুন" else "পরবর্তী",
                         fontWeight = FontWeight.Bold,
                         fontSize = 16.sp,
                         color = Color.White

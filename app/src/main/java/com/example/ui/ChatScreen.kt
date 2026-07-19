@@ -12,6 +12,9 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -19,6 +22,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -35,9 +39,11 @@ import com.example.ui.theme.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -60,14 +66,19 @@ import java.util.*
 fun ChatScreen(
     viewModel: ChatViewModel,
     recipient: User,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    onProfile: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val currentUserId = FirebaseAuth.getInstance().currentUser?.uid ?: ""
     val messages by viewModel.chatMessagesState.collectAsState()
     val isTyping by viewModel.isRecipientTyping.collectAsState()
     val chatTheme by viewModel.chatTheme.collectAsState()
+    val currentUser by viewModel.currentUserState.collectAsState()
+    val typingSounds by viewModel.typingSoundsEnabled.collectAsState()
+    val notificationSounds by viewModel.notificationSoundsEnabled.collectAsState()
     var showThemePicker by remember { mutableStateOf(false) }
+    var showChatSettings by remember { mutableStateOf(false) }
     
     val users by viewModel.usersState.collectAsState()
     val updatedRecipient = users.find { it.uid == recipient.uid } ?: recipient
@@ -312,6 +323,46 @@ fun ChatScreen(
         )
     }
 
+    if (showChatSettings) {
+        val isBlocked = currentUser?.blockedUsers?.contains(recipient.uid) == true
+        AlertDialog(
+            onDismissRequest = { showChatSettings = false },
+            title = { Text("Chat settings", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    ListItem(
+                        headlineContent = { Text("View profile") },
+                        leadingContent = { Icon(Icons.Default.Person, null) },
+                        modifier = Modifier.clip(RoundedCornerShape(18.dp)).clickable { showChatSettings = false; onProfile() }
+                    )
+                    ListItem(
+                        headlineContent = { Text("Conversation theme") },
+                        supportingContent = { Text(chatTheme) },
+                        leadingContent = { Icon(Icons.Default.Palette, null) },
+                        modifier = Modifier.clip(RoundedCornerShape(18.dp)).clickable { showChatSettings = false; showThemePicker = true }
+                    )
+                    ListItem(
+                        headlineContent = { Text("Typing sounds") },
+                        leadingContent = { Icon(Icons.Default.Keyboard, null) },
+                        trailingContent = {
+                            Switch(typingSounds, { viewModel.updateSoundPreferences(notificationSounds, it) })
+                        }
+                    )
+                    ListItem(
+                        headlineContent = { Text(if (isBlocked) "Unblock user" else "Block user") },
+                        leadingContent = { Icon(if (isBlocked) Icons.Default.LockOpen else Icons.Default.Block, null, tint = MaterialTheme.colorScheme.error) },
+                        modifier = Modifier.clip(RoundedCornerShape(18.dp)).clickable {
+                            if (isBlocked) viewModel.unblockUser(recipient.uid) { Toast.makeText(context, "User unblocked", Toast.LENGTH_SHORT).show() }
+                            else viewModel.blockUser(recipient.uid) { Toast.makeText(context, "User blocked", Toast.LENGTH_SHORT).show(); onBack() }
+                            showChatSettings = false
+                        }
+                    )
+                }
+            },
+            confirmButton = { TextButton(onClick = { showChatSettings = false }) { Text("Done") } }
+        )
+    }
+
     Scaffold(
         containerColor = Color.Transparent,
         contentWindowInsets = androidx.compose.foundation.layout.WindowInsets(0, 0, 0, 0),
@@ -378,7 +429,7 @@ fun ChatScreen(
                                 )
                             } else {
                                 Text(
-                                    text = if (updatedRecipient.isOnline) "Active Now" else "Offline",
+                                    text = if (updatedRecipient.isOnline) "Active now" else formatLastSeen(updatedRecipient.lastActive),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = if (updatedRecipient.isOnline) Color(0xFF4CAF50) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
                                 )
@@ -395,13 +446,8 @@ fun ChatScreen(
                     IconButton(onClick = { showThemePicker = true }) {
                         Icon(Icons.Default.Palette, contentDescription = "Chat theme", tint = MaterialTheme.colorScheme.primary)
                     }
-                    IconButton(onClick = {
-                        viewModel.blockUser(recipient.uid) {
-                            Toast.makeText(context, "User Blocked", Toast.LENGTH_SHORT).show()
-                            onBack()
-                        }
-                    }) {
-                        Icon(Icons.Default.Block, contentDescription = "Block User", tint = MaterialTheme.colorScheme.error)
+                    IconButton(onClick = { showChatSettings = true }) {
+                        Icon(Icons.Default.MoreVert, contentDescription = "Chat settings")
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -692,6 +738,8 @@ fun MessageBubbleItem(
     onReactSelect: (String) -> Unit
 ) {
     var showMenu by remember { mutableStateOf(false) }
+    var dragOffset by remember { mutableFloatStateOf(0f) }
+    val animatedDrag by animateFloatAsState(dragOffset, spring(stiffness = Spring.StiffnessMedium), label = "swipe_reply")
     val isDark = isSystemInDarkTheme()
 
     val shape = if (isSentByMe) {
@@ -725,6 +773,20 @@ fun MessageBubbleItem(
         Column(
             modifier = Modifier
                 .widthIn(max = 290.dp)
+                .graphicsLayer { translationX = animatedDrag }
+                .pointerInput(message.messageId) {
+                    detectHorizontalDragGestures(
+                        onDragEnd = {
+                            if (kotlin.math.abs(dragOffset) > 72f) onReplySelect()
+                            dragOffset = 0f
+                        },
+                        onDragCancel = { dragOffset = 0f },
+                        onHorizontalDrag = { change, amount ->
+                            change.consume()
+                            dragOffset = (dragOffset + amount).coerceIn(-120f, 120f)
+                        }
+                    )
+                }
                 .combinedClickable(
                     onClick = { showMenu = !showMenu },
                     onLongClick = { showMenu = true }
@@ -830,6 +892,23 @@ fun MessageBubbleItem(
                             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
                             textAlign = TextAlign.End
                         )
+                        if (isSentByMe) {
+                            Spacer(Modifier.width(4.dp))
+                            Icon(
+                                imageVector = when {
+                                    message.seenByRecipient -> Icons.Default.CheckCircle
+                                    message.deliveredToRecipient -> Icons.Default.DoneAll
+                                    else -> Icons.Default.Check
+                                },
+                                contentDescription = when {
+                                    message.seenByRecipient -> "Seen and saved"
+                                    message.deliveredToRecipient -> "Delivered"
+                                    else -> "Sent"
+                                },
+                                tint = if (message.seenByRecipient) Color(0xFF55D6FF) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = .72f),
+                                modifier = Modifier.size(if (message.seenByRecipient) 14.dp else 15.dp)
+                            )
+                        }
                     }
                 }
             }
@@ -987,5 +1066,16 @@ fun VoicePlayerBubble(
             Text("🎙️ Voice Note", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold, fontSize = 12.sp)
             Text("${durationSec}s duration", color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f), fontSize = 10.sp)
         }
+    }
+}
+
+private fun formatLastSeen(lastActive: Long): String {
+    if (lastActive <= 0L) return "Offline"
+    val minutes = ((System.currentTimeMillis() - lastActive).coerceAtLeast(0L) / 60_000L)
+    return when {
+        minutes < 1 -> "Last seen just now"
+        minutes < 60 -> "Last seen ${minutes}m ago"
+        minutes < 24 * 60 -> "Last seen ${minutes / 60}h ago"
+        else -> "Last seen ${SimpleDateFormat("dd MMM, hh:mm a", Locale.getDefault()).format(Date(lastActive))}"
     }
 }

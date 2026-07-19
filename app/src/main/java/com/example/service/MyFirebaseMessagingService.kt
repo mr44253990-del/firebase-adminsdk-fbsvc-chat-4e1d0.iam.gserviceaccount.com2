@@ -5,6 +5,8 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.os.Build
 import android.util.Log
 import androidx.core.app.NotificationCompat
@@ -14,6 +16,8 @@ import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
+import java.net.HttpURLConnection
+import java.net.URL
 
 class MyFirebaseMessagingService : FirebaseMessagingService() {
 
@@ -43,14 +47,23 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         val title = remoteMessage.notification?.title ?: remoteMessage.data["title"] ?: "New Message"
         val body = remoteMessage.notification?.body ?: remoteMessage.data["body"] ?: "You received a new message"
         val senderId = remoteMessage.data["senderId"] ?: ""
+        val notificationType = remoteMessage.data["notificationType"] ?: "message"
+        val senderProfileUrl = remoteMessage.data["senderProfileUrl"] ?: ""
 
-        sendNotification(title, body, senderId)
+        sendNotification(title, body, senderId, notificationType, senderProfileUrl)
     }
 
-    private fun sendNotification(title: String, messageBody: String, senderId: String) {
+    private fun sendNotification(
+        title: String,
+        messageBody: String,
+        senderId: String,
+        notificationType: String,
+        senderProfileUrl: String
+    ) {
         val intent = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
             putExtra("senderId", senderId)
+            putExtra("notificationType", notificationType)
         }
 
         val pendingIntent = PendingIntent.getActivity(
@@ -65,7 +78,11 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
             .setContentText(messageBody)
             .setAutoCancel(true)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setDefaults(NotificationCompat.DEFAULT_SOUND or NotificationCompat.DEFAULT_VIBRATE)
+            .setVibrate(longArrayOf(0, 180, 90, 220))
             .setContentIntent(pendingIntent)
+
+        loadBitmap(senderProfileUrl)?.let { notificationBuilder.setLargeIcon(it) }
 
         val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
@@ -75,11 +92,28 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
                 "FireChat Messages",
                 NotificationManager.IMPORTANCE_HIGH
             ).apply {
-                description = "Notifications for incoming messages from other FireChat users"
+                description = "Messages, reactions, comments, tags and friend requests"
+                enableVibration(true)
+                vibrationPattern = longArrayOf(0, 180, 90, 220)
             }
             notificationManager.createNotificationChannel(channel)
         }
 
         notificationManager.notify(System.currentTimeMillis().toInt(), notificationBuilder.build())
+    }
+
+    private fun loadBitmap(url: String): Bitmap? {
+        if (!url.startsWith("http")) return null
+        return try {
+            val connection = URL(url).openConnection() as HttpURLConnection
+            connection.connectTimeout = 2500
+            connection.readTimeout = 2500
+            connection.doInput = true
+            connection.connect()
+            connection.inputStream.use(BitmapFactory::decodeStream)
+        } catch (e: Exception) {
+            Log.w("FCM_SERVICE", "Could not load notification avatar: ${e.message}")
+            null
+        }
     }
 }
