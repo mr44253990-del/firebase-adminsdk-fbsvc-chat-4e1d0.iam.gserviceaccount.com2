@@ -12,6 +12,7 @@ import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.*
+import com.example.call.CallEngine
 import com.google.firebase.auth.AuthCredential
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.database.DataSnapshot
@@ -292,6 +293,42 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
             })
+    }
+
+    fun startAudioCall(recipient: User, onReady: (String) -> Unit) {
+        val caller = getCurrentUserOrFallback() ?: return
+        CallEngine.startOutgoing(getApplication(), recipient.uid, recipient.name, recipient.profileImageUrl) { callId ->
+            withUserFcmToken(recipient.uid, recipient.fcmToken) { token ->
+                triggerFcmGatewayNotification(
+                    gatewayUrl = _webhookUrl.value,
+                    targetToken = token,
+                    senderName = caller.name,
+                    messageBody = "Incoming FireChat audio call",
+                    senderId = caller.uid,
+                    senderProfileUrl = caller.profileImageUrl,
+                    notificationType = "incoming_call",
+                    targetId = callId
+                )
+            }
+            val chatId = listOf(caller.uid, recipient.uid).sorted().joinToString("_")
+            val historyMessage = Message(
+                messageId = "call_$callId", senderId = caller.uid, senderName = caller.name,
+                senderUsername = caller.username, text = "📞 FireChat audio call",
+                timestamp = System.currentTimeMillis(), deliveredToRecipient = recipient.isOnline
+            )
+            getDatabaseInstance().getReference("chats").child(chatId).child("messages")
+                .child(historyMessage.messageId).setValue(historyMessage)
+            viewModelScope.launch(Dispatchers.IO) {
+                cacheDao.insertMessage(CachedMessage.fromMessage(historyMessage, chatId))
+            }
+            onReady(callId)
+            viewModelScope.launch {
+                kotlinx.coroutines.delay(30_000)
+                if (CallEngine.state.value.callId == callId && CallEngine.state.value.status == "ringing") {
+                    CallEngine.timeout()
+                }
+            }
+        }
     }
 
     fun sendAdminTestNotification() {
@@ -1750,8 +1787,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                             if (now - story.timestamp <= 12 * 60 * 60 * 1000) {
                                 list.add(story)
                             } else {
-                                // Expired story: Auto-remove from DB to clean up
-                                FirebaseFirestore.getInstance().collection("stories").document(story.id).delete()
+                                // Expired story: remove media storage first, then metadata/cache.
+                                viewModelScope.launch(Dispatchers.IO) {
+                                    listOf(story.imageUrl, story.videoUrl).filter { it.isNotBlank() }.forEach(::deleteSupabaseObject)
+                                    cacheDao.deleteStory(story.id)
+                                    FirebaseFirestore.getInstance().collection("stories").document(story.id).delete()
+                                }
                             }
                         }
                     }
@@ -1847,13 +1888,15 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun deleteStory(storyId: String) {
-        FirebaseFirestore.getInstance().collection("stories").document(storyId).delete()
-            .addOnSuccessListener {
-                viewModelScope.launch(Dispatchers.IO) {
-                    cacheDao.deleteStory(storyId)
-                }
-                loadStories()
+        val ref = FirebaseFirestore.getInstance().collection("stories").document(storyId)
+        ref.get().addOnSuccessListener { doc ->
+            val media = listOfNotNull(doc.getString("imageUrl"), doc.getString("videoUrl")).filter { it.isNotBlank() }
+            viewModelScope.launch(Dispatchers.IO) {
+                media.forEach(::deleteSupabaseObject)
+                cacheDao.deleteStory(storyId)
+                ref.delete().addOnSuccessListener { loadStories() }
             }
+        }
     }
 
     // --- Social Posts Logic ---
@@ -1913,7 +1956,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                                 title = doc.getString("title") ?: "",
                                 tags = (doc.get("tags") as? List<*>)?.mapNotNull { it as? String } ?: emptyList(),
                                 taggedUserIds = (doc.get("taggedUserIds") as? List<*>)?.mapNotNull { it as? String } ?: emptyList(),
-                                feeling = doc.getString("feeling") ?: ""
+                                feeling = doc.getString("feeling") ?: "",
+                                backgroundStyle = doc.getString("backgroundStyle") ?: "glass",
+                                textAnimation = doc.getString("textAnimation") ?: "none"
                             )
 
                             // Apply privacy filters & blocked lists filters
@@ -1948,7 +1993,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         title: String = "",
         tags: List<String> = emptyList(),
         taggedUserIds: List<String> = emptyList(),
-        feeling: String = ""
+        feeling: String = "",
+        backgroundStyle: String = "glass",
+        textAnimation: String = "none"
     ) {
         val user = getCurrentUserOrFallback() ?: return
         val postId = UUID.randomUUID().toString()
@@ -1958,15 +2005,18 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             senderName = user.name,
             senderProfilePic = user.profileImageUrl,
             text = text,
-            imageUrl = imageUrl,
-            audioUrl = audioUrl,
-            videoUrl = videoUrl,
+            // Feed posts are intentionally text-only. Media remains available for stories/chat.
+            imageUrl = "",
+            audioUrl = "",
+            videoUrl = "",
             timestamp = System.currentTimeMillis(),
             isPrivate = isPrivate,
             title = title,
             tags = tags,
             taggedUserIds = taggedUserIds,
-            feeling = feeling
+            feeling = feeling,
+            backgroundStyle = backgroundStyle,
+            textAnimation = textAnimation
         )
 
         // Webhook shouldn't be called according to instruction ("কোন পোস্ট করলে রিকোয়েস্ট যাবে না")

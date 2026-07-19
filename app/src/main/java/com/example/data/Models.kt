@@ -74,7 +74,9 @@ data class Post(
     val title: String = "",
     val tags: List<String> = emptyList(),
     val taggedUserIds: List<String> = emptyList(),
-    val feeling: String = ""
+    val feeling: String = "",
+    val backgroundStyle: String = "glass",
+    val textAnimation: String = "none"
 )
 
 data class PostComment(

@@ -34,9 +34,10 @@ export default {
       return new Response(JSON.stringify({
         ok: serviceAccountConfigured,
         service: "FireChat Direct FCM Gateway",
-        version: "3.2.0",
+        version: "4.0.0",
         projectId,
         serviceAccountConfigured,
+        turnConfigured: Boolean(env.TURN_TOKEN_ID && env.TURN_API_TOKEN),
         authenticatedCallsRequired: true,
         timestamp: Date.now()
       }), {
@@ -55,13 +56,6 @@ export default {
     try {
       const payload = await request.json();
       const { token, title, body, senderId, senderName, senderProfileUrl, notificationType, targetId } = payload;
-
-      if (!token || !title || !body) {
-        return new Response(JSON.stringify({ error: "Missing required fields: token, title, body" }), {
-          status: 400,
-          headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
-        });
-      }
 
       // 1. Parse Firebase Service Account Key
       if (!env.FIREBASE_SERVICE_ACCOUNT) {
@@ -89,6 +83,36 @@ export default {
       if (!caller || (senderId && caller.sub !== senderId)) {
         return new Response(JSON.stringify({ error: "Unauthorized Firebase caller" }), {
           status: 401,
+          headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
+        });
+      }
+
+      const path = new URL(request.url).pathname.replace(/\/+$/, "");
+      if (path === "/turn-credentials") {
+        if (!env.TURN_TOKEN_ID || !env.TURN_API_TOKEN) {
+          return new Response(JSON.stringify({ error: "TURN_TOKEN_ID or TURN_API_TOKEN secret is missing" }), {
+            status: 503,
+            headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
+          });
+        }
+        const turnResponse = await fetch(
+          `https://rtc.live.cloudflare.com/v1/turn/keys/${env.TURN_TOKEN_ID}/credentials/generate-ice-servers`,
+          {
+            method: "POST",
+            headers: { "Authorization": `Bearer ${env.TURN_API_TOKEN}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ ttl: 3600, customIdentifier: caller.sub })
+          }
+        );
+        const turnResult = await turnResponse.json();
+        return new Response(JSON.stringify(turnResult), {
+          status: turnResponse.status,
+          headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*", "Cache-Control": "no-store" }
+        });
+      }
+
+      if (!token || !title || !body) {
+        return new Response(JSON.stringify({ error: "Missing required fields: token, title, body" }), {
+          status: 400,
           headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
         });
       }

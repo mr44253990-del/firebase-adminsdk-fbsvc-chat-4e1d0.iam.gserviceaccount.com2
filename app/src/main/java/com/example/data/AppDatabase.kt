@@ -191,7 +191,9 @@ data class CachedPost(
     val title: String,
     val tagsJson: String,
     val taggedUserIdsJson: String,
-    val feeling: String
+    val feeling: String,
+    val backgroundStyle: String,
+    val textAnimation: String
 ) {
     fun toPost(): Post {
         val reactionsMap = mutableMapOf<String, String>()
@@ -227,7 +229,7 @@ data class CachedPost(
             title,
             try { JSONArray(tagsJson).let { array -> (0 until array.length()).map { array.getString(it) } } } catch (_: Exception) { emptyList() },
             try { JSONArray(taggedUserIdsJson).let { array -> (0 until array.length()).map { array.getString(it) } } } catch (_: Exception) { emptyList() },
-            feeling
+            feeling, backgroundStyle, textAnimation
         )
     }
 
@@ -252,7 +254,8 @@ data class CachedPost(
                 post.id, post.senderId, post.senderName, post.senderProfilePic,
                 post.text, post.imageUrl, post.audioUrl, post.videoUrl, post.timestamp,
                 reactionsObj.toString(), commentsArr.toString(), post.viewsCount, post.isPrivate,
-                post.title, JSONArray(post.tags).toString(), JSONArray(post.taggedUserIds).toString(), post.feeling
+                post.title, JSONArray(post.tags).toString(), JSONArray(post.taggedUserIds).toString(), post.feeling,
+                post.backgroundStyle, post.textAnimation
             )
         }
     }
@@ -441,7 +444,7 @@ interface CacheDao {
         CachedGroupMessage::class,
         CachedActivityNotification::class
     ],
-    version = 3,
+    version = 4,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -456,6 +459,12 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE cached_messages ADD COLUMN deliveredToRecipient INTEGER NOT NULL DEFAULT 0")
             }
         }
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE cached_posts ADD COLUMN backgroundStyle TEXT NOT NULL DEFAULT 'glass'")
+                db.execSQL("ALTER TABLE cached_posts ADD COLUMN textAnimation TEXT NOT NULL DEFAULT 'none'")
+            }
+        }
 
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
@@ -463,7 +472,7 @@ abstract class AppDatabase : RoomDatabase() {
                     context.applicationContext,
                     AppDatabase::class.java,
                     "firechat_offline_cache_db"
-                ).addMigrations(MIGRATION_2_3)
+                ).addMigrations(MIGRATION_2_3, MIGRATION_3_4)
                     .fallbackToDestructiveMigration()
                     .build()
                 INSTANCE = instance

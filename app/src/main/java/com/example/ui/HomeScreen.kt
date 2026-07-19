@@ -3,12 +3,14 @@ package com.example.ui
 import android.Manifest
 import android.app.DatePickerDialog
 import android.content.Context
+import android.content.Intent
 import android.content.ClipboardManager
 import android.content.ClipData
 import android.content.pm.PackageManager
 import android.media.MediaPlayer
 import android.net.Uri
 import android.os.Build
+import android.provider.Settings
 import android.util.Log
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -33,6 +35,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.pager.VerticalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.ClickableText
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -53,8 +56,12 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -83,6 +90,7 @@ fun HomeScreen(
     viewModel: ChatViewModel,
     onUserSelected: (User) -> Unit,
     onProfileSelected: (User) -> Unit,
+    onCreatePost: () -> Unit,
     onGroupSelected: (Group) -> Unit,
     onSignOut: () -> Unit
 ) {
@@ -113,7 +121,6 @@ fun HomeScreen(
     val currentTab by viewModel.currentTabState.collectAsState()
 
     // Dialog & Creation controllers
-    var showCreatePostDialog by remember { mutableStateOf(false) }
     var showCreateGroupDialog by remember { mutableStateOf(false) }
     var selectedStoryIndex by remember { mutableStateOf<Int?>(null) }
 
@@ -327,7 +334,7 @@ fun HomeScreen(
                         }
                         item(key = "composer") {
                             Card(
-                                onClick = { showCreatePostDialog = true },
+                                onClick = onCreatePost,
                                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
                                 shape = RoundedCornerShape(28.dp),
                                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = .70f)),
@@ -344,10 +351,11 @@ fun HomeScreen(
                                         modifier = Modifier.size(44.dp).clip(CircleShape)
                                     )
                                     Spacer(Modifier.width(12.dp))
-                                    Text("What's on your mind?", Modifier.weight(1f), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 15.sp)
-                                    Icon(Icons.Outlined.Image, "Add photo", tint = MaterialTheme.colorScheme.primary)
-                                    Spacer(Modifier.width(12.dp))
-                                    Icon(Icons.Outlined.Videocam, "Add video", tint = MaterialTheme.colorScheme.secondary)
+                                    Column(Modifier.weight(1f).padding(start = 12.dp)) {
+                                        Text("Write a text post…", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 15.sp)
+                                        Text("Backgrounds • feelings • tags", color = MaterialTheme.colorScheme.primary, fontSize = 10.sp)
+                                    }
+                                    Icon(Icons.Outlined.Palette, "Choose post background", tint = MaterialTheme.colorScheme.primary)
                                     Spacer(Modifier.width(10.dp))
                                     Surface(color = MaterialTheme.colorScheme.primary, shape = CircleShape) {
                                         Text("Post", Modifier.padding(horizontal = 18.dp, vertical = 10.dp), color = MaterialTheme.colorScheme.onPrimary, fontWeight = FontWeight.Bold)
@@ -956,6 +964,18 @@ fun HomeScreen(
                                         onCheckedChange = { viewModel.updateSoundPreferences(notificationSounds, it) }
                                     )
                                 }
+                                if (Build.VERSION.SDK_INT >= 34) {
+                                    val manager = context.getSystemService(android.app.NotificationManager::class.java)
+                                    if (!manager.canUseFullScreenIntent()) {
+                                        OutlinedButton(
+                                            onClick = {
+                                                context.startActivity(Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT).apply {
+                                                    data = Uri.parse("package:${context.packageName}")
+                                                })
+                                            }, modifier = Modifier.fillMaxWidth()
+                                        ) { Icon(Icons.Default.Call, null); Spacer(Modifier.width(8.dp)); Text("Allow full-screen incoming calls") }
+                                    }
+                                }
                             }
                         }
 
@@ -1158,239 +1178,6 @@ fun HomeScreen(
             onReject = { viewModel.respondToFriendRequest(it, false) },
             onAcceptMessage = { viewModel.respondToMessageRequest(it, true) },
             onRejectMessage = { viewModel.respondToMessageRequest(it, false) }
-        )
-    }
-
-    // CREATE POST DIALOG
-    if (showCreatePostDialog) {
-        var postTitle by remember { mutableStateOf("") }
-        var postText by remember { mutableStateOf("") }
-        var postTags by remember { mutableStateOf("") }
-        var taggedPeople by remember { mutableStateOf("") }
-        val selectedTaggedIds = remember { mutableStateListOf<String>() }
-        var postFeeling by remember { mutableStateOf("") }
-        var postImageUrl by remember { mutableStateOf("") }
-        var postVideoUrl by remember { mutableStateOf("") }
-        var isPrivateToggle by remember { mutableStateOf(false) }
-        var isUploadingMedia by remember { mutableStateOf(false) }
-
-        val imagePicker = rememberLauncherForActivityResult(
-            contract = ActivityResultContracts.GetContent()
-        ) { uri: Uri? ->
-            if (uri != null) {
-                isUploadingMedia = true
-                try {
-                    val inputStream: InputStream? = context.contentResolver.openInputStream(uri)
-                    val bytes = inputStream?.readBytes()
-                    if (bytes != null) {
-                        viewModel.uploadFileToSupabase(
-                            bucket = "chat_images",
-                            fileName = "post_${System.currentTimeMillis()}.jpg",
-                            fileBytes = bytes,
-                            contentType = "image/jpeg",
-                            onSuccess = { publicUrl ->
-                                isUploadingMedia = false
-                                postImageUrl = publicUrl
-                                Toast.makeText(context, "Post image uploaded!", Toast.LENGTH_SHORT).show()
-                            },
-                            onFailure = { err ->
-                                isUploadingMedia = false
-                                Toast.makeText(context, "Upload failed: $err", Toast.LENGTH_SHORT).show()
-                            }
-                        )
-                    }
-                } catch (e: Exception) {
-                    isUploadingMedia = false
-                }
-            }
-        }
-
-        val videoPicker = rememberLauncherForActivityResult(
-            contract = ActivityResultContracts.GetContent()
-        ) { uri: Uri? ->
-            if (uri != null) {
-                isUploadingMedia = true
-                try {
-                    val inputStream: InputStream? = context.contentResolver.openInputStream(uri)
-                    val bytes = inputStream?.readBytes()
-                    if (bytes != null) {
-                        viewModel.uploadFileToSupabase(
-                            bucket = "chat_images",
-                            fileName = "post_${System.currentTimeMillis()}.mp4",
-                            fileBytes = bytes,
-                            contentType = "video/mp4",
-                            onSuccess = { publicUrl ->
-                                isUploadingMedia = false
-                                postVideoUrl = publicUrl
-                                Toast.makeText(context, "Post video uploaded!", Toast.LENGTH_SHORT).show()
-                            },
-                            onFailure = { err ->
-                                isUploadingMedia = false
-                                Toast.makeText(context, "Upload failed: $err", Toast.LENGTH_SHORT).show()
-                            }
-                        )
-                    }
-                } catch (e: Exception) {
-                    isUploadingMedia = false
-                }
-            }
-        }
-
-        AlertDialog(
-            onDismissRequest = { showCreatePostDialog = false },
-            title = { Text("Create a post", fontWeight = FontWeight.Bold) },
-            text = {
-                Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    OutlinedTextField(
-                        value = postTitle,
-                        onValueChange = { postTitle = it },
-                        label = { Text("Title") },
-                        placeholder = { Text("Give your post a title") },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true
-                    )
-                    OutlinedTextField(
-                        value = postText,
-                        onValueChange = { postText = it },
-                        placeholder = { Text("What's on your mind?") },
-                        modifier = Modifier.fillMaxWidth(),
-                        maxLines = 5
-                    )
-                    Text("Feeling / activity", fontWeight = FontWeight.SemiBold)
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                        items(listOf("😊 Happy", "🥰 Loved", "🎉 Excited", "😎 Cool", "😢 Sad", "✈️ Traveling", "🍽️ Eating", "🎮 Gaming")) { feeling ->
-                            FilterChip(
-                                selected = postFeeling == feeling,
-                                onClick = { postFeeling = if (postFeeling == feeling) "" else feeling },
-                                label = { Text(feeling) },
-                                shape = CircleShape
-                            )
-                        }
-                    }
-                    OutlinedTextField(
-                        value = postTags,
-                        onValueChange = { postTags = it },
-                        label = { Text("Hashtags") },
-                        placeholder = { Text("travel, friends, firechat") },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true
-                    )
-                    OutlinedTextField(
-                        value = taggedPeople,
-                        onValueChange = { taggedPeople = it },
-                        label = { Text("Tag people") },
-                        placeholder = { Text("Type @name or username") },
-                        leadingIcon = { Icon(Icons.Outlined.AlternateEmail, null) },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true
-                    )
-                    if (selectedTaggedIds.isNotEmpty()) {
-                        LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            items(selectedTaggedIds.toList()) { uid ->
-                                allUsers.find { it.uid == uid }?.let { person ->
-                                    InputChip(
-                                        selected = true,
-                                        onClick = { selectedTaggedIds.remove(uid) },
-                                        label = { Text(person.name) },
-                                        avatar = {
-                                            AsyncImage(person.profileImageUrl.ifBlank { null }, person.name, error = painterResource(R.drawable.img_app_logo), modifier = Modifier.size(24.dp).clip(CircleShape))
-                                        },
-                                        trailingIcon = { Icon(Icons.Default.Close, "Remove", Modifier.size(16.dp)) }
-                                    )
-                                }
-                            }
-                        }
-                    }
-                    val tagQuery = taggedPeople.trim().removePrefix("@").lowercase()
-                    val tagMatches = if (tagQuery.length < 2) emptyList() else allUsers.filter {
-                        it.uid !in selectedTaggedIds && (it.name.contains(tagQuery, true) || it.username.contains(tagQuery, true))
-                    }.take(5)
-                    tagMatches.forEach { person ->
-                        Row(
-                            Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).clickable {
-                                selectedTaggedIds.add(person.uid)
-                                taggedPeople = ""
-                            }.background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .55f)).padding(8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            AsyncImage(person.profileImageUrl.ifBlank { null }, person.name, error = painterResource(R.drawable.img_app_logo), modifier = Modifier.size(38.dp).clip(CircleShape))
-                            Spacer(Modifier.width(9.dp))
-                            Column { Text(person.name, fontWeight = FontWeight.Bold); Text("@${person.username}", fontSize = 11.sp) }
-                        }
-                    }
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        IconButton(
-                            onClick = { imagePicker.launch("image/*") },
-                            modifier = Modifier.background(MaterialTheme.colorScheme.primaryContainer, CircleShape)
-                        ) {
-                            Icon(Icons.Default.AddPhotoAlternate, contentDescription = "Attach image")
-                        }
-
-                        IconButton(
-                            onClick = { videoPicker.launch("video/*") },
-                            modifier = Modifier.background(MaterialTheme.colorScheme.secondaryContainer, CircleShape)
-                        ) {
-                            Icon(Icons.Default.Videocam, contentDescription = "Attach video")
-                        }
-
-                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                            if (postImageUrl.isNotBlank()) {
-                                Text("Image Attached ✅", color = Color(0xFF4CAF50), fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                            }
-                            if (postVideoUrl.isNotBlank()) {
-                                Text("Video Attached ✅", color = Color(0xFF4CAF50), fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.weight(1f))
-
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Checkbox(checked = isPrivateToggle, onCheckedChange = { isPrivateToggle = it })
-                            Text("Private", fontSize = 12.sp)
-                        }
-                    }
-
-                    if (isUploadingMedia) {
-                        CircularProgressIndicator(modifier = Modifier.size(24.dp))
-                    }
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        if (postTitle.isNotBlank() || postText.isNotBlank() || postImageUrl.isNotBlank() || postVideoUrl.isNotBlank()) {
-                            val tags = postTags.split(",", " ").map { it.trim().removePrefix("#") }.filter { it.isNotBlank() }.distinct()
-                            val taggedIds = selectedTaggedIds.toList()
-                            viewModel.createPost(
-                                text = postText,
-                                imageUrl = postImageUrl,
-                                audioUrl = "",
-                                videoUrl = postVideoUrl,
-                                isPrivate = isPrivateToggle,
-                                onComplete = {},
-                                title = postTitle,
-                                tags = tags,
-                                taggedUserIds = taggedIds,
-                                feeling = postFeeling
-                            )
-                            showCreatePostDialog = false
-                        }
-                    },
-                    enabled = !isUploadingMedia
-                ) {
-                    Text("Post", fontWeight = FontWeight.Bold)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showCreatePostDialog = false }) {
-                    Text("Cancel")
-                }
-            }
         )
     }
 
@@ -2440,15 +2227,25 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
     val currentUserProfile = allUsers.find { it.uid == currentUserId }
     val currentUserPic = currentUserProfile?.profileImageUrl ?: ""
     val postOwner = allUsers.find { it.uid == post.senderId }
+    val styledPost = post.backgroundStyle != "glass"
+    val postMotion = rememberInfiniteTransition(label = "post_${post.id}")
+    val postScale by postMotion.animateFloat(
+        initialValue = if (post.textAnimation == "pulse") .985f else 1f,
+        targetValue = if (post.textAnimation == "pulse") 1.015f else if (post.textAnimation == "breathe") 1.008f else 1f,
+        animationSpec = infiniteRepeatable(tween(1400, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        label = "post_motion"
+    )
+    val postShape = RoundedCornerShape(26.dp)
+    val postContainerModifier = (if (styledPost) {
+        Modifier.fillMaxWidth()
+            .background(Brush.linearGradient(postBackgroundColors(post.backgroundStyle)), postShape)
+            .border(1.dp, Color.White.copy(alpha = .24f), postShape)
+    } else {
+        Modifier.fillMaxWidth().glassmorphic(isDark = isDark, shape = postShape)
+    }).graphicsLayer { scaleX = postScale; scaleY = postScale }
+    val primaryPostText = if (styledPost) Color.White else MaterialTheme.colorScheme.onSurface
 
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .glassmorphic(
-                isDark = isDark,
-                shape = RoundedCornerShape(24.dp)
-            )
-    ) {
+    Box(modifier = postContainerModifier) {
         Column(modifier = Modifier.padding(16.dp)) {
             // Sender top row
             Row(
@@ -2510,7 +2307,7 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
             Spacer(modifier = Modifier.height(12.dp))
 
             if (post.title.isNotBlank()) {
-                Text(post.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                Text(post.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = primaryPostText)
                 Spacer(Modifier.height(6.dp))
             }
             if (post.feeling.isNotBlank()) {
@@ -2520,11 +2317,11 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
 
             // Post Content Text
             if (post.text.isNotBlank()) {
-                Text(
-                    text = post.text, 
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    lineHeight = 20.sp
+                LinkifiedPostText(
+                    text = post.text,
+                    color = primaryPostText,
+                    styled = styledPost,
+                    modifier = if (styledPost) Modifier.fillMaxWidth().padding(vertical = 18.dp) else Modifier
                 )
                 Spacer(modifier = Modifier.height(10.dp))
             }
@@ -3179,4 +2976,46 @@ fun GroupItemCard(group: Group, onClick: () -> Unit) {
             }
         }
     }
+}
+
+@Composable
+private fun LinkifiedPostText(text: String, color: Color, styled: Boolean, modifier: Modifier = Modifier) {
+    val uriHandler = LocalUriHandler.current
+    val urlRegex = remember { Regex("https?://[^\\s]+", RegexOption.IGNORE_CASE) }
+    val annotated = remember(text, color) {
+        buildAnnotatedString {
+            var cursor = 0
+            urlRegex.findAll(text).forEach { match ->
+                append(text.substring(cursor, match.range.first))
+                pushStringAnnotation("URL", match.value)
+                pushStyle(SpanStyle(color = if (styled) Color(0xFFBDEBFF) else Color(0xFF3D8BFF), textDecoration = TextDecoration.Underline, fontWeight = FontWeight.SemiBold))
+                append(match.value)
+                pop(); pop()
+                cursor = match.range.last + 1
+            }
+            append(text.substring(cursor))
+        }
+    }
+    ClickableText(
+        text = annotated,
+        modifier = modifier,
+        style = MaterialTheme.typography.bodyMedium.copy(
+            color = color,
+            lineHeight = if (styled) 26.sp else 20.sp,
+            fontSize = if (styled) 18.sp else 14.sp,
+            textAlign = if (styled) TextAlign.Center else TextAlign.Start
+        ),
+        onClick = { offset -> annotated.getStringAnnotations("URL", offset, offset).firstOrNull()?.let { runCatching { uriHandler.openUri(it.item) } } }
+    )
+}
+
+private fun postBackgroundColors(style: String): List<Color> = when (style) {
+    "sunset" -> listOf(Color(0xFFFF6B6B), Color(0xFFFFB347), Color(0xFF7A3152))
+    "ocean" -> listOf(Color(0xFF005C97), Color(0xFF00A8CC), Color(0xFF002B5B))
+    "aurora" -> listOf(Color(0xFF4A148C), Color(0xFF00BFA5), Color(0xFF311B92))
+    "forest" -> listOf(Color(0xFF0B3D2E), Color(0xFF2E8B57), Color(0xFF102A1E))
+    "rose" -> listOf(Color(0xFF8E2DE2), Color(0xFFFF5F6D), Color(0xFF3A1C71))
+    "midnight" -> listOf(Color(0xFF020024), Color(0xFF090979), Color(0xFF111827))
+    "mono" -> listOf(Color(0xFF111111), Color(0xFF424242), Color(0xFF151515))
+    else -> listOf(Color(0xFF28233F), Color(0xFF6750A4), Color(0xFF15233A))
 }

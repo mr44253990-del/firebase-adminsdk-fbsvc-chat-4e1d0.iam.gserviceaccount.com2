@@ -7,10 +7,14 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.media.RingtoneManager
 import android.os.Build
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.core.app.Person
+import androidx.core.graphics.drawable.IconCompat
 import com.example.MainActivity
+import com.example.call.IncomingCallActivity
 import com.example.data.User
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
@@ -58,8 +62,54 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         val notificationType = remoteMessage.data["notificationType"] ?: "message"
         val senderProfileUrl = remoteMessage.data["senderProfileUrl"] ?: ""
         val targetId = remoteMessage.data["targetId"] ?: ""
+        val senderName = remoteMessage.data["senderName"] ?: title
 
-        sendNotification(title, body, senderId, notificationType, senderProfileUrl, targetId)
+        if (notificationType == "incoming_call") {
+            sendIncomingCallNotification(targetId, senderId, senderName, senderProfileUrl)
+        } else {
+            sendNotification(title, body, senderId, notificationType, senderProfileUrl, targetId)
+        }
+    }
+
+    private fun sendIncomingCallNotification(callId: String, callerId: String, callerName: String, callerImage: String) {
+        if (callId.isBlank()) return
+        fun callIntent(action: String, requestCode: Int) = PendingIntent.getActivity(
+            this, requestCode,
+            Intent(this, IncomingCallActivity::class.java).apply {
+                this.action = action
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                putExtra("callId", callId); putExtra("callerId", callerId)
+                putExtra("callerName", callerName); putExtra("callerImage", callerImage)
+            }, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val answer = callIntent("com.ebchat.ACCEPT_CALL", (callId + "answer").hashCode())
+        val decline = callIntent("com.ebchat.DECLINE_CALL", (callId + "decline").hashCode())
+        val fullScreen = callIntent("com.ebchat.SHOW_CALL", (callId + "screen").hashCode())
+        val avatar = loadBitmap(callerImage)
+        val personBuilder = Person.Builder().setName(callerName).setImportant(true)
+        if (avatar != null) personBuilder.setIcon(IconCompat.createWithBitmap(avatar))
+        val person = personBuilder.build()
+        val channelId = "firechat_calls_v1"
+        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            manager.createNotificationChannel(NotificationChannel(channelId, "FireChat Calls", NotificationManager.IMPORTANCE_HIGH).apply {
+                description = "Incoming FireChat audio calls"
+                setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE), null)
+                enableVibration(true); vibrationPattern = longArrayOf(0, 500, 300, 500)
+                lockscreenVisibility = NotificationCompat.VISIBILITY_PUBLIC
+            })
+        }
+        val builder = NotificationCompat.Builder(this, channelId)
+            .setSmallIcon(android.R.drawable.sym_call_incoming)
+            .setContentTitle("Incoming FireChat call")
+            .setContentText(callerName)
+            .setCategory(NotificationCompat.CATEGORY_CALL)
+            .setPriority(NotificationCompat.PRIORITY_MAX)
+            .setOngoing(true).setAutoCancel(false).setTimeoutAfter(30_000)
+            .setStyle(NotificationCompat.CallStyle.forIncomingCall(person, decline, answer))
+            .setContentIntent(fullScreen)
+        if (Build.VERSION.SDK_INT < 34 || manager.canUseFullScreenIntent()) builder.setFullScreenIntent(fullScreen, true)
+        manager.notify(callId.hashCode(), builder.build())
     }
 
     private fun sendNotification(

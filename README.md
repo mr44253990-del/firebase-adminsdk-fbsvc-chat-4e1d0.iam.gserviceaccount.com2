@@ -44,6 +44,32 @@ The new `firechat-fcm-worker.js` supports public health diagnostics and authenti
 
 The explicit Google button uses `GetSignInWithGoogleOption`, which always requests the account chooser. Ensure Firebase Authentication → Google is enabled, the correct Web OAuth client exists, and debug/release SHA-1 and SHA-256 fingerprints are registered before downloading a fresh `google-services.json`.
 
+### Text-only posts
+
+Feed posts are text-only and use a dedicated composer route. Users can choose predefined animated gradient backgrounds, feelings, hashtags, people tags, privacy, and clickable HTTPS links. The ViewModel forcibly clears image/audio/video fields even if an old client attempts to submit them. Story and chat media remain supported. Expired 12-hour stories delete both Firestore metadata and their Supabase image/video objects.
+
+### 1:1 WebRTC audio calls
+
+Audio calls use RTDB for offer/answer/ICE signaling and Cloudflare Realtime TURN only when direct P2P connectivity fails. Worker `4.0.0` exposes an authenticated `/turn-credentials` endpoint and generates one-hour short-lived credentials; long-lived TURN secrets never enter the APK.
+
+Create fresh Cloudflare secrets (rotate every value ever pasted into chat):
+
+```text
+TURN_TOKEN_ID=<fresh TURN key ID>
+TURN_API_TOKEN=<fresh TURN API token>
+```
+
+Deploy with:
+
+```bash
+export TURN_TOKEN_ID='fresh-id'
+export TURN_API_TOKEN='fresh-token'
+./deploy-firechat-worker.sh
+firebase deploy --only database,firestore:rules
+```
+
+Android 14+ may require the user to enable **Allow full-screen incoming calls** under Profile & appearance. Without that special access, Android correctly falls back to a high-priority CallStyle heads-up notification. Incoming calls ring with the device ringtone, expire after 30 seconds, support accept/decline, mute, speaker, reconnect state, and retain a lightweight call item in local chat history.
+
 ### Ephemeral chat delivery
 
 Direct messages use RTDB as a delivery envelope and Room as device-owned history. The sender stores a local copy immediately. When the receiver opens the conversation, FireChat stores the incoming text/image/voice metadata locally, writes a lightweight seen receipt for the sender, and removes the delivered message envelope from RTDB. Receipt documents are removed after the sender caches the seen state. A non-destructive Room `2 → 3` migration preserves existing local conversations during app updates.

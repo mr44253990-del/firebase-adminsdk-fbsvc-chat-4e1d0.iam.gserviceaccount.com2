@@ -37,7 +37,24 @@ echo "Writing encrypted FIREBASE_SERVICE_ACCOUNT secret..."
 SECRET_RESULT=$(curl -fsS -X PUT "${API}/secrets" "${AUTH[@]}" \
   -H 'Content-Type: application/json' --data-binary "$SECRET_PAYLOAD")
 unset SECRET_PAYLOAD
-python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("success"), d.get("errors"); print("Encrypted secret saved")' <<<"$SECRET_RESULT"
+python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("success"), d.get("errors"); print("Encrypted Firebase secret saved")' <<<"$SECRET_RESULT"
+
+put_secret() {
+  local name="$1" value="$2"
+  local payload
+  payload=$(NAME="$name" VALUE="$value" python3 -c 'import json,os; print(json.dumps({"name":os.environ["NAME"],"text":os.environ["VALUE"],"type":"secret_text"}))')
+  local result
+  result=$(curl -fsS -X PUT "${API}/secrets" "${AUTH[@]}" -H 'Content-Type: application/json' --data-binary "$payload")
+  python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("success"), d.get("errors")' <<<"$result"
+  unset payload result
+  echo "Encrypted ${name} secret saved"
+}
+if [[ -n "${TURN_TOKEN_ID:-}" && -n "${TURN_API_TOKEN:-}" ]]; then
+  put_secret TURN_TOKEN_ID "$TURN_TOKEN_ID"
+  put_secret TURN_API_TOKEN "$TURN_API_TOKEN"
+else
+  echo "TURN secrets not set; audio calling health will report turnConfigured=false" >&2
+fi
 
 echo "Testing ${WORKER_URL}..."
 curl -fsS "${WORKER_URL}" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps(d,indent=2)); assert d.get("ok") is True, "Worker health check failed"'

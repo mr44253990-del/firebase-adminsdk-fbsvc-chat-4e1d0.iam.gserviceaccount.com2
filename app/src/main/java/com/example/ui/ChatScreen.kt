@@ -1,12 +1,14 @@
 package com.example.ui
 
 import android.Manifest
+import android.app.DownloadManager
 import android.content.Context
 import android.content.pm.PackageManager
 import android.media.MediaPlayer
 import android.media.MediaRecorder
 import android.net.Uri
 import android.os.Build
+import android.os.Environment
 import android.util.Log
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -23,6 +25,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -51,6 +54,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
 import coil.compose.AsyncImage
 import com.example.data.Message
@@ -67,7 +72,8 @@ fun ChatScreen(
     viewModel: ChatViewModel,
     recipient: User,
     onBack: () -> Unit,
-    onProfile: () -> Unit = {}
+    onProfile: () -> Unit = {},
+    onCall: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val currentUserId = FirebaseAuth.getInstance().currentUser?.uid ?: ""
@@ -102,13 +108,18 @@ fun ChatScreen(
             ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
         )
     }
+    var pendingCall by remember { mutableStateOf(false) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
     ) { isGranted ->
         audioPermissionGranted = isGranted
-        if (!isGranted) {
-            Toast.makeText(context, "Microphone access is needed for voice messages.", Toast.LENGTH_SHORT).show()
+        if (isGranted && pendingCall) {
+            pendingCall = false
+            onCall()
+        } else if (!isGranted) {
+            pendingCall = false
+            Toast.makeText(context, "Microphone access is needed for voice messages and calls.", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -443,6 +454,12 @@ fun ChatScreen(
                     }
                 },
                 actions = {
+                    IconButton(onClick = {
+                        if (audioPermissionGranted) onCall()
+                        else { pendingCall = true; permissionLauncher.launch(Manifest.permission.RECORD_AUDIO) }
+                    }) {
+                        Icon(Icons.Default.Call, contentDescription = "Audio call", tint = Color(0xFF45D483))
+                    }
                     IconButton(onClick = { showThemePicker = true }) {
                         Icon(Icons.Default.Palette, contentDescription = "Chat theme", tint = MaterialTheme.colorScheme.primary)
                     }
@@ -738,6 +755,7 @@ fun MessageBubbleItem(
     onReactSelect: (String) -> Unit
 ) {
     var showMenu by remember { mutableStateOf(false) }
+    var showImageViewer by remember { mutableStateOf(false) }
     var dragOffset by remember { mutableFloatStateOf(0f) }
     val animatedDrag by animateFloatAsState(dragOffset, spring(stiffness = Spring.StiffnessMedium), label = "swipe_reply")
     val isDark = isSystemInDarkTheme()
@@ -764,9 +782,11 @@ fun MessageBubbleItem(
     val alignment = if (isSentByMe) Alignment.End else Alignment.Start
 
     val timeString = remember(message.timestamp) {
-        // Displays time correctly formatted in 12-hour local format
         val sdf = SimpleDateFormat("hh:mm a", Locale.getDefault())
         sdf.format(Date(message.timestamp))
+    }
+    if (showImageViewer && !message.imageUrl.isNullOrBlank()) {
+        FullScreenChatImage(message.imageUrl, onDismiss = { showImageViewer = false })
     }
 
     Box(modifier = Modifier.fillMaxWidth(), contentAlignment = if (isSentByMe) Alignment.TopEnd else Alignment.TopStart) {
@@ -852,8 +872,9 @@ fun MessageBubbleItem(
                             contentScale = ContentScale.Crop,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(160.dp)
+                                .height(180.dp)
                                 .clip(RoundedCornerShape(18.dp))
+                                .clickable { showImageViewer = true }
                                 .background(MaterialTheme.colorScheme.surface)
                         )
                         Spacer(modifier = Modifier.height(6.dp))
@@ -1077,5 +1098,45 @@ private fun formatLastSeen(lastActive: Long): String {
         minutes < 60 -> "Last seen ${minutes}m ago"
         minutes < 24 * 60 -> "Last seen ${minutes / 60}h ago"
         else -> "Last seen ${SimpleDateFormat("dd MMM, hh:mm a", Locale.getDefault()).format(Date(lastActive))}"
+    }
+}
+
+@Composable
+private fun FullScreenChatImage(imageUrl: String, onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    var scale by remember { mutableFloatStateOf(1f) }
+    var offsetX by remember { mutableFloatStateOf(0f) }
+    var offsetY by remember { mutableFloatStateOf(0f) }
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
+        Box(Modifier.fillMaxSize().background(Color.Black)) {
+            AsyncImage(
+                model = imageUrl, contentDescription = "Full screen image", contentScale = ContentScale.Fit,
+                modifier = Modifier.fillMaxSize().pointerInput(imageUrl) {
+                    detectTransformGestures { _, pan, zoom, _ ->
+                        scale = (scale * zoom).coerceIn(1f, 5f)
+                        offsetX += pan.x; offsetY += pan.y
+                    }
+                }.graphicsLayer(scaleX = scale, scaleY = scale, translationX = offsetX, translationY = offsetY)
+            )
+            Row(Modifier.align(Alignment.TopEnd).windowInsetsPadding(WindowInsets.statusBars).padding(14.dp)) {
+                IconButton(
+                    onClick = {
+                        if (imageUrl.startsWith("http")) {
+                            val request = DownloadManager.Request(Uri.parse(imageUrl))
+                                .setTitle("FireChat image")
+                                .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+                                .setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, "FireChat_${System.currentTimeMillis()}.jpg")
+                            (context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager).enqueue(request)
+                            Toast.makeText(context, "Download started", Toast.LENGTH_SHORT).show()
+                        } else Toast.makeText(context, "Image is already saved on this device", Toast.LENGTH_SHORT).show()
+                    }, modifier = Modifier.background(Color.Black.copy(alpha = .45f), CircleShape)
+                ) { Icon(Icons.Default.Download, "Download", tint = Color.White) }
+                Spacer(Modifier.width(8.dp))
+                IconButton(onClick = onDismiss, modifier = Modifier.background(Color.Black.copy(alpha = .45f), CircleShape)) {
+                    Icon(Icons.Default.Close, "Close", tint = Color.White)
+                }
+            }
+            Text("Pinch to zoom • drag to move", color = Color.White.copy(alpha = .65f), modifier = Modifier.align(Alignment.BottomCenter).windowInsetsPadding(WindowInsets.navigationBars).padding(18.dp))
+        }
     }
 }

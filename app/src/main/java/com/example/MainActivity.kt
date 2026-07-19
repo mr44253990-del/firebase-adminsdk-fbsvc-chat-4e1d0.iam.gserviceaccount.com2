@@ -18,10 +18,13 @@ import androidx.navigation.compose.rememberNavController
 import androidx.compose.ui.platform.LocalContext
 import com.example.ui.AuthScreen
 import com.example.ui.ChatScreen
+import com.example.call.CallScreen
+import com.example.call.CallEngine
 import com.example.ui.ChatViewModel
 import com.example.ui.HomeScreen
 import com.example.ui.GroupChatScreen
 import com.example.ui.OnboardingScreen
+import com.example.ui.PostComposerScreen
 import com.example.ui.SplashScreen
 import com.example.ui.UserProfileScreen
 import com.example.ui.isOnboardingCompleted
@@ -69,6 +72,7 @@ class MainActivity : ComponentActivity() {
                 val activeRecipient by viewModel.activeRecipientUser.collectAsState()
                 val activeGroup by viewModel.activeGroup.collectAsState()
                 val selectedProfile by viewModel.selectedProfile.collectAsState()
+                val callState by CallEngine.state.collectAsState()
                 val context = LocalContext.current
 
                 // Check starting destination depending on whether onboarding has been completed and if a user is already signed in
@@ -137,6 +141,7 @@ class MainActivity : ComponentActivity() {
                                     viewModel.selectProfile(user)
                                     navController.navigate("profile")
                                 },
+                                onCreatePost = { navController.navigate("compose_post") },
                                 onGroupSelected = { group ->
                                     viewModel.selectGroup(group)
                                     navController.navigate("group_chat")
@@ -146,6 +151,14 @@ class MainActivity : ComponentActivity() {
                                         popUpTo("home") { inclusive = true }
                                     }
                                 }
+                            )
+                        }
+
+                        composable("compose_post") {
+                            PostComposerScreen(
+                                viewModel = viewModel,
+                                onBack = { navController.popBackStack() },
+                                onPublished = { navController.popBackStack() }
                             )
                         }
 
@@ -163,6 +176,18 @@ class MainActivity : ComponentActivity() {
                             }
                         }
 
+                        composable("call") {
+                            CallScreen(
+                                callId = callState.callId,
+                                remoteUid = callState.remoteUid,
+                                remoteName = callState.remoteName,
+                                remoteImage = callState.remoteImage,
+                                incoming = false,
+                                initiallyAccepted = true,
+                                onClose = { navController.popBackStack() }
+                            )
+                        }
+
                         composable("chat") {
                             activeRecipient?.let { recipient ->
                                 ChatScreen(
@@ -174,6 +199,11 @@ class MainActivity : ComponentActivity() {
                                     onProfile = {
                                         viewModel.selectProfile(recipient)
                                         navController.navigate("profile")
+                                    },
+                                    onCall = {
+                                        viewModel.startAudioCall(recipient) {
+                                            navController.navigate("call")
+                                        }
                                     }
                                 )
                             }
