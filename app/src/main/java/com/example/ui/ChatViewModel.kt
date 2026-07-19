@@ -149,7 +149,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         _currentTabState.value = tab
     }
 
-    private val defaultWebhookUrl = "https://rakibul.n8n-host.com/webhook/ra"
+    private val defaultWebhookUrl = ""
 
     private val _webhookUrl = MutableStateFlow(sharedPrefs.getString("webhook_url", defaultWebhookUrl).orEmpty().ifBlank { defaultWebhookUrl })
     val webhookUrl: StateFlow<String> = _webhookUrl.asStateFlow()
@@ -1040,8 +1040,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 .addOnSuccessListener { owner ->
                     val token = owner.getString("fcmToken").orEmpty()
                     if (token.isNotBlank()) {
-                        triggerN8NWebhookNotification(
-                            webhookUrl = _webhookUrl.value,
+                        triggerFcmGatewayNotification(
+                            gatewayUrl = _webhookUrl.value,
                             targetToken = token,
                             senderName = actor.name,
                             messageBody = text,
@@ -1216,13 +1216,16 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         "timestamp" to System.currentTimeMillis()
                     ))
 
-                // Send FCM trigger call through Webhook (always trigger so admin can see it in n8n)
-                triggerN8NWebhookNotification(
-                    webhookUrl = _webhookUrl.value,
+                // Direct secure FCM v1 gateway; no n8n hop.
+                triggerFcmGatewayNotification(
+                    gatewayUrl = _webhookUrl.value,
                     targetToken = recipientUser.fcmToken,
                     senderName = currentUser.name,
                     messageBody = if (voiceUrl != null) "🎙️ Voice message" else if (imageUrl != null) "📷 Image attachment" else text,
-                    senderId = currentUser.uid
+                    senderId = currentUser.uid,
+                    senderProfileUrl = currentUser.profileImageUrl,
+                    notificationType = "message",
+                    targetId = messageId
                 )
             }
     }
@@ -1406,8 +1409,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private fun triggerN8NWebhookNotification(
-        webhookUrl: String,
+    private fun triggerFcmGatewayNotification(
+        gatewayUrl: String,
         targetToken: String,
         senderName: String,
         messageBody: String,
@@ -1416,8 +1419,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         notificationType: String = "message",
         targetId: String = ""
     ) {
-        if (webhookUrl.isBlank() || !webhookUrl.startsWith("http")) {
-            Log.w("WEBHOOK_NOTIF", "Invalid Webhook URL. Cannot trigger push notification.")
+        if (gatewayUrl.isBlank() || !gatewayUrl.startsWith("https://")) {
+            Log.w("FCM_GATEWAY", "Direct FCM gateway URL is not configured.")
             return
         }
 
@@ -1447,22 +1450,22 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
                 val body = jsonObject.toString().toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull())
                 val request = Request.Builder()
-                    .url(webhookUrl)
+                    .url(gatewayUrl)
                     .post(body)
                     .build()
 
                 client.newCall(request).enqueue(object : Callback {
                     override fun onFailure(call: Call, e: IOException) {
-                        Log.e("WEBHOOK_NOTIF", "Failed to contact Webhook: ${e.message}")
+                        Log.e("FCM_GATEWAY", "Failed to contact Webhook: ${e.message}")
                     }
 
                     override fun onResponse(call: Call, response: Response) {
                         val respBody = response.body?.string() ?: ""
-                        Log.d("WEBHOOK_NOTIF", "Webhook Response [${response.code}]: $respBody")
+                        Log.d("FCM_GATEWAY", "FCM gateway response [${response.code}]: $respBody")
                     }
                 })
             } catch (e: Exception) {
-                Log.e("WEBHOOK_NOTIF", "Exception during webhook setup: ${e.message}")
+                Log.e("FCM_GATEWAY", "Exception during FCM gateway request: ${e.message}")
             }
         }
     }
@@ -1988,6 +1991,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val newMembers = (group.members + memberIds).distinct()
         val ref = FirebaseFirestore.getInstance().collection("groups").document(group.id)
         ref.update("members", newMembers).addOnSuccessListener {
+            memberIds.forEach { uid ->
+                createActivityNotification(uid, "group_added", group.id, "added you to ${group.name}")
+            }
             val messageId = UUID.randomUUID().toString()
             ref.collection("messages").document(messageId).set(
                 GroupMessage(
@@ -2085,6 +2091,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             .addOnSuccessListener {
                 val lastMsgText = if (voiceUrl != null) "🎙️ Voice message" else if (imageUrl != null) "📷 Image attachment" else text
                 groupRef.update("lastMessage", "${user.name}: $lastMsgText")
+                groupRef.get().addOnSuccessListener { groupDoc ->
+                    val members = (groupDoc.get("members") as? List<*>)?.mapNotNull { it as? String }.orEmpty()
+                    members.filter { it != user.uid }.forEach { uid ->
+                        createActivityNotification(uid, "group_message", groupId, "sent a message in ${groupDoc.getString("name") ?: "your group"}")
+                    }
+                }
             }
     }
 

@@ -40,7 +40,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.example.R
-import com.google.android.libraries.identity.googleid.GetGoogleIdOption
+import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import com.google.firebase.auth.GoogleAuthProvider
 import kotlinx.coroutines.launch
@@ -586,11 +586,11 @@ fun AuthScreen(
                         onClick = {
                             scope.launch {
                                 try {
-                                    val googleOption = GetGoogleIdOption.Builder()
-                                        .setFilterByAuthorizedAccounts(false)
-                                        .setServerClientId(context.getString(R.string.default_web_client_id))
-                                        .setAutoSelectEnabled(false)
-                                        .build()
+                                    // Explicit Google button flow always opens the account chooser instead
+                                    // of silently filtering to previously authorized accounts.
+                                    val googleOption = GetSignInWithGoogleOption.Builder(
+                                        context.getString(R.string.default_web_client_id)
+                                    ).build()
                                     val request = GetCredentialRequest.Builder()
                                         .addCredentialOption(googleOption)
                                         .build()

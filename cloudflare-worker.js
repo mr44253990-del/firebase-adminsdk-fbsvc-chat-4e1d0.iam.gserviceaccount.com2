@@ -70,11 +70,11 @@ export default {
       const fcmMessage = {
         message: {
           token: token,
-          notification: {
-            title: title,
-            body: body
-          },
+          // Data-only high-priority payload: Android always routes this through
+          // MyFirebaseMessagingService so message/request/activity styles stay distinct.
           data: {
+            title: title || "FireChat",
+            body: body || "You have a new update",
             senderId: senderId || "",
             senderName: senderName || "",
             senderProfileUrl: senderProfileUrl || "",
@@ -82,11 +82,7 @@ export default {
             targetId: targetId || ""
           },
           android: {
-            priority: "high",
-            notification: {
-              sound: "default",
-              click_action: "com.example.MainActivity"
-            }
+            priority: "high"
           }
         }
       };

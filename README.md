@@ -21,6 +21,18 @@ Choose an appearance from **Profile & appearance → Choose Application Theme**.
 5. Google provides display name, email, and profile image. Birthday is not included in the standard Google ID token; users can complete it safely from **Profile & appearance**.
 6. Redeploy `cloudflare-worker.js` after this update. Its FCM data payload now includes activity type, target ID, sender name, and public profile image URL. The recipient token stays inside the trusted delivery request and is never copied into client-readable notification history.
 
+### Direct FCM v1 gateway — no n8n
+
+FireChat no longer requires an n8n webhook. The Android client calls the included Cloudflare Worker directly. The Worker exchanges its encrypted service-account credential for an OAuth token and calls FCM v1.
+
+1. Revoke every service-account key ever pasted into chat, source code, an APK, or a public repository.
+2. Generate a fresh Firebase service-account JSON key.
+3. In Cloudflare Worker → Settings → Variables, create an **encrypted secret** named `FIREBASE_SERVICE_ACCOUNT` and paste the fresh JSON there. Never place it in Android resources, BuildConfig, `.env`, `google-services.json`, or Git.
+4. Deploy the current `cloudflare-worker.js`. It sends data-only high-priority messages so Android applies separate Message, Request, and Activity channels with custom vibration and profile imagery.
+5. In FireChat's admin Service panel, save the Worker HTTPS URL as the **Direct FCM Gateway**.
+
+The explicit Google button uses `GetSignInWithGoogleOption`, which always requests the account chooser. Ensure Firebase Authentication → Google is enabled, the correct Web OAuth client exists, and debug/release SHA-1 and SHA-256 fingerprints are registered before downloading a fresh `google-services.json`.
+
 ### Ephemeral chat delivery
 
 Direct messages use RTDB as a delivery envelope and Room as device-owned history. The sender stores a local copy immediately. When the receiver opens the conversation, FireChat stores the incoming text/image/voice metadata locally, writes a lightweight seen receipt for the sender, and removes the delivered message envelope from RTDB. Receipt documents are removed after the sender caches the seen state. A non-destructive Room `2 → 3` migration preserves existing local conversations during app updates.

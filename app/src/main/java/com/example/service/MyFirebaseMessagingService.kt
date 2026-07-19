@@ -19,6 +19,14 @@ import com.google.firebase.messaging.RemoteMessage
 import java.net.HttpURLConnection
 import java.net.URL
 
+
+private data class NotificationStyle(
+    val channelId: String,
+    val channelName: String,
+    val vibration: LongArray,
+    val category: String
+)
+
 class MyFirebaseMessagingService : FirebaseMessagingService() {
 
     override fun onNewToken(token: String) {
@@ -49,8 +57,9 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         val senderId = remoteMessage.data["senderId"] ?: ""
         val notificationType = remoteMessage.data["notificationType"] ?: "message"
         val senderProfileUrl = remoteMessage.data["senderProfileUrl"] ?: ""
+        val targetId = remoteMessage.data["targetId"] ?: ""
 
-        sendNotification(title, body, senderId, notificationType, senderProfileUrl)
+        sendNotification(title, body, senderId, notificationType, senderProfileUrl, targetId)
     }
 
     private fun sendNotification(
@@ -58,28 +67,42 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         messageBody: String,
         senderId: String,
         notificationType: String,
-        senderProfileUrl: String
+        senderProfileUrl: String,
+        targetId: String
     ) {
         val intent = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
             putExtra("senderId", senderId)
             putExtra("notificationType", notificationType)
+            putExtra("targetId", targetId)
         }
 
         val pendingIntent = PendingIntent.getActivity(
-            this, 0, intent,
-            PendingIntent.FLAG_ONE_SHOT or PendingIntent.FLAG_IMMUTABLE
+            this,
+            (targetId + notificationType + System.currentTimeMillis()).hashCode(),
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val channelId = "firechat_messages_channel"
+        val (channelId, channelName, pattern, category) = when (notificationType) {
+            "message" -> NotificationStyle("firechat_messages_v2", "Messages", longArrayOf(0, 120, 70, 150), NotificationCompat.CATEGORY_MESSAGE)
+            "friend_request", "friend_accepted", "message_request", "message_accepted" ->
+                NotificationStyle("firechat_requests_v2", "Requests", longArrayOf(0, 220, 100, 220), NotificationCompat.CATEGORY_SOCIAL)
+            else -> NotificationStyle("firechat_activity_v2", "Activity", longArrayOf(0, 100), NotificationCompat.CATEGORY_SOCIAL)
+        }
+
         val notificationBuilder = NotificationCompat.Builder(this, channelId)
-            .setSmallIcon(android.R.drawable.stat_notify_chat) // standard system icon or app icon
+            .setSmallIcon(android.R.drawable.stat_notify_chat)
             .setContentTitle(title)
             .setContentText(messageBody)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(messageBody))
             .setAutoCancel(true)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setDefaults(NotificationCompat.DEFAULT_SOUND or NotificationCompat.DEFAULT_VIBRATE)
-            .setVibrate(longArrayOf(0, 180, 90, 220))
+            .setCategory(category)
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+            .setDefaults(NotificationCompat.DEFAULT_SOUND)
+            .setVibrate(pattern)
+            .setNumber(1)
             .setContentIntent(pendingIntent)
 
         loadBitmap(senderProfileUrl)?.let { notificationBuilder.setLargeIcon(it) }
@@ -87,14 +110,17 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                channelId,
-                "FireChat Messages",
-                NotificationManager.IMPORTANCE_HIGH
-            ).apply {
-                description = "Messages, reactions, comments, tags and friend requests"
+            val channel = NotificationChannel(channelId, "FireChat • $channelName", NotificationManager.IMPORTANCE_HIGH).apply {
+                description = when (channelId) {
+                    "firechat_messages_v2" -> "Direct and group chat messages"
+                    "firechat_requests_v2" -> "Friend and message requests"
+                    else -> "Reactions, comments, tags and story activity"
+                }
                 enableVibration(true)
-                vibrationPattern = longArrayOf(0, 180, 90, 220)
+                vibrationPattern = pattern
+                enableLights(true)
+                lightColor = 0xFF8A72FF.toInt()
+                setShowBadge(true)
             }
             notificationManager.createNotificationChannel(channel)
         }

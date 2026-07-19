@@ -566,14 +566,14 @@ fun HomeScreen(
                             ) {
                                 Column(modifier = Modifier.padding(20.dp)) {
                                     Text(
-                                        text = "Webhook Push Notifications Configuration",
+                                        text = "Direct FCM Gateway Configuration",
                                         style = MaterialTheme.typography.titleSmall,
                                         fontWeight = FontWeight.Bold,
                                         color = MaterialTheme.colorScheme.primary
                                     )
                                     Spacer(modifier = Modifier.height(6.dp))
                                     Text(
-                                        text = "Incoming message events in direct chats trigger notifications using this URL. This configuration instantly propagates to all user devices via Realtime Database.",
+                                        text = "Messages, friend requests, tags and activity alerts are sent directly through your secure FCM v1 Worker. No n8n webhook is used. Keep the service-account key only in the Worker secret.",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
@@ -582,7 +582,7 @@ fun HomeScreen(
                                     OutlinedTextField(
                                         value = adminUrlInput,
                                         onValueChange = { adminUrlInput = it },
-                                        placeholder = { Text("https://rakibul.n8n-host.com/webhook/ra") },
+                                        placeholder = { Text("https://firechat-fcm.your-subdomain.workers.dev") },
                                         modifier = Modifier.fillMaxWidth(),
                                         singleLine = true,
                                         shape = RoundedCornerShape(18.dp)
@@ -593,11 +593,11 @@ fun HomeScreen(
                                     Button(
                                         onClick = {
                                             viewModel.updateWebhookUrl(adminUrlInput)
-                                            Toast.makeText(context, "Saved webhook URL securely to database!", Toast.LENGTH_SHORT).show()
+                                            Toast.makeText(context, "Saved direct FCM gateway URL!", Toast.LENGTH_SHORT).show()
                                         },
                                         modifier = Modifier.fillMaxWidth()
                                     ) {
-                                        Text("Save and Deploy Webhook", fontWeight = FontWeight.Bold)
+                                        Text("Save FCM Gateway", fontWeight = FontWeight.Bold)
                                     }
                                 }
                             }
@@ -2006,23 +2006,39 @@ private fun ImmersiveVideoPage(
     onProfileSelected: (User) -> Unit
 ) {
     var prepared by remember(post.id) { mutableStateOf(false) }
+    var isPaused by remember(post.id) { mutableStateOf(false) }
     var comment by remember(post.id) { mutableStateOf("") }
+    val videoView = remember(post.id) { mutableStateOf<VideoView?>(null) }
+    var optimisticReaction by remember(post.id) { mutableStateOf<Boolean?>(null) }
+    DisposableEffect(post.id) {
+        onDispose {
+            videoView.value?.stopPlayback()
+            videoView.value = null
+        }
+    }
     val currentUser by viewModel.currentUserState.collectAsState()
     val sentRequests by viewModel.sentFriendRequestIds.collectAsState()
     val isFriend = owner?.let { currentUser?.friends?.contains(it.uid) == true } ?: false
     val requested = owner?.let { sentRequests.contains("${currentUser?.uid}_${it.uid}") } ?: false
-    val reacted = post.reactions.containsKey(currentUser?.uid.orEmpty())
+    val serverReacted = post.reactions.containsKey(currentUser?.uid.orEmpty())
+    val reacted = optimisticReaction ?: serverReacted
+    val displayedReactionCount = (post.reactions.size + when {
+        optimisticReaction == true && !serverReacted -> 1
+        optimisticReaction == false && serverReacted -> -1
+        else -> 0
+    }).coerceAtLeast(0)
 
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         key(post.id) {
             AndroidView(
                 factory = { context ->
                     VideoView(context).apply {
+                        videoView.value = this
                         setVideoPath(post.videoUrl)
                         setOnPreparedListener { player ->
                             player.isLooping = true
                             prepared = true
-                            if (isActive) { player.setVolume(1f, 1f); start() }
+                            if (isActive && !isPaused) { player.setVolume(1f, 1f); start() }
                         }
                         setOnInfoListener { _, what, _ ->
                             prepared = what != MediaPlayer.MEDIA_INFO_BUFFERING_START
@@ -2031,7 +2047,7 @@ private fun ImmersiveVideoPage(
                     }
                 },
                 update = { video ->
-                    if (isActive) {
+                    if (isActive && !isPaused) {
                         if (!video.isPlaying) video.start()
                     } else {
                         video.pause()
@@ -2048,6 +2064,18 @@ private fun ImmersiveVideoPage(
             }
         }
         Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color.Transparent, Color.Black.copy(alpha = .78f)))))
+        AnimatedVisibility(
+            visible = isPaused,
+            modifier = Modifier.align(Alignment.Center)
+        ) {
+            IconButton(
+                onClick = { isPaused = false },
+                modifier = Modifier.size(68.dp).background(Color.Black.copy(alpha = .48f), CircleShape)
+            ) { Icon(Icons.Default.PlayArrow, "Resume video", tint = Color.White, modifier = Modifier.size(38.dp)) }
+        }
+        Box(
+            Modifier.fillMaxWidth().height(52.dp).align(Alignment.Center).clickable { isPaused = !isPaused }
+        )
 
         Column(
             Modifier.align(Alignment.CenterEnd).padding(end = 14.dp, bottom = 150.dp),
@@ -2061,10 +2089,13 @@ private fun ImmersiveVideoPage(
                     modifier = Modifier.size(52.dp).clip(CircleShape).border(2.dp, Color.White, CircleShape).clickable { onProfileSelected(person) }
                 )
             }
-            IconButton(onClick = { viewModel.reactToPost(post.id, "❤️") }, modifier = Modifier.background(Color.Black.copy(alpha = .38f), CircleShape)) {
+            IconButton(onClick = {
+                optimisticReaction = !reacted
+                viewModel.reactToPost(post.id, "❤️")
+            }, modifier = Modifier.background(Color.Black.copy(alpha = .38f), CircleShape)) {
                 Icon(if (reacted) Icons.Default.Favorite else Icons.Outlined.FavoriteBorder, "Like", tint = if (reacted) Color(0xFFFF4F78) else Color.White)
             }
-            Text(post.reactions.size.toString(), color = Color.White, fontWeight = FontWeight.Bold)
+            Text(displayedReactionCount.toString(), color = Color.White, fontWeight = FontWeight.Bold)
             if (owner != null && owner.uid != currentUser?.uid && !isFriend) {
                 if (requested) {
                     IconButton(onClick = { viewModel.cancelFriendRequest(owner.uid) }, modifier = Modifier.background(Color.Black.copy(alpha = .38f), CircleShape)) {
@@ -2113,6 +2144,11 @@ private fun ImmersiveVideoPage(
 
 @Composable
 fun FullScreenVideoPlayer(videoUrl: String, onDismiss: () -> Unit) {
+    val playerView = remember(videoUrl) { mutableStateOf<VideoView?>(null) }
+    var paused by remember(videoUrl) { mutableStateOf(false) }
+    DisposableEffect(videoUrl) {
+        onDispose { playerView.value?.stopPlayback(); playerView.value = null }
+    }
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)
@@ -2121,16 +2157,23 @@ fun FullScreenVideoPlayer(videoUrl: String, onDismiss: () -> Unit) {
             AndroidView(
                 factory = { context ->
                     VideoView(context).apply {
+                        playerView.value = this
                         setVideoPath(videoUrl)
                         setOnPreparedListener { player ->
                             player.isLooping = true
-                            start()
+                            if (!paused) start()
                         }
                     }
                 },
-                update = { video -> if (!video.isPlaying) video.start() },
+                update = { video -> if (paused) video.pause() else if (!video.isPlaying) video.start() },
                 modifier = Modifier.fillMaxSize()
             )
+            IconButton(
+                onClick = { paused = !paused },
+                modifier = Modifier.align(Alignment.Center).size(62.dp).background(Color.Black.copy(alpha = .42f), CircleShape)
+            ) {
+                Icon(if (paused) Icons.Default.PlayArrow else Icons.Default.Pause, if (paused) "Play" else "Pause", tint = Color.White)
+            }
             IconButton(
                 onClick = onDismiss,
                 modifier = Modifier
@@ -2321,6 +2364,13 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
     var isCommentsExpanded by remember { mutableStateOf(false) }
     var commentInputText by remember { mutableStateOf("") }
     var showFullscreenVideo by remember(post.id) { mutableStateOf(false) }
+    val inlineVideoView = remember(post.id) { mutableStateOf<VideoView?>(null) }
+    DisposableEffect(post.id) {
+        onDispose {
+            inlineVideoView.value?.stopPlayback()
+            inlineVideoView.value = null
+        }
+    }
     val currentUserId = FirebaseAuth.getInstance().currentUser?.uid ?: ""
     val isDark = isSystemInDarkTheme()
     val allUsers by viewModel.usersState.collectAsState()
@@ -2470,15 +2520,19 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
                     AndroidView(
                         factory = { context ->
                             VideoView(context).apply {
+                                inlineVideoView.value = this
                                 setVideoPath(post.videoUrl)
                                 setOnPreparedListener { player ->
                                     player.isLooping = true
                                     player.setVolume(1f, 1f)
-                                    start()
+                                    if (!showFullscreenVideo) start()
                                 }
                             }
                         },
-                        update = { video -> if (!video.isPlaying) video.start() },
+                        update = { video ->
+                            if (showFullscreenVideo) video.pause()
+                            else if (!video.isPlaying) video.start()
+                        },
                         modifier = Modifier.fillMaxSize()
                     )
                     Box(Modifier.fillMaxSize().clickable { showFullscreenVideo = true })
