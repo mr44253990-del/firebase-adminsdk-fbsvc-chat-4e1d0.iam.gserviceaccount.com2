@@ -19,6 +19,13 @@ Choose an appearance from **Profile & appearance → Choose Application Theme**.
 3. Notifications use Firestore as a short-lived delivery queue. The Android client writes each received item to Room and then deletes the remote notification document, keeping history locally without growing Firestore indefinitely.
 4. Friend and message request queries use a single `receiverId` equality filter, so no composite Firestore index is required.
 5. Google provides display name, email, and profile image. Birthday is not included in the standard Google ID token; users can complete it safely from **Profile & appearance**.
+6. Redeploy `cloudflare-worker.js` after this update. Its FCM data payload now includes activity type, target ID, sender name, and public profile image URL. The recipient token stays inside the trusted delivery request and is never copied into client-readable notification history.
+
+### Ephemeral chat delivery
+
+Direct messages use RTDB as a delivery envelope and Room as device-owned history. The sender stores a local copy immediately. When the receiver opens the conversation, FireChat stores the incoming text/image/voice metadata locally, writes a lightweight seen receipt for the sender, and removes the delivered message envelope from RTDB. Receipt documents are removed after the sender caches the seen state. A non-destructive Room `2 → 3` migration preserves existing local conversations during app updates.
+
+Remote Supabase media files are intentionally not deleted during acknowledgement. Removing a media object before a verified local file download would break cached image and voice messages. A future server-side retention job may remove media only after both devices submit durable-download acknowledgements.
 
 স্বাগতম! **FireChat** হলো একটি রিয়েল-টাইম চ্যাটিং অ্যান্ড্রয়েড অ্যাপ্লিকেশন যা Jetpack Compose, Kotlin এবং Firebase (Authentication, Firestore, Realtime Database) ব্যবহার করে তৈরি করা হয়েছে। ব্যাকগ্রাউন্ডে এবং অ্যাপ বন্ধ থাকা অবস্থায়ও নোটিফিকেশন পাঠাতে এটি **Cloudflare Workers** এবং **Firebase Cloud Messaging (FCM) v1 API** এর সফল সংযোগ ব্যবহার করে।
 
