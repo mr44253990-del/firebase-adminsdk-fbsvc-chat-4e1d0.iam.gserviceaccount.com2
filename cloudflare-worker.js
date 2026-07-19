@@ -242,7 +242,7 @@ async function getGoogleAccessToken(clientEmail, privateKeyPem) {
 
   const claim = {
     iss: clientEmail,
-    scope: "https://www.googleapis.com/auth/firebase.messaging",
+    scope: "https://www.googleapis.com/auth/firebase.messaging https://www.googleapis.com/auth/datastore",
     aud: "https://oauth2.googleapis.com/token",
     exp: exp,
     iat: iat
