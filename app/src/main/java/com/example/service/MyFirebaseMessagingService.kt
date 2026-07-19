@@ -66,6 +66,13 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         val targetId = remoteMessage.data["targetId"] ?: ""
         val senderName = remoteMessage.data["senderName"] ?: title
 
+        if (notificationType == "call_cancelled") {
+            if (targetId.isNotBlank()) {
+                (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).cancel(targetId.hashCode())
+                FirebaseDatabase.getInstance().getReference("calls").child(targetId).child("status").setValue("ended")
+            }
+            return
+        }
         if (notificationType == "incoming_call" || notificationType == "incoming_video_call") {
             if (targetId.isNotBlank()) {
                 FirebaseDatabase.getInstance().getReference("calls").child(targetId).child("status").setValue("ringing")

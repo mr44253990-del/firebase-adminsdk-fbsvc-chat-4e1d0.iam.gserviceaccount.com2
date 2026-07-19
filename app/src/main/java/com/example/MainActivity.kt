@@ -204,6 +204,9 @@ class MainActivity : ComponentActivity() {
                                 incoming = false,
                                 video = callState.video,
                                 initiallyAccepted = true,
+                                onEndCall = {
+                                    activeRecipient?.let { viewModel.endCall(it, callState.callId) } ?: CallEngine.end()
+                                },
                                 onClose = { navController.popBackStack() }
                             )
                         }

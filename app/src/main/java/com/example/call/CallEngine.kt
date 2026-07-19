@@ -173,6 +173,11 @@ object CallEngine {
         _state.value = _state.value.copy(muted = muted)
     }
 
+    fun switchCamera() {
+        runCatching { (videoCapturer as? CameraVideoCapturer)?.switchCamera(null) }
+            .onFailure { Log.w("CALL_ENGINE", "Camera switch failed", it) }
+    }
+
     fun toggleSpeaker() {
         val context = appContext ?: return
         val enabled = !_state.value.speaker

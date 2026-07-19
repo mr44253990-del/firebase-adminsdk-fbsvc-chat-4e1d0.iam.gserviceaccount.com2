@@ -395,7 +395,10 @@ fun ChatScreen(
         topBar = {
             TopAppBar(
                 title = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.clip(RoundedCornerShape(18.dp)).clickable(onClick = onProfile).padding(horizontal = 4.dp, vertical = 2.dp)
+                    ) {
                         Box(contentAlignment = Alignment.BottomEnd) {
                             if (updatedRecipient.profileImageUrl.isNotBlank()) {
                                 AsyncImage(

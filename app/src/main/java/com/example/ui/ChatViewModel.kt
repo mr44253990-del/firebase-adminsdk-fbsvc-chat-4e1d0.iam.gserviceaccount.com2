@@ -182,6 +182,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private var globalNotificationListener: ValueEventListener? = null
     private var presenceListener: ValueEventListener? = null
     private var activityNotificationListener: ListenerRegistration? = null
+    private var currentUserProfileListener: ListenerRegistration? = null
     private var friendRequestListener: ListenerRegistration? = null
     private var sentFriendRequestListener: ListenerRegistration? = null
     private var messageRequestListener: ListenerRegistration? = null
@@ -297,6 +298,19 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     fun startAudioCall(recipient: User, onReady: (String) -> Unit) = startCall(recipient, false, onReady)
     fun startVideoCall(recipient: User, onReady: (String) -> Unit) = startCall(recipient, true, onReady)
+
+    fun endCall(recipient: User, callId: String) {
+        CallEngine.end()
+        val caller = getCurrentUserOrFallback() ?: return
+        withUserFcmToken(recipient.uid, recipient.fcmToken) { token ->
+            triggerFcmGatewayNotification(
+                gatewayUrl = _webhookUrl.value, targetToken = token,
+                senderName = caller.name, messageBody = "Call ended",
+                senderId = caller.uid, senderProfileUrl = caller.profileImageUrl,
+                notificationType = "call_cancelled", targetId = callId
+            )
+        }
+    }
 
     private fun startCall(recipient: User, video: Boolean, onReady: (String) -> Unit) {
         val caller = getCurrentUserOrFallback() ?: return
@@ -583,6 +597,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     .setValue(mapOf("isOnline" to false, "lastActive" to System.currentTimeMillis()))
             }
             FirebaseAuth.getInstance().signOut()
+            currentUserProfileListener?.remove()
+            currentUserProfileListener = null
             _currentUserState.value = null
             _usersState.value = emptyList()
             _filteredUsersState.value = emptyList()
@@ -619,9 +635,18 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun loadCurrentUserProfile(uid: String) {
-        FirebaseFirestore.getInstance().collection("users")
-            .document(uid)
-            .get()
+        val profileRef = FirebaseFirestore.getInstance().collection("users").document(uid)
+        currentUserProfileListener?.remove()
+        currentUserProfileListener = profileRef.addSnapshotListener { document, error ->
+            if (error != null) {
+                Log.e("FIRESTORE_PROFILE", "Live profile failed: ${error.message}")
+            } else if (document != null && document.exists()) {
+                runCatching { document.toObject(User::class.java) }.getOrNull()?.let { liveUser ->
+                    _currentUserState.value = liveUser
+                }
+            }
+        }
+        profileRef.get()
             .addOnSuccessListener { document ->
                 if (document != null && document.exists()) {
                     val user = try {

@@ -12,6 +12,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
@@ -84,6 +85,7 @@ fun CallScreen(
     incoming: Boolean,
     video: Boolean = false,
     initiallyAccepted: Boolean = false,
+    onEndCall: () -> Unit = { CallEngine.end() },
     onClose: () -> Unit
 ) {
     val context = LocalContext.current
@@ -91,10 +93,14 @@ fun CallScreen(
     val state by CallEngine.state.collectAsState()
     val effectiveVideo = video || state.video
     var elapsedSeconds by remember { mutableLongStateOf(0L) }
-    DisposableEffect(Unit) {
+    DisposableEffect(effectiveVideo) {
         val window = (view.context as? Activity)?.window
         window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
-        onDispose { window?.clearFlags(WindowManager.LayoutParams.FLAG_SECURE) }
+        if (effectiveVideo) window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        onDispose {
+            window?.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+            window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
     }
     LaunchedEffect(state.connectedAt, state.status) {
         while (state.status == "connected" && state.connectedAt > 0L) {
@@ -130,14 +136,19 @@ fun CallScreen(
             )
         }
         Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).padding(28.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Spacer(Modifier.weight(.18f))
-            AsyncImage(
-                model = remoteImage.ifBlank { null }, contentDescription = remoteName,
-                error = painterResource(R.drawable.img_app_logo), contentScale = ContentScale.Crop,
-                modifier = Modifier.size(138.dp).clip(CircleShape).border(4.dp, Color.White.copy(.75f), CircleShape)
-            )
-            Spacer(Modifier.height(26.dp))
-            Text(remoteName, color = Color.White, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.ExtraBold, textAlign = TextAlign.Center)
+            Spacer(Modifier.weight(if (effectiveVideo && accepted) .06f else .18f))
+            AnimatedVisibility(visible = !effectiveVideo || !accepted) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    AsyncImage(
+                        model = remoteImage.ifBlank { null }, contentDescription = remoteName,
+                        error = painterResource(R.drawable.img_app_logo), contentScale = ContentScale.Crop,
+                        modifier = Modifier.size(138.dp).clip(CircleShape).border(4.dp, Color.White.copy(.75f), CircleShape)
+                    )
+                    Spacer(Modifier.height(26.dp))
+                    Text(remoteName, color = Color.White, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.ExtraBold, textAlign = TextAlign.Center)
+                }
+            }
+            Surface(color = Color.Black.copy(alpha = if (effectiveVideo && accepted) .45f else 0f), shape = CircleShape) {
             Text(
                 when {
                     state.error != null -> state.error!!
@@ -147,8 +158,10 @@ fun CallScreen(
                     state.status == "ringing" -> "Ringing…"
                     state.status == "reconnecting" -> "Reconnecting…"
                     else -> "Connecting securely…"
-                }, color = Color.White.copy(.72f), textAlign = TextAlign.Center
+                }, color = Color.White.copy(.82f), textAlign = TextAlign.Center,
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp)
             )
+            }
             Spacer(Modifier.weight(1f))
             if (!accepted && incoming) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
@@ -167,8 +180,9 @@ fun CallScreen(
             } else {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
                     CallCircleButton(Color.White.copy(.15f), if (state.muted) Icons.Default.MicOff else Icons.Default.Mic, "Mute") { CallEngine.toggleMute() }
-                    CallCircleButton(Color(0xFFE53935), Icons.Default.CallEnd, "End") { CallEngine.end(); onClose() }
+                    CallCircleButton(Color(0xFFE53935), Icons.Default.CallEnd, "End") { onEndCall(); onClose() }
                     CallCircleButton(Color.White.copy(.15f), if (state.speaker) Icons.Default.VolumeUp else Icons.Default.Hearing, "Speaker") { CallEngine.toggleSpeaker() }
+                    if (effectiveVideo) CallCircleButton(Color.White.copy(.15f), Icons.Default.Cameraswitch, "Flip") { CallEngine.switchCamera() }
                 }
             }
             Spacer(Modifier.height(30.dp))
