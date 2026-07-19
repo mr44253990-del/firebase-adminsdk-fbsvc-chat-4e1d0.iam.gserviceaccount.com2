@@ -21,6 +21,7 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.runtime.*
+import androidx.credentials.Credential
 import androidx.credentials.CredentialManager
 import androidx.credentials.CustomCredential
 import androidx.credentials.GetCredentialRequest
@@ -40,6 +41,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.example.R
+import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import com.google.firebase.auth.GoogleAuthProvider
@@ -57,6 +59,23 @@ fun AuthScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val credentialManager = remember { CredentialManager.create(context) }
+    suspend fun requestGoogleCredential(): Credential {
+        val serverClientId = context.getString(R.string.default_web_client_id)
+        require(serverClientId.isNotBlank()) { "Missing default_web_client_id; download a fresh google-services.json" }
+        val explicit = GetCredentialRequest.Builder()
+            .addCredentialOption(GetSignInWithGoogleOption.Builder(serverClientId).build()).build()
+        return try {
+            credentialManager.getCredential(context, explicit).credential
+        } catch (explicitError: Exception) {
+            // Some OEM Credential Manager providers do not support the explicit button option.
+            // Fall back to the broad account chooser without filtering authorized accounts.
+            val fallback = GetCredentialRequest.Builder().addCredentialOption(
+                GetGoogleIdOption.Builder().setServerClientId(serverClientId)
+                    .setFilterByAuthorizedAccounts(false).setAutoSelectEnabled(false).build()
+            ).build()
+            credentialManager.getCredential(context, fallback).credential
+        }
+    }
     val authLoading by viewModel.authLoading.collectAsState()
     val authError by viewModel.authError.collectAsState()
     val isFirebaseConfigured by viewModel.isFirebaseConfigured.collectAsState()
@@ -586,16 +605,7 @@ fun AuthScreen(
                         onClick = {
                             scope.launch {
                                 try {
-                                    // Explicit Google button flow always opens the account chooser instead
-                                    // of silently filtering to previously authorized accounts.
-                                    val googleOption = GetSignInWithGoogleOption.Builder(
-                                        context.getString(R.string.default_web_client_id)
-                                    ).build()
-                                    val request = GetCredentialRequest.Builder()
-                                        .addCredentialOption(googleOption)
-                                        .build()
-                                    val result = credentialManager.getCredential(context, request)
-                                    val credential = result.credential
+                                    val credential = requestGoogleCredential()
                                     if (credential is CustomCredential && credential.type == GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
                                         val googleToken = GoogleIdTokenCredential.createFrom(credential.data)
                                         viewModel.signInWithGoogleCredential(
@@ -606,7 +616,14 @@ fun AuthScreen(
                                         Toast.makeText(context, "Unsupported Google credential", Toast.LENGTH_SHORT).show()
                                     }
                                 } catch (e: Exception) {
-                                    Toast.makeText(context, e.localizedMessage ?: "Google sign-in cancelled", Toast.LENGTH_SHORT).show()
+                                    val detail = e.localizedMessage.orEmpty()
+                                    val message = when {
+                                        detail.contains("10") || detail.contains("developer", true) -> "Google OAuth SHA/package configuration is missing"
+                                        detail.contains("credential", true) -> "No Google account credential is available on this device"
+                                        detail.isNotBlank() -> detail
+                                        else -> "Google sign-in was cancelled"
+                                    }
+                                    Toast.makeText(context, message, Toast.LENGTH_LONG).show()
                                 }
                             }
                         },

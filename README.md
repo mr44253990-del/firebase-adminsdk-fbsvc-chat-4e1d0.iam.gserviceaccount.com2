@@ -42,7 +42,14 @@ export FIREBASE_SERVICE_ACCOUNT_FILE='/absolute/path/to/a-fresh-service-account.
 
 The new `firechat-fcm-worker.js` supports public health diagnostics and authenticated POST delivery. Use `./test-firechat-worker.sh` for cURL-based health/authenticated tests. Never put either credential in these scripts.
 
-The explicit Google button uses `GetSignInWithGoogleOption`, which always requests the account chooser. Ensure Firebase Authentication → Google is enabled, the correct Web OAuth client exists, and debug/release SHA-1 and SHA-256 fingerprints are registered before downloading a fresh `google-services.json`.
+The Google button first uses `GetSignInWithGoogleOption` and falls back to `GetGoogleIdOption` for OEM Credential Manager compatibility. The repository now uses one stable debug keystore so CI fingerprints no longer change on every build. Add these fingerprints to Firebase Android app `com.ebchat`, enable Authentication → Google, then download a fresh `google-services.json` (it must contain an Android OAuth `client_type: 1` entry):
+
+```text
+Debug SHA-1:   92:1B:62:30:48:C5:93:25:09:A5:F7:F9:05:95:83:90:9A:92:AF:F0
+Debug SHA-256: 73:4D:2E:06:28:37:1E:DB:E5:D5:AD:1C:86:6D:CE:99:72:6E:E7:BC:D4:9B:0B:E4:4E:4B:DF:B6:F1:54:43:4F
+```
+
+Release SHA values must also be added from the real release keystore. The currently checked-in `google-services.json` has only Web OAuth `client_type: 3`, so Firebase Console configuration and a fresh download are mandatory.
 
 ### Text-only posts
 

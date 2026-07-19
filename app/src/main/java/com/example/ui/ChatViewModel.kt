@@ -297,6 +297,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     fun startAudioCall(recipient: User, onReady: (String) -> Unit) {
         val caller = getCurrentUserOrFallback() ?: return
+        try {
         CallEngine.startOutgoing(getApplication(), recipient.uid, recipient.name, recipient.profileImageUrl) { callId ->
             withUserFcmToken(recipient.uid, recipient.fcmToken) { token ->
                 triggerFcmGatewayNotification(
@@ -328,6 +329,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     CallEngine.timeout()
                 }
             }
+        }
+        } catch (error: Throwable) {
+            Log.e("CALL_ENGINE", "Call launch failed", error)
+            CallEngine.reportFailure("Could not start call: ${error.message ?: error.javaClass.simpleName}")
         }
     }
 

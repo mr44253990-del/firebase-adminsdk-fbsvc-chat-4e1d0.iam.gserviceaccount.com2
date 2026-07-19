@@ -58,6 +58,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
 import coil.compose.AsyncImage
+import com.example.call.CallEngine
 import com.example.data.Message
 import com.example.data.User
 import com.google.firebase.auth.FirebaseAuth
@@ -83,6 +84,7 @@ fun ChatScreen(
     val currentUser by viewModel.currentUserState.collectAsState()
     val typingSounds by viewModel.typingSoundsEnabled.collectAsState()
     val notificationSounds by viewModel.notificationSoundsEnabled.collectAsState()
+    val callState by CallEngine.state.collectAsState()
     var showThemePicker by remember { mutableStateOf(false) }
     var showChatSettings by remember { mutableStateOf(false) }
     
@@ -120,6 +122,13 @@ fun ChatScreen(
         } else if (!isGranted) {
             pendingCall = false
             Toast.makeText(context, "Microphone access is needed for voice messages and calls.", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    LaunchedEffect(callState.error) {
+        callState.error?.let {
+            Toast.makeText(context, it, Toast.LENGTH_LONG).show()
+            CallEngine.clearError()
         }
     }
 

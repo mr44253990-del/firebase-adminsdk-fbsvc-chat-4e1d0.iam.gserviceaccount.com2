@@ -2,6 +2,8 @@ package com.example.call
 
 import android.content.Context
 import android.media.AudioManager
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.database.*
@@ -33,6 +35,7 @@ object CallEngine {
     private const val GATEWAY = "https://solitary-hill-dcdc.mr44253990.workers.dev/turn-credentials"
     private val _state = MutableStateFlow(CallState())
     val state: StateFlow<CallState> = _state
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     private var appContext: Context? = null
     private var factory: PeerConnectionFactory? = null
@@ -42,24 +45,32 @@ object CallEngine {
     private var callListener: ValueEventListener? = null
     private val candidateListeners = mutableListOf<Pair<DatabaseReference, ChildEventListener>>()
 
-    fun initialize(context: Context) {
-        if (factory != null) return
-        appContext = context.applicationContext
-        PeerConnectionFactory.initialize(
-            PeerConnectionFactory.InitializationOptions.builder(context.applicationContext)
-                .setEnableInternalTracer(false).createInitializationOptions()
-        )
-        factory = PeerConnectionFactory.builder().createPeerConnectionFactory()
+    @Synchronized
+    fun initialize(context: Context): Boolean {
+        if (factory != null) return true
+        return try {
+            appContext = context.applicationContext
+            PeerConnectionFactory.initialize(
+                PeerConnectionFactory.InitializationOptions.builder(context.applicationContext)
+                    .setEnableInternalTracer(false).createInitializationOptions()
+            )
+            factory = PeerConnectionFactory.builder().createPeerConnectionFactory()
+            factory != null
+        } catch (error: Throwable) {
+            Log.e("CALL_ENGINE", "WebRTC initialization failed", error)
+            fail("Calling is unavailable on this device: ${error.message ?: error.javaClass.simpleName}")
+            false
+        }
     }
 
     fun startOutgoing(context: Context, remoteUid: String, remoteName: String, remoteImage: String, onInviteReady: (String) -> Unit) {
-        initialize(context)
+        if (!initialize(context)) return
         val me = FirebaseAuth.getInstance().currentUser?.uid ?: return fail("Please sign in again")
         val callId = UUID.randomUUID().toString()
         _state.value = CallState(callId, remoteUid, remoteName, remoteImage, "outgoing", "connecting")
         fetchIceServers { servers, error ->
             if (error != null) return@fetchIceServers fail(error)
-            createPeer(servers, callId, me, true)
+            if (!createPeer(servers, callId, me, true)) return@fetchIceServers
             peer?.createOffer(object : SimpleSdpObserver() {
                 override fun onCreateSuccess(sdp: SessionDescription) {
                     peer?.setLocalDescription(SimpleSdpObserver(), sdp)
@@ -84,7 +95,7 @@ object CallEngine {
     }
 
     fun acceptIncoming(context: Context, callId: String, callerUid: String, callerName: String, callerImage: String) {
-        initialize(context)
+        if (!initialize(context)) return
         val me = FirebaseAuth.getInstance().currentUser?.uid ?: return fail("Please sign in again")
         _state.value = CallState(callId, callerUid, callerName, callerImage, "incoming", "connecting")
         val ref = FirebaseDatabase.getInstance().getReference("calls").child(callId)
@@ -93,7 +104,7 @@ object CallEngine {
             if (!snapshot.exists() || snapshot.child("status").getValue(String::class.java) != "ringing") return@addOnSuccessListener fail("Call is no longer available")
             fetchIceServers { servers, error ->
                 if (error != null) return@fetchIceServers fail(error)
-                createPeer(servers, callId, me, false)
+                if (!createPeer(servers, callId, me, false)) return@fetchIceServers
                 val offer = SessionDescription(
                     SessionDescription.Type.fromCanonicalForm(snapshot.child("offerType").getValue(String::class.java) ?: "offer"),
                     snapshot.child("offerSdp").getValue(String::class.java) ?: return@fetchIceServers fail("Missing call offer")
@@ -148,7 +159,8 @@ object CallEngine {
         _state.value = _state.value.copy(speaker = enabled)
     }
 
-    private fun createPeer(servers: List<PeerConnection.IceServer>, callId: String, myUid: String, caller: Boolean) {
+    private fun createPeer(servers: List<PeerConnection.IceServer>, callId: String, myUid: String, caller: Boolean): Boolean {
+        return try {
         val config = PeerConnection.RTCConfiguration(servers).apply {
             sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
             continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_CONTINUALLY
@@ -176,8 +188,17 @@ object CallEngine {
             override fun onRenegotiationNeeded() {}
             override fun onAddTrack(p0: RtpReceiver?, p1: Array<out MediaStream>?) {}
         })
+        if (peer == null) throw IllegalStateException("WebRTC peer connection could not be created")
         val source = factory?.createAudioSource(MediaConstraints())
+            ?: throw IllegalStateException("WebRTC audio source could not be created")
         audioTrack = factory?.createAudioTrack("firechat_audio_$myUid", source)?.also { peer?.addTrack(it, listOf("firechat")) }
+            ?: throw IllegalStateException("WebRTC audio track could not be created")
+        true
+        } catch (error: Throwable) {
+            Log.e("CALL_ENGINE", "Peer creation failed", error)
+            fail("Could not start secure audio: ${error.message ?: error.javaClass.simpleName}")
+            false
+        }
     }
 
     private fun listenCall(ref: DatabaseReference, isCaller: Boolean) {
@@ -223,10 +244,15 @@ object CallEngine {
             val request = Request.Builder().url(GATEWAY).header("Authorization", "Bearer $token")
                 .post("{}".toRequestBody("application/json".toMediaType())).build()
             OkHttpClient.Builder().callTimeout(15, TimeUnit.SECONDS).build().newCall(request).enqueue(object : Callback {
-                override fun onFailure(call: Call, e: java.io.IOException) = callback(emptyList(), e.localizedMessage ?: "TURN unavailable")
+                override fun onFailure(call: Call, e: java.io.IOException) {
+                    mainHandler.post { callback(emptyList(), e.localizedMessage ?: "TURN unavailable") }
+                }
                 override fun onResponse(call: Call, response: Response) {
                     response.use {
-                        if (!it.isSuccessful) return callback(emptyList(), "TURN gateway HTTP ${it.code}")
+                        if (!it.isSuccessful) {
+                            mainHandler.post { callback(emptyList(), "TURN gateway HTTP ${it.code}") }
+                            return
+                        }
                         val root = JSONObject(it.body?.string().orEmpty())
                         val list = mutableListOf<PeerConnection.IceServer>()
                         val array = root.optJSONArray("iceServers") ?: JSONArray()
@@ -235,7 +261,8 @@ object CallEngine {
                             val urls = if (urlsJson != null) (0 until urlsJson.length()).map { index -> urlsJson.getString(index) } else listOf(item.optString("urls"))
                             list += PeerConnection.IceServer.builder(urls).setUsername(item.optString("username")).setPassword(item.optString("credential")).createIceServer()
                         }
-                        callback(list.ifEmpty { listOf(PeerConnection.IceServer.builder("stun:stun.cloudflare.com:3478").createIceServer()) }, null)
+                        val resolved = list.ifEmpty { listOf(PeerConnection.IceServer.builder("stun:stun.cloudflare.com:3478").createIceServer()) }
+                        mainHandler.post { callback(resolved, null) }
                     }
                 }
             })
@@ -249,6 +276,9 @@ object CallEngine {
         audioTrack?.dispose(); audioTrack = null
         _state.value = _state.value.copy(status = finalStatus)
     }
+
+    fun reportFailure(message: String) = fail(message)
+    fun clearError() { _state.value = _state.value.copy(error = null, status = if (_state.value.status == "failed") "idle" else _state.value.status) }
 
     private fun fail(message: String) {
         Log.e("CALL_ENGINE", message)
