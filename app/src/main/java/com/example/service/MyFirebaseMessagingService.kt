@@ -9,6 +9,8 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.media.RingtoneManager
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.Person
@@ -20,6 +22,7 @@ import com.example.data.User
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.database.FirebaseDatabase
+import com.google.firebase.database.ServerValue
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
 import java.net.HttpURLConnection
@@ -55,6 +58,7 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
 
     override fun onMessageReceived(remoteMessage: RemoteMessage) {
         super.onMessageReceived(remoteMessage)
+        markDeviceReachableFromPush()
         Log.d("FCM_SERVICE", "Message received from: ${remoteMessage.from}")
 
         // Extract title and body
@@ -81,6 +85,44 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         } else {
             sendNotification(title, body, senderId, notificationType, senderProfileUrl, targetId)
         }
+    }
+
+    private fun markDeviceReachableFromPush() {
+        val uid = FirebaseAuth.getInstance().currentUser?.uid ?: return
+        val receivedAt = System.currentTimeMillis()
+        val statusRef = FirebaseDatabase.getInstance().getReference("status").child(uid)
+        statusRef.updateChildren(
+            mapOf(
+                "isOnline" to true,
+                "lastActive" to receivedAt,
+                "lastPushReceivedAt" to receivedAt,
+                "onlineSource" to "push"
+            )
+        )
+        statusRef.onDisconnect().updateChildren(
+            mapOf(
+                "isOnline" to false,
+                "lastActive" to ServerValue.TIMESTAMP,
+                "onlineSource" to "disconnected"
+            )
+        )
+        // A delivered push means the device is reachable, not that the UI stays open.
+        // Keep the online badge briefly and only expire the exact heartbeat that we wrote.
+        Handler(Looper.getMainLooper()).postDelayed({
+            statusRef.get().addOnSuccessListener { snapshot ->
+                val latestPush = snapshot.child("lastPushReceivedAt").getValue(Long::class.java) ?: 0L
+                val foreground = snapshot.child("foreground").getValue(Boolean::class.java) ?: false
+                if (!foreground && latestPush == receivedAt) {
+                    statusRef.updateChildren(
+                        mapOf(
+                            "isOnline" to false,
+                            "lastActive" to System.currentTimeMillis(),
+                            "onlineSource" to "push_expired"
+                        )
+                    )
+                }
+            }
+        }, 60_000L)
     }
 
     private fun sendIncomingCallNotification(callId: String, callerId: String, callerName: String, callerImage: String, videoCall: Boolean) {

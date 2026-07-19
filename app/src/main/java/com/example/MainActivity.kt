@@ -48,14 +48,14 @@ class MainActivity : ComponentActivity() {
         super.onStart()
         FirebaseAuth.getInstance().currentUser?.uid?.let { uid ->
             FirebaseDatabase.getInstance().getReference("status").child(uid)
-                .setValue(mapOf("isOnline" to true, "lastActive" to System.currentTimeMillis(), "foreground" to true))
+                .setValue(mapOf("isOnline" to true, "lastActive" to System.currentTimeMillis(), "foreground" to true, "onlineSource" to "foreground"))
         }
     }
 
     override fun onStop() {
         FirebaseAuth.getInstance().currentUser?.uid?.let { uid ->
             FirebaseDatabase.getInstance().getReference("status").child(uid)
-                .setValue(mapOf("isOnline" to false, "lastActive" to System.currentTimeMillis(), "foreground" to false))
+                .setValue(mapOf("isOnline" to false, "lastActive" to System.currentTimeMillis(), "foreground" to false, "onlineSource" to "background"))
         }
         super.onStop()
     }
