@@ -486,11 +486,13 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     return@addOnCompleteListener
                 }
                 val token = task.result
-                FirebaseFirestore.getInstance().collection("users")
-                    .document(uid)
-                    .update("fcmToken", token)
+                val firestore = FirebaseFirestore.getInstance()
+                firestore.collection("fcm_tokens").document(uid)
+                    .set(mapOf("token" to token, "updatedAt" to System.currentTimeMillis()))
                     .addOnSuccessListener {
-                        _currentUserState.value = _currentUserState.value?.copy(fcmToken = token)
+                        // Remove any legacy public-profile token field after private migration.
+                        firestore.collection("users").document(uid).update("fcmToken", FieldValue.delete())
+                        _currentUserState.value = _currentUserState.value?.copy(fcmToken = "")
                     }
             }
         } catch (e: Exception) {
@@ -1036,22 +1038,16 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             text = text,
             timestamp = System.currentTimeMillis()
         )).addOnSuccessListener {
-            FirebaseFirestore.getInstance().collection("users").document(ownerId).get()
-                .addOnSuccessListener { owner ->
-                    val token = owner.getString("fcmToken").orEmpty()
-                    if (token.isNotBlank()) {
-                        triggerFcmGatewayNotification(
-                            gatewayUrl = _webhookUrl.value,
-                            targetToken = token,
-                            senderName = actor.name,
-                            messageBody = text,
-                            senderId = actor.uid,
-                            senderProfileUrl = actor.profileImageUrl,
-                            notificationType = type,
-                            targetId = targetId
-                        )
-                    }
-                }
+            triggerFcmGatewayNotification(
+                gatewayUrl = _webhookUrl.value,
+                targetUid = ownerId,
+                senderName = actor.name,
+                messageBody = text,
+                senderId = actor.uid,
+                senderProfileUrl = actor.profileImageUrl,
+                notificationType = type,
+                targetId = targetId
+            )
         }.addOnFailureListener { Log.e("ACTIVITY_CENTER", "Delivery failed: ${it.message}") }
     }
 
@@ -1219,7 +1215,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 // Direct secure FCM v1 gateway; no n8n hop.
                 triggerFcmGatewayNotification(
                     gatewayUrl = _webhookUrl.value,
-                    targetToken = recipientUser.fcmToken,
+                    targetUid = recipientUser.uid,
                     senderName = currentUser.name,
                     messageBody = if (voiceUrl != null) "🎙️ Voice message" else if (imageUrl != null) "📷 Image attachment" else text,
                     senderId = currentUser.uid,
@@ -1411,7 +1407,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun triggerFcmGatewayNotification(
         gatewayUrl: String,
-        targetToken: String,
+        targetUid: String,
         senderName: String,
         messageBody: String,
         senderId: String,
@@ -1424,9 +1420,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
 
-        viewModelScope.launch {
-            try {
-                val client = OkHttpClient()
+        val authUser = FirebaseAuth.getInstance().currentUser ?: return
+        authUser.getIdToken(false).addOnSuccessListener { tokenResult ->
+            val callerToken = tokenResult.token ?: return@addOnSuccessListener
+            viewModelScope.launch {
+                try {
+                    val client = OkHttpClient()
                 
                 // Formats in 12-hour AM/PM Bangladesh local time
                 val sdf = SimpleDateFormat("yyyy-MM-dd hh:mm:ss a", Locale.getDefault()).apply {
@@ -1435,7 +1434,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 val formattedTime = sdf.format(Date())
 
                 val jsonObject = JSONObject().apply {
-                    put("token", targetToken)
+                    put("targetUid", targetUid)
                     put("title", if (notificationType == "message") "New message from $senderName" else "$senderName • FireChat")
                     put("body", messageBody)
                     put("text", messageBody)
@@ -1451,6 +1450,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 val body = jsonObject.toString().toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull())
                 val request = Request.Builder()
                     .url(gatewayUrl)
+                    .header("Authorization", "Bearer $callerToken")
                     .post(body)
                     .build()
 
@@ -1464,10 +1464,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         Log.d("FCM_GATEWAY", "FCM gateway response [${response.code}]: $respBody")
                     }
                 })
-            } catch (e: Exception) {
-                Log.e("FCM_GATEWAY", "Exception during FCM gateway request: ${e.message}")
+                } catch (e: Exception) {
+                    Log.e("FCM_GATEWAY", "Exception during FCM gateway request: ${e.message}")
+                }
             }
-        }
+        }.addOnFailureListener { Log.e("FCM_GATEWAY", "Could not authenticate gateway call: ${it.message}") }
     }
 
     // --- Dynamic Themes & Network ---

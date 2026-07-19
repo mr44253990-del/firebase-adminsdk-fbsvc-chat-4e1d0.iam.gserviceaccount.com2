@@ -18,7 +18,7 @@ export default {
         headers: {
           "Access-Control-Allow-Origin": "*",
           "Access-Control-Allow-Methods": "POST, OPTIONS",
-          "Access-Control-Allow-Headers": "Content-Type",
+          "Access-Control-Allow-Headers": "Content-Type, Authorization",
         },
       });
     }
@@ -32,10 +32,10 @@ export default {
 
     try {
       const payload = await request.json();
-      const { token, title, body, senderId, senderName, senderProfileUrl, notificationType, targetId } = payload;
+      const { targetUid, title, body, senderId, senderName, senderProfileUrl, notificationType, targetId } = payload;
 
-      if (!token || !title || !body) {
-        return new Response(JSON.stringify({ error: "Missing required fields: token, title, body" }), {
+      if (!targetUid || !title || !body) {
+        return new Response(JSON.stringify({ error: "Missing required fields: targetUid, title, body" }), {
           status: 400,
           headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
         });
@@ -61,8 +61,39 @@ export default {
         });
       }
 
+      // Authenticate the Android caller with its Firebase ID token. This prevents
+      // an exposed Worker URL from becoming an unauthenticated push relay.
+      const caller = await verifyFirebaseIdToken(request, projectId);
+      if (!caller || (senderId && caller.sub !== senderId)) {
+        return new Response(JSON.stringify({ error: "Unauthorized Firebase caller" }), {
+          status: 401,
+          headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
+        });
+      }
+
       // 2. Fetch Google OAuth2 Access Token using Web Crypto API
       const accessToken = await getGoogleAccessToken(clientEmail, privateKeyPem);
+
+      // Resolve the device token server-side. Android sends only the recipient UID;
+      // other clients never receive or enumerate private FCM registration tokens.
+      const tokenDocumentUrl = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents/fcm_tokens/${encodeURIComponent(targetUid)}`;
+      const tokenResponse = await fetch(tokenDocumentUrl, {
+        headers: { "Authorization": `Bearer ${accessToken}` }
+      });
+      if (!tokenResponse.ok) {
+        return new Response(JSON.stringify({ error: "Recipient token is unavailable", status: tokenResponse.status }), {
+          status: 404,
+          headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
+        });
+      }
+      const tokenDocument = await tokenResponse.json();
+      const token = tokenDocument?.fields?.token?.stringValue;
+      if (!token) {
+        return new Response(JSON.stringify({ error: "Recipient has no registered FCM token" }), {
+          status: 404,
+          headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
+        });
+      }
 
       // 3. Send Notification via FCM v1 API
       const fcmUrl = `https://fcm.googleapis.com/v1/projects/${projectId}/messages:send`;
@@ -115,6 +146,48 @@ export default {
     }
   }
 };
+
+/** Verify a Firebase Auth ID token using Google's rotating Secure Token JWKs. */
+async function verifyFirebaseIdToken(request, projectId) {
+  try {
+    const authorization = request.headers.get("Authorization") || "";
+    if (!authorization.startsWith("Bearer ")) return null;
+    const jwt = authorization.slice(7);
+    const parts = jwt.split(".");
+    if (parts.length !== 3) return null;
+
+    const header = JSON.parse(new TextDecoder().decode(base64UrlToBytes(parts[0])));
+    const payload = JSON.parse(new TextDecoder().decode(base64UrlToBytes(parts[1])));
+    const now = Math.floor(Date.now() / 1000);
+    if (header.alg !== "RS256" || !header.kid || payload.aud !== projectId ||
+        payload.iss !== `https://securetoken.google.com/${projectId}` ||
+        payload.exp <= now || payload.iat > now + 60 || !payload.sub) return null;
+
+    const jwksResponse = await fetch("https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com");
+    if (!jwksResponse.ok) return null;
+    const jwks = await jwksResponse.json();
+    const jwk = jwks.keys?.find(key => key.kid === header.kid);
+    if (!jwk) return null;
+    const cryptoKey = await crypto.subtle.importKey(
+      "jwk", jwk, { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, false, ["verify"]
+    );
+    const valid = await crypto.subtle.verify(
+      "RSASSA-PKCS1-v1_5",
+      cryptoKey,
+      base64UrlToBytes(parts[2]),
+      new TextEncoder().encode(`${parts[0]}.${parts[1]}`)
+    );
+    return valid ? payload : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function base64UrlToBytes(value) {
+  const base64 = value.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(value.length / 4) * 4, "=");
+  const binary = atob(base64);
+  return Uint8Array.from(binary, char => char.charCodeAt(0));
+}
 
 /**
  * Signs a RS256 JWT claim and exchanges it for a Google OAuth2 access token.

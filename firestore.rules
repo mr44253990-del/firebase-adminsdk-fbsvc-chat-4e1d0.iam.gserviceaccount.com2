@@ -23,6 +23,11 @@ service cloud.firestore {
       }
     }
 
+    match /fcm_tokens/{uid} {
+      allow create, update, delete: if owner(uid);
+      allow read: if owner(uid); // Worker service account bypasses client rules.
+    }
+
     match /friend_requests/{requestId} {
       allow create: if signedIn() && request.resource.data.senderId == request.auth.uid;
       allow read, delete: if signedIn() &&
