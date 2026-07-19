@@ -5,6 +5,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Scaffold
@@ -30,6 +31,7 @@ import com.example.ui.UserProfileScreen
 import com.example.ui.isOnboardingCompleted
 import com.example.ui.theme.MyApplicationTheme
 import com.example.ui.theme.PremiumBackground
+import com.example.service.PresenceService
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import com.example.data.User
@@ -43,6 +45,7 @@ class MainActivity : ComponentActivity() {
     private val viewModel: ChatViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        installSplashScreen()
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
@@ -73,7 +76,11 @@ class MainActivity : ComponentActivity() {
                 val activeGroup by viewModel.activeGroup.collectAsState()
                 val selectedProfile by viewModel.selectedProfile.collectAsState()
                 val callState by CallEngine.state.collectAsState()
+                val currentUser by viewModel.currentUserState.collectAsState()
                 val context = LocalContext.current
+                LaunchedEffect(currentUser?.uid) {
+                    if (currentUser?.uid != null) runCatching { PresenceService.start(context) }
+                }
 
                 // Check starting destination depending on whether onboarding has been completed and if a user is already signed in
                 val destinationAfterSplash = remember {
@@ -183,6 +190,7 @@ class MainActivity : ComponentActivity() {
                                 remoteName = callState.remoteName,
                                 remoteImage = callState.remoteImage,
                                 incoming = false,
+                                video = callState.video,
                                 initiallyAccepted = true,
                                 onClose = { navController.popBackStack() }
                             )
@@ -201,9 +209,10 @@ class MainActivity : ComponentActivity() {
                                         navController.navigate("profile")
                                     },
                                     onCall = {
-                                        viewModel.startAudioCall(recipient) {
-                                            navController.navigate("call")
-                                        }
+                                        viewModel.startAudioCall(recipient) { navController.navigate("call") }
+                                    },
+                                    onVideoCall = {
+                                        viewModel.startVideoCall(recipient) { navController.navigate("call") }
                                     }
                                 )
                             }

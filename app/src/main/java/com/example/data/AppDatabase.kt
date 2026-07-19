@@ -69,6 +69,7 @@ data class CachedMessage(
     val imageUrl: String?,
     val voiceUrl: String?,
     val voiceDurationSec: Int?,
+    val remoteVoiceUrl: String?,
     val seenByRecipient: Boolean,
     val deliveredToRecipient: Boolean,
     val chatId: String // to query messages per conversation
@@ -80,6 +81,7 @@ data class CachedMessage(
             edited = edited, replyToId = replyToId, replyToText = replyToText,
             replyToSenderName = replyToSenderName, imageUrl = imageUrl,
             voiceUrl = voiceUrl, voiceDurationSec = voiceDurationSec,
+            remoteVoiceUrl = remoteVoiceUrl,
             seenByRecipient = seenByRecipient, deliveredToRecipient = deliveredToRecipient
         )
     }
@@ -90,7 +92,7 @@ data class CachedMessage(
                 msg.messageId, msg.senderId, msg.senderName, msg.senderUsername,
                 msg.text, msg.timestamp, msg.edited, msg.replyToId, msg.replyToText,
                 msg.replyToSenderName, msg.imageUrl, msg.voiceUrl, msg.voiceDurationSec,
-                msg.seenByRecipient, msg.deliveredToRecipient, chatId
+                msg.remoteVoiceUrl, msg.seenByRecipient, msg.deliveredToRecipient, chatId
             )
         }
     }
@@ -373,6 +375,9 @@ interface CacheDao {
     @Query("UPDATE cached_messages SET seenByRecipient = 1, deliveredToRecipient = 1 WHERE messageId = :messageId")
     suspend fun markMessageSeen(messageId: String)
 
+    @Query("UPDATE cached_messages SET remoteVoiceUrl = NULL WHERE messageId = :messageId")
+    suspend fun clearRemoteVoiceUrl(messageId: String)
+
 
     @Query("SELECT * FROM cached_stories ORDER BY timestamp DESC")
     fun getAllStories(): Flow<List<CachedStory>>
@@ -444,7 +449,7 @@ interface CacheDao {
         CachedGroupMessage::class,
         CachedActivityNotification::class
     ],
-    version = 4,
+    version = 5,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -465,6 +470,11 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE cached_posts ADD COLUMN textAnimation TEXT NOT NULL DEFAULT 'none'")
             }
         }
+        private val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE cached_messages ADD COLUMN remoteVoiceUrl TEXT")
+            }
+        }
 
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
@@ -472,7 +482,7 @@ abstract class AppDatabase : RoomDatabase() {
                     context.applicationContext,
                     AppDatabase::class.java,
                     "firechat_offline_cache_db"
-                ).addMigrations(MIGRATION_2_3, MIGRATION_3_4)
+                ).addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
                     .fallbackToDestructiveMigration()
                     .build()
                 INSTANCE = instance

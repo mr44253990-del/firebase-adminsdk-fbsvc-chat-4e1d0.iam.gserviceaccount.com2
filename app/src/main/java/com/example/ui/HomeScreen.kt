@@ -93,6 +93,14 @@ fun HomeScreen(
     onSignOut: () -> Unit
 ) {
     val context = LocalContext.current
+    val backgroundPrefs = remember { context.getSharedPreferences("background_presence", Context.MODE_PRIVATE) }
+    var showBackgroundPresencePrompt by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        if (!backgroundPrefs.getBoolean("prompted", false)) {
+            kotlinx.coroutines.delay(1200)
+            showBackgroundPresencePrompt = true
+        }
+    }
     val isOnlineState by viewModel.isNetworkAvailable.collectAsState()
     val currentUser by viewModel.currentUserState.collectAsState()
     val users by viewModel.filteredUsersState.collectAsState()
@@ -1152,6 +1160,31 @@ fun HomeScreen(
                 }
             }
         }
+    }
+
+    if (showBackgroundPresencePrompt) {
+        AlertDialog(
+            onDismissRequest = {
+                backgroundPrefs.edit().putBoolean("prompted", true).apply()
+                showBackgroundPresencePrompt = false
+            },
+            icon = { Icon(Icons.Outlined.WifiTethering, null) },
+            title = { Text("Keep FireChat online in background") },
+            text = { Text("FireChat uses a visible low-priority foreground notification to keep online status and incoming calls available when the app is closed. For best reliability, allow unrestricted background battery usage in system settings.") },
+            confirmButton = {
+                Button(onClick = {
+                    backgroundPrefs.edit().putBoolean("prompted", true).apply()
+                    showBackgroundPresencePrompt = false
+                    runCatching { context.startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)) }
+                }) { Text("Open battery settings") }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    backgroundPrefs.edit().putBoolean("prompted", true).apply()
+                    showBackgroundPresencePrompt = false
+                }) { Text("Not now") }
+            }
+        )
     }
 
     if (showGlobalSearch) {

@@ -8,4 +8,10 @@
         <item name="android:navigationBarColor">#080A12</item>
         <item name="android:windowDisablePreview">false</item>
     </style>
+
+    <style name="Theme.MyApplication.Starting" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">#080A12</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/splash_transparent</item>
+        <item name="postSplashScreenTheme">@style/Theme.MyApplication</item>
+    </style>
 </resources>

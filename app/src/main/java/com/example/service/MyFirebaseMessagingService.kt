@@ -64,14 +64,14 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         val targetId = remoteMessage.data["targetId"] ?: ""
         val senderName = remoteMessage.data["senderName"] ?: title
 
-        if (notificationType == "incoming_call") {
-            sendIncomingCallNotification(targetId, senderId, senderName, senderProfileUrl)
+        if (notificationType == "incoming_call" || notificationType == "incoming_video_call") {
+            sendIncomingCallNotification(targetId, senderId, senderName, senderProfileUrl, notificationType == "incoming_video_call")
         } else {
             sendNotification(title, body, senderId, notificationType, senderProfileUrl, targetId)
         }
     }
 
-    private fun sendIncomingCallNotification(callId: String, callerId: String, callerName: String, callerImage: String) {
+    private fun sendIncomingCallNotification(callId: String, callerId: String, callerName: String, callerImage: String, videoCall: Boolean) {
         if (callId.isBlank()) return
         fun callIntent(action: String, requestCode: Int) = PendingIntent.getActivity(
             this, requestCode,
@@ -79,7 +79,7 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
                 this.action = action
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
                 putExtra("callId", callId); putExtra("callerId", callerId)
-                putExtra("callerName", callerName); putExtra("callerImage", callerImage)
+                putExtra("callerName", callerName); putExtra("callerImage", callerImage); putExtra("videoCall", videoCall)
             }, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
         val answer = callIntent("com.ebchat.ACCEPT_CALL", (callId + "answer").hashCode())
@@ -101,7 +101,7 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         }
         val builder = NotificationCompat.Builder(this, channelId)
             .setSmallIcon(android.R.drawable.sym_call_incoming)
-            .setContentTitle("Incoming FireChat call")
+            .setContentTitle(if (videoCall) "Incoming FireChat video call" else "Incoming FireChat audio call")
             .setContentText(callerName)
             .setCategory(NotificationCompat.CATEGORY_CALL)
             .setPriority(NotificationCompat.PRIORITY_MAX)

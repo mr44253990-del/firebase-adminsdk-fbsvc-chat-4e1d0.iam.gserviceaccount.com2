@@ -13,6 +13,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.*
 import com.example.call.CallEngine
+import com.example.service.PresenceService
 import com.google.firebase.auth.AuthCredential
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.database.DataSnapshot
@@ -295,26 +296,29 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             })
     }
 
-    fun startAudioCall(recipient: User, onReady: (String) -> Unit) {
+    fun startAudioCall(recipient: User, onReady: (String) -> Unit) = startCall(recipient, false, onReady)
+    fun startVideoCall(recipient: User, onReady: (String) -> Unit) = startCall(recipient, true, onReady)
+
+    private fun startCall(recipient: User, video: Boolean, onReady: (String) -> Unit) {
         val caller = getCurrentUserOrFallback() ?: return
         try {
-        CallEngine.startOutgoing(getApplication(), recipient.uid, recipient.name, recipient.profileImageUrl) { callId ->
+        CallEngine.startOutgoing(getApplication(), recipient.uid, recipient.name, recipient.profileImageUrl, video = video) { callId ->
             withUserFcmToken(recipient.uid, recipient.fcmToken) { token ->
                 triggerFcmGatewayNotification(
                     gatewayUrl = _webhookUrl.value,
                     targetToken = token,
                     senderName = caller.name,
-                    messageBody = "Incoming FireChat audio call",
+                    messageBody = if (video) "Incoming FireChat video call" else "Incoming FireChat audio call",
                     senderId = caller.uid,
                     senderProfileUrl = caller.profileImageUrl,
-                    notificationType = "incoming_call",
+                    notificationType = if (video) "incoming_video_call" else "incoming_call",
                     targetId = callId
                 )
             }
             val chatId = listOf(caller.uid, recipient.uid).sorted().joinToString("_")
             val historyMessage = Message(
                 messageId = "call_$callId", senderId = caller.uid, senderName = caller.name,
-                senderUsername = caller.username, text = "📞 FireChat audio call",
+                senderUsername = caller.username, text = if (video) "📹 FireChat video call" else "📞 FireChat audio call",
                 timestamp = System.currentTimeMillis(), deliveredToRecipient = recipient.isOnline
             )
             getDatabaseInstance().getReference("chats").child(chatId).child("messages")
@@ -579,6 +583,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 getDatabaseInstance().getReference("status").child(uid)
                     .setValue(mapOf("isOnline" to false, "lastActive" to System.currentTimeMillis()))
             }
+            getApplication<Application>().stopService(android.content.Intent(getApplication(), PresenceService::class.java))
             FirebaseAuth.getInstance().signOut()
             _currentUserState.value = null
             _usersState.value = emptyList()
@@ -813,7 +818,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun localizeIncomingMedia(message: Message, chatId: String): Message {
-        fun download(url: String?, suffix: String): String? {
+        fun download(url: String?, suffix: String, deleteAfterSave: Boolean): String? {
             if (url.isNullOrBlank() || !url.startsWith("http")) return url
             return try {
                 val extension = url.substringBefore('?').substringAfterLast('.', "bin").take(5)
@@ -828,7 +833,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
                 if (file.exists() && file.length() > 0L) {
-                    deleteSupabaseObject(url)
+                    if (deleteAfterSave) deleteSupabaseObject(url)
                     file.toURI().toString()
                 } else url
             } catch (e: Exception) {
@@ -836,10 +841,24 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 url
             }
         }
+        val originalVoiceUrl = message.voiceUrl?.takeIf { it.startsWith("http") }
         return message.copy(
-            imageUrl = download(message.imageUrl, "image"),
-            voiceUrl = download(message.voiceUrl, "voice")
+            imageUrl = download(message.imageUrl, "image", deleteAfterSave = true),
+            voiceUrl = download(message.voiceUrl, "voice", deleteAfterSave = false),
+            remoteVoiceUrl = originalVoiceUrl ?: message.remoteVoiceUrl
         )
+    }
+
+    fun acknowledgeVoicePlayed(messageId: String, remoteVoiceUrl: String?) {
+        if (remoteVoiceUrl.isNullOrBlank() || !remoteVoiceUrl.startsWith("http")) return
+        viewModelScope.launch(Dispatchers.IO) {
+            if (deleteSupabaseObject(remoteVoiceUrl)) {
+                cacheDao.clearRemoteVoiceUrl(messageId)
+                _chatMessagesState.value = _chatMessagesState.value.map {
+                    if (it.messageId == messageId) it.copy(remoteVoiceUrl = null) else it
+                }
+            }
+        }
     }
 
     private fun deleteSupabaseObject(publicUrl: String): Boolean {
@@ -909,6 +928,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                                     imageUrl = childSnapshot.child("imageUrl").value as? String,
                                     voiceUrl = childSnapshot.child("voiceUrl").value as? String,
                                     voiceDurationSec = (childSnapshot.child("voiceDurationSec").value as? Long)?.toInt(),
+                                    remoteVoiceUrl = childSnapshot.child("remoteVoiceUrl").value as? String,
                                     seenByRecipient = childSnapshot.child("seenByRecipient").value as? Boolean ?: false,
                                     deliveredToRecipient = childSnapshot.child("deliveredToRecipient").value as? Boolean ?: false
                                 )

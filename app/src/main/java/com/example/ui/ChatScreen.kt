@@ -74,7 +74,8 @@ fun ChatScreen(
     recipient: User,
     onBack: () -> Unit,
     onProfile: () -> Unit = {},
-    onCall: () -> Unit = {}
+    onCall: () -> Unit = {},
+    onVideoCall: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val currentUserId = FirebaseAuth.getInstance().currentUser?.uid ?: ""
@@ -123,6 +124,11 @@ fun ChatScreen(
             pendingCall = false
             Toast.makeText(context, "Microphone access is needed for voice messages and calls.", Toast.LENGTH_SHORT).show()
         }
+    }
+
+    val videoPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { permissions ->
+        if (permissions[Manifest.permission.RECORD_AUDIO] == true && permissions[Manifest.permission.CAMERA] == true) onVideoCall()
+        else Toast.makeText(context, "Camera and microphone permissions are required for video calls.", Toast.LENGTH_LONG).show()
     }
 
     LaunchedEffect(callState.error) {
@@ -464,6 +470,13 @@ fun ChatScreen(
                 },
                 actions = {
                     IconButton(onClick = {
+                        val cameraGranted = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+                        if (audioPermissionGranted && cameraGranted) onVideoCall()
+                        else videoPermissionLauncher.launch(arrayOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.CAMERA))
+                    }) {
+                        Icon(Icons.Default.Videocam, contentDescription = "Video call", tint = Color(0xFF55C7FF))
+                    }
+                    IconButton(onClick = {
                         if (audioPermissionGranted) onCall()
                         else { pendingCall = true; permissionLauncher.launch(Manifest.permission.RECORD_AUDIO) }
                     }) {
@@ -548,6 +561,9 @@ fun ChatScreen(
                             },
                             onReactSelect = { reaction ->
                                 viewModel.addReaction(recipient.uid, msg.messageId, reaction)
+                            },
+                            onVoicePlayed = {
+                                viewModel.acknowledgeVoicePlayed(msg.messageId, msg.remoteVoiceUrl)
                             }
                         )
                     }
@@ -761,7 +777,8 @@ fun MessageBubbleItem(
     onReplySelect: () -> Unit,
     onEditSelect: () -> Unit,
     onDeleteSelect: () -> Unit,
-    onReactSelect: (String) -> Unit
+    onReactSelect: (String) -> Unit,
+    onVoicePlayed: () -> Unit
 ) {
     var showMenu by remember { mutableStateOf(false) }
     var showImageViewer by remember { mutableStateOf(false) }
@@ -891,7 +908,7 @@ fun MessageBubbleItem(
 
                     // Render Voice message if present
                     if (!message.voiceUrl.isNullOrBlank()) {
-                        VoicePlayerBubble(voiceUrl = message.voiceUrl, durationSec = message.voiceDurationSec ?: 0)
+                        VoicePlayerBubble(voiceUrl = message.voiceUrl, durationSec = message.voiceDurationSec ?: 0, onPlaybackStarted = onVoicePlayed)
                         Spacer(modifier = Modifier.height(4.dp))
                     }
 
@@ -1024,9 +1041,11 @@ fun MessageBubbleItem(
 @Composable
 fun VoicePlayerBubble(
     voiceUrl: String,
-    durationSec: Int
+    durationSec: Int,
+    onPlaybackStarted: () -> Unit = {}
 ) {
     var isPlaying by remember { mutableStateOf(false) }
+    var playbackAcknowledged by remember(voiceUrl) { mutableStateOf(false) }
     var mediaPlayer by remember { mutableStateOf<MediaPlayer?>(null) }
     val context = LocalContext.current
     val isDark = isSystemInDarkTheme()
@@ -1060,6 +1079,10 @@ fun VoicePlayerBubble(
                                 setOnPreparedListener {
                                     start()
                                     isPlaying = true
+                                    if (!playbackAcknowledged) {
+                                        playbackAcknowledged = true
+                                        onPlaybackStarted()
+                                    }
                                 }
                                 setOnCompletionListener {
                                     isPlaying = false

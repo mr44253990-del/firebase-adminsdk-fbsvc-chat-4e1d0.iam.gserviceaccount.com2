@@ -30,6 +30,7 @@ data class Message(
     val imageUrl: String? = null,
     val voiceUrl: String? = null,
     val voiceDurationSec: Int? = null,
+    val remoteVoiceUrl: String? = null,
     val seenByRecipient: Boolean = false,
     val deliveredToRecipient: Boolean = false,
     val reactions: Map<String, String> = emptyMap()
