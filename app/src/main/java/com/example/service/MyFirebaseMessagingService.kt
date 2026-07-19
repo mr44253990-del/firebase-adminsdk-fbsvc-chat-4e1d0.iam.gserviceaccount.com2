@@ -12,12 +12,14 @@ import android.os.Build
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.Person
+import androidx.core.app.RemoteInput
 import androidx.core.graphics.drawable.IconCompat
 import com.example.MainActivity
 import com.example.call.IncomingCallActivity
 import com.example.data.User
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.database.FirebaseDatabase
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
 import java.net.HttpURLConnection
@@ -65,6 +67,9 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         val senderName = remoteMessage.data["senderName"] ?: title
 
         if (notificationType == "incoming_call" || notificationType == "incoming_video_call") {
+            if (targetId.isNotBlank()) {
+                FirebaseDatabase.getInstance().getReference("calls").child(targetId).child("status").setValue("ringing")
+            }
             sendIncomingCallNotification(targetId, senderId, senderName, senderProfileUrl, notificationType == "incoming_video_call")
         } else {
             sendNotification(title, body, senderId, notificationType, senderProfileUrl, targetId)
@@ -141,6 +146,7 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
             else -> NotificationStyle("firechat_activity_v2", "Activity", longArrayOf(0, 100), NotificationCompat.CATEGORY_SOCIAL)
         }
 
+        val notificationId = System.currentTimeMillis().toInt()
         val notificationBuilder = NotificationCompat.Builder(this, channelId)
             .setSmallIcon(android.R.drawable.stat_notify_chat)
             .setContentTitle(title)
@@ -154,6 +160,15 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
             .setVibrate(pattern)
             .setNumber(1)
             .setContentIntent(pendingIntent)
+
+        if (notificationType == "message" && senderId.isNotBlank()) {
+            val replyInput = RemoteInput.Builder(NotificationReplyReceiver.REPLY_KEY).setLabel("Reply to $title").build()
+            val replyIntent = Intent(this, NotificationReplyReceiver::class.java).apply {
+                putExtra("senderId", senderId); putExtra("notificationId", notificationId)
+            }
+            val replyPending = PendingIntent.getBroadcast(this, notificationId, replyIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE)
+            notificationBuilder.addAction(NotificationCompat.Action.Builder(android.R.drawable.ic_menu_send, "Reply", replyPending).addRemoteInput(replyInput).setAllowGeneratedReplies(true).build())
+        }
 
         loadBitmap(senderProfileUrl)?.let { notificationBuilder.setLargeIcon(it) }
 
@@ -175,7 +190,7 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
             notificationManager.createNotificationChannel(channel)
         }
 
-        notificationManager.notify(System.currentTimeMillis().toInt(), notificationBuilder.build())
+        notificationManager.notify(notificationId, notificationBuilder.build())
     }
 
     private fun loadBitmap(url: String): Bitmap? {

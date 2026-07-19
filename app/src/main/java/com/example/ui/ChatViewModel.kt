@@ -13,7 +13,6 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.*
 import com.example.call.CallEngine
-import com.example.service.PresenceService
 import com.google.firebase.auth.AuthCredential
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.database.DataSnapshot
@@ -583,7 +582,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 getDatabaseInstance().getReference("status").child(uid)
                     .setValue(mapOf("isOnline" to false, "lastActive" to System.currentTimeMillis()))
             }
-            getApplication<Application>().stopService(android.content.Intent(getApplication(), PresenceService::class.java))
             FirebaseAuth.getInstance().signOut()
             _currentUserState.value = null
             _usersState.value = emptyList()

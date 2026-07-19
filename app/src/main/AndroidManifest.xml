@@ -11,8 +11,6 @@
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_REMOTE_MESSAGING" />
 
     <application
         android:allowBackup="true"
@@ -44,11 +42,9 @@
             android:turnScreenOn="true"
             android:theme="@style/Theme.MyApplication" />
 
-        <service
-            android:name=".service.PresenceService"
-            android:exported="false"
-            android:stopWithTask="false"
-            android:foregroundServiceType="remoteMessaging" />
+        <receiver
+            android:name=".service.NotificationReplyReceiver"
+            android:exported="false" />
 
         <service
             android:name=".service.MyFirebaseMessagingService"

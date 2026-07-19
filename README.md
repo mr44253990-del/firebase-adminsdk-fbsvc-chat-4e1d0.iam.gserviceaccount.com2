@@ -77,6 +77,10 @@ firebase deploy --only database,firestore:rules
 
 Android 14+ may require the user to enable **Allow full-screen incoming calls** under Profile & appearance. Without that special access, Android correctly falls back to a high-priority CallStyle heads-up notification. Incoming calls ring with the device ringtone, expire after 30 seconds, support accept/decline, mute, speaker, reconnect state, and retain a lightweight call item in local chat history.
 
+FireChat does not run a persistent background-presence service. Foreground means online; background/closed means offline with last-seen. FCM remains responsible for messages and incoming calls. When an incoming-call FCM reaches the callee, the device changes RTDB status from `calling` to `ringing`; the caller then hears ringback. Connecting vibrates briefly, audio calls use the proximity sensor to turn the screen off near the ear, and notification messages support inline replies.
+
+Onboarding pages support left/right swipes, animated transitions, pulsing illustrations, and button navigation. Call windows use `FLAG_SECURE`, preventing standard screenshots and screen recording during audio/video calls.
+
 ### Ephemeral chat delivery
 
 Direct messages use RTDB as a delivery envelope and Room as device-owned history. The sender stores a local copy immediately. When the receiver opens the conversation, FireChat stores the incoming text/image/voice metadata locally, writes a lightweight seen receipt for the sender, and removes the delivered message envelope from RTDB. Receipt documents are removed after the sender caches the seen state. A non-destructive Room `2 → 3` migration preserves existing local conversations during app updates.

@@ -31,8 +31,8 @@ import com.example.ui.UserProfileScreen
 import com.example.ui.isOnboardingCompleted
 import com.example.ui.theme.MyApplicationTheme
 import com.example.ui.theme.PremiumBackground
-import com.example.service.PresenceService
 import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.database.FirebaseDatabase
 import com.google.firebase.firestore.FirebaseFirestore
 import com.example.data.User
 import coil.Coil
@@ -43,6 +43,22 @@ import coil.memory.MemoryCache
 class MainActivity : ComponentActivity() {
 
     private val viewModel: ChatViewModel by viewModels()
+
+    override fun onStart() {
+        super.onStart()
+        FirebaseAuth.getInstance().currentUser?.uid?.let { uid ->
+            FirebaseDatabase.getInstance().getReference("status").child(uid)
+                .setValue(mapOf("isOnline" to true, "lastActive" to System.currentTimeMillis(), "foreground" to true))
+        }
+    }
+
+    override fun onStop() {
+        FirebaseAuth.getInstance().currentUser?.uid?.let { uid ->
+            FirebaseDatabase.getInstance().getReference("status").child(uid)
+                .setValue(mapOf("isOnline" to false, "lastActive" to System.currentTimeMillis(), "foreground" to false))
+        }
+        super.onStop()
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
@@ -76,11 +92,7 @@ class MainActivity : ComponentActivity() {
                 val activeGroup by viewModel.activeGroup.collectAsState()
                 val selectedProfile by viewModel.selectedProfile.collectAsState()
                 val callState by CallEngine.state.collectAsState()
-                val currentUser by viewModel.currentUserState.collectAsState()
                 val context = LocalContext.current
-                LaunchedEffect(currentUser?.uid) {
-                    if (currentUser?.uid != null) runCatching { PresenceService.start(context) }
-                }
 
                 // Check starting destination depending on whether onboarding has been completed and if a user is already signed in
                 val destinationAfterSplash = remember {

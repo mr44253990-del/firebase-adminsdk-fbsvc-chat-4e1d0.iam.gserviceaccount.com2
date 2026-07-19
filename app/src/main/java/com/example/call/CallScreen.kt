@@ -143,6 +143,7 @@ fun CallScreen(
                     state.error != null -> state.error!!
                     !accepted && incoming -> if (effectiveVideo) "Incoming FireChat video call" else "Incoming FireChat audio call"
                     state.status == "connected" -> "Connected • %02d:%02d".format(elapsedSeconds / 60, elapsedSeconds % 60)
+                    state.status == "calling" -> "Calling…"
                     state.status == "ringing" -> "Ringing…"
                     state.status == "reconnecting" -> "Reconnecting…"
                     else -> "Connecting securely…"

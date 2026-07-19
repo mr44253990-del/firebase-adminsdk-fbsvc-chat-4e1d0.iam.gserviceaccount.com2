@@ -2,8 +2,13 @@ package com.example.call
 
 import android.content.Context
 import android.media.AudioManager
+import android.media.ToneGenerator
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
+import android.os.VibrationEffect
+import android.os.Vibrator
 import android.util.Log
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.database.*
@@ -50,6 +55,8 @@ object CallEngine {
     private var surfaceTextureHelper: SurfaceTextureHelper? = null
     private var localRenderer: SurfaceViewRenderer? = null
     private var remoteRenderer: SurfaceViewRenderer? = null
+    private var ringbackTone: ToneGenerator? = null
+    private var proximityWakeLock: PowerManager.WakeLock? = null
     private var callRef: DatabaseReference? = null
     private var callListener: ValueEventListener? = null
     private val candidateListeners = mutableListOf<Pair<DatabaseReference, ChildEventListener>>()
@@ -92,11 +99,11 @@ object CallEngine {
                     callRef = ref
                     ref.setValue(mapOf(
                         "callId" to callId, "callerId" to me, "calleeId" to remoteUid,
-                        "status" to "ringing", "callType" to if (video) "video" else "audio", "offerType" to sdp.type.canonicalForm(),
+                        "status" to "calling", "callType" to if (video) "video" else "audio", "offerType" to sdp.type.canonicalForm(),
                         "offerSdp" to sdp.description, "createdAt" to System.currentTimeMillis(),
                         "expiresAt" to System.currentTimeMillis() + 30_000
                     )).addOnSuccessListener {
-                        _state.value = _state.value.copy(status = "ringing")
+                        _state.value = _state.value.copy(status = "calling")
                         listenCall(ref, isCaller = true)
                         listenRemoteCandidates(ref.child("calleeCandidates"))
                         onInviteReady(callId)
@@ -173,6 +180,7 @@ object CallEngine {
         @Suppress("DEPRECATION")
         run { manager.mode = AudioManager.MODE_IN_COMMUNICATION; manager.isSpeakerphoneOn = enabled }
         _state.value = _state.value.copy(speaker = enabled)
+        updateProximityLock()
     }
 
     private fun createPeer(servers: List<PeerConnection.IceServer>, callId: String, myUid: String, caller: Boolean): Boolean {
@@ -261,7 +269,14 @@ object CallEngine {
                         peer?.setRemoteDescription(SimpleSdpObserver(), SessionDescription(SessionDescription.Type.ANSWER, answerSdp))
                     }
                 }
-                _state.value = _state.value.copy(status = status)
+                val previous = _state.value.status
+                if (status == "ringing" && isCaller) startRingback() else if (status != "ringing") stopRingback()
+                if (status == "connected" && previous != "connected") vibrateConnected()
+                _state.value = _state.value.copy(
+                    status = status,
+                    connectedAt = if (status == "connected") _state.value.connectedAt.takeIf { it > 0 } ?: System.currentTimeMillis() else _state.value.connectedAt
+                )
+                if (status == "connected") updateProximityLock()
                 if (status in listOf("declined", "ended", "missed")) cleanup(status)
             }
             override fun onCancelled(error: DatabaseError) = fail(error.message)
@@ -316,7 +331,44 @@ object CallEngine {
         }.addOnFailureListener { callback(emptyList(), it.localizedMessage ?: "TURN authentication failed") }
     }
 
+    private fun startRingback() {
+        if (ringbackTone != null) return
+        runCatching {
+            ringbackTone = ToneGenerator(AudioManager.STREAM_VOICE_CALL, 55).also {
+                it.startTone(ToneGenerator.TONE_SUP_RINGTONE)
+            }
+        }
+    }
+
+    private fun stopRingback() {
+        runCatching { ringbackTone?.stopTone(); ringbackTone?.release() }
+        ringbackTone = null
+    }
+
+    private fun vibrateConnected() {
+        val context = appContext ?: return
+        val vibrator = context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator ?: return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) vibrator.vibrate(VibrationEffect.createOneShot(90, VibrationEffect.DEFAULT_AMPLITUDE))
+        else @Suppress("DEPRECATION") vibrator.vibrate(90)
+    }
+
+    private fun updateProximityLock() {
+        val context = appContext ?: return
+        val shouldUse = _state.value.status == "connected" && !_state.value.video && !_state.value.speaker
+        if (shouldUse && proximityWakeLock?.isHeld != true) {
+            val power = context.getSystemService(Context.POWER_SERVICE) as PowerManager
+            if (power.isWakeLockLevelSupported(PowerManager.PROXIMITY_SCREEN_OFF_WAKE_LOCK)) {
+                proximityWakeLock = power.newWakeLock(PowerManager.PROXIMITY_SCREEN_OFF_WAKE_LOCK, "FireChat:CallProximity").apply { acquire() }
+            }
+        } else if (!shouldUse && proximityWakeLock?.isHeld == true) {
+            proximityWakeLock?.release(); proximityWakeLock = null
+        }
+    }
+
     private fun cleanup(finalStatus: String) {
+        stopRingback()
+        if (proximityWakeLock?.isHeld == true) runCatching { proximityWakeLock?.release() }
+        proximityWakeLock = null
         candidateListeners.forEach { (ref, listener) -> ref.removeEventListener(listener) }; candidateListeners.clear()
         callListener?.let { listener -> callRef?.removeEventListener(listener) }; callListener = null
         runCatching { videoCapturer?.stopCapture() }; videoCapturer?.dispose(); videoCapturer = null
