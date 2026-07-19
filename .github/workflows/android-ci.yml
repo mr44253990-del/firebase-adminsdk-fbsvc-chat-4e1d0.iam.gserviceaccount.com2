@@ -26,27 +26,43 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Generate wrapper if missing
-        run: gradle wrapper
+      - name: Generate Gradle Wrapper if missing
+        run: |
+          if [ ! -f "./gradlew" ]; then
+            gradle wrapper
+          fi
+          chmod +x gradlew
 
-      - name: Ensure debug keystore exists
+      - name: Ensure Debug Keystore Exists
         run: |
           if [ ! -f debug.keystore ]; then
             keytool -genkeypair \
               -alias androiddebugkey \
-              -keypass android \
-              -keystore debug.keystore \
-              -storepass android \
-              -dname "CN=Android Debug,O=Android,C=US" \
               -keyalg RSA \
               -keysize 2048 \
-              -validity 10000
+              -validity 10000 \
+              -keystore debug.keystore \
+              -storepass android \
+              -keypass android \
+              -dname "CN=Android Debug,O=Android,C=US"
           fi
 
       - name: Build Debug APK
         run: ./gradlew assembleDebug
 
-      - name: Upload APK
+      - name: Show SHA-1 & SHA-256 Fingerprints
+        run: |
+          echo "========================================"
+          echo "Android Debug Keystore Fingerprints"
+          echo "========================================"
+          keytool -list -v \
+            -keystore debug.keystore \
+            -alias androiddebugkey \
+            -storepass android \
+            -keypass android | grep -E "SHA1:|SHA-1:|SHA256:|SHA-256:"
+          echo "========================================"
+
+      - name: Upload Debug APK
         uses: actions/upload-artifact@v4
         with:
           name: app-debug-apk
