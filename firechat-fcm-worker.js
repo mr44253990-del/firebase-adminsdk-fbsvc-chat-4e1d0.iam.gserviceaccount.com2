@@ -103,8 +103,20 @@ export default {
         headers: { "Authorization": `Bearer ${accessToken}` }
       });
       if (!tokenResponse.ok) {
-        return new Response(JSON.stringify({ error: "Recipient token is unavailable", status: tokenResponse.status }), {
-          status: 404,
+        let tokenLookupError = null;
+        try { tokenLookupError = await tokenResponse.json(); } catch (_) {}
+        const permissionDenied = tokenResponse.status === 401 || tokenResponse.status === 403;
+        return new Response(JSON.stringify({
+          success: false,
+          error: permissionDenied
+            ? "Worker service account cannot read private FCM tokens"
+            : "Recipient token is unavailable",
+          errorStatus: permissionDenied ? "FIRESTORE_PERMISSION_DENIED" : "TOKEN_LOOKUP_FAILED",
+          upstreamStatus: tokenResponse.status,
+          requiredPermission: permissionDenied ? "datastore.entities.get" : null,
+          details: tokenLookupError?.error?.message || null
+        }), {
+          status: permissionDenied ? 503 : 404,
           headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
         });
       }
