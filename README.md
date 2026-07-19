@@ -19,7 +19,7 @@ Choose an appearance from **Profile & appearance → Choose Application Theme**.
 3. Notifications use Firestore as a short-lived delivery queue. The Android client writes each received item to Room and then deletes the remote notification document, keeping history locally without growing Firestore indefinitely.
 4. Friend and message request queries use a single `receiverId` equality filter, so no composite Firestore index is required.
 5. Google provides display name, email, and profile image. Birthday is not included in the standard Google ID token; users can complete it safely from **Profile & appearance**.
-6. Redeploy `cloudflare-worker.js` after this update. Its payload includes only the recipient UID, activity type, target ID, sender name, and public profile image URL. The Worker resolves the device token server-side from private `fcm_tokens/{uid}`; another Android client never receives the token.
+6. Redeploy `cloudflare-worker.js` after this update. The authenticated sender reads the recipient's `users/{uid}.fcmToken` routing field and includes that token with activity type, target ID, sender name, and public profile image URL. Worker `3.2.0` performs no Firestore lookup; it validates the caller's Firebase ID token and sends directly through FCM v1.
 
 ### Direct FCM v1 gateway — no n8n
 

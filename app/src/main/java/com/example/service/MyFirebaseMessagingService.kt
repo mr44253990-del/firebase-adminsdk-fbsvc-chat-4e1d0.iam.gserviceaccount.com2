@@ -35,11 +35,11 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         // If a user is currently authenticated, update their token in Firestore
         val currentUid = FirebaseAuth.getInstance().currentUser?.uid
         if (currentUid != null) {
-            FirebaseFirestore.getInstance().collection("fcm_tokens")
+            FirebaseFirestore.getInstance().collection("users")
                 .document(currentUid)
-                .set(mapOf("token" to token, "updatedAt" to System.currentTimeMillis()))
+                .update(mapOf("fcmToken" to token, "fcmTokenUpdatedAt" to System.currentTimeMillis()))
                 .addOnSuccessListener {
-                    Log.d("FCM_SERVICE", "Successfully updated private FCM token on refresh.")
+                    Log.d("FCM_SERVICE", "Successfully updated profile FCM routing token.")
                 }
                 .addOnFailureListener { e ->
                     Log.e("FCM_SERVICE", "Failed to update FCM token: ${e.message}")

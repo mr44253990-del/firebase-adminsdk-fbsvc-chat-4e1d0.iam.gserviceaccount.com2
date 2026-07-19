@@ -299,16 +299,18 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             _gatewayHealth.value = GatewayHealth(message = "Admin session is not authenticated")
             return
         }
-        triggerFcmGatewayNotification(
-            gatewayUrl = _webhookUrl.value,
-            targetUid = admin.uid,
-            senderName = "FireChat Diagnostics",
-            messageBody = "Direct FCM gateway test completed successfully",
-            senderId = admin.uid,
-            senderProfileUrl = admin.profileImageUrl,
-            notificationType = "gateway_test",
-            targetId = "test_${System.currentTimeMillis()}"
-        )
+        withUserFcmToken(admin.uid, admin.fcmToken) { token ->
+            triggerFcmGatewayNotification(
+                gatewayUrl = _webhookUrl.value,
+                targetToken = token,
+                senderName = "FireChat Diagnostics",
+                messageBody = "Direct FCM gateway test completed successfully",
+                senderId = admin.uid,
+                senderProfileUrl = admin.profileImageUrl,
+                notificationType = "gateway_test",
+                targetId = "test_${System.currentTimeMillis()}"
+            )
+        }
     }
 
     private fun listenToGlobalConfig() {
@@ -558,12 +560,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 val token = task.result
                 val firestore = FirebaseFirestore.getInstance()
-                firestore.collection("fcm_tokens").document(uid)
-                    .set(mapOf("token" to token, "updatedAt" to System.currentTimeMillis()))
+                // Recipient routing token is kept on the user profile as requested so an
+                // authenticated sender can include it directly in the Worker POST body.
+                firestore.collection("users").document(uid)
+                    .update(mapOf("fcmToken" to token, "fcmTokenUpdatedAt" to System.currentTimeMillis()))
                     .addOnSuccessListener {
-                        // Remove any legacy public-profile token field after private migration.
-                        firestore.collection("users").document(uid).update("fcmToken", FieldValue.delete())
-                        _currentUserState.value = _currentUserState.value?.copy(fcmToken = "")
+                        _currentUserState.value = _currentUserState.value?.copy(fcmToken = token)
                     }
             }
         } catch (e: Exception) {
@@ -1147,6 +1149,25 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             }
     }
 
+    private fun withUserFcmToken(uid: String, knownToken: String = "", onToken: (String) -> Unit) {
+        if (knownToken.isNotBlank()) {
+            onToken(knownToken)
+            return
+        }
+        FirebaseFirestore.getInstance().collection("users").document(uid).get()
+            .addOnSuccessListener { document ->
+                val token = document.getString("fcmToken").orEmpty()
+                if (token.isBlank()) {
+                    Log.w("FCM_GATEWAY", "Recipient $uid has no FCM token")
+                    _gatewayHealth.value = GatewayHealth(message = "Recipient has not registered an FCM token yet")
+                } else onToken(token)
+            }
+            .addOnFailureListener {
+                Log.e("FCM_GATEWAY", "Could not load recipient token: ${it.message}")
+                _gatewayHealth.value = GatewayHealth(message = "Could not load recipient notification token")
+            }
+    }
+
     private fun createActivityNotification(ownerId: String, type: String, targetId: String, text: String) {
         val actor = getCurrentUserOrFallback() ?: return
         if (ownerId.isBlank() || ownerId == actor.uid) return
@@ -1163,16 +1184,18 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             text = text,
             timestamp = System.currentTimeMillis()
         )).addOnSuccessListener {
-            triggerFcmGatewayNotification(
-                gatewayUrl = _webhookUrl.value,
-                targetUid = ownerId,
-                senderName = actor.name,
-                messageBody = text,
-                senderId = actor.uid,
-                senderProfileUrl = actor.profileImageUrl,
-                notificationType = type,
-                targetId = targetId
-            )
+            withUserFcmToken(ownerId) { recipientToken ->
+                triggerFcmGatewayNotification(
+                    gatewayUrl = _webhookUrl.value,
+                    targetToken = recipientToken,
+                    senderName = actor.name,
+                    messageBody = text,
+                    senderId = actor.uid,
+                    senderProfileUrl = actor.profileImageUrl,
+                    notificationType = type,
+                    targetId = targetId
+                )
+            }
         }.addOnFailureListener { Log.e("ACTIVITY_CENTER", "Delivery failed: ${it.message}") }
     }
 
@@ -1341,17 +1364,20 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         "timestamp" to System.currentTimeMillis()
                     ))
 
-                // Direct secure FCM v1 gateway; no n8n hop.
-                triggerFcmGatewayNotification(
-                    gatewayUrl = _webhookUrl.value,
-                    targetUid = recipientUser.uid,
-                    senderName = currentUser.name,
-                    messageBody = if (voiceUrl != null) "🎙️ Voice message" else if (imageUrl != null) "📷 Image attachment" else text,
-                    senderId = currentUser.uid,
-                    senderProfileUrl = currentUser.profileImageUrl,
-                    notificationType = "message",
-                    targetId = messageId
-                )
+                // Sender resolves the recipient profile token and posts it directly to the
+                // authenticated Worker. The Worker performs no Firestore lookup.
+                withUserFcmToken(recipientUser.uid, recipientUser.fcmToken) { recipientToken ->
+                    triggerFcmGatewayNotification(
+                        gatewayUrl = _webhookUrl.value,
+                        targetToken = recipientToken,
+                        senderName = currentUser.name,
+                        messageBody = if (voiceUrl != null) "🎙️ Voice message" else if (imageUrl != null) "📷 Image attachment" else text,
+                        senderId = currentUser.uid,
+                        senderProfileUrl = currentUser.profileImageUrl,
+                        notificationType = "message",
+                        targetId = messageId
+                    )
+                }
             }
     }
 
@@ -1550,7 +1576,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun triggerFcmGatewayNotification(
         gatewayUrl: String,
-        targetUid: String,
+        targetToken: String,
         senderName: String,
         messageBody: String,
         senderId: String,
@@ -1577,7 +1603,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 val formattedTime = sdf.format(Date())
 
                 val jsonObject = JSONObject().apply {
-                    put("targetUid", targetUid)
+                    put("token", targetToken)
                     put("title", if (notificationType == "message") "New message from $senderName" else "$senderName • FireChat")
                     put("body", messageBody)
                     put("text", messageBody)

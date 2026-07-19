@@ -34,7 +34,7 @@ export default {
       return new Response(JSON.stringify({
         ok: serviceAccountConfigured,
         service: "FireChat Direct FCM Gateway",
-        version: "3.1.0",
+        version: "3.2.0",
         projectId,
         serviceAccountConfigured,
         authenticatedCallsRequired: true,
@@ -54,10 +54,10 @@ export default {
 
     try {
       const payload = await request.json();
-      const { targetUid, title, body, senderId, senderName, senderProfileUrl, notificationType, targetId } = payload;
+      const { token, title, body, senderId, senderName, senderProfileUrl, notificationType, targetId } = payload;
 
-      if (!targetUid || !title || !body) {
-        return new Response(JSON.stringify({ error: "Missing required fields: targetUid, title, body" }), {
+      if (!token || !title || !body) {
+        return new Response(JSON.stringify({ error: "Missing required fields: token, title, body" }), {
           status: 400,
           headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
         });
@@ -95,39 +95,6 @@ export default {
 
       // 2. Fetch Google OAuth2 Access Token using Web Crypto API
       const accessToken = await getGoogleAccessToken(clientEmail, privateKeyPem);
-
-      // Resolve the device token server-side. Android sends only the recipient UID;
-      // other clients never receive or enumerate private FCM registration tokens.
-      const tokenDocumentUrl = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents/fcm_tokens/${encodeURIComponent(targetUid)}`;
-      const tokenResponse = await fetch(tokenDocumentUrl, {
-        headers: { "Authorization": `Bearer ${accessToken}` }
-      });
-      if (!tokenResponse.ok) {
-        let tokenLookupError = null;
-        try { tokenLookupError = await tokenResponse.json(); } catch (_) {}
-        const permissionDenied = tokenResponse.status === 401 || tokenResponse.status === 403;
-        return new Response(JSON.stringify({
-          success: false,
-          error: permissionDenied
-            ? "Worker service account cannot read private FCM tokens"
-            : "Recipient token is unavailable",
-          errorStatus: permissionDenied ? "FIRESTORE_PERMISSION_DENIED" : "TOKEN_LOOKUP_FAILED",
-          upstreamStatus: tokenResponse.status,
-          requiredPermission: permissionDenied ? "datastore.entities.get" : null,
-          details: tokenLookupError?.error?.message || null
-        }), {
-          status: permissionDenied ? 503 : 404,
-          headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
-        });
-      }
-      const tokenDocument = await tokenResponse.json();
-      const token = tokenDocument?.fields?.token?.stringValue;
-      if (!token) {
-        return new Response(JSON.stringify({ error: "Recipient has no registered FCM token" }), {
-          status: 404,
-          headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
-        });
-      }
 
       // 3. Send Notification via FCM v1 API
       const fcmUrl = `https://fcm.googleapis.com/v1/projects/${projectId}/messages:send`;
@@ -242,7 +209,7 @@ async function getGoogleAccessToken(clientEmail, privateKeyPem) {
 
   const claim = {
     iss: clientEmail,
-    scope: "https://www.googleapis.com/auth/firebase.messaging https://www.googleapis.com/auth/datastore",
+    scope: "https://www.googleapis.com/auth/firebase.messaging",
     aud: "https://oauth2.googleapis.com/token",
     exp: exp,
     iat: iat
