@@ -33,7 +33,7 @@ export default {
       }
       const contentType = request.headers.get("Content-Type") || "application/octet-stream";
       const contentLength = Number(request.headers.get("Content-Length") || 0);
-      if (contentLength > 150 * 1024 * 1024) return jsonResponse({ error: "Media exceeds 150 MB limit" }, 413);
+      if (contentLength > 95 * 1024 * 1024) return jsonResponse({ error: "Media exceeds 95 MB limit" }, 413);
       const kind = url.searchParams.get("kind") === "reel" ? "reels" : "posts";
       const extension = (url.searchParams.get("extension") || mimeExtension(contentType)).replace(/[^a-z0-9]/gi, "").slice(0, 8) || "bin";
       const key = `${kind}/${auth.caller.sub}/${Date.now()}-${crypto.randomUUID()}.${extension}`;

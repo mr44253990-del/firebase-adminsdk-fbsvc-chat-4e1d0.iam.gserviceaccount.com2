@@ -80,8 +80,8 @@ fun PostComposerScreen(viewModel: ChatViewModel, onBack: () -> Unit, onPublished
         val mime = context.contentResolver.getType(uri) ?: if (video) "video/mp4" else "image/jpeg"
         val bytes = runCatching { context.contentResolver.openInputStream(uri)?.use { it.readBytes() } }.getOrNull()
         if (bytes == null) { Toast.makeText(context, "Could not read media", Toast.LENGTH_SHORT).show(); return }
-        val max = if (video) 150 * 1024 * 1024 else 15 * 1024 * 1024
-        if (bytes.size > max) { Toast.makeText(context, if (video) "Video limit is 150 MB" else "Image limit is 15 MB", Toast.LENGTH_LONG).show(); return }
+        val max = if (video) 95 * 1024 * 1024 else 15 * 1024 * 1024
+        if (bytes.size > max) { Toast.makeText(context, if (video) "Video limit is 95 MB" else "Image limit is 15 MB", Toast.LENGTH_LONG).show(); return }
         uploading = true
         val ext = when { mime.contains("webm") -> "webm"; mime.contains("png") -> "png"; mime.contains("webp") -> "webp"; video -> "mp4"; else -> "jpg" }
         viewModel.uploadMediaToR2(bytes, mime, if (video && isReel) "reel" else "post", ext, tags,
