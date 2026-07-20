@@ -29,7 +29,7 @@ export default {
       try {
       const auth = await authenticateCaller(request, env);
       if (!auth.ok) return auth.response;
-      if (!env.MEDIA_BUCKET || !env.R2_PUBLIC_BASE_URL) {
+      if (!env.MEDIA_BUCKET || typeof env.MEDIA_BUCKET.put !== "function" || !env.R2_PUBLIC_BASE_URL) {
         return jsonResponse({ error: "MEDIA_BUCKET binding or R2_PUBLIC_BASE_URL is missing" }, 503);
       }
       const contentType = request.headers.get("Content-Type") || "application/octet-stream";
@@ -74,12 +74,12 @@ export default {
       return new Response(JSON.stringify({
         ok: serviceAccountConfigured,
         service: "FireChat Direct FCM Gateway",
-        version: "4.2.2",
+        version: "4.2.3",
         projectId,
         serviceAccountConfigured,
         turnConfigured: Boolean(env.TURN_TOKEN_ID && env.TURN_API_TOKEN),
         sfuConfigured: Boolean(env.CALLS_APP_ID && env.CALLS_APP_TOKEN),
-        r2Configured: Boolean(env.MEDIA_BUCKET && env.R2_PUBLIC_BASE_URL),
+        r2Configured: Boolean(env.MEDIA_BUCKET && typeof env.MEDIA_BUCKET.put === "function" && typeof env.MEDIA_BUCKET.list === "function" && env.R2_PUBLIC_BASE_URL),
         mediaRetentionDays: 10,
         authenticatedCallsRequired: true,
         timestamp: Date.now()
@@ -131,7 +131,7 @@ export default {
       }
 
       if (path === "/media/delete") {
-        if (!env.MEDIA_BUCKET) return jsonResponse({ error: "MEDIA_BUCKET binding is missing" }, 503);
+        if (!env.MEDIA_BUCKET || typeof env.MEDIA_BUCKET.delete !== "function") return jsonResponse({ error: "MEDIA_BUCKET must be an R2 bucket binding, not a variable or secret" }, 503);
         const key = String(payload.key || "");
         if (!key.startsWith("posts/") && !key.startsWith("reels/")) return jsonResponse({ error: "Invalid media key" }, 400);
         const object = await env.MEDIA_BUCKET.head(key);
@@ -143,7 +143,7 @@ export default {
       }
 
       if (path === "/media/reels/list" || path === "/media/reels/search") {
-        if (!env.MEDIA_BUCKET || !env.R2_PUBLIC_BASE_URL) return jsonResponse({ error: "R2 media is not configured" }, 503);
+        if (!env.MEDIA_BUCKET || typeof env.MEDIA_BUCKET.list !== "function" || !env.R2_PUBLIC_BASE_URL) return jsonResponse({ error: "R2 media binding is not configured" }, 503);
         const limit = Math.min(Math.max(Number(payload.limit || 20), 1), 50);
         const listed = await env.MEDIA_BUCKET.list({ prefix: "reels/", limit: 100, cursor: payload.cursor, include: ["customMetadata", "httpMetadata"] });
         const query = String(payload.query || "").trim().toLowerCase();
