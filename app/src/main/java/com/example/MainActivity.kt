@@ -31,6 +31,7 @@ import com.example.ui.UserProfileScreen
 import com.example.ui.isOnboardingCompleted
 import com.example.ui.theme.MyApplicationTheme
 import com.example.ui.theme.PremiumBackground
+import com.example.video.VideoPlayerManager
 import com.example.security.AppLockManager
 import com.example.security.AppLockScreen
 import com.google.firebase.auth.FirebaseAuth
@@ -42,6 +43,7 @@ import coil.ImageLoader
 import coil.disk.DiskCache
 import coil.memory.MemoryCache
 
+@androidx.media3.common.util.UnstableApi
 class MainActivity : FragmentActivity() {
 
     private val viewModel: ChatViewModel by viewModels()
@@ -59,6 +61,7 @@ class MainActivity : FragmentActivity() {
             FirebaseDatabase.getInstance().getReference("status").child(uid)
                 .setValue(mapOf("isOnline" to false, "lastActive" to System.currentTimeMillis(), "foreground" to false, "onlineSource" to "background"))
         }
+        VideoPlayerManager.pause()
         AppLockManager.lock(this)
         super.onStop()
     }

@@ -1,3 +1,5 @@
+@file:OptIn(androidx.media3.common.util.UnstableApi::class)
+
 package com.example.ui
 
 import android.Manifest
@@ -80,7 +82,8 @@ import com.example.data.FriendRequest
 import com.example.data.Group
 import com.example.data.MessageRequest
 import com.example.data.Post
-import com.example.data.ReelCacheManager
+import com.example.video.SharedCachedVideo
+import com.example.video.VideoPlayerManager
 import com.example.data.Story
 import com.example.data.User
 import com.google.firebase.auth.FirebaseAuth
@@ -283,7 +286,7 @@ fun HomeScreen(
             }
         },
         bottomBar = {
-            NavigationBar(
+            if (currentTab != 6) NavigationBar(
                 containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.82f),
                 tonalElevation = 0.dp,
                 modifier = Modifier
@@ -309,10 +312,10 @@ fun HomeScreen(
                     label = { Text("Groups", fontSize = 10.sp) }
                 )
                 NavigationBarItem(
-                    selected = currentTab == 6,
-                    onClick = { viewModel.setCurrentTab(6) },
-                    icon = { Icon(Icons.Default.SmartDisplay, contentDescription = "Reels") },
-                    label = { Text("Reels", fontSize = 10.sp) }
+                    selected = currentTab == 5,
+                    onClick = { viewModel.setCurrentTab(5) },
+                    icon = { Icon(Icons.Default.PersonAdd, contentDescription = "Friends") },
+                    label = { Text("Friends", fontSize = 10.sp) }
                 )
                 NavigationBarItem(
                     selected = currentTab == 4,
@@ -425,7 +428,7 @@ fun HomeScreen(
                         } else {
                             items(posts, key = { it.id }) { post ->
                                 Box(Modifier.padding(horizontal = 14.dp)) {
-                                    SocialPostItem(post = post, viewModel = viewModel, onProfileSelected = onProfileSelected, autoPlayVideo = post.id == activeFeedPostId)
+                                    SocialPostItem(post = post, viewModel = viewModel, onProfileSelected = onProfileSelected, autoPlayVideo = post.id == activeFeedPostId && selectedStoryIndex == null)
                                 }
                             }
                         }
@@ -1147,7 +1150,8 @@ fun HomeScreen(
                         posts = posts,
                         users = allUsers,
                         viewModel = viewModel,
-                        onProfileSelected = onProfileSelected
+                        onProfileSelected = onProfileSelected,
+                        onClose = { viewModel.setCurrentTab(0) }
                     )
                 }
                 5 -> {
@@ -1918,7 +1922,8 @@ fun ReelsFeedScreen(
     posts: List<Post>,
     users: List<User>,
     viewModel: ChatViewModel,
-    onProfileSelected: (User) -> Unit
+    onProfileSelected: (User) -> Unit,
+    onClose: () -> Unit
 ) {
     val context = LocalContext.current
     val reels = remember(posts) {
@@ -1934,28 +1939,24 @@ fun ReelsFeedScreen(
     }
     val startPage = remember(reels) { (Int.MAX_VALUE / 2).let { it - (it % reels.size) } }
     val pager = rememberPagerState(initialPage = startPage, pageCount = { Int.MAX_VALUE })
-    val cached = remember { mutableStateMapOf<String, String>() }
     LaunchedEffect(reels, pager) {
         snapshotFlow { pager.currentPage }.collect { page ->
-            repeat(minOf(3, reels.size)) { offset ->
-                val item = reels[(page + offset) % reels.size]
-                ReelCacheManager.cachedPath(context, item.id)?.let { cached[item.id] = it }
-                    ?: ReelCacheManager.cache(context, item.id, item.videoUrl) { path ->
-                        if (path != null) android.os.Handler(android.os.Looper.getMainLooper()).post { cached[item.id] = path }
-                    }
-            }
+            VideoPlayerManager.preload(context, (1..3).map { offset -> reels[(page + offset) % reels.size].videoUrl })
         }
     }
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         VerticalPager(state = pager, modifier = Modifier.fillMaxSize(), beyondViewportPageCount = 2) { page ->
             val source = reels[page % reels.size]
-            val playable = cached[source.id]?.let { source.copy(videoUrl = it) } ?: source
             ImmersiveVideoPage(
-                post = playable, owner = users.find { it.uid == source.senderId },
+                post = source, owner = users.find { it.uid == source.senderId },
                 isActive = pager.currentPage == page, viewModel = viewModel,
                 onProfileSelected = onProfileSelected
             )
         }
+        IconButton(
+            onClick = onClose,
+            modifier = Modifier.align(Alignment.TopStart).windowInsetsPadding(WindowInsets.statusBars).padding(12.dp).background(Color.Black.copy(.45f), CircleShape)
+        ) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Color.White) }
     }
 }
 
@@ -2010,20 +2011,12 @@ private fun ImmersiveVideoPage(
     viewModel: ChatViewModel,
     onProfileSelected: (User) -> Unit
 ) {
-    var prepared by remember(post.id) { mutableStateOf(false) }
     var isPaused by remember(post.id) { mutableStateOf(false) }
     var comment by remember(post.id) { mutableStateOf("") }
     var showComments by remember(post.id) { mutableStateOf(false) }
     var showDescription by remember(post.id) { mutableStateOf(false) }
     var horizontalDrag by remember(post.id) { mutableFloatStateOf(0f) }
-    val videoView = remember(post.id) { mutableStateOf<VideoView?>(null) }
     var optimisticReaction by remember(post.id) { mutableStateOf<Boolean?>(null) }
-    DisposableEffect(post.id) {
-        onDispose {
-            videoView.value?.stopPlayback()
-            videoView.value = null
-        }
-    }
     val currentUser by viewModel.currentUserState.collectAsState()
     val sentRequests by viewModel.sentFriendRequestIds.collectAsState()
     val isFriend = owner?.let { currentUser?.friends?.contains(it.uid) == true } ?: false
@@ -2037,44 +2030,11 @@ private fun ImmersiveVideoPage(
     }).coerceAtLeast(0)
 
     Box(Modifier.fillMaxSize().background(Color.Black)) {
-        key(post.id) {
-            AndroidView(
-                factory = { context ->
-                    VideoView(context).apply {
-                        videoView.value = this
-                        setVideoPath(post.videoUrl)
-                        setOnPreparedListener { player ->
-                            player.isLooping = true
-                            prepared = true
-                            if (isActive && !isPaused) { player.setVolume(1f, 1f); start() }
-                        }
-                        setOnInfoListener { _, what, _ ->
-                            prepared = what != MediaPlayer.MEDIA_INFO_BUFFERING_START
-                            false
-                        }
-                    }
-                },
-                update = { video ->
-                    if (isActive && !isPaused) {
-                        if (!video.isPlaying) video.start()
-                    } else {
-                        video.pause()
-                    }
-                },
-                modifier = Modifier.fillMaxSize()
-            )
-        }
-        if (!prepared) {
-            if (post.imageUrl.isNotBlank()) {
-                AsyncImage(post.imageUrl, "Reel thumbnail", contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
-                Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = .28f)))
-            }
-            Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
-                CircularProgressIndicator(color = Color.White)
-                Spacer(Modifier.height(10.dp))
-                Text("ভিডিও প্রস্তুত হচ্ছে…", color = Color.White.copy(alpha = .75f))
-            }
-        }
+        SharedCachedVideo(
+            ownerId = "reel_${post.id}", videoUrl = post.videoUrl,
+            thumbnailUrl = post.imageUrl, active = isActive,
+            playWhenReady = isActive && !isPaused, sound = true, modifier = Modifier.fillMaxSize()
+        )
         Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color.Transparent, Color.Black.copy(alpha = .78f)))))
         Box(Modifier.fillMaxSize().pointerInput(post.id) {
             detectTapGestures(onDoubleTap = {
@@ -2410,15 +2370,6 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
     var commentInputText by remember { mutableStateOf("") }
     var showPostMenu by remember { mutableStateOf(false) }
     var showEditPost by remember { mutableStateOf(false) }
-    val inlineVideoView = remember(post.id) { mutableStateOf<VideoView?>(null) }
-    val inlineMediaPlayer = remember(post.id) { mutableStateOf<MediaPlayer?>(null) }
-    DisposableEffect(post.id) {
-        onDispose {
-            inlineVideoView.value?.stopPlayback()
-            inlineVideoView.value = null
-            inlineMediaPlayer.value = null
-        }
-    }
     val currentUserId = FirebaseAuth.getInstance().currentUser?.uid ?: ""
     val isDark = isSystemInDarkTheme()
     val allUsers by viewModel.usersState.collectAsState()
@@ -2591,23 +2542,10 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
                         .clickable { viewModel.setCurrentTab(6) },
                     contentAlignment = Alignment.Center
                 ) {
-                    AndroidView(
-                        factory = { context ->
-                            VideoView(context).apply {
-                                inlineVideoView.value = this
-                                setVideoPath(post.videoUrl)
-                                setOnPreparedListener { player ->
-                                    inlineMediaPlayer.value = player
-                                    player.isLooping = true
-                                    player.setVolume(if (autoPlayVideo) 1f else 0f, if (autoPlayVideo) 1f else 0f)
-                                    if (autoPlayVideo) start()
-                                }
-                            }
-                        },
-                        update = { video ->
-                            inlineMediaPlayer.value?.setVolume(if (autoPlayVideo) 1f else 0f, if (autoPlayVideo) 1f else 0f)
-                            if (autoPlayVideo && !video.isPlaying) video.start() else if (!autoPlayVideo && video.isPlaying) video.pause()
-                        },
+                    SharedCachedVideo(
+                        ownerId = "feed_${post.id}", videoUrl = post.videoUrl,
+                        thumbnailUrl = post.imageUrl, active = autoPlayVideo,
+                        playWhenReady = autoPlayVideo, sound = autoPlayVideo,
                         modifier = Modifier.fillMaxSize()
                     )
                     Box(Modifier.fillMaxSize().clickable { viewModel.setCurrentTab(6) })
