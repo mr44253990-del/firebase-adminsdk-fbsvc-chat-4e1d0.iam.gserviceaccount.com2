@@ -1956,7 +1956,7 @@ fun ReelsFeedScreen(
         IconButton(
             onClick = onClose,
             modifier = Modifier.align(Alignment.TopStart).windowInsetsPadding(WindowInsets.statusBars).padding(12.dp).background(Color.Black.copy(.45f), CircleShape)
-        ) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Color.White) }
+        ) { Icon(Icons.Default.ArrowBack, "Back", tint = Color.White) }
     }
 }
 
