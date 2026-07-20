@@ -76,14 +76,29 @@ jobs:
           test -n "$RELEASE_KEYSTORE_BASE64"
           echo "$RELEASE_KEYSTORE_BASE64" | base64 --decode > release-upload.jks
 
-      - name: Build Signed Release APK and AAB
+      - name: Show Release SHA-1 and SHA-256 Fingerprints
+        if: github.event_name != 'pull_request'
+        env:
+          RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+        run: |
+          echo "========================================"
+          echo "Android Release Keystore Fingerprints"
+          echo "========================================"
+          keytool -list -v \
+            -keystore release-upload.jks \
+            -alias "$RELEASE_KEY_ALIAS" \
+            -storepass "$RELEASE_STORE_PASSWORD" | grep -E "SHA1:|SHA-1:|SHA256:|SHA-256:"
+          echo "========================================"
+
+      - name: Build Signed Release APK
         if: github.event_name != 'pull_request'
         env:
           KEYSTORE_PATH: ${{ github.workspace }}/release-upload.jks
           RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
           RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
           RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
-        run: ./gradlew assembleRelease bundleRelease
+        run: ./gradlew assembleRelease
 
       - name: Upload Signed Release APK
         if: github.event_name != 'pull_request'
@@ -91,10 +106,3 @@ jobs:
         with:
           name: app-release-apk
           path: app/build/outputs/apk/release/*.apk
-
-      - name: Upload Play Store AAB
-        if: github.event_name != 'pull_request'
-        uses: actions/upload-artifact@v4
-        with:
-          name: app-release-aab
-          path: app/build/outputs/bundle/release/*.aab

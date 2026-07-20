@@ -25,7 +25,7 @@ export default {
       });
     }
 
-    if (request.method === "PUT" && path === "/media/upload") {
+    if ((request.method === "POST" || request.method === "PUT") && path === "/media/upload") {
       const auth = await authenticateCaller(request, env);
       if (!auth.ok) return auth.response;
       if (!env.MEDIA_BUCKET || !env.R2_PUBLIC_BASE_URL) {
@@ -63,7 +63,7 @@ export default {
       return new Response(JSON.stringify({
         ok: serviceAccountConfigured,
         service: "FireChat Direct FCM Gateway",
-        version: "4.2.0",
+        version: "4.2.1",
         projectId,
         serviceAccountConfigured,
         turnConfigured: Boolean(env.TURN_TOKEN_ID && env.TURN_API_TOKEN),
@@ -79,7 +79,7 @@ export default {
     }
 
     if (request.method !== "POST") {
-      return new Response(JSON.stringify({ error: "Only GET health checks and POST notification requests are supported" }), {
+      return new Response(JSON.stringify({ error: "Only GET health checks and POST API requests are supported" }), {
         status: 405,
         headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
       });

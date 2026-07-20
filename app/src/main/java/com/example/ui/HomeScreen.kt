@@ -685,6 +685,30 @@ fun HomeScreen(
                                 }
                             }
 
+                            Card(shape = RoundedCornerShape(24.dp), modifier = Modifier.fillMaxWidth()) {
+                                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                                    Text("Infrastructure checklist", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                                    AdminStatusRow("Firebase / FCM", gatewayHealth.configured, "FIREBASE_SERVICE_ACCOUNT")
+                                    AdminStatusRow("Cloudflare R2", gatewayHealth.r2Configured, "MEDIA_BUCKET + R2_PUBLIC_BASE_URL")
+                                    AdminStatusRow("TURN calling", gatewayHealth.turnConfigured, "TURN_TOKEN_ID + TURN_API_TOKEN")
+                                    AdminStatusRow("Realtime SFU", gatewayHealth.sfuConfigured, "CALLS_APP_ID + CALLS_APP_TOKEN")
+                                    Text("Post and reel media retention: 10 days", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            }
+
+                            Card(shape = RoundedCornerShape(24.dp), modifier = Modifier.fillMaxWidth()) {
+                                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Text("Smart admin actions", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        OutlinedButton(onClick = { viewModel.testFcmGateway(webhookUrl) }, modifier = Modifier.weight(1f)) { Text("Health check") }
+                                        OutlinedButton(onClick = { viewModel.loadPosts(); viewModel.loadStories(); viewModel.loadGroups() }, modifier = Modifier.weight(1f)) { Text("Refresh data") }
+                                    }
+                                    Button(onClick = { viewModel.sendAdminTestNotification() }, enabled = gatewayHealth.configured, modifier = Modifier.fillMaxWidth()) {
+                                        Icon(Icons.Outlined.SendToMobile, null); Spacer(Modifier.width(8.dp)); Text("Send diagnostic push")
+                                    }
+                                }
+                            }
+
                             Card(
                                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
                                 shape = RoundedCornerShape(24.dp),
@@ -3158,4 +3182,14 @@ private fun postBackgroundColors(style: String): List<Color> = when (style) {
     "midnight" -> listOf(Color(0xFF020024), Color(0xFF090979), Color(0xFF111827))
     "mono" -> listOf(Color(0xFF111111), Color(0xFF424242), Color(0xFF151515))
     else -> listOf(Color(0xFF28233F), Color(0xFF6750A4), Color(0xFF15233A))
+}
+
+@Composable
+private fun AdminStatusRow(label: String, ready: Boolean, requirement: String) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Icon(if (ready) Icons.Default.CheckCircle else Icons.Default.Warning, null, tint = if (ready) Color(0xFF45D483) else MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp))
+        Spacer(Modifier.width(9.dp))
+        Column(Modifier.weight(1f)) { Text(label, fontWeight = FontWeight.SemiBold); Text(requirement, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        Text(if (ready) "READY" else "SETUP", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = if (ready) Color(0xFF45D483) else MaterialTheme.colorScheme.error)
+    }
 }

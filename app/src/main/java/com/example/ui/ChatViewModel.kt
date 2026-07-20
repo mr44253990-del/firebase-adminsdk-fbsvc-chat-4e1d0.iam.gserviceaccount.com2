@@ -1700,7 +1700,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     val request = Request.Builder().url(url)
                         .header("Authorization", "Bearer $idToken")
                         .header("X-Media-Tags", tags.take(400).replace("[^A-Za-z0-9,# _-]".toRegex(), ""))
-                        .put(bytes.toRequestBody(contentType.toMediaTypeOrNull()))
+                        .post(bytes.toRequestBody(contentType.toMediaTypeOrNull()))
                         .build()
                     OkHttpClient.Builder().callTimeout(3, TimeUnit.MINUTES).build().newCall(request).execute().use { response ->
                         val body = response.body?.string().orEmpty()
