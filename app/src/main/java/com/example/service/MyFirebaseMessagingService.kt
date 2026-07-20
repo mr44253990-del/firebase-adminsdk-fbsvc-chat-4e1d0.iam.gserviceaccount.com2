@@ -7,6 +7,8 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.media.AudioAttributes
+import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -16,6 +18,7 @@ import androidx.core.app.Person
 import androidx.core.app.RemoteInput
 import androidx.core.graphics.drawable.IconCompat
 import com.example.MainActivity
+import com.example.R
 import com.example.security.AppLockManager
 import com.example.call.IncomingCallActivity
 import com.example.data.User
@@ -200,13 +203,14 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         )
 
         val (channelId, channelName, pattern, category) = when (notificationType) {
-            "message" -> NotificationStyle("firechat_messages_v2", "Messages", longArrayOf(0, 120, 70, 150), NotificationCompat.CATEGORY_MESSAGE)
+            "message" -> NotificationStyle("firechat_messages_v3", "Messages", longArrayOf(0, 120, 70, 150), NotificationCompat.CATEGORY_MESSAGE)
             "friend_request", "friend_accepted", "message_request", "message_accepted" ->
                 NotificationStyle("firechat_requests_v2", "Requests", longArrayOf(0, 220, 100, 220), NotificationCompat.CATEGORY_SOCIAL)
             else -> NotificationStyle("firechat_activity_v2", "Activity", longArrayOf(0, 100), NotificationCompat.CATEGORY_SOCIAL)
         }
 
         val notificationId = System.currentTimeMillis().toInt()
+        val messageSound = Uri.parse("android.resource://$packageName/${R.raw.mixkit_confirmation_tone_2867}")
         val notificationBuilder = NotificationCompat.Builder(this, channelId)
             .setSmallIcon(android.R.drawable.stat_notify_chat)
             .setContentTitle(title)
@@ -216,10 +220,11 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setCategory(category)
             .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
-            .setDefaults(NotificationCompat.DEFAULT_SOUND)
             .setVibrate(pattern)
             .setNumber(1)
             .setContentIntent(pendingIntent)
+        if (notificationType == "message") notificationBuilder.setSound(messageSound)
+        else notificationBuilder.setDefaults(NotificationCompat.DEFAULT_SOUND)
 
         if (notificationType == "message" && senderId.isNotBlank()) {
             val replyInput = RemoteInput.Builder(NotificationReplyReceiver.REPLY_KEY).setLabel("Reply to $title").build()
@@ -237,9 +242,14 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(channelId, "FireChat • $channelName", NotificationManager.IMPORTANCE_HIGH).apply {
                 description = when (channelId) {
-                    "firechat_messages_v2" -> "Direct and group chat messages"
+                    "firechat_messages_v3" -> "Direct and group chat messages"
                     "firechat_requests_v2" -> "Friend and message requests"
                     else -> "Reactions, comments, tags and story activity"
+                }
+                if (channelId == "firechat_messages_v3") {
+                    setSound(messageSound, AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_NOTIFICATION)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build())
                 }
                 enableVibration(true)
                 vibrationPattern = pattern

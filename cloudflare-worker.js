@@ -26,6 +26,7 @@ export default {
     }
 
     if ((request.method === "POST" || request.method === "PUT") && path === "/media/upload") {
+      try {
       const auth = await authenticateCaller(request, env);
       if (!auth.ok) return auth.response;
       if (!env.MEDIA_BUCKET || !env.R2_PUBLIC_BASE_URL) {
@@ -50,6 +51,16 @@ export default {
       });
       const publicBase = env.R2_PUBLIC_BASE_URL.replace(/\/$/, "");
       return jsonResponse({ success: true, key, publicUrl: `${publicBase}/${key}`, expiresAt, kind }, 201);
+      } catch (error) {
+        return jsonResponse({
+          success: false,
+          error: "R2 upload failed",
+          errorCode: "R2_UPLOAD_EXCEPTION",
+          details: error?.message || String(error),
+          bindingType: typeof env.MEDIA_BUCKET,
+          hasPublicBaseUrl: Boolean(env.R2_PUBLIC_BASE_URL)
+        }, 500);
+      }
     }
 
     if (request.method === "GET") {
@@ -63,7 +74,7 @@ export default {
       return new Response(JSON.stringify({
         ok: serviceAccountConfigured,
         service: "FireChat Direct FCM Gateway",
-        version: "4.2.1",
+        version: "4.2.2",
         projectId,
         serviceAccountConfigured,
         turnConfigured: Boolean(env.TURN_TOKEN_ID && env.TURN_API_TOKEN),

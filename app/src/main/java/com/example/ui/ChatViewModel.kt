@@ -1704,7 +1704,13 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         .build()
                     OkHttpClient.Builder().callTimeout(3, TimeUnit.MINUTES).build().newCall(request).execute().use { response ->
                         val body = response.body?.string().orEmpty()
-                        if (!response.isSuccessful) return@use withContext(Dispatchers.Main) { onFailure(runCatching { JSONObject(body).optString("error") }.getOrDefault("R2 upload failed (${response.code})")) }
+                        if (!response.isSuccessful) return@use withContext(Dispatchers.Main) {
+                            val message = runCatching {
+                                val errorJson = JSONObject(body)
+                                listOf(errorJson.optString("error"), errorJson.optString("details")).filter { it.isNotBlank() }.joinToString(": ")
+                            }.getOrDefault("").ifBlank { "R2 upload failed (${response.code})" }
+                            onFailure(message)
+                        }
                         val json = JSONObject(body)
                         val result = R2MediaResult(json.getString("publicUrl"), json.getString("key"), json.getLong("expiresAt"), json.getString("kind"))
                         withContext(Dispatchers.Main) { onSuccess(result) }
