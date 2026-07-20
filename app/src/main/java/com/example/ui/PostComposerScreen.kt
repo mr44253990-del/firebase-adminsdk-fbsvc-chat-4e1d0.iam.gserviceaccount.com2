@@ -1,8 +1,11 @@
 package com.example.ui
 
+import android.graphics.Bitmap
+import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.widget.Toast
 import android.widget.VideoView
+import java.io.ByteArrayOutputStream
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.*
@@ -72,9 +75,17 @@ fun PostComposerScreen(viewModel: ChatViewModel, onBack: () -> Unit, onPublished
     var privatePost by remember { mutableStateOf(false) }
     var publishing by remember { mutableStateOf(false) }
     var uploading by remember { mutableStateOf(false) }
+    var pendingUploads by remember { mutableIntStateOf(0) }
+    var uploadPercent by remember { mutableIntStateOf(0) }
+    var uploadEtaSeconds by remember { mutableLongStateOf(0L) }
     var isReel by remember { mutableStateOf(false) }
-    var imageMedia by remember { mutableStateOf<R2MediaResult?>(null) }
+    val imageMedia = remember { mutableStateListOf<R2MediaResult>() }
     var videoMedia by remember { mutableStateOf<R2MediaResult?>(null) }
+
+    fun finishOneUpload() {
+        pendingUploads = (pendingUploads - 1).coerceAtLeast(0)
+        uploading = pendingUploads > 0
+    }
 
     fun upload(uri: Uri, video: Boolean) {
         val mime = context.contentResolver.getType(uri) ?: if (video) "video/mp4" else "image/jpeg"
@@ -82,13 +93,41 @@ fun PostComposerScreen(viewModel: ChatViewModel, onBack: () -> Unit, onPublished
         if (bytes == null) { Toast.makeText(context, "Could not read media", Toast.LENGTH_SHORT).show(); return }
         val max = if (video) 95 * 1024 * 1024 else 15 * 1024 * 1024
         if (bytes.size > max) { Toast.makeText(context, if (video) "Video limit is 95 MB" else "Image limit is 15 MB", Toast.LENGTH_LONG).show(); return }
+        val thumbnailBytes = if (video) runCatching {
+            val retriever = MediaMetadataRetriever()
+            retriever.setDataSource(context, uri)
+            val frame = retriever.getFrameAtTime(1_000_000, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+            retriever.release()
+            frame?.let { bitmap ->
+                val width = 540
+                val height = (bitmap.height * (width.toFloat() / bitmap.width)).toInt().coerceAtLeast(1)
+                val scaled = Bitmap.createScaledBitmap(bitmap, width, height, true)
+                ByteArrayOutputStream().use { out -> scaled.compress(Bitmap.CompressFormat.JPEG, 78, out); out.toByteArray() }
+            }
+        }.getOrNull() else null
+        pendingUploads++
         uploading = true
+        uploadPercent = 0
+        uploadEtaSeconds = 0L
         val ext = when { mime.contains("webm") -> "webm"; mime.contains("png") -> "png"; mime.contains("webp") -> "webp"; video -> "mp4"; else -> "jpg" }
         viewModel.uploadMediaToR2(bytes, mime, if (video && isReel) "reel" else "post", ext, tags,
-            onSuccess = { result -> uploading = false; if (video) videoMedia = result else imageMedia = result },
-            onFailure = { error -> uploading = false; Toast.makeText(context, error, Toast.LENGTH_LONG).show() })
+            onProgress = { percent, eta -> uploadPercent = percent; uploadEtaSeconds = eta },
+            onSuccess = { result ->
+                if (!video) { if (imageMedia.size < 5) imageMedia.add(result); finishOneUpload() }
+                else {
+                    videoMedia = result
+                    if (thumbnailBytes != null && imageMedia.isEmpty()) {
+                        viewModel.uploadMediaToR2(thumbnailBytes, "image/jpeg", "thumbnail", "jpg", tags,
+                            onSuccess = { thumb -> imageMedia.add(thumb); finishOneUpload() },
+                            onFailure = { finishOneUpload() })
+                    } else finishOneUpload()
+                }
+            },
+            onFailure = { error -> finishOneUpload(); Toast.makeText(context, error, Toast.LENGTH_LONG).show() })
     }
-    val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { it?.let { uri -> upload(uri, false) } }
+    val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetMultipleContents()) { uris ->
+        uris.take((5 - imageMedia.size).coerceAtLeast(0)).forEach { uri -> upload(uri, false) }
+    }
     val videoPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { it?.let { uri -> upload(uri, true) } }
 
     Scaffold(
@@ -100,23 +139,24 @@ fun PostComposerScreen(viewModel: ChatViewModel, onBack: () -> Unit, onPublished
                 actions = {
                     Button(
                         onClick = {
-                            if (text.isBlank() && imageMedia == null && videoMedia == null) return@Button
+                            if (text.isBlank() && imageMedia.isEmpty() && videoMedia == null) return@Button
                             publishing = true
-                            val expiry = listOfNotNull(imageMedia?.expiresAt, videoMedia?.expiresAt).maxOrNull() ?: 0L
+                            val expiry = (imageMedia.map { it.expiresAt } + listOfNotNull(videoMedia?.expiresAt)).maxOrNull() ?: 0L
                             viewModel.createPost(
-                                text = text.trim(), imageUrl = imageMedia?.publicUrl.orEmpty(), audioUrl = "", videoUrl = videoMedia?.publicUrl.orEmpty(),
+                                text = text.trim(), imageUrl = imageMedia.firstOrNull()?.publicUrl.orEmpty(), audioUrl = "", videoUrl = videoMedia?.publicUrl.orEmpty(),
                                 isPrivate = privatePost,
                                 onComplete = { publishing = false; onPublished() },
                                 title = title.trim(),
                                 tags = tags.split(",", " ").map { it.trim().removePrefix("#") }.filter { it.isNotBlank() }.distinct(),
                                 taggedUserIds = taggedIds.toList(), feeling = feeling,
                                 backgroundStyle = style.id, textAnimation = animation,
-                                r2ObjectKeys = listOfNotNull(imageMedia?.key, videoMedia?.key),
+                                r2ObjectKeys = imageMedia.map { it.key } + listOfNotNull(videoMedia?.key),
                                 isReel = isReel && videoMedia != null,
-                                expiresAt = expiry
+                                expiresAt = expiry,
+                                imageUrls = imageMedia.map { it.publicUrl }
                             )
                         },
-                        enabled = (text.isNotBlank() || imageMedia != null || videoMedia != null) && !publishing && !uploading,
+                        enabled = (text.isNotBlank() || imageMedia.isNotEmpty() || videoMedia != null) && !publishing && !uploading,
                         modifier = Modifier.padding(end = 8.dp)
                     ) { if (publishing) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp) else Text("Publish") }
                 },
@@ -136,18 +176,26 @@ fun PostComposerScreen(viewModel: ChatViewModel, onBack: () -> Unit, onPublished
                         Switch(isReel, { isReel = it }, enabled = videoMedia == null)
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        OutlinedButton(onClick = { imagePicker.launch("image/*") }, enabled = !uploading && imageMedia == null, modifier = Modifier.weight(1f)) {
+                        OutlinedButton(onClick = { imagePicker.launch("image/*") }, enabled = !uploading && imageMedia.size < 5, modifier = Modifier.weight(1f)) {
                             Icon(Icons.Outlined.AddPhotoAlternate, null); Spacer(Modifier.width(6.dp)); Text("Photo")
                         }
                         OutlinedButton(onClick = { videoPicker.launch("video/*") }, enabled = !uploading && videoMedia == null, modifier = Modifier.weight(1f)) {
                             Icon(Icons.Outlined.VideoLibrary, null); Spacer(Modifier.width(6.dp)); Text("Video")
                         }
                     }
-                    if (uploading) { LinearProgressIndicator(Modifier.fillMaxWidth()); Text("Uploading securely to Cloudflare R2…", fontSize = 11.sp) }
-                    imageMedia?.let { media ->
-                        Box(Modifier.fillMaxWidth().height(190.dp).clip(RoundedCornerShape(20.dp))) {
-                            AsyncImage(media.publicUrl, "Post image", contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
-                            IconButton(onClick = { viewModel.discardR2Media(media.key); imageMedia = null }, modifier = Modifier.align(Alignment.TopEnd).background(Color.Black.copy(.5f), CircleShape)) { Icon(Icons.Outlined.Delete, "Remove", tint = Color.White) }
+                    if (uploading) {
+                        LinearProgressIndicator(progress = { uploadPercent / 100f }, modifier = Modifier.fillMaxWidth())
+                        Text("Uploading to Cloudflare R2 • $uploadPercent%${if (uploadEtaSeconds > 0) " • about ${uploadEtaSeconds}s left" else ""}", fontSize = 11.sp)
+                    }
+                    if (imageMedia.isNotEmpty()) {
+                        Text("${imageMedia.size}/5 photos", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            items(imageMedia, key = { it.key }) { media ->
+                                Box(Modifier.size(width = 150.dp, height = 190.dp).clip(RoundedCornerShape(20.dp))) {
+                                    AsyncImage(media.publicUrl, "Post image", contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                                    IconButton(onClick = { viewModel.discardR2Media(media.key); imageMedia.remove(media) }, modifier = Modifier.align(Alignment.TopEnd).background(Color.Black.copy(.5f), CircleShape)) { Icon(Icons.Outlined.Delete, "Remove", tint = Color.White) }
+                                }
+                            }
                         }
                     }
                     videoMedia?.let { media ->
@@ -158,7 +206,7 @@ fun PostComposerScreen(viewModel: ChatViewModel, onBack: () -> Unit, onPublished
                     }
                 }
             }
-            PostCanvasPreview(style, animation, title, text.ifBlank { if (imageMedia != null || videoMedia != null) "Add a caption…" else "Write something meaningful…" }, feeling)
+            PostCanvasPreview(style, animation, title, text.ifBlank { if (imageMedia.isNotEmpty() || videoMedia != null) "Add a caption…" else "Write something meaningful…" }, feeling)
             OutlinedTextField(
                 value = title, onValueChange = { if (it.length <= 80) title = it },
                 label = { Text("Title (optional)") }, modifier = Modifier.fillMaxWidth(), singleLine = true, shape = RoundedCornerShape(20.dp)

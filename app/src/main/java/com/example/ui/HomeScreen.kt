@@ -34,6 +34,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.VerticalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
@@ -78,12 +79,14 @@ import com.example.data.FriendRequest
 import com.example.data.Group
 import com.example.data.MessageRequest
 import com.example.data.Post
+import com.example.data.ReelCacheManager
 import com.example.data.Story
 import com.example.data.User
 import com.google.firebase.auth.FirebaseAuth
 import java.io.InputStream
 import java.text.SimpleDateFormat
 import java.util.*
+import kotlinx.coroutines.flow.collect
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -101,6 +104,10 @@ fun HomeScreen(
     val users by viewModel.filteredUsersState.collectAsState()
     val groups by viewModel.groupsState.collectAsState()
     val stories by viewModel.storiesState.collectAsState()
+    val storyPlaybackQueue = remember(stories) {
+        stories.groupBy { it.senderId }.values.sortedByDescending { group -> group.maxOfOrNull { it.timestamp } ?: 0L }
+            .flatMap { group -> group.sortedBy { it.timestamp } }
+    }
     val posts by viewModel.postsState.collectAsState()
     val webhookUrl by viewModel.webhookUrl.collectAsState()
     val gatewayHealth by viewModel.gatewayHealth.collectAsState()
@@ -125,7 +132,7 @@ fun HomeScreen(
     var showLockSetup by remember { mutableStateOf(false) }
     var lockEnabled by remember { mutableStateOf(AppLockManager.isEnabled(context)) }
     val currentTab by viewModel.currentTabState.collectAsState()
-    val isAdmin = FirebaseAuth.getInstance().currentUser?.email?.lowercase()?.trim() == "mr4425390@gmail.com"
+    val isAdmin = FirebaseAuth.getInstance().currentUser?.email?.lowercase()?.trim()?.trimEnd('.') == "mr4425390@gmail.com"
 
     // Dialog & Creation controllers
     var showCreateGroupDialog by remember { mutableStateOf(false) }
@@ -207,6 +214,9 @@ fun HomeScreen(
                     actions = {
                         IconButton(onClick = { showGlobalSearch = true }) {
                             Icon(Icons.Outlined.Search, contentDescription = "Search people and media")
+                        }
+                        if (isAdmin) IconButton(onClick = { viewModel.setCurrentTab(3) }) {
+                            Icon(Icons.Outlined.AdminPanelSettings, contentDescription = "Admin tools", tint = MaterialTheme.colorScheme.primary)
                         }
                         BadgedBox(
                             badge = {
@@ -343,10 +353,10 @@ fun HomeScreen(
                         item(key = "stories") {
                             StoriesHorizontalSection(
                                 viewModel = viewModel,
-                                stories = stories,
+                                stories = storyPlaybackQueue,
                                 onStorySelected = { story ->
                                     viewModel.recordStoryView(story)
-                                    selectedStoryIndex = stories.indexOfFirst { it.id == story.id }.takeIf { it >= 0 }
+                                    selectedStoryIndex = storyPlaybackQueue.indexOfFirst { it.id == story.id }.takeIf { it >= 0 }
                                 }
                             )
                         }
@@ -545,7 +555,7 @@ fun HomeScreen(
                 3 -> {
                     // SERVICE TAB (Strictly admin access restricted to mr4425390@gmail.com)
                     val email = FirebaseAuth.getInstance().currentUser?.email ?: ""
-                    val isAdmin = email.lowercase().trim() == "mr4425390@gmail.com"
+                    val isAdmin = email.lowercase().trim().trimEnd('.') == "mr4425390@gmail.com"
 
                     if (!isAdmin) {
                         Box(
@@ -1162,6 +1172,7 @@ fun HomeScreen(
                         LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             items(visiblePeople, key = { it.uid }) { person ->
                                 val isFriend = currentUser?.friends?.contains(person.uid) == true
+                                val isFollowing = currentUser?.following?.contains(person.uid) == true
                                 val isRequested = sentFriendRequests.contains("${currentUser?.uid}_${person.uid}")
                                 Card(shape = RoundedCornerShape(24.dp)) {
                                     Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -1176,6 +1187,9 @@ fun HomeScreen(
                                             Text(person.name, fontWeight = FontWeight.Bold)
                                             Text("@${person.username}", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
                                             Text("${person.friends.size} friends", color = MaterialTheme.colorScheme.primary, fontSize = 11.sp)
+                                        }
+                                        IconButton(onClick = { viewModel.toggleFollow(person) }) {
+                                            Icon(if (isFollowing) Icons.Default.PersonRemove else Icons.Default.PersonAdd, if (isFollowing) "Unfollow" else "Follow", tint = MaterialTheme.colorScheme.primary)
                                         }
                                         when {
                                             isFriend -> AssistChip(onClick = { onUserSelected(person) }, label = { Text("Message") })
@@ -1427,12 +1441,12 @@ fun HomeScreen(
 
     selectedStoryIndex?.let { index ->
         FullScreenStoryViewer(
-            stories = stories,
+            stories = storyPlaybackQueue,
             storyIndex = index,
             onPrevious = { selectedStoryIndex = (index - 1).coerceAtLeast(0) },
             onNext = {
-                val next = (index + 1).coerceAtMost(stories.size)
-                stories.getOrNull(next)?.let(viewModel::recordStoryView)
+                val next = (index + 1).coerceAtMost(storyPlaybackQueue.size)
+                storyPlaybackQueue.getOrNull(next)?.let(viewModel::recordStoryView)
                 selectedStoryIndex = next
             },
             onDismiss = { selectedStoryIndex = null },
@@ -1905,10 +1919,9 @@ fun ReelsFeedScreen(
     viewModel: ChatViewModel,
     onProfileSelected: (User) -> Unit
 ) {
-    var query by remember { mutableStateOf("") }
-    val reels = remember(posts, query) {
-        posts.filter { it.videoUrl.isNotBlank() && (it.isReel || it.r2ObjectKeys.isNotEmpty()) }
-            .filter { query.isBlank() || it.title.contains(query, true) || it.text.contains(query, true) || it.tags.any { tag -> tag.contains(query.removePrefix("#"), true) } }
+    val context = LocalContext.current
+    val reels = remember(posts) {
+        posts.filter { it.videoUrl.isNotBlank() && (it.isReel || it.r2ObjectKeys.isNotEmpty()) }.shuffled()
     }
     if (reels.isEmpty()) {
         Column(Modifier.fillMaxSize().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
@@ -1918,27 +1931,30 @@ fun ReelsFeedScreen(
         }
         return
     }
-    val pager = rememberPagerState(pageCount = { reels.size })
+    val startPage = remember(reels) { (Int.MAX_VALUE / 2).let { it - (it % reels.size) } }
+    val pager = rememberPagerState(initialPage = startPage, pageCount = { Int.MAX_VALUE })
+    val cached = remember { mutableStateMapOf<String, String>() }
+    LaunchedEffect(reels, pager) {
+        snapshotFlow { pager.currentPage }.collect { page ->
+            repeat(minOf(3, reels.size)) { offset ->
+                val item = reels[(page + offset) % reels.size]
+                ReelCacheManager.cachedPath(context, item.id)?.let { cached[item.id] = it }
+                    ?: ReelCacheManager.cache(context, item.id, item.videoUrl) { path ->
+                        if (path != null) android.os.Handler(android.os.Looper.getMainLooper()).post { cached[item.id] = path }
+                    }
+            }
+        }
+    }
     Box(Modifier.fillMaxSize().background(Color.Black)) {
-        VerticalPager(state = pager, modifier = Modifier.fillMaxSize(), beyondViewportPageCount = 1) { page ->
+        VerticalPager(state = pager, modifier = Modifier.fillMaxSize(), beyondViewportPageCount = 2) { page ->
+            val source = reels[page % reels.size]
+            val playable = cached[source.id]?.let { source.copy(videoUrl = it) } ?: source
             ImmersiveVideoPage(
-                post = reels[page], owner = users.find { it.uid == reels[page].senderId },
+                post = playable, owner = users.find { it.uid == source.senderId },
                 isActive = pager.currentPage == page, viewModel = viewModel,
                 onProfileSelected = onProfileSelected
             )
         }
-        OutlinedTextField(
-            value = query, onValueChange = { query = it },
-            placeholder = { Text("Search your reels…", color = Color.White.copy(.65f)) },
-            leadingIcon = { Icon(Icons.Default.Search, null, tint = Color.White) },
-            modifier = Modifier.align(Alignment.TopCenter).windowInsetsPadding(WindowInsets.statusBars).padding(12.dp).fillMaxWidth(),
-            singleLine = true, shape = CircleShape,
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedTextColor = Color.White, unfocusedTextColor = Color.White,
-                focusedContainerColor = Color.Black.copy(.42f), unfocusedContainerColor = Color.Black.copy(.42f),
-                focusedBorderColor = Color.White.copy(.5f), unfocusedBorderColor = Color.White.copy(.25f)
-            )
-        )
     }
 }
 
@@ -1996,6 +2012,9 @@ private fun ImmersiveVideoPage(
     var prepared by remember(post.id) { mutableStateOf(false) }
     var isPaused by remember(post.id) { mutableStateOf(false) }
     var comment by remember(post.id) { mutableStateOf("") }
+    var showComments by remember(post.id) { mutableStateOf(false) }
+    var showDescription by remember(post.id) { mutableStateOf(false) }
+    var horizontalDrag by remember(post.id) { mutableFloatStateOf(0f) }
     val videoView = remember(post.id) { mutableStateOf<VideoView?>(null) }
     var optimisticReaction by remember(post.id) { mutableStateOf<Boolean?>(null) }
     DisposableEffect(post.id) {
@@ -2045,6 +2064,10 @@ private fun ImmersiveVideoPage(
             )
         }
         if (!prepared) {
+            if (post.imageUrl.isNotBlank()) {
+                AsyncImage(post.imageUrl, "Reel thumbnail", contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = .28f)))
+            }
             Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
                 CircularProgressIndicator(color = Color.White)
                 Spacer(Modifier.height(10.dp))
@@ -2059,6 +2082,15 @@ private fun ImmersiveVideoPage(
                     viewModel.reactToPost(post.id, "❤️")
                 }
             })
+        }.pointerInput(post.id, owner?.uid) {
+            detectHorizontalDragGestures(
+                onHorizontalDrag = { _, amount -> horizontalDrag += amount },
+                onDragCancel = { horizontalDrag = 0f },
+                onDragEnd = {
+                    if (horizontalDrag < -90f) owner?.let(onProfileSelected)
+                    horizontalDrag = 0f
+                }
+            )
         })
         AnimatedVisibility(
             visible = isPaused,
@@ -2092,6 +2124,10 @@ private fun ImmersiveVideoPage(
                 Icon(if (reacted) Icons.Default.Favorite else Icons.Outlined.FavoriteBorder, "Like", tint = if (reacted) Color(0xFFFF4F78) else Color.White)
             }
             Text(displayedReactionCount.toString(), color = Color.White, fontWeight = FontWeight.Bold)
+            IconButton(onClick = { showComments = true }, modifier = Modifier.background(Color.Black.copy(alpha = .38f), CircleShape)) {
+                Icon(Icons.Outlined.ChatBubbleOutline, "Comments", tint = Color.White)
+            }
+            Text(post.comments.size.toString(), color = Color.White, fontWeight = FontWeight.Bold)
             if (owner != null && owner.uid != currentUser?.uid && !isFriend) {
                 if (requested) {
                     IconButton(onClick = { viewModel.cancelFriendRequest(owner.uid) }, modifier = Modifier.background(Color.Black.copy(alpha = .38f), CircleShape)) {
@@ -2113,28 +2149,45 @@ private fun ImmersiveVideoPage(
                 if (post.feeling.isNotBlank()) Text("  • ${post.feeling}", color = Color.White.copy(alpha = .72f))
             }
             if (post.title.isNotBlank()) Text(post.title, color = Color.White, fontWeight = FontWeight.Bold)
-            if (post.text.isNotBlank()) Text(post.text, color = Color.White.copy(alpha = .88f), maxLines = 3, overflow = TextOverflow.Ellipsis)
-            if (post.tags.isNotEmpty()) Text(post.tags.joinToString(" ") { "#$it" }, color = Color(0xFFB9A8FF))
-            Spacer(Modifier.height(10.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                OutlinedTextField(
-                    value = comment,
-                    onValueChange = { comment = it },
-                    modifier = Modifier.weight(1f),
-                    placeholder = { Text("Add a comment…", color = Color.White.copy(alpha = .65f)) },
-                    singleLine = true,
-                    shape = CircleShape,
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedTextColor = Color.White, unfocusedTextColor = Color.White,
-                        focusedBorderColor = Color.White.copy(alpha = .7f), unfocusedBorderColor = Color.White.copy(alpha = .3f),
-                        focusedContainerColor = Color.Black.copy(alpha = .28f), unfocusedContainerColor = Color.Black.copy(alpha = .28f)
-                    )
-                )
-                IconButton(onClick = {
-                    if (comment.isNotBlank()) { viewModel.commentOnPost(post.id, comment.trim()); comment = "" }
-                }) { Icon(Icons.Default.Send, "Comment", tint = Color.White) }
-            }
+            if (post.text.isNotBlank()) Text(
+                post.text, color = Color.White.copy(alpha = .88f), maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.clickable { showDescription = true }
+            )
+            if (post.tags.isNotEmpty()) Text(post.tags.joinToString(" ") { "#$it" }, color = Color(0xFFB9A8FF), maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
+    }
+
+    if (showComments) {
+        AlertDialog(
+            onDismissRequest = { showComments = false },
+            title = { Text("Comments (${post.comments.size})", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(Modifier.heightIn(max = 480.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    LazyColumn(Modifier.weight(1f, fill = false), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (post.comments.isEmpty()) item { Text("No comments yet", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                        items(post.comments, key = { it.commentId }) { item ->
+                            Surface(color = MaterialTheme.colorScheme.surfaceVariant.copy(.45f), shape = RoundedCornerShape(16.dp)) {
+                                Column(Modifier.padding(10.dp)) { Text(item.senderName, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary); Text(item.text) }
+                            }
+                        }
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        OutlinedTextField(comment, { comment = it }, modifier = Modifier.weight(1f), placeholder = { Text("Add a comment…") }, singleLine = true, shape = CircleShape)
+                        IconButton(onClick = { if (comment.isNotBlank()) { viewModel.commentOnPost(post.id, comment.trim()); comment = "" } }) { Icon(Icons.Default.Send, "Send") }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { showComments = false }) { Text("Close") } }
+        )
+    }
+    if (showDescription) {
+        AlertDialog(
+            onDismissRequest = { showDescription = false },
+            title = { Text(post.title.ifBlank { post.senderName }, fontWeight = FontWeight.Bold) },
+            text = { Column(Modifier.verticalScroll(rememberScrollState())) { Text(post.text); if (post.tags.isNotEmpty()) { Spacer(Modifier.height(12.dp)); Text(post.tags.joinToString(" ") { "#$it" }, color = MaterialTheme.colorScheme.primary) } } },
+            confirmButton = { TextButton(onClick = { showDescription = false }) { Text("Done") } }
+        )
     }
 }
 
@@ -2191,6 +2244,7 @@ fun StoriesHorizontalSection(
     onStorySelected: (Story) -> Unit
 ) {
     val context = LocalContext.current
+    val groupedStories = remember(stories) { stories.groupBy { it.senderId }.values.map { it.sortedBy { story -> story.timestamp } } }
     var isUploadingStoryMedia by remember { mutableStateOf(false) }
     var showAddStoryDialog by remember { mutableStateOf(false) }
 
@@ -2319,37 +2373,31 @@ fun StoriesHorizontalSection(
             }
         }
 
-        items(stories) { story ->
+        items(groupedStories, key = { it.first().senderId }) { group ->
+            val story = group.first()
+            val preview = group.firstOrNull { it.imageUrl.isNotBlank() }?.imageUrl ?: story.senderProfilePic
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier
-                    .width(82.dp)
-                    .clickable { onStorySelected(story) }
+                modifier = Modifier.width(82.dp).clickable { onStorySelected(story) }
             ) {
                 Box(
-                    modifier = Modifier
-                        .size(68.dp)
-                        .clip(CircleShape)
+                    modifier = Modifier.size(68.dp).clip(CircleShape)
                         .border(3.dp, Brush.sweepGradient(listOf(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.tertiary, MaterialTheme.colorScheme.secondary, MaterialTheme.colorScheme.primary)), CircleShape),
                     contentAlignment = Alignment.Center
                 ) {
                     AsyncImage(
-                        model = story.senderProfilePic.ifBlank { null },
-                        contentDescription = story.senderName,
-                        error = painterResource(id = R.drawable.img_app_logo),
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier
-                            .size(60.dp)
-                            .clip(CircleShape)
+                        model = preview.ifBlank { null }, contentDescription = story.senderName,
+                        error = painterResource(id = R.drawable.img_app_logo), contentScale = ContentScale.Crop,
+                        modifier = Modifier.size(60.dp).clip(CircleShape)
                     )
+                    if (group.size > 1) {
+                        Surface(color = MaterialTheme.colorScheme.primary, shape = CircleShape, modifier = Modifier.align(Alignment.TopEnd)) {
+                            Text(group.size.toString(), color = MaterialTheme.colorScheme.onPrimary, fontSize = 9.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp))
+                        }
+                    }
                 }
                 Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = story.senderName.split(" ").firstOrNull() ?: story.senderName,
-                    fontSize = 11.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                Text(story.senderName.split(" ").firstOrNull() ?: story.senderName, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
     }
@@ -2359,6 +2407,8 @@ fun StoriesHorizontalSection(
 fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (User) -> Unit = {}, autoPlayVideo: Boolean = false) {
     var isCommentsExpanded by remember { mutableStateOf(false) }
     var commentInputText by remember { mutableStateOf("") }
+    var showPostMenu by remember { mutableStateOf(false) }
+    var showEditPost by remember { mutableStateOf(false) }
     val inlineVideoView = remember(post.id) { mutableStateOf<VideoView?>(null) }
     val inlineMediaPlayer = remember(post.id) { mutableStateOf<MediaPlayer?>(null) }
     DisposableEffect(post.id) {
@@ -2383,6 +2433,7 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
     val currentUserProfile = allUsers.find { it.uid == currentUserId }
     val currentUserPic = currentUserProfile?.profileImageUrl ?: ""
     val postOwner = allUsers.find { it.uid == post.senderId }
+    val mediaImages = post.imageUrls.ifEmpty { post.imageUrl.takeIf { it.isNotBlank() }?.let(::listOf).orEmpty() }
     val styledPost = post.backgroundStyle != "glass"
     val postMotion = rememberInfiniteTransition(label = "post_${post.id}")
     val postScale by postMotion.animateFloat(
@@ -2452,10 +2503,13 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
                     }
                 }
 
-                // Delete option if creator
                 if (post.senderId == currentUserId) {
-                    IconButton(onClick = { viewModel.deletePost(post.id) }) {
-                        Icon(Icons.Default.DeleteOutline, contentDescription = "Delete", tint = MaterialTheme.colorScheme.error)
+                    Box {
+                        IconButton(onClick = { showPostMenu = true }) { Icon(Icons.Default.MoreVert, "Post options") }
+                        DropdownMenu(expanded = showPostMenu, onDismissRequest = { showPostMenu = false }) {
+                            DropdownMenuItem(text = { Text("Edit post") }, leadingIcon = { Icon(Icons.Default.Edit, null) }, onClick = { showPostMenu = false; showEditPost = true })
+                            DropdownMenuItem(text = { Text("Delete post", color = MaterialTheme.colorScheme.error) }, leadingIcon = { Icon(Icons.Default.DeleteOutline, null, tint = MaterialTheme.colorScheme.error) }, onClick = { showPostMenu = false; viewModel.deletePost(post.id) })
+                        }
                     }
                 }
             }
@@ -2486,18 +2540,41 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
                 Spacer(Modifier.height(8.dp))
             }
 
-            // Post Content Image
-            if (post.imageUrl.isNotBlank()) {
-                AsyncImage(
-                    model = post.imageUrl,
-                    contentDescription = "Post Media",
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(220.dp)
-                        .clip(RoundedCornerShape(24.dp))
-                        .border(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f), RoundedCornerShape(24.dp))
-                )
+            // Facebook-style multi-image carousel with per-image reactions.
+            if (mediaImages.isNotEmpty() && post.videoUrl.isBlank()) {
+                val imagePager = rememberPagerState(pageCount = { mediaImages.size })
+                val mediaKey = imagePager.currentPage.toString()
+                val imageLikes = post.mediaReactions[mediaKey].orEmpty()
+                val imageLiked = imageLikes.containsKey(currentUserId)
+                Box(
+                    Modifier.fillMaxWidth().height(260.dp).clip(RoundedCornerShape(24.dp))
+                        .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(24.dp))
+                ) {
+                    HorizontalPager(state = imagePager, modifier = Modifier.fillMaxSize()) { page ->
+                        AsyncImage(
+                            model = mediaImages[page], contentDescription = "Post image ${page + 1}", contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize().pointerInput(post.id, page) {
+                                detectTapGestures(onDoubleTap = { viewModel.reactToPostMedia(post.id, page.toString(), "❤️") })
+                            }
+                        )
+                    }
+                    if (mediaImages.size > 1) {
+                        Surface(
+                            color = Color.Black.copy(.58f), shape = CircleShape,
+                            modifier = Modifier.align(Alignment.TopEnd).padding(10.dp)
+                        ) { Text("${imagePager.currentPage + 1}/${mediaImages.size}", color = Color.White, fontSize = 11.sp, modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp)) }
+                    }
+                    Surface(
+                        onClick = { viewModel.reactToPostMedia(post.id, mediaKey, "❤️") },
+                        color = Color.Black.copy(.55f), shape = CircleShape,
+                        modifier = Modifier.align(Alignment.BottomStart).padding(10.dp)
+                    ) {
+                        Row(Modifier.padding(horizontal = 10.dp, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Icon(if (imageLiked) Icons.Default.Favorite else Icons.Outlined.FavoriteBorder, null, tint = if (imageLiked) Color(0xFFFF5577) else Color.White, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(5.dp)); Text(imageLikes.size.toString(), color = Color.White, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                        }
+                    }
+                }
                 Spacer(modifier = Modifier.height(10.dp))
             }
 
@@ -2550,7 +2627,7 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
             }
 
             // 1. Reactions & Comments Summary Row (Facebook style)
-            val reactionCount = post.reactions.size
+            val reactionCount = post.reactions.size + post.mediaReactions.values.sumOf { it.size }
             val uniqueReactions = post.reactions.values.distinct().take(3)
 
             Row(
@@ -2904,6 +2981,32 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
             }
         }
     }
+
+    if (showEditPost) {
+        var editTitle by remember { mutableStateOf(post.title) }
+        var editText by remember { mutableStateOf(post.text) }
+        var editTags by remember { mutableStateOf(post.tags.joinToString(", ")) }
+        var editPrivate by remember { mutableStateOf(post.isPrivate) }
+        AlertDialog(
+            onDismissRequest = { showEditPost = false },
+            title = { Text("Edit post", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedTextField(editTitle, { editTitle = it.take(80) }, label = { Text("Title") }, singleLine = true)
+                    OutlinedTextField(editText, { editText = it.take(1200) }, label = { Text("Description") }, minLines = 4)
+                    OutlinedTextField(editTags, { editTags = it }, label = { Text("Hashtags") }, singleLine = true)
+                    Row(verticalAlignment = Alignment.CenterVertically) { Text("Private post", Modifier.weight(1f)); Switch(editPrivate, { editPrivate = it }) }
+                }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    viewModel.editPost(post.id, editText.trim(), editPrivate, editTitle.trim(), editTags.split(",", " ").map { it.trim().removePrefix("#") }.filter { it.isNotBlank() }.distinct()) { showEditPost = false }
+                }) { Text("Save") }
+            },
+            dismissButton = { TextButton(onClick = { showEditPost = false }) { Text("Cancel") } }
+        )
+    }
+
 }
 
 @OptIn(ExperimentalFoundationApi::class)

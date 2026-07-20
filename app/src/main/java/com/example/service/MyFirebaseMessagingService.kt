@@ -72,10 +72,18 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         val body = if (hideContent) "New notification received — unlock FireChat to view" else rawBody
         val senderId = remoteMessage.data["senderId"] ?: ""
         val notificationType = remoteMessage.data["notificationType"] ?: "message"
+        val targetId = remoteMessage.data["targetId"] ?: ""
+        if (notificationType == "message" && senderId.isNotBlank() && targetId.isNotBlank()) {
+            FirebaseAuth.getInstance().currentUser?.uid?.let { receiverUid ->
+                val chatId = listOf(senderId, receiverUid).sorted().joinToString("_")
+                FirebaseDatabase.getInstance().getReference("delivery_receipts")
+                    .child(senderId).child(chatId).child(targetId)
+                    .setValue(mapOf("delivered" to true, "deliveredAt" to System.currentTimeMillis()))
+            }
+        }
         val muted = getSharedPreferences("firechat_prefs", Context.MODE_PRIVATE).getStringSet("muted_users", emptySet())?.contains(senderId) == true
         if (muted && notificationType == "message") return
         val senderProfileUrl = remoteMessage.data["senderProfileUrl"] ?: ""
-        val targetId = remoteMessage.data["targetId"] ?: ""
         val senderName = if (hideContent) "FireChat user" else remoteMessage.data["senderName"] ?: title
 
         if (notificationType == "call_cancelled") {

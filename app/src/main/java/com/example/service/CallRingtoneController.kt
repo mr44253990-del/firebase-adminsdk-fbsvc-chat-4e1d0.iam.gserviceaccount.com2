@@ -5,9 +5,7 @@ import android.content.Context
 import android.media.AudioAttributes
 import android.media.Ringtone
 import android.media.RingtoneManager
-import android.net.Uri
 import android.os.*
-import com.example.R
 
 /** Single source of truth for incoming-call sound/vibration; avoids channel caching and double audio. */
 object CallRingtoneController {
@@ -22,7 +20,7 @@ object CallRingtoneController {
         stop(context, activeCallId, cancelNotification = false)
         activeCallId = callId
         runCatching {
-            val ringtoneUri = Uri.parse("android.resource://${context.packageName}/${R.raw.dynamic_ringtone}")
+            val ringtoneUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
             ringtone = RingtoneManager.getRingtone(context.applicationContext, ringtoneUri)?.apply {
                 audioAttributes = AudioAttributes.Builder()
                     .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)

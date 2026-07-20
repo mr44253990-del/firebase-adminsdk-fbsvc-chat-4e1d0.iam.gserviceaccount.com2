@@ -43,7 +43,9 @@ fun UserProfileScreen(
     val sentRequests by viewModel.sentFriendRequestIds.collectAsState()
     val liveUser = allUsers.find { it.uid == user.uid } ?: user
     val userPosts = posts.filter { it.senderId == liveUser.uid }
+    val totalLikes = userPosts.sumOf { post -> post.reactions.size + post.mediaReactions.values.sumOf { it.size } }
     val isFriend = currentUser?.friends?.contains(liveUser.uid) == true
+    val isFollowing = currentUser?.following?.contains(liveUser.uid) == true
     val isRequested = sentRequests.contains("${currentUser?.uid}_${liveUser.uid}")
 
     Scaffold(
@@ -100,16 +102,21 @@ fun UserProfileScreen(
                     }
                     Row(
                         Modifier.padding(vertical = 12.dp),
-                        horizontalArrangement = Arrangement.spacedBy(28.dp)
+                        horizontalArrangement = Arrangement.spacedBy(16.dp)
                     ) {
                         ProfileMetric(liveUser.friends.size.toString(), "Friends")
+                        ProfileMetric(liveUser.followers.size.toString(), "Followers")
                         ProfileMetric(userPosts.size.toString(), "Posts")
-                        ProfileMetric(if (liveUser.isOnline) "Online" else "Offline", "Status")
+                        ProfileMetric(totalLikes.toString(), "Likes")
                     }
                     Row(
                         Modifier.fillMaxWidth().padding(horizontal = 18.dp),
                         horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
+                        OutlinedButton(onClick = { viewModel.toggleFollow(liveUser) }, modifier = Modifier.weight(1f)) {
+                            Icon(if (isFollowing) Icons.Outlined.PersonRemove else Icons.Outlined.PersonAdd, null, Modifier.size(17.dp))
+                            Spacer(Modifier.width(4.dp)); Text(if (isFollowing) "Unfollow" else "Follow")
+                        }
                         if (!isFriend) {
                             if (isRequested) {
                                 OutlinedButton(

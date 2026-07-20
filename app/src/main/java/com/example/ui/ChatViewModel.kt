@@ -33,6 +33,7 @@ import kotlinx.coroutines.withContext
 import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.RequestBody.Companion.toRequestBody
+import okio.BufferedSink
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -66,6 +67,28 @@ data class R2MediaResult(
     val expiresAt: Long,
     val kind: String
 )
+
+private class ProgressBytesRequestBody(
+    private val bytes: ByteArray,
+    private val type: MediaType?,
+    private val progress: (Int, Long) -> Unit
+) : RequestBody() {
+    override fun contentType() = type
+    override fun contentLength() = bytes.size.toLong()
+    override fun writeTo(sink: BufferedSink) {
+        val started = System.currentTimeMillis()
+        var offset = 0
+        val chunk = 64 * 1024
+        while (offset < bytes.size) {
+            val count = minOf(chunk, bytes.size - offset)
+            sink.write(bytes, offset, count); offset += count
+            val elapsed = (System.currentTimeMillis() - started).coerceAtLeast(1L)
+            val rate = offset * 1000.0 / elapsed
+            val remaining = if (rate > 0) ((bytes.size - offset) / rate).toLong() else 0L
+            progress((offset * 100L / bytes.size).toInt(), remaining)
+        }
+    }
+}
 
 class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -1020,9 +1043,16 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             override fun onDataChange(snapshot: DataSnapshot) {
                 snapshot.children.forEach { receipt ->
                     val messageId = receipt.key ?: return@forEach
-                    viewModelScope.launch(Dispatchers.IO) { cacheDao.markMessageSeen(messageId) }
+                    val seen = receipt.child("seen").getValue(Boolean::class.java) == true
+                    val delivered = seen || receipt.child("delivered").getValue(Boolean::class.java) == true
+                    viewModelScope.launch(Dispatchers.IO) {
+                        if (seen) cacheDao.markMessageSeen(messageId) else if (delivered) cacheDao.markMessageDelivered(messageId)
+                    }
                     _chatMessagesState.value = _chatMessagesState.value.map {
-                        if (it.messageId == messageId) it.copy(seenByRecipient = true, deliveredToRecipient = true) else it
+                        if (it.messageId == messageId) it.copy(
+                            seenByRecipient = it.seenByRecipient || seen,
+                            deliveredToRecipient = it.deliveredToRecipient || delivered
+                        ) else it
                     }
                     receipt.ref.removeValue()
                 }
@@ -1353,6 +1383,19 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 createActivityNotification(target.uid, "friend_request", requestId, "sent you a friend request")
                 onResult(true, "Friend request sent")
             }.addOnFailureListener { onResult(false, it.localizedMessage ?: "Request failed") }
+    }
+
+    fun toggleFollow(target: User) {
+        val me = getCurrentUserOrFallback() ?: return
+        if (target.uid == me.uid) return
+        val following = me.following.contains(target.uid)
+        val firestore = FirebaseFirestore.getInstance()
+        val batch = firestore.batch()
+        batch.update(firestore.collection("users").document(me.uid), "following", if (following) FieldValue.arrayRemove(target.uid) else FieldValue.arrayUnion(target.uid))
+        batch.update(firestore.collection("users").document(target.uid), "followers", if (following) FieldValue.arrayRemove(me.uid) else FieldValue.arrayUnion(me.uid))
+        batch.commit().addOnSuccessListener {
+            if (!following) createActivityNotification(target.uid, "new_follower", me.uid, "started following you")
+        }
     }
 
     fun cancelFriendRequest(targetUid: String, onComplete: (Boolean) -> Unit = {}) {
@@ -1688,6 +1731,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         kind: String,
         extension: String,
         tags: String = "",
+        onProgress: (Int, Long) -> Unit = { _, _ -> },
         onSuccess: (R2MediaResult) -> Unit,
         onFailure: (String) -> Unit
     ) {
@@ -1696,11 +1740,14 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             val idToken = tokenResult.token ?: return@addOnSuccessListener onFailure("Could not authenticate upload")
             viewModelScope.launch(Dispatchers.IO) {
                 try {
-                    val url = _webhookUrl.value.trimEnd('/') + "/media/upload?kind=${if (kind == "reel") "reel" else "post"}&extension=$extension"
+                    val uploadKind = when (kind) { "reel" -> "reel"; "thumbnail" -> "thumbnail"; else -> "post" }
+                    val url = _webhookUrl.value.trimEnd('/') + "/media/upload?kind=$uploadKind&extension=$extension"
                     val request = Request.Builder().url(url)
                         .header("Authorization", "Bearer $idToken")
                         .header("X-Media-Tags", tags.take(400).replace("[^A-Za-z0-9,# _-]".toRegex(), ""))
-                        .post(bytes.toRequestBody(contentType.toMediaTypeOrNull()))
+                        .post(ProgressBytesRequestBody(bytes, contentType.toMediaTypeOrNull()) { percent, eta ->
+                            viewModelScope.launch(Dispatchers.Main) { onProgress(percent, eta) }
+                        })
                         .build()
                     OkHttpClient.Builder().callTimeout(3, TimeUnit.MINUTES).build().newCall(request).execute().use { response ->
                         val body = response.body?.string().orEmpty()
@@ -2144,7 +2191,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                                 textAnimation = doc.getString("textAnimation") ?: "none",
                                 r2ObjectKeys = (doc.get("r2ObjectKeys") as? List<*>)?.mapNotNull { it as? String } ?: emptyList(),
                                 isReel = doc.getBoolean("isReel") ?: false,
-                                expiresAt = doc.getLong("expiresAt") ?: 0L
+                                expiresAt = doc.getLong("expiresAt") ?: 0L,
+                                imageUrls = (doc.get("imageUrls") as? List<*>)?.mapNotNull { it as? String } ?: emptyList(),
+                                mediaReactions = (doc.get("mediaReactions") as? Map<*, *>)?.entries?.associate { entry ->
+                                    entry.key.toString() to ((entry.value as? Map<*, *>)?.entries?.associate { it.key.toString() to it.value.toString() } ?: emptyMap())
+                                } ?: emptyMap()
                             )
 
                             if (post.expiresAt > 0L && System.currentTimeMillis() >= post.expiresAt) {
@@ -2185,7 +2236,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         textAnimation: String = "none",
         r2ObjectKeys: List<String> = emptyList(),
         isReel: Boolean = false,
-        expiresAt: Long = 0L
+        expiresAt: Long = 0L,
+        imageUrls: List<String> = emptyList()
     ) {
         val user = getCurrentUserOrFallback() ?: return
         val postId = UUID.randomUUID().toString()
@@ -2208,7 +2260,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             textAnimation = textAnimation,
             r2ObjectKeys = r2ObjectKeys,
             isReel = isReel,
-            expiresAt = expiresAt
+            expiresAt = expiresAt,
+            imageUrls = imageUrls.ifEmpty { imageUrl.takeIf { it.isNotBlank() }?.let(::listOf).orEmpty() }
         )
 
         // Webhook shouldn't be called according to instruction ("কোন পোস্ট করলে রিকোয়েস্ট যাবে না")
@@ -2226,9 +2279,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             }
     }
 
-    fun editPost(postId: String, text: String, isPrivate: Boolean, onComplete: () -> Unit) {
+    fun editPost(postId: String, text: String, isPrivate: Boolean, title: String, tags: List<String>, onComplete: () -> Unit) {
         val postRef = FirebaseFirestore.getInstance().collection("posts").document(postId)
-        postRef.update(mapOf("text" to text, "isPrivate" to isPrivate))
+        postRef.update(mapOf("text" to text, "title" to title, "tags" to tags, "isPrivate" to isPrivate, "editedAt" to System.currentTimeMillis()))
             .addOnSuccessListener {
                 onComplete()
                 loadPosts()
@@ -2276,6 +2329,22 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         )
                     }
                 }
+            }
+        }
+    }
+
+    fun reactToPostMedia(postId: String, mediaKey: String, reactionType: String = "❤️") {
+        val user = getCurrentUserOrFallback() ?: return
+        val ref = FirebaseFirestore.getInstance().collection("posts").document(postId)
+        ref.get().addOnSuccessListener { doc ->
+            val root = (doc.get("mediaReactions") as? Map<*, *>)?.entries?.associate { entry ->
+                entry.key.toString() to ((entry.value as? Map<*, *>)?.entries?.associate { it.key.toString() to it.value.toString() }?.toMutableMap() ?: mutableMapOf())
+            }?.toMutableMap() ?: mutableMapOf()
+            val reactions = root[mediaKey]?.toMutableMap() ?: mutableMapOf()
+            if (reactions[user.uid] == reactionType) reactions.remove(user.uid) else reactions[user.uid] = reactionType
+            root[mediaKey] = reactions
+            ref.update("mediaReactions", root).addOnSuccessListener {
+                if (reactions[user.uid] == reactionType) createActivityNotification(doc.getString("senderId") ?: "", "media_reaction", postId, "liked a photo in your post")
             }
         }
     }

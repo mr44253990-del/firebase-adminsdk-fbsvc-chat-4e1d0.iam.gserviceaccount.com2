@@ -24,7 +24,9 @@ data class CachedUser(
     val createdAt: Long,
     val friendsJson: String,
     val bio: String,
-    val coverImageUrl: String
+    val coverImageUrl: String,
+    val followersJson: String,
+    val followingJson: String
 ) {
     fun toUser(): User {
         val blockedList = mutableListOf<String>()
@@ -39,7 +41,8 @@ data class CachedUser(
             val array = JSONArray(friendsJson)
             for (i in 0 until array.length()) friendList.add(array.getString(i))
         } catch (_: Exception) {}
-        return User(uid, name, dob, username, fcmToken, profileImageUrl, isOnline, lastActive, blockedList, createdAt, friendList, bio, coverImageUrl)
+        fun parseIds(json: String) = try { JSONArray(json).let { array -> (0 until array.length()).map { array.getString(it) } } } catch (_: Exception) { emptyList() }
+        return User(uid, name, dob, username, fcmToken, profileImageUrl, isOnline, lastActive, blockedList, createdAt, friendList, bio, coverImageUrl, parseIds(followersJson), parseIds(followingJson))
     }
 
     companion object {
@@ -48,7 +51,8 @@ data class CachedUser(
             return CachedUser(
                 user.uid, user.name, user.dob, user.username, user.fcmToken,
                 user.profileImageUrl, user.isOnline, user.lastActive,
-                jsonArray.toString(), user.createdAt, JSONArray(user.friends).toString(), user.bio, user.coverImageUrl
+                jsonArray.toString(), user.createdAt, JSONArray(user.friends).toString(), user.bio, user.coverImageUrl,
+                JSONArray(user.followers).toString(), JSONArray(user.following).toString()
             )
         }
     }
@@ -198,7 +202,9 @@ data class CachedPost(
     val textAnimation: String,
     val r2ObjectKeysJson: String,
     val isReel: Boolean,
-    val expiresAt: Long
+    val expiresAt: Long,
+    val imageUrlsJson: String,
+    val mediaReactionsJson: String
 ) {
     fun toPost(): Post {
         val reactionsMap = mutableMapOf<String, String>()
@@ -228,6 +234,15 @@ data class CachedPost(
             }
         } catch (e: Exception) {}
 
+        val mediaReactionMap = mutableMapOf<String, Map<String, String>>()
+        try {
+            val root = JSONObject(mediaReactionsJson)
+            root.keys().forEach { mediaKey ->
+                val child = root.getJSONObject(mediaKey)
+                mediaReactionMap[mediaKey] = child.keys().asSequence().associateWith { uid -> child.getString(uid) }
+            }
+        } catch (_: Exception) {}
+
         return Post(
             id, senderId, senderName, senderProfilePic, text, imageUrl, audioUrl, videoUrl,
             timestamp, reactionsMap, commentList, viewsCount, isPrivate,
@@ -236,7 +251,9 @@ data class CachedPost(
             try { JSONArray(taggedUserIdsJson).let { array -> (0 until array.length()).map { array.getString(it) } } } catch (_: Exception) { emptyList() },
             feeling, backgroundStyle, textAnimation,
             try { JSONArray(r2ObjectKeysJson).let { array -> (0 until array.length()).map { array.getString(it) } } } catch (_: Exception) { emptyList() },
-            isReel, expiresAt
+            isReel, expiresAt,
+            try { JSONArray(imageUrlsJson).let { array -> (0 until array.length()).map { array.getString(it) } } } catch (_: Exception) { emptyList() },
+            mediaReactionMap
         )
     }
 
@@ -257,12 +274,17 @@ data class CachedPost(
                 commentsArr.put(o)
             }
 
+            val mediaReactionsObj = JSONObject()
+            post.mediaReactions.forEach { (mediaKey, reactions) ->
+                val child = JSONObject(); reactions.forEach { (uid, emoji) -> child.put(uid, emoji) }; mediaReactionsObj.put(mediaKey, child)
+            }
             return CachedPost(
                 post.id, post.senderId, post.senderName, post.senderProfilePic,
                 post.text, post.imageUrl, post.audioUrl, post.videoUrl, post.timestamp,
                 reactionsObj.toString(), commentsArr.toString(), post.viewsCount, post.isPrivate,
                 post.title, JSONArray(post.tags).toString(), JSONArray(post.taggedUserIds).toString(), post.feeling,
-                post.backgroundStyle, post.textAnimation, JSONArray(post.r2ObjectKeys).toString(), post.isReel, post.expiresAt
+                post.backgroundStyle, post.textAnimation, JSONArray(post.r2ObjectKeys).toString(), post.isReel, post.expiresAt,
+                JSONArray(post.imageUrls).toString(), mediaReactionsObj.toString()
             )
         }
     }
@@ -380,6 +402,9 @@ interface CacheDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertMessages(msgs: List<CachedMessage>)
 
+    @Query("UPDATE cached_messages SET deliveredToRecipient = 1 WHERE messageId = :messageId")
+    suspend fun markMessageDelivered(messageId: String)
+
     @Query("UPDATE cached_messages SET seenByRecipient = 1, deliveredToRecipient = 1 WHERE messageId = :messageId")
     suspend fun markMessageSeen(messageId: String)
 
@@ -457,7 +482,7 @@ interface CacheDao {
         CachedGroupMessage::class,
         CachedActivityNotification::class
     ],
-    version = 6,
+    version = 8,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -490,6 +515,18 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE cached_posts ADD COLUMN expiresAt INTEGER NOT NULL DEFAULT 0")
             }
         }
+        private val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE cached_posts ADD COLUMN imageUrlsJson TEXT NOT NULL DEFAULT '[]'")
+                db.execSQL("ALTER TABLE cached_posts ADD COLUMN mediaReactionsJson TEXT NOT NULL DEFAULT '{}'")
+            }
+        }
+        private val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE cached_users ADD COLUMN followersJson TEXT NOT NULL DEFAULT '[]'")
+                db.execSQL("ALTER TABLE cached_users ADD COLUMN followingJson TEXT NOT NULL DEFAULT '[]'")
+            }
+        }
 
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
@@ -497,7 +534,7 @@ abstract class AppDatabase : RoomDatabase() {
                     context.applicationContext,
                     AppDatabase::class.java,
                     "firechat_offline_cache_db"
-                ).addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
+                ).addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8)
                     .fallbackToDestructiveMigration()
                     .build()
                 INSTANCE = instance

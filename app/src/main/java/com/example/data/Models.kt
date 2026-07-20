@@ -13,7 +13,9 @@ data class User(
     val createdAt: Long = 0L,
     val friends: List<String> = emptyList(),
     val bio: String = "",
-    val coverImageUrl: String = ""
+    val coverImageUrl: String = "",
+    val followers: List<String> = emptyList(),
+    val following: List<String> = emptyList()
 )
 
 data class Message(
@@ -80,7 +82,9 @@ data class Post(
     val textAnimation: String = "none",
     val r2ObjectKeys: List<String> = emptyList(),
     val isReel: Boolean = false,
-    val expiresAt: Long = 0L
+    val expiresAt: Long = 0L,
+    val imageUrls: List<String> = emptyList(),
+    val mediaReactions: Map<String, Map<String, String>> = emptyMap()
 )
 
 data class PostComment(
