@@ -77,7 +77,10 @@ data class Post(
     val taggedUserIds: List<String> = emptyList(),
     val feeling: String = "",
     val backgroundStyle: String = "glass",
-    val textAnimation: String = "none"
+    val textAnimation: String = "none",
+    val r2ObjectKeys: List<String> = emptyList(),
+    val isReel: Boolean = false,
+    val expiresAt: Long = 0L
 )
 
 data class PostComment(

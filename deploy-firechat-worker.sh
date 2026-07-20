@@ -7,6 +7,8 @@ WORKER_NAME="${WORKER_NAME:-solitary-hill-dcdc}"
 SERVICE_ACCOUNT_FILE="${FIREBASE_SERVICE_ACCOUNT_FILE:-chat-4e1d0-service-account.json}"
 WORKER_FILE="${WORKER_FILE:-firechat-fcm-worker.js}"
 WORKER_URL="https://${WORKER_NAME}.mr44253990.workers.dev/"
+R2_BUCKET_NAME="${R2_BUCKET_NAME:-firechat-media}"
+: "${R2_PUBLIC_BASE_URL:?Set R2_PUBLIC_BASE_URL to your bucket's https://pub-....r2.dev URL}"
 
 [[ -f "$SERVICE_ACCOUNT_FILE" ]] || { echo "Missing service-account file: $SERVICE_ACCOUNT_FILE" >&2; exit 1; }
 [[ -f "$WORKER_FILE" ]] || { echo "Missing Worker file: $WORKER_FILE" >&2; exit 1; }
@@ -21,10 +23,22 @@ PY
 API="https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/workers/scripts/${WORKER_NAME}"
 AUTH=(-H "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}")
 
-echo "Uploading Worker module ${WORKER_NAME}..."
+echo "Uploading Worker module ${WORKER_NAME} with R2 binding ${R2_BUCKET_NAME}..."
+METADATA=$(R2_BUCKET_NAME="$R2_BUCKET_NAME" R2_PUBLIC_BASE_URL="$R2_PUBLIC_BASE_URL" python3 - <<'PY'
+import json,os
+print(json.dumps({
+  "main_module":"firechat-fcm-worker.js",
+  "bindings":[
+    {"type":"r2_bucket","name":"MEDIA_BUCKET","bucket_name":os.environ["R2_BUCKET_NAME"]},
+    {"type":"plain_text","name":"R2_PUBLIC_BASE_URL","text":os.environ["R2_PUBLIC_BASE_URL"]}
+  ]
+}))
+PY
+)
 UPLOAD_RESULT=$(curl -fsS -X PUT "${API}" "${AUTH[@]}" \
-  -F 'metadata={"main_module":"firechat-fcm-worker.js"};type=application/json' \
+  -F "metadata=${METADATA};type=application/json" \
   -F "firechat-fcm-worker.js=@${WORKER_FILE};type=application/javascript+module")
+unset METADATA
 python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("success"), d.get("errors"); print("Worker uploaded")' <<<"$UPLOAD_RESULT"
 
 SECRET_PAYLOAD=$(python3 - "$SERVICE_ACCOUNT_FILE" <<'PY'

@@ -16,6 +16,7 @@ import androidx.core.app.Person
 import androidx.core.app.RemoteInput
 import androidx.core.graphics.drawable.IconCompat
 import com.example.MainActivity
+import com.example.security.AppLockManager
 import com.example.call.IncomingCallActivity
 import com.example.data.User
 import com.google.firebase.auth.FirebaseAuth
@@ -61,13 +62,18 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         Log.d("FCM_SERVICE", "Message received from: ${remoteMessage.from}")
 
         // Extract title and body
-        val title = remoteMessage.notification?.title ?: remoteMessage.data["title"] ?: "New Message"
-        val body = remoteMessage.notification?.body ?: remoteMessage.data["body"] ?: "You received a new message"
+        val rawTitle = remoteMessage.notification?.title ?: remoteMessage.data["title"] ?: "New Message"
+        val rawBody = remoteMessage.notification?.body ?: remoteMessage.data["body"] ?: "You received a new message"
+        val hideContent = AppLockManager.isEnabled(this)
+        val title = if (hideContent) "FireChat" else rawTitle
+        val body = if (hideContent) "New notification received — unlock FireChat to view" else rawBody
         val senderId = remoteMessage.data["senderId"] ?: ""
         val notificationType = remoteMessage.data["notificationType"] ?: "message"
+        val muted = getSharedPreferences("firechat_prefs", Context.MODE_PRIVATE).getStringSet("muted_users", emptySet())?.contains(senderId) == true
+        if (muted && notificationType == "message") return
         val senderProfileUrl = remoteMessage.data["senderProfileUrl"] ?: ""
         val targetId = remoteMessage.data["targetId"] ?: ""
-        val senderName = remoteMessage.data["senderName"] ?: title
+        val senderName = if (hideContent) "FireChat user" else remoteMessage.data["senderName"] ?: title
 
         if (notificationType == "call_cancelled") {
             if (targetId.isNotBlank()) {

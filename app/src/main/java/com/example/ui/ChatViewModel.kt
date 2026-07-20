@@ -54,7 +54,17 @@ data class GatewayHealth(
     val configured: Boolean = false,
     val message: String = "Not checked",
     val projectId: String = "",
-    val version: String = ""
+    val version: String = "",
+    val r2Configured: Boolean = false,
+    val turnConfigured: Boolean = false,
+    val sfuConfigured: Boolean = false
+)
+
+data class R2MediaResult(
+    val publicUrl: String,
+    val key: String,
+    val expiresAt: Long,
+    val kind: String
 )
 
 class ChatViewModel(application: Application) : AndroidViewModel(application) {
@@ -74,6 +84,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     val notificationSoundsEnabled: StateFlow<Boolean> = _notificationSoundsEnabled.asStateFlow()
     private val _typingSoundsEnabled = MutableStateFlow(sharedPrefs.getBoolean("typing_sounds", true))
     val typingSoundsEnabled: StateFlow<Boolean> = _typingSoundsEnabled.asStateFlow()
+    private val _mutedUserIds = MutableStateFlow(sharedPrefs.getStringSet("muted_users", emptySet())?.toSet() ?: emptySet())
+    val mutedUserIds: StateFlow<Set<String>> = _mutedUserIds.asStateFlow()
 
     // Network tracking (defaults to true for maximum compatibility on emulators)
     private val _isNetworkAvailable = MutableStateFlow(true)
@@ -294,7 +306,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                                 else -> json.optString("error", "Worker secret is missing or invalid")
                             },
                             projectId = json.optString("projectId"),
-                            version = json.optString("version")
+                            version = json.optString("version"),
+                            r2Configured = json.optBoolean("r2Configured"),
+                            turnConfigured = json.optBoolean("turnConfigured"),
+                            sfuConfigured = json.optBoolean("sfuConfigured")
                         )
                     }
                 }
@@ -1112,6 +1127,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun toggleMuteUser(uid: String) {
+        val updated = _mutedUserIds.value.toMutableSet().apply { if (!add(uid)) remove(uid) }.toSet()
+        _mutedUserIds.value = updated
+        sharedPrefs.edit().putStringSet("muted_users", updated).apply()
+    }
+
     fun playTypingSound() {
         if (!_typingSoundsEnabled.value) return
         try {
@@ -1661,6 +1682,57 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun uploadMediaToR2(
+        bytes: ByteArray,
+        contentType: String,
+        kind: String,
+        extension: String,
+        tags: String = "",
+        onSuccess: (R2MediaResult) -> Unit,
+        onFailure: (String) -> Unit
+    ) {
+        val user = FirebaseAuth.getInstance().currentUser ?: return onFailure("Please sign in again")
+        user.getIdToken(false).addOnSuccessListener { tokenResult ->
+            val idToken = tokenResult.token ?: return@addOnSuccessListener onFailure("Could not authenticate upload")
+            viewModelScope.launch(Dispatchers.IO) {
+                try {
+                    val url = _webhookUrl.value.trimEnd('/') + "/media/upload?kind=${if (kind == "reel") "reel" else "post"}&extension=$extension"
+                    val request = Request.Builder().url(url)
+                        .header("Authorization", "Bearer $idToken")
+                        .header("X-Media-Tags", tags.take(400).replace("[^A-Za-z0-9,# _-]".toRegex(), ""))
+                        .put(bytes.toRequestBody(contentType.toMediaTypeOrNull()))
+                        .build()
+                    OkHttpClient.Builder().callTimeout(3, TimeUnit.MINUTES).build().newCall(request).execute().use { response ->
+                        val body = response.body?.string().orEmpty()
+                        if (!response.isSuccessful) return@use withContext(Dispatchers.Main) { onFailure(runCatching { JSONObject(body).optString("error") }.getOrDefault("R2 upload failed (${response.code})")) }
+                        val json = JSONObject(body)
+                        val result = R2MediaResult(json.getString("publicUrl"), json.getString("key"), json.getLong("expiresAt"), json.getString("kind"))
+                        withContext(Dispatchers.Main) { onSuccess(result) }
+                    }
+                } catch (e: Exception) {
+                    withContext(Dispatchers.Main) { onFailure(e.localizedMessage ?: "R2 upload failed") }
+                }
+            }
+        }.addOnFailureListener { onFailure(it.localizedMessage ?: "Upload authentication failed") }
+    }
+
+    fun discardR2Media(key: String) = deleteR2Object(key)
+
+    private fun deleteR2Object(key: String, onComplete: (() -> Unit)? = null) {
+        val user = FirebaseAuth.getInstance().currentUser ?: return onComplete?.invoke() ?: Unit
+        user.getIdToken(false).addOnSuccessListener { tokenResult ->
+            val token = tokenResult.token ?: return@addOnSuccessListener onComplete?.invoke() ?: Unit
+            val payload = JSONObject().put("key", key).toString()
+            val request = Request.Builder().url(_webhookUrl.value.trimEnd('/') + "/media/delete")
+                .header("Authorization", "Bearer $token")
+                .post(payload.toRequestBody("application/json".toMediaTypeOrNull())).build()
+            OkHttpClient().newCall(request).enqueue(object : Callback {
+                override fun onFailure(call: Call, e: IOException) { onComplete?.invoke() }
+                override fun onResponse(call: Call, response: Response) { response.close(); onComplete?.invoke() }
+            })
+        }.addOnFailureListener { onComplete?.invoke() }
+    }
+
     // General file upload helper to Supabase Storage via REST
     fun uploadFileToSupabase(
         bucket: String,
@@ -2063,14 +2135,18 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                                 taggedUserIds = (doc.get("taggedUserIds") as? List<*>)?.mapNotNull { it as? String } ?: emptyList(),
                                 feeling = doc.getString("feeling") ?: "",
                                 backgroundStyle = doc.getString("backgroundStyle") ?: "glass",
-                                textAnimation = doc.getString("textAnimation") ?: "none"
+                                textAnimation = doc.getString("textAnimation") ?: "none",
+                                r2ObjectKeys = (doc.get("r2ObjectKeys") as? List<*>)?.mapNotNull { it as? String } ?: emptyList(),
+                                isReel = doc.getBoolean("isReel") ?: false,
+                                expiresAt = doc.getLong("expiresAt") ?: 0L
                             )
 
-                            // Apply privacy filters & blocked lists filters
-                            if (!myBlocked.contains(post.senderId)) {
-                                if (!post.isPrivate || post.senderId == currentUid) {
-                                    list.add(post)
-                                }
+                            if (post.expiresAt > 0L && System.currentTimeMillis() >= post.expiresAt) {
+                                post.r2ObjectKeys.forEach(::deleteR2Object)
+                                viewModelScope.launch(Dispatchers.IO) { cacheDao.deletePost(post.id) }
+                                doc.reference.delete()
+                            } else if (!myBlocked.contains(post.senderId)) {
+                                if (!post.isPrivate || post.senderId == currentUid) list.add(post)
                             }
                         } catch (e: Exception) {
                             Log.e("POST_PARSE", "Error parsing post: ${e.message}")
@@ -2100,7 +2176,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         taggedUserIds: List<String> = emptyList(),
         feeling: String = "",
         backgroundStyle: String = "glass",
-        textAnimation: String = "none"
+        textAnimation: String = "none",
+        r2ObjectKeys: List<String> = emptyList(),
+        isReel: Boolean = false,
+        expiresAt: Long = 0L
     ) {
         val user = getCurrentUserOrFallback() ?: return
         val postId = UUID.randomUUID().toString()
@@ -2110,10 +2189,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             senderName = user.name,
             senderProfilePic = user.profileImageUrl,
             text = text,
-            // Feed posts are intentionally text-only. Media remains available for stories/chat.
-            imageUrl = "",
+            imageUrl = imageUrl,
             audioUrl = "",
-            videoUrl = "",
+            videoUrl = videoUrl,
             timestamp = System.currentTimeMillis(),
             isPrivate = isPrivate,
             title = title,
@@ -2121,7 +2199,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             taggedUserIds = taggedUserIds,
             feeling = feeling,
             backgroundStyle = backgroundStyle,
-            textAnimation = textAnimation
+            textAnimation = textAnimation,
+            r2ObjectKeys = r2ObjectKeys,
+            isReel = isReel,
+            expiresAt = expiresAt
         )
 
         // Webhook shouldn't be called according to instruction ("কোন পোস্ট করলে রিকোয়েস্ট যাবে না")
@@ -2130,6 +2211,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             .addOnSuccessListener {
                 taggedUserIds.forEach { taggedUid ->
                     createActivityNotification(taggedUid, "post_tag", postId, "tagged you in a post${if (title.isNotBlank()) ": $title" else ""}")
+                }
+                if (isReel) user.friends.forEach { friendUid ->
+                    createActivityNotification(friendUid, "new_reel", postId, "published a new reel")
                 }
                 onComplete()
                 loadPosts()
@@ -2148,13 +2232,13 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     fun deletePost(postId: String) {
         val postRef = FirebaseFirestore.getInstance().collection("posts").document(postId)
         postRef.get().addOnSuccessListener { document ->
-            val mediaUrls = listOfNotNull(
-                document.getString("imageUrl"),
-                document.getString("videoUrl"),
-                document.getString("audioUrl")
+            val r2Keys = (document.get("r2ObjectKeys") as? List<*>)?.mapNotNull { it as? String }.orEmpty()
+            val legacyMediaUrls = listOfNotNull(
+                document.getString("imageUrl"), document.getString("videoUrl"), document.getString("audioUrl")
             ).filter { it.isNotBlank() }
+            r2Keys.forEach(::deleteR2Object)
             viewModelScope.launch(Dispatchers.IO) {
-                mediaUrls.forEach { url ->
+                if (r2Keys.isEmpty()) legacyMediaUrls.forEach { url ->
                     deleteSupabaseObject(url)
                     localUploadFiles.remove(url)?.let { localUri ->
                         try { File(java.net.URI(localUri)).delete() } catch (_: Exception) {}

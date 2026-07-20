@@ -21,6 +21,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.input.pointer.pointerInput
@@ -71,6 +72,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import android.widget.VideoView
 import com.example.R
 import com.example.data.ActivityNotification
+import com.example.security.AppLockManager
 import com.example.data.FriendRequest
 import com.example.data.Group
 import com.example.data.MessageRequest
@@ -110,6 +112,7 @@ fun HomeScreen(
     val currentTheme by viewModel.themeState.collectAsState()
     val notificationSounds by viewModel.notificationSoundsEnabled.collectAsState()
     val typingSounds by viewModel.typingSoundsEnabled.collectAsState()
+    val mutedUsers by viewModel.mutedUserIds.collectAsState()
     val allUsers by viewModel.usersState.collectAsState()
     val conversationUserIds by viewModel.conversationUserIds.collectAsState()
     val unreadCounts by viewModel.unreadCountsState.collectAsState()
@@ -118,7 +121,10 @@ fun HomeScreen(
     var showAccountMenu by remember { mutableStateOf(false) }
     var showActivityCenter by remember { mutableStateOf(false) }
     var showGlobalSearch by remember { mutableStateOf(false) }
+    var showLockSetup by remember { mutableStateOf(false) }
+    var lockEnabled by remember { mutableStateOf(AppLockManager.isEnabled(context)) }
     val currentTab by viewModel.currentTabState.collectAsState()
+    val isAdmin = FirebaseAuth.getInstance().currentUser?.email?.lowercase()?.trim() == "mr4425390@gmail.com"
 
     // Dialog & Creation controllers
     var showCreateGroupDialog by remember { mutableStateOf(false) }
@@ -238,6 +244,16 @@ fun HomeScreen(
                                     }
                                 )
                                 DropdownMenuItem(
+                                    text = { Text("Discover people") },
+                                    leadingIcon = { Icon(Icons.Outlined.PersonAdd, null) },
+                                    onClick = { showAccountMenu = false; viewModel.setCurrentTab(5) }
+                                )
+                                if (isAdmin) DropdownMenuItem(
+                                    text = { Text("Admin control center") },
+                                    leadingIcon = { Icon(Icons.Outlined.AdminPanelSettings, null) },
+                                    onClick = { showAccountMenu = false; viewModel.setCurrentTab(3) }
+                                )
+                                DropdownMenuItem(
                                     text = { Text("Sign out", color = MaterialTheme.colorScheme.error) },
                                     leadingIcon = { Icon(Icons.Outlined.Logout, null, tint = MaterialTheme.colorScheme.error) },
                                     onClick = {
@@ -280,22 +296,11 @@ fun HomeScreen(
                     icon = { Icon(Icons.Default.Group, contentDescription = "Groups") },
                     label = { Text("Groups", fontSize = 10.sp) }
                 )
-                val email = FirebaseAuth.getInstance().currentUser?.email ?: ""
-                val isAdmin = email.lowercase().trim() == "mr4425390@gmail.com"
-
-                if (isAdmin) {
-                    NavigationBarItem(
-                        selected = currentTab == 3,
-                        onClick = { viewModel.setCurrentTab(3) },
-                        icon = { Icon(Icons.Default.AdminPanelSettings, contentDescription = "Service") },
-                        label = { Text("Service", fontSize = 10.sp) }
-                    )
-                }
                 NavigationBarItem(
-                    selected = currentTab == 5,
-                    onClick = { viewModel.setCurrentTab(5) },
-                    icon = { Icon(Icons.Default.PersonAdd, contentDescription = "People") },
-                    label = { Text("People", fontSize = 10.sp) }
+                    selected = currentTab == 6,
+                    onClick = { viewModel.setCurrentTab(6) },
+                    icon = { Icon(Icons.Default.SmartDisplay, contentDescription = "Reels") },
+                    label = { Text("Reels", fontSize = 10.sp) }
                 )
                 NavigationBarItem(
                     selected = currentTab == 4,
@@ -315,9 +320,21 @@ fun HomeScreen(
         ) {
             when (currentTab) {
                 0 -> {
+                    val feedState = rememberLazyListState()
+                    val postIds = remember(posts) { posts.map { it.id }.toSet() }
+                    val activeFeedPostId by remember(feedState, postIds) {
+                        derivedStateOf {
+                            val center = (feedState.layoutInfo.viewportStartOffset + feedState.layoutInfo.viewportEndOffset) / 2
+                            feedState.layoutInfo.visibleItemsInfo
+                                .filter { it.key in postIds }
+                                .minByOrNull { kotlin.math.abs((it.offset + it.size / 2) - center) }
+                                ?.key as? String
+                        }
+                    }
                     // One continuous list: stories/composer/filters naturally collapse while scrolling
                     // and return when the user reaches the top, leaving maximum room for media.
                     LazyColumn(
+                        state = feedState,
                         modifier = Modifier.fillMaxSize(),
                         contentPadding = PaddingValues(bottom = 14.dp),
                         verticalArrangement = Arrangement.spacedBy(10.dp)
@@ -396,7 +413,7 @@ fun HomeScreen(
                         } else {
                             items(posts, key = { it.id }) { post ->
                                 Box(Modifier.padding(horizontal = 14.dp)) {
-                                    SocialPostItem(post = post, viewModel = viewModel, onProfileSelected = onProfileSelected)
+                                    SocialPostItem(post = post, viewModel = viewModel, onProfileSelected = onProfileSelected, autoPlayVideo = post.id == activeFeedPostId)
                                 }
                             }
                         }
@@ -459,7 +476,12 @@ fun HomeScreen(
                                         user = user,
                                         viewModel = viewModel,
                                         hasActiveStory = hasActiveStory,
-                                        onSelect = { onUserSelected(user) }
+                                        isMuted = user.uid in mutedUsers,
+                                        onSelect = { onUserSelected(user) },
+                                        onLongPress = {
+                                            viewModel.toggleMuteUser(user.uid)
+                                            Toast.makeText(context, if (user.uid in mutedUsers) "${user.name} unmuted" else "${user.name} muted", Toast.LENGTH_SHORT).show()
+                                        }
                                     )
                                 }
                             }
@@ -654,6 +676,7 @@ fun HomeScreen(
                                                 Text(gatewayHealth.message, fontWeight = FontWeight.Bold)
                                                 if (gatewayHealth.projectId.isNotBlank()) {
                                                     Text("Project: ${gatewayHealth.projectId} • Worker ${gatewayHealth.version}", fontSize = 11.sp)
+                                                    Text("R2 ${if (gatewayHealth.r2Configured) "✓" else "✗"}  •  TURN ${if (gatewayHealth.turnConfigured) "✓" else "✗"}  •  SFU ${if (gatewayHealth.sfuConfigured) "✓" else "✗"}", fontSize = 11.sp)
                                                 }
                                             }
                                         }
@@ -954,6 +977,27 @@ fun HomeScreen(
 
                         Card(shape = RoundedCornerShape(28.dp), modifier = Modifier.fillMaxWidth()) {
                             Column(Modifier.padding(16.dp)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Icons.Outlined.Lock, null, tint = MaterialTheme.colorScheme.primary)
+                                    Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
+                                        Text("App lock", fontWeight = FontWeight.Bold)
+                                        Text(if (lockEnabled) "PIN and notification privacy enabled" else "Protect FireChat with PIN or biometrics", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    Switch(checked = lockEnabled, onCheckedChange = {
+                                        if (it) showLockSetup = true else { AppLockManager.disable(context); lockEnabled = false }
+                                    })
+                                }
+                                if (lockEnabled && AppLockManager.canUseBiometric(context)) {
+                                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                        Text("Biometric unlock", Modifier.weight(1f))
+                                        Switch(AppLockManager.isBiometricEnabled(context), { AppLockManager.setBiometric(context, it) })
+                                    }
+                                }
+                            }
+                        }
+
+                        Card(shape = RoundedCornerShape(28.dp), modifier = Modifier.fillMaxWidth()) {
+                            Column(Modifier.padding(16.dp)) {
                                 Text("Sounds & activity", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                                 Text("Control notification and live typing feedback.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -1062,6 +1106,14 @@ fun HomeScreen(
                         }
                     }
                 }
+                6 -> {
+                    ReelsFeedScreen(
+                        posts = posts,
+                        users = allUsers,
+                        viewModel = viewModel,
+                        onProfileSelected = onProfileSelected
+                    )
+                }
                 5 -> {
                     var peopleQuery by remember { mutableStateOf("") }
                     val visiblePeople = allUsers.filter {
@@ -1162,6 +1214,34 @@ fun HomeScreen(
                 }
             }
         }
+    }
+
+    if (showLockSetup) {
+        var pin by remember { mutableStateOf("") }
+        var confirmPin by remember { mutableStateOf("") }
+        var biometric by remember { mutableStateOf(AppLockManager.canUseBiometric(context)) }
+        AlertDialog(
+            onDismissRequest = { showLockSetup = false },
+            title = { Text("Set FireChat lock", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("Choose a 4–8 digit PIN. Notification content will be hidden while lock is enabled.")
+                    OutlinedTextField(pin, { pin = it.filter(Char::isDigit).take(8) }, label = { Text("PIN") }, singleLine = true)
+                    OutlinedTextField(confirmPin, { confirmPin = it.filter(Char::isDigit).take(8) }, label = { Text("Confirm PIN") }, singleLine = true)
+                    if (AppLockManager.canUseBiometric(context)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) { Text("Enable biometric unlock", Modifier.weight(1f)); Switch(biometric, { biometric = it }) }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    if (pin == confirmPin && AppLockManager.setLock(context, pin, biometric)) {
+                        lockEnabled = true; showLockSetup = false
+                    } else Toast.makeText(context, "PINs must match and contain 4–8 digits", Toast.LENGTH_LONG).show()
+                }) { Text("Enable lock") }
+            },
+            dismissButton = { TextButton(onClick = { showLockSetup = false }) { Text("Cancel") } }
+        )
     }
 
     if (showGlobalSearch) {
@@ -1794,6 +1874,51 @@ fun FullScreenStoryViewer(
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
+fun ReelsFeedScreen(
+    posts: List<Post>,
+    users: List<User>,
+    viewModel: ChatViewModel,
+    onProfileSelected: (User) -> Unit
+) {
+    var query by remember { mutableStateOf("") }
+    val reels = remember(posts, query) {
+        posts.filter { it.videoUrl.isNotBlank() && (it.isReel || it.r2ObjectKeys.isNotEmpty()) }
+            .filter { query.isBlank() || it.title.contains(query, true) || it.text.contains(query, true) || it.tags.any { tag -> tag.contains(query.removePrefix("#"), true) } }
+    }
+    if (reels.isEmpty()) {
+        Column(Modifier.fillMaxSize().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+            Icon(Icons.Outlined.VideoLibrary, null, Modifier.size(72.dp), tint = MaterialTheme.colorScheme.primary)
+            Spacer(Modifier.height(12.dp)); Text("No reels yet", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            Text("Upload a video and enable ‘Publish video as Reel’.", color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
+        }
+        return
+    }
+    val pager = rememberPagerState(pageCount = { reels.size })
+    Box(Modifier.fillMaxSize().background(Color.Black)) {
+        VerticalPager(state = pager, modifier = Modifier.fillMaxSize(), beyondViewportPageCount = 1) { page ->
+            ImmersiveVideoPage(
+                post = reels[page], owner = users.find { it.uid == reels[page].senderId },
+                isActive = pager.currentPage == page, viewModel = viewModel,
+                onProfileSelected = onProfileSelected
+            )
+        }
+        OutlinedTextField(
+            value = query, onValueChange = { query = it },
+            placeholder = { Text("Search your reels…", color = Color.White.copy(.65f)) },
+            leadingIcon = { Icon(Icons.Default.Search, null, tint = Color.White) },
+            modifier = Modifier.align(Alignment.TopCenter).windowInsetsPadding(WindowInsets.statusBars).padding(12.dp).fillMaxWidth(),
+            singleLine = true, shape = CircleShape,
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedTextColor = Color.White, unfocusedTextColor = Color.White,
+                focusedContainerColor = Color.Black.copy(.42f), unfocusedContainerColor = Color.Black.copy(.42f),
+                focusedBorderColor = Color.White.copy(.5f), unfocusedBorderColor = Color.White.copy(.25f)
+            )
+        )
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
 fun VerticalVideoFeedDialog(
     videos: List<Post>,
     startIndex: Int,
@@ -1902,6 +2027,14 @@ private fun ImmersiveVideoPage(
             }
         }
         Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color.Transparent, Color.Black.copy(alpha = .78f)))))
+        Box(Modifier.fillMaxSize().pointerInput(post.id) {
+            detectTapGestures(onDoubleTap = {
+                if (!reacted) {
+                    optimisticReaction = true
+                    viewModel.reactToPost(post.id, "❤️")
+                }
+            })
+        })
         AnimatedVisibility(
             visible = isPaused,
             modifier = Modifier.align(Alignment.Center)
@@ -2198,15 +2331,16 @@ fun StoriesHorizontalSection(
 }
 
 @Composable
-fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (User) -> Unit = {}) {
+fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (User) -> Unit = {}, autoPlayVideo: Boolean = false) {
     var isCommentsExpanded by remember { mutableStateOf(false) }
     var commentInputText by remember { mutableStateOf("") }
-    var showFullscreenVideo by remember(post.id) { mutableStateOf(false) }
     val inlineVideoView = remember(post.id) { mutableStateOf<VideoView?>(null) }
+    val inlineMediaPlayer = remember(post.id) { mutableStateOf<MediaPlayer?>(null) }
     DisposableEffect(post.id) {
         onDispose {
             inlineVideoView.value?.stopPlayback()
             inlineVideoView.value = null
+            inlineMediaPlayer.value = null
         }
     }
     val currentUserId = FirebaseAuth.getInstance().currentUser?.uid ?: ""
@@ -2214,17 +2348,6 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
     val allUsers by viewModel.usersState.collectAsState()
     val allPosts by viewModel.postsState.collectAsState()
     val videoPosts = allPosts.filter { it.videoUrl.isNotBlank() }
-
-    if (showFullscreenVideo && post.videoUrl.isNotBlank()) {
-        VerticalVideoFeedDialog(
-            videos = videoPosts,
-            startIndex = videoPosts.indexOfFirst { it.id == post.id }.coerceAtLeast(0),
-            users = allUsers,
-            viewModel = viewModel,
-            onProfileSelected = onProfileSelected,
-            onDismiss = { showFullscreenVideo = false }
-        )
-    }
 
     // Register simple visual view count increment on render
     LaunchedEffect(post.id) {
@@ -2362,7 +2485,7 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
                         .clip(RoundedCornerShape(24.dp))
                         .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(24.dp))
                         .background(Color.Black)
-                        .clickable { showFullscreenVideo = true },
+                        .clickable { viewModel.setCurrentTab(6) },
                     contentAlignment = Alignment.Center
                 ) {
                     AndroidView(
@@ -2371,19 +2494,20 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
                                 inlineVideoView.value = this
                                 setVideoPath(post.videoUrl)
                                 setOnPreparedListener { player ->
+                                    inlineMediaPlayer.value = player
                                     player.isLooping = true
-                                    player.setVolume(1f, 1f)
-                                    if (!showFullscreenVideo) start()
+                                    player.setVolume(if (autoPlayVideo) 1f else 0f, if (autoPlayVideo) 1f else 0f)
+                                    if (autoPlayVideo) start()
                                 }
                             }
                         },
                         update = { video ->
-                            if (showFullscreenVideo) video.pause()
-                            else if (!video.isPlaying) video.start()
+                            inlineMediaPlayer.value?.setVolume(if (autoPlayVideo) 1f else 0f, if (autoPlayVideo) 1f else 0f)
+                            if (autoPlayVideo && !video.isPlaying) video.start() else if (!autoPlayVideo && video.isPlaying) video.pause()
                         },
                         modifier = Modifier.fillMaxSize()
                     )
-                    Box(Modifier.fillMaxSize().clickable { showFullscreenVideo = true })
+                    Box(Modifier.fillMaxSize().clickable { viewModel.setCurrentTab(6) })
                     Row(
                         modifier = Modifier
                             .align(Alignment.BottomEnd)
@@ -2762,7 +2886,9 @@ fun ChatConversationUserItem(
     user: User,
     viewModel: ChatViewModel,
     hasActiveStory: Boolean,
-    onSelect: () -> Unit
+    isMuted: Boolean,
+    onSelect: () -> Unit,
+    onLongPress: () -> Unit
 ) {
     // Collect the dynamic last message between currentUser and otherUser
     val lastMessageState by viewModel.getLastMessageFlow(user.uid).collectAsState(initial = null)
@@ -2775,7 +2901,7 @@ fun ChatConversationUserItem(
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onSelect),
+            .combinedClickable(onClick = onSelect, onLongClick = onLongPress),
         shape = RoundedCornerShape(28.dp),
         colors = CardDefaults.cardColors(
             containerColor = if (hasUnread) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
@@ -2901,6 +3027,10 @@ fun ChatConversationUserItem(
 
             // Message Status indicators & unread markers!
             Row(verticalAlignment = Alignment.CenterVertically) {
+                if (isMuted) {
+                    Icon(Icons.Default.NotificationsOff, "Muted", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(5.dp))
+                }
                 if (hasUnread) {
                     // Cute glowing notification indicator badge
                     Box(

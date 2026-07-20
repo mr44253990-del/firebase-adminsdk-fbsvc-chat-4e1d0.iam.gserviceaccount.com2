@@ -1,0 +1,24 @@
+{
+  "Rules": [
+    {
+      "ID": "Expire all FireChat post and reel media after 10 days",
+      "Status": "Enabled",
+      "Filter": {
+        "Prefix": ""
+      },
+      "Expiration": {
+        "Days": 10
+      }
+    },
+    {
+      "ID": "Abort incomplete mobile uploads",
+      "Status": "Enabled",
+      "Filter": {
+        "Prefix": ""
+      },
+      "AbortIncompleteMultipartUpload": {
+        "DaysAfterInitiation": 1
+      }
+    }
+  ]
+}

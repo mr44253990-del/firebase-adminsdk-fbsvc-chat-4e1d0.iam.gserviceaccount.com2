@@ -10,6 +10,7 @@ import android.os.PowerManager
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.util.Log
+import com.example.service.CallForegroundService
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.database.*
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -57,6 +58,8 @@ object CallEngine {
     private var remoteRenderer: SurfaceViewRenderer? = null
     private var ringbackTone: ToneGenerator? = null
     private var proximityWakeLock: PowerManager.WakeLock? = null
+    private var callCpuWakeLock: PowerManager.WakeLock? = null
+    private var audioManager: AudioManager? = null
     private var callRef: DatabaseReference? = null
     private var callListener: ValueEventListener? = null
     private val candidateListeners = mutableListOf<Pair<DatabaseReference, ChildEventListener>>()
@@ -284,7 +287,10 @@ object CallEngine {
                     status = status,
                     connectedAt = if (status == "connected") _state.value.connectedAt.takeIf { it > 0 } ?: System.currentTimeMillis() else _state.value.connectedAt
                 )
-                if (status == "connected") updateProximityLock()
+                if (status == "connected") {
+                    activateCallRuntime()
+                    updateProximityLock()
+                }
                 if (status in listOf("declined", "ended", "missed")) cleanup(status)
             }
             override fun onCancelled(error: DatabaseError) = fail(error.message)
@@ -339,6 +345,22 @@ object CallEngine {
         }.addOnFailureListener { callback(emptyList(), it.localizedMessage ?: "TURN authentication failed") }
     }
 
+    private fun activateCallRuntime() {
+        val context = appContext ?: return
+        runCatching { CallForegroundService.start(context, _state.value.callId, _state.value.remoteName, _state.value.video) }
+        if (callCpuWakeLock?.isHeld != true) {
+            val power = context.getSystemService(Context.POWER_SERVICE) as PowerManager
+            callCpuWakeLock = power.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "FireChat:ActiveCallCpu").apply {
+                setReferenceCounted(false)
+                acquire(2 * 60 * 60 * 1000L)
+            }
+        }
+        audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        @Suppress("DEPRECATION")
+        audioManager?.requestAudioFocus(null, AudioManager.STREAM_VOICE_CALL, AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
+        audioManager?.mode = AudioManager.MODE_IN_COMMUNICATION
+    }
+
     private fun startRingback() {
         if (ringbackTone != null) return
         runCatching {
@@ -360,6 +382,13 @@ object CallEngine {
         else @Suppress("DEPRECATION") vibrator.vibrate(90)
     }
 
+    private fun vibrateCallEnded() {
+        val context = appContext ?: return
+        val vibrator = context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator ?: return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) vibrator.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 80, 60, 160), -1))
+        else @Suppress("DEPRECATION") vibrator.vibrate(longArrayOf(0, 80, 60, 160), -1)
+    }
+
     private fun updateProximityLock() {
         val context = appContext ?: return
         val shouldUse = _state.value.status == "connected" && !_state.value.video && !_state.value.speaker
@@ -374,9 +403,16 @@ object CallEngine {
     }
 
     private fun cleanup(finalStatus: String) {
+        val wasConnected = _state.value.connectedAt > 0L
         stopRingback()
+        appContext?.let(CallForegroundService::stop)
         if (proximityWakeLock?.isHeld == true) runCatching { proximityWakeLock?.release() }
         proximityWakeLock = null
+        if (callCpuWakeLock?.isHeld == true) runCatching { callCpuWakeLock?.release() }
+        callCpuWakeLock = null
+        @Suppress("DEPRECATION")
+        runCatching { audioManager?.abandonAudioFocus(null); audioManager?.mode = AudioManager.MODE_NORMAL }
+        audioManager = null
         candidateListeners.forEach { (ref, listener) -> ref.removeEventListener(listener) }; candidateListeners.clear()
         callListener?.let { listener -> callRef?.removeEventListener(listener) }; callListener = null
         runCatching { videoCapturer?.stopCapture() }; videoCapturer?.dispose(); videoCapturer = null
@@ -384,6 +420,7 @@ object CallEngine {
         localVideoTrack?.dispose(); localVideoTrack = null; remoteVideoTrack = null
         peer?.close(); peer?.dispose(); peer = null
         audioTrack?.dispose(); audioTrack = null
+        if (wasConnected) vibrateCallEnded()
         _state.value = _state.value.copy(status = finalStatus)
     }
 

@@ -12,15 +12,44 @@
 
 export default {
   async fetch(request, env, ctx) {
+    const url = new URL(request.url);
+    const path = url.pathname.replace(/\/+$/, "") || "/";
     // Enable CORS
     if (request.method === "OPTIONS") {
       return new Response("OK", {
         headers: {
           "Access-Control-Allow-Origin": "*",
-          "Access-Control-Allow-Methods": "POST, OPTIONS",
+          "Access-Control-Allow-Methods": "GET, POST, PUT, OPTIONS",
           "Access-Control-Allow-Headers": "Content-Type, Authorization",
         },
       });
+    }
+
+    if (request.method === "PUT" && path === "/media/upload") {
+      const auth = await authenticateCaller(request, env);
+      if (!auth.ok) return auth.response;
+      if (!env.MEDIA_BUCKET || !env.R2_PUBLIC_BASE_URL) {
+        return jsonResponse({ error: "MEDIA_BUCKET binding or R2_PUBLIC_BASE_URL is missing" }, 503);
+      }
+      const contentType = request.headers.get("Content-Type") || "application/octet-stream";
+      const contentLength = Number(request.headers.get("Content-Length") || 0);
+      if (contentLength > 150 * 1024 * 1024) return jsonResponse({ error: "Media exceeds 150 MB limit" }, 413);
+      const kind = url.searchParams.get("kind") === "reel" ? "reels" : "posts";
+      const extension = (url.searchParams.get("extension") || mimeExtension(contentType)).replace(/[^a-z0-9]/gi, "").slice(0, 8) || "bin";
+      const key = `${kind}/${auth.caller.sub}/${Date.now()}-${crypto.randomUUID()}.${extension}`;
+      const expiresAt = Date.now() + 10 * 24 * 60 * 60 * 1000;
+      await env.MEDIA_BUCKET.put(key, request.body, {
+        httpMetadata: { contentType, cacheControl: "public, max-age=3600" },
+        customMetadata: {
+          ownerUid: auth.caller.sub,
+          kind,
+          expiresAt: String(expiresAt),
+          title: (request.headers.get("X-Media-Title") || "").slice(0, 200),
+          tags: (request.headers.get("X-Media-Tags") || "").slice(0, 500)
+        }
+      });
+      const publicBase = env.R2_PUBLIC_BASE_URL.replace(/\/$/, "");
+      return jsonResponse({ success: true, key, publicUrl: `${publicBase}/${key}`, expiresAt, kind }, 201);
     }
 
     if (request.method === "GET") {
@@ -34,11 +63,13 @@ export default {
       return new Response(JSON.stringify({
         ok: serviceAccountConfigured,
         service: "FireChat Direct FCM Gateway",
-        version: "4.1.0",
+        version: "4.2.0",
         projectId,
         serviceAccountConfigured,
         turnConfigured: Boolean(env.TURN_TOKEN_ID && env.TURN_API_TOKEN),
         sfuConfigured: Boolean(env.CALLS_APP_ID && env.CALLS_APP_TOKEN),
+        r2Configured: Boolean(env.MEDIA_BUCKET && env.R2_PUBLIC_BASE_URL),
+        mediaRetentionDays: 10,
         authenticatedCallsRequired: true,
         timestamp: Date.now()
       }), {
@@ -88,7 +119,42 @@ export default {
         });
       }
 
-      const path = new URL(request.url).pathname.replace(/\/+$/, "");
+      if (path === "/media/delete") {
+        if (!env.MEDIA_BUCKET) return jsonResponse({ error: "MEDIA_BUCKET binding is missing" }, 503);
+        const key = String(payload.key || "");
+        if (!key.startsWith("posts/") && !key.startsWith("reels/")) return jsonResponse({ error: "Invalid media key" }, 400);
+        const object = await env.MEDIA_BUCKET.head(key);
+        if (!object) return jsonResponse({ success: true, alreadyDeleted: true });
+        const isAdmin = caller.email === "mr4425390@gmail.com";
+        if (!isAdmin && object.customMetadata?.ownerUid !== caller.sub) return jsonResponse({ error: "Not allowed to delete this media" }, 403);
+        await env.MEDIA_BUCKET.delete(key);
+        return jsonResponse({ success: true, key });
+      }
+
+      if (path === "/media/reels/list" || path === "/media/reels/search") {
+        if (!env.MEDIA_BUCKET || !env.R2_PUBLIC_BASE_URL) return jsonResponse({ error: "R2 media is not configured" }, 503);
+        const limit = Math.min(Math.max(Number(payload.limit || 20), 1), 50);
+        const listed = await env.MEDIA_BUCKET.list({ prefix: "reels/", limit: 100, cursor: payload.cursor, include: ["customMetadata", "httpMetadata"] });
+        const query = String(payload.query || "").trim().toLowerCase();
+        const now = Date.now();
+        const publicBase = env.R2_PUBLIC_BASE_URL.replace(/\/$/, "");
+        const items = listed.objects
+          .filter(object => Number(object.customMetadata?.expiresAt || 0) > now)
+          .filter(object => !query || `${object.customMetadata?.title || ""} ${object.customMetadata?.tags || ""}`.toLowerCase().includes(query))
+          .slice(0, limit)
+          .map(object => ({
+            key: object.key,
+            publicUrl: `${publicBase}/${object.key}`,
+            size: object.size,
+            uploaded: object.uploaded,
+            contentType: object.httpMetadata?.contentType || "video/mp4",
+            title: object.customMetadata?.title || "",
+            tags: (object.customMetadata?.tags || "").split(",").filter(Boolean),
+            expiresAt: Number(object.customMetadata?.expiresAt || 0)
+          }));
+        return jsonResponse({ success: true, items, cursor: listed.truncated ? listed.cursor : null });
+      }
+
       if (path === "/turn-credentials") {
         if (!env.TURN_TOKEN_ID || !env.TURN_API_TOKEN) {
           return new Response(JSON.stringify({ error: "TURN_TOKEN_ID or TURN_API_TOKEN secret is missing" }), {
@@ -210,6 +276,35 @@ export default {
     }
   }
 };
+
+function jsonResponse(value, status = 200) {
+  return new Response(JSON.stringify(value), {
+    status,
+    headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*", "Cache-Control": "no-store" }
+  });
+}
+
+function mimeExtension(contentType) {
+  if (contentType.includes("mp4")) return "mp4";
+  if (contentType.includes("webm")) return "webm";
+  if (contentType.includes("png")) return "png";
+  if (contentType.includes("webp")) return "webp";
+  if (contentType.includes("gif")) return "gif";
+  if (contentType.includes("jpeg") || contentType.includes("jpg")) return "jpg";
+  return "bin";
+}
+
+async function authenticateCaller(request, env) {
+  try {
+    const account = JSON.parse(env.FIREBASE_SERVICE_ACCOUNT || "{}");
+    if (!account.project_id) return { ok: false, response: jsonResponse({ error: "FIREBASE_SERVICE_ACCOUNT is missing" }, 503) };
+    const caller = await verifyFirebaseIdToken(request, account.project_id);
+    if (!caller) return { ok: false, response: jsonResponse({ error: "Unauthorized Firebase caller" }, 401) };
+    return { ok: true, caller, account };
+  } catch (error) {
+    return { ok: false, response: jsonResponse({ error: error.message || "Authentication failed" }, 500) };
+  }
+}
 
 /** Verify a Firebase Auth ID token using Google's rotating Secure Token JWKs. */
 async function verifyFirebaseIdToken(request, projectId) {

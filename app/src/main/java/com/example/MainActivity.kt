@@ -1,7 +1,7 @@
 package com.example
 
 import android.os.Bundle
-import androidx.activity.ComponentActivity
+import androidx.fragment.app.FragmentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
@@ -31,6 +31,8 @@ import com.example.ui.UserProfileScreen
 import com.example.ui.isOnboardingCompleted
 import com.example.ui.theme.MyApplicationTheme
 import com.example.ui.theme.PremiumBackground
+import com.example.security.AppLockManager
+import com.example.security.AppLockScreen
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.database.FirebaseDatabase
 import com.google.firebase.firestore.FirebaseFirestore
@@ -40,7 +42,7 @@ import coil.ImageLoader
 import coil.disk.DiskCache
 import coil.memory.MemoryCache
 
-class MainActivity : ComponentActivity() {
+class MainActivity : FragmentActivity() {
 
     private val viewModel: ChatViewModel by viewModels()
 
@@ -57,12 +59,14 @@ class MainActivity : ComponentActivity() {
             FirebaseDatabase.getInstance().getReference("status").child(uid)
                 .setValue(mapOf("isOnline" to false, "lastActive" to System.currentTimeMillis(), "foreground" to false, "onlineSource" to "background"))
         }
+        AppLockManager.lock(this)
         super.onStop()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
         super.onCreate(savedInstanceState)
+        AppLockManager.initialize(this)
         enableEdgeToEdge()
 
         // Configure standard Coil cache so images (like profile pics) are cached aggressively offline
@@ -87,6 +91,10 @@ class MainActivity : ComponentActivity() {
             val currentTheme by viewModel.themeState.collectAsState()
             
             MyApplicationTheme(themeType = currentTheme) {
+                val appLocked by AppLockManager.locked.collectAsState()
+                if (appLocked) {
+                    AppLockScreen(this@MainActivity)
+                } else {
                 val navController = rememberNavController()
                 val activeRecipient by viewModel.activeRecipientUser.collectAsState()
                 val activeGroup by viewModel.activeGroup.collectAsState()
@@ -271,6 +279,7 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
                     }
+                }
                 }
             }
         }

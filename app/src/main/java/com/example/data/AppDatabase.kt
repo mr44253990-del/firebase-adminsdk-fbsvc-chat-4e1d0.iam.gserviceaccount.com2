@@ -195,7 +195,10 @@ data class CachedPost(
     val taggedUserIdsJson: String,
     val feeling: String,
     val backgroundStyle: String,
-    val textAnimation: String
+    val textAnimation: String,
+    val r2ObjectKeysJson: String,
+    val isReel: Boolean,
+    val expiresAt: Long
 ) {
     fun toPost(): Post {
         val reactionsMap = mutableMapOf<String, String>()
@@ -231,7 +234,9 @@ data class CachedPost(
             title,
             try { JSONArray(tagsJson).let { array -> (0 until array.length()).map { array.getString(it) } } } catch (_: Exception) { emptyList() },
             try { JSONArray(taggedUserIdsJson).let { array -> (0 until array.length()).map { array.getString(it) } } } catch (_: Exception) { emptyList() },
-            feeling, backgroundStyle, textAnimation
+            feeling, backgroundStyle, textAnimation,
+            try { JSONArray(r2ObjectKeysJson).let { array -> (0 until array.length()).map { array.getString(it) } } } catch (_: Exception) { emptyList() },
+            isReel, expiresAt
         )
     }
 
@@ -257,7 +262,7 @@ data class CachedPost(
                 post.text, post.imageUrl, post.audioUrl, post.videoUrl, post.timestamp,
                 reactionsObj.toString(), commentsArr.toString(), post.viewsCount, post.isPrivate,
                 post.title, JSONArray(post.tags).toString(), JSONArray(post.taggedUserIds).toString(), post.feeling,
-                post.backgroundStyle, post.textAnimation
+                post.backgroundStyle, post.textAnimation, JSONArray(post.r2ObjectKeys).toString(), post.isReel, post.expiresAt
             )
         }
     }
@@ -452,7 +457,7 @@ interface CacheDao {
         CachedGroupMessage::class,
         CachedActivityNotification::class
     ],
-    version = 5,
+    version = 6,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -478,6 +483,13 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE cached_messages ADD COLUMN remoteVoiceUrl TEXT")
             }
         }
+        private val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE cached_posts ADD COLUMN r2ObjectKeysJson TEXT NOT NULL DEFAULT '[]'")
+                db.execSQL("ALTER TABLE cached_posts ADD COLUMN isReel INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE cached_posts ADD COLUMN expiresAt INTEGER NOT NULL DEFAULT 0")
+            }
+        }
 
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
@@ -485,7 +497,7 @@ abstract class AppDatabase : RoomDatabase() {
                     context.applicationContext,
                     AppDatabase::class.java,
                     "firechat_offline_cache_db"
-                ).addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+                ).addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
                     .fallbackToDestructiveMigration()
                     .build()
                 INSTANCE = instance

@@ -81,7 +81,27 @@ firebase deploy --only database,firestore:rules
 
 Android 14+ may require the user to enable **Allow full-screen incoming calls** under Profile & appearance. Without that special access, Android correctly falls back to a high-priority CallStyle heads-up notification. Incoming calls ring with the device ringtone, expire after 30 seconds, support accept/decline, mute, speaker, reconnect state, and retain a lightweight call item in local chat history.
 
-FireChat does not run a persistent background-presence service. Foreground means online; background/closed means offline with last-seen. FCM remains responsible for messages and incoming calls. When an incoming-call FCM reaches the callee, the device changes RTDB status from `calling` to `ringing`; the caller then hears ringback. Connecting vibrates briefly, audio calls use the proximity sensor to turn the screen off near the ear, and notification messages support inline replies.
+FireChat does not run a persistent background-presence service. Foreground means online; background/closed means offline with last-seen. FCM remains responsible for messages and incoming calls. When an incoming-call FCM reaches the callee, the device changes RTDB status from `calling` to `ringing`; the caller then hears ringback. Connecting vibrates briefly, audio calls use the proximity sensor to turn the screen off near the ear, and notification messages support inline replies. Only an active call starts a temporary phone-call foreground service and CPU wake lock, keeping microphone/camera alive with the screen off; it stops immediately when the call ends.
+
+### Cloudflare R2 posts and reels
+
+Stories and chat media retain their existing storage flow. New post photos/videos and reels upload through authenticated Worker `4.2.0` directly to the `MEDIA_BUCKET` R2 binding. Configure:
+
+```text
+R2_BUCKET_NAME=firechat-media
+R2_PUBLIC_BASE_URL=https://pub-....r2.dev
+Worker binding name=MEDIA_BUCKET
+```
+
+Set the bucket public in R2, deploy `r2-lifecycle.json`, and apply the 10-day expiration lifecycle to all post/reel objects. Worker endpoints are `/media/upload`, `/media/delete`, `/media/reels/list`, and `/media/reels/search`. Firestore stores mutable metadata, likes, comments and R2 object keys; R2 stores binaries only.
+
+### App lock and notification privacy
+
+Profile settings can enable a 4–8 digit PBKDF2 PIN and optional Android biometric/device credential. When lock is enabled, notifications hide sender/message content. Long-pressing a conversation toggles mute. The lock closes on app background and reopens through PIN or biometric prompt.
+
+### Release signing
+
+GitHub Actions now restores a protected upload keystore from repository secrets and builds `assembleDebug`, signed `assembleRelease`, and `bundleRelease`. Release SHA fingerprints are stored separately in the private release-signing deliverable; add them to Firebase before using Google login in release builds.
 
 Onboarding pages support left/right swipes, animated transitions, pulsing illustrations, and button navigation. Call windows use `FLAG_SECURE`, preventing standard screenshots and screen recording during audio/video calls.
 

@@ -1,6 +1,10 @@
 package com.example.ui
 
+import android.net.Uri
 import android.widget.Toast
+import android.widget.VideoView
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -18,6 +22,9 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.outlined.AlternateEmail
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Lock
+import androidx.compose.material.icons.outlined.AddPhotoAlternate
+import androidx.compose.material.icons.outlined.VideoLibrary
+import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -26,8 +33,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.text.font.FontWeight
+import coil.compose.AsyncImage
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -61,29 +71,52 @@ fun PostComposerScreen(viewModel: ChatViewModel, onBack: () -> Unit, onPublished
     var animation by remember { mutableStateOf("none") }
     var privatePost by remember { mutableStateOf(false) }
     var publishing by remember { mutableStateOf(false) }
+    var uploading by remember { mutableStateOf(false) }
+    var isReel by remember { mutableStateOf(false) }
+    var imageMedia by remember { mutableStateOf<R2MediaResult?>(null) }
+    var videoMedia by remember { mutableStateOf<R2MediaResult?>(null) }
+
+    fun upload(uri: Uri, video: Boolean) {
+        val mime = context.contentResolver.getType(uri) ?: if (video) "video/mp4" else "image/jpeg"
+        val bytes = runCatching { context.contentResolver.openInputStream(uri)?.use { it.readBytes() } }.getOrNull()
+        if (bytes == null) { Toast.makeText(context, "Could not read media", Toast.LENGTH_SHORT).show(); return }
+        val max = if (video) 150 * 1024 * 1024 else 15 * 1024 * 1024
+        if (bytes.size > max) { Toast.makeText(context, if (video) "Video limit is 150 MB" else "Image limit is 15 MB", Toast.LENGTH_LONG).show(); return }
+        uploading = true
+        val ext = when { mime.contains("webm") -> "webm"; mime.contains("png") -> "png"; mime.contains("webp") -> "webp"; video -> "mp4"; else -> "jpg" }
+        viewModel.uploadMediaToR2(bytes, mime, if (video && isReel) "reel" else "post", ext, tags,
+            onSuccess = { result -> uploading = false; if (video) videoMedia = result else imageMedia = result },
+            onFailure = { error -> uploading = false; Toast.makeText(context, error, Toast.LENGTH_LONG).show() })
+    }
+    val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { it?.let { uri -> upload(uri, false) } }
+    val videoPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { it?.let { uri -> upload(uri, true) } }
 
     Scaffold(
         containerColor = Color.Transparent,
         topBar = {
             TopAppBar(
-                title = { Column { Text("Create text post", fontWeight = FontWeight.Bold); Text("No storage-heavy media", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) } },
+                title = { Column { Text("Create post", fontWeight = FontWeight.Bold); Text("R2 media expires in 10 days", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) } },
                 navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
                 actions = {
                     Button(
                         onClick = {
-                            if (text.isBlank()) return@Button
+                            if (text.isBlank() && imageMedia == null && videoMedia == null) return@Button
                             publishing = true
+                            val expiry = listOfNotNull(imageMedia?.expiresAt, videoMedia?.expiresAt).maxOrNull() ?: 0L
                             viewModel.createPost(
-                                text = text.trim(), imageUrl = "", audioUrl = "", videoUrl = "",
+                                text = text.trim(), imageUrl = imageMedia?.publicUrl.orEmpty(), audioUrl = "", videoUrl = videoMedia?.publicUrl.orEmpty(),
                                 isPrivate = privatePost,
                                 onComplete = { publishing = false; onPublished() },
                                 title = title.trim(),
                                 tags = tags.split(",", " ").map { it.trim().removePrefix("#") }.filter { it.isNotBlank() }.distinct(),
                                 taggedUserIds = taggedIds.toList(), feeling = feeling,
-                                backgroundStyle = style.id, textAnimation = animation
+                                backgroundStyle = style.id, textAnimation = animation,
+                                r2ObjectKeys = listOfNotNull(imageMedia?.key, videoMedia?.key),
+                                isReel = isReel && videoMedia != null,
+                                expiresAt = expiry
                             )
                         },
-                        enabled = text.isNotBlank() && !publishing,
+                        enabled = (text.isNotBlank() || imageMedia != null || videoMedia != null) && !publishing && !uploading,
                         modifier = Modifier.padding(end = 8.dp)
                     ) { if (publishing) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp) else Text("Publish") }
                 },
@@ -95,7 +128,37 @@ fun PostComposerScreen(viewModel: ChatViewModel, onBack: () -> Unit, onPublished
             Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            PostCanvasPreview(style, animation, title, text.ifBlank { "Write something meaningful…" }, feeling)
+            Card(shape = RoundedCornerShape(26.dp)) {
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Media", fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                        Text("Publish video as Reel", fontSize = 11.sp)
+                        Switch(isReel, { isReel = it }, enabled = videoMedia == null)
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        OutlinedButton(onClick = { imagePicker.launch("image/*") }, enabled = !uploading && imageMedia == null, modifier = Modifier.weight(1f)) {
+                            Icon(Icons.Outlined.AddPhotoAlternate, null); Spacer(Modifier.width(6.dp)); Text("Photo")
+                        }
+                        OutlinedButton(onClick = { videoPicker.launch("video/*") }, enabled = !uploading && videoMedia == null, modifier = Modifier.weight(1f)) {
+                            Icon(Icons.Outlined.VideoLibrary, null); Spacer(Modifier.width(6.dp)); Text("Video")
+                        }
+                    }
+                    if (uploading) { LinearProgressIndicator(Modifier.fillMaxWidth()); Text("Uploading securely to Cloudflare R2…", fontSize = 11.sp) }
+                    imageMedia?.let { media ->
+                        Box(Modifier.fillMaxWidth().height(190.dp).clip(RoundedCornerShape(20.dp))) {
+                            AsyncImage(media.publicUrl, "Post image", contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                            IconButton(onClick = { viewModel.discardR2Media(media.key); imageMedia = null }, modifier = Modifier.align(Alignment.TopEnd).background(Color.Black.copy(.5f), CircleShape)) { Icon(Icons.Outlined.Delete, "Remove", tint = Color.White) }
+                        }
+                    }
+                    videoMedia?.let { media ->
+                        Box(Modifier.fillMaxWidth().height(220.dp).clip(RoundedCornerShape(20.dp)).background(Color.Black)) {
+                            AndroidView(factory = { ctx -> VideoView(ctx).apply { setVideoPath(media.publicUrl); setOnPreparedListener { it.isLooping = true; start() } } }, modifier = Modifier.fillMaxSize())
+                            IconButton(onClick = { viewModel.discardR2Media(media.key); videoMedia = null }, modifier = Modifier.align(Alignment.TopEnd).background(Color.Black.copy(.5f), CircleShape)) { Icon(Icons.Outlined.Delete, "Remove", tint = Color.White) }
+                        }
+                    }
+                }
+            }
+            PostCanvasPreview(style, animation, title, text.ifBlank { if (imageMedia != null || videoMedia != null) "Add a caption…" else "Write something meaningful…" }, feeling)
             OutlinedTextField(
                 value = title, onValueChange = { if (it.length <= 80) title = it },
                 label = { Text("Title (optional)") }, modifier = Modifier.fillMaxWidth(), singleLine = true, shape = RoundedCornerShape(20.dp)
