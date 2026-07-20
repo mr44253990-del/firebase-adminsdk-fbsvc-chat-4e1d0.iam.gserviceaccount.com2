@@ -1,5 +1,6 @@
 package com.example.security
 
+import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -35,7 +36,7 @@ fun AppLockScreen(activity: FragmentActivity) {
         prompt.authenticate(
             BiometricPrompt.PromptInfo.Builder().setTitle("Unlock FireChat")
                 .setSubtitle("Use fingerprint, face, or device credential")
-                .setAllowedAuthenticators(BiometricPrompt.Authenticators.BIOMETRIC_STRONG or BiometricPrompt.Authenticators.DEVICE_CREDENTIAL)
+                .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG or BiometricManager.Authenticators.DEVICE_CREDENTIAL)
                 .build()
         )
     }
