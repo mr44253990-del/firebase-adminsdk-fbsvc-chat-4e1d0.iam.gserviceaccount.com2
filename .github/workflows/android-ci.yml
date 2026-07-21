@@ -9,63 +9,100 @@ on:
       - "**"
   workflow_dispatch:
 
-
 jobs:
-
   build:
-
     runs-on: ubuntu-latest
 
     steps:
-
-      - name: Checkout
+      - name: Checkout code
         uses: actions/checkout@v4
 
-
-      - name: Setup JDK 17
+      - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: 17
-
+          java-version: "17"
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
-
-      - name: Generate Wrapper
+      - name: Generate Gradle Wrapper if missing
         run: |
           if [ ! -f "./gradlew" ]; then
             gradle wrapper
           fi
           chmod +x gradlew
 
+      - name: Ensure Debug Keystore Exists
+        run: |
+          if [ ! -f debug.keystore ]; then
+            keytool -genkeypair \
+              -alias androiddebugkey \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -keystore debug.keystore \
+              -storepass android \
+              -keypass android \
+              -dname "CN=Android Debug,O=Android,C=US"
+          fi
 
-      - name: Restore Keystore
+      - name: Build Debug APK
+        run: ./gradlew assembleDebug
+
+      - name: Show SHA-1 & SHA-256 Fingerprints
+        run: |
+          echo "========================================"
+          echo "Android Debug Keystore Fingerprints"
+          echo "========================================"
+          keytool -list -v \
+            -keystore debug.keystore \
+            -alias androiddebugkey \
+            -storepass android \
+            -keypass android | grep -E "SHA1:|SHA-1:|SHA256:|SHA-256:"
+          echo "========================================"
+
+      - name: Upload Debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-debug-apk
+          path: app/build/outputs/apk/debug/*.apk
+
+      - name: Restore Release Keystore
+        if: github.event_name != 'pull_request'
         env:
           RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
         run: |
+          test -n "$RELEASE_KEYSTORE_BASE64"
           echo "$RELEASE_KEYSTORE_BASE64" | base64 --decode > release-upload.jks
 
+      - name: Show Release SHA-1 and SHA-256 Fingerprints
+        if: github.event_name != 'pull_request'
+        env:
+          RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+        run: |
+          echo "========================================"
+          echo "Android Release Keystore Fingerprints"
+          echo "========================================"
+          keytool -list -v \
+            -keystore release-upload.jks \
+            -alias "$RELEASE_KEY_ALIAS" \
+            -storepass "$RELEASE_STORE_PASSWORD" | grep -E "SHA1:|SHA-1:|SHA256:|SHA-256:"
+          echo "========================================"
 
-      - name: Build arm64 Release APK
+      - name: Build Signed Release APK
+        if: github.event_name != 'pull_request'
         env:
           KEYSTORE_PATH: ${{ github.workspace }}/release-upload.jks
           RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
           RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
           RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+        run: ./gradlew assembleRelease
 
-        run: |
-          ./gradlew assembleRelease
-
-
-      - name: Verify APK ABI
-        run: |
-          unzip -l app/build/outputs/apk/release/*.apk | grep arm64
-
-
-      - name: Upload APK
+      - name: Upload Signed Release APK
+        if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v4
         with:
-          name: arm64-release-apk
+          name: app-release-apk
           path: app/build/outputs/apk/release/*.apk
