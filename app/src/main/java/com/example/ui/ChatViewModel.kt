@@ -2767,7 +2767,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val groupRef = FirebaseFirestore.getInstance().collection("groups").document(groupId)
         groupRef.collection("messages").document(messageId).set(msg)
             .addOnSuccessListener {
-                val lastMsgText = if (fileUrl != null) "📎 ${fileName ?: "File"}" else if (voiceUrl != null) "🎙️ Voice message" else if (imageUrl != null) "📷 Image attachment" else text
+                val lastMsgText = if (voiceUrl != null) "🎙️ Voice message" else if (imageUrl != null) "📷 Image attachment" else text
                 groupRef.update("lastMessage", "${user.name}: $lastMsgText")
                 groupRef.get().addOnSuccessListener { groupDoc ->
                     val members = (groupDoc.get("members") as? List<*>)?.mapNotNull { it as? String }.orEmpty()
