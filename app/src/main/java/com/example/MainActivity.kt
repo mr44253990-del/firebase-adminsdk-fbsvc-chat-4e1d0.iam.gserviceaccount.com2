@@ -1,10 +1,11 @@
 package com.example
 
 import android.os.Bundle
-import androidx.activity.ComponentActivity
+import androidx.fragment.app.FragmentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Scaffold
@@ -18,13 +19,23 @@ import androidx.navigation.compose.rememberNavController
 import androidx.compose.ui.platform.LocalContext
 import com.example.ui.AuthScreen
 import com.example.ui.ChatScreen
+import com.example.call.CallScreen
+import com.example.call.CallEngine
 import com.example.ui.ChatViewModel
 import com.example.ui.HomeScreen
 import com.example.ui.GroupChatScreen
 import com.example.ui.OnboardingScreen
+import com.example.ui.PostComposerScreen
+import com.example.ui.SplashScreen
+import com.example.ui.UserProfileScreen
 import com.example.ui.isOnboardingCompleted
 import com.example.ui.theme.MyApplicationTheme
+import com.example.ui.theme.PremiumBackground
+import com.example.video.VideoPlayerManager
+import com.example.security.AppLockManager
+import com.example.security.AppLockScreen
 import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.database.FirebaseDatabase
 import com.google.firebase.firestore.FirebaseFirestore
 import com.example.data.User
 import coil.Coil
@@ -32,19 +43,42 @@ import coil.ImageLoader
 import coil.disk.DiskCache
 import coil.memory.MemoryCache
 
-class MainActivity : ComponentActivity() {
+@androidx.media3.common.util.UnstableApi
+class MainActivity : FragmentActivity() {
 
     private val viewModel: ChatViewModel by viewModels()
 
+    override fun onStart() {
+        super.onStart()
+        FirebaseAuth.getInstance().currentUser?.uid?.let { uid ->
+            FirebaseDatabase.getInstance().getReference("status").child(uid)
+                .setValue(mapOf("isOnline" to true, "lastActive" to System.currentTimeMillis(), "foreground" to true, "onlineSource" to "foreground"))
+        }
+    }
+
+    override fun onStop() {
+        FirebaseAuth.getInstance().currentUser?.uid?.let { uid ->
+            FirebaseDatabase.getInstance().getReference("status").child(uid)
+                .setValue(mapOf("isOnline" to false, "lastActive" to System.currentTimeMillis(), "foreground" to false, "onlineSource" to "background"))
+        }
+        VideoPlayerManager.pause()
+        AppLockManager.lock(this)
+        super.onStop()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
+        installSplashScreen()
         super.onCreate(savedInstanceState)
+        AppLockManager.initialize(this)
         enableEdgeToEdge()
 
         // Configure standard Coil cache so images (like profile pics) are cached aggressively offline
         val imageLoader = ImageLoader.Builder(this)
             .memoryCache {
                 MemoryCache.Builder(this)
-                    .maxSizePercent(0.25)
+                    // Avoid letting image cache consume a quarter of RAM on
+                    // entry-level devices while keeping recent avatars warm.
+                    .maxSizePercent(0.15)
                     .build()
             }
             .diskCache {
@@ -62,13 +96,19 @@ class MainActivity : ComponentActivity() {
             val currentTheme by viewModel.themeState.collectAsState()
             
             MyApplicationTheme(themeType = currentTheme) {
+                val appLocked by AppLockManager.locked.collectAsState()
+                if (appLocked) {
+                    AppLockScreen(this@MainActivity)
+                } else {
                 val navController = rememberNavController()
                 val activeRecipient by viewModel.activeRecipientUser.collectAsState()
                 val activeGroup by viewModel.activeGroup.collectAsState()
+                val selectedProfile by viewModel.selectedProfile.collectAsState()
+                val callState by CallEngine.state.collectAsState()
                 val context = LocalContext.current
 
                 // Check starting destination depending on whether onboarding has been completed and if a user is already signed in
-                val startDestination = remember {
+                val destinationAfterSplash = remember {
                     try {
                         if (!isOnboardingCompleted(context)) {
                             "onboarding"
@@ -82,12 +122,20 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
-                Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+                PremiumBackground {
                     NavHost(
                         navController = navController,
-                        startDestination = startDestination,
+                        startDestination = "splash",
                         modifier = Modifier.fillMaxSize()
                     ) {
+                        composable("splash") {
+                            SplashScreen {
+                                navController.navigate(destinationAfterSplash) {
+                                    popUpTo("splash") { inclusive = true }
+                                }
+                            }
+                        }
+
                         composable("onboarding") {
                             OnboardingScreen(
                                 onFinished = {
@@ -121,6 +169,11 @@ class MainActivity : ComponentActivity() {
                                     viewModel.selectRecipient(recipient)
                                     navController.navigate("chat")
                                 },
+                                onProfileSelected = { user ->
+                                    viewModel.selectProfile(user)
+                                    navController.navigate("profile")
+                                },
+                                onCreatePost = { navController.navigate("compose_post") },
                                 onGroupSelected = { group ->
                                     viewModel.selectGroup(group)
                                     navController.navigate("group_chat")
@@ -133,6 +186,44 @@ class MainActivity : ComponentActivity() {
                             )
                         }
 
+                        composable("compose_post") {
+                            PostComposerScreen(
+                                viewModel = viewModel,
+                                onBack = { navController.popBackStack() },
+                                onPublished = { navController.popBackStack() }
+                            )
+                        }
+
+                        composable("profile") {
+                            selectedProfile?.let { profile ->
+                                UserProfileScreen(
+                                    viewModel = viewModel,
+                                    user = profile,
+                                    onBack = { navController.popBackStack() },
+                                    onMessage = {
+                                        viewModel.selectRecipient(profile)
+                                        navController.navigate("chat")
+                                    }
+                                )
+                            }
+                        }
+
+                        composable("call") {
+                            CallScreen(
+                                callId = callState.callId,
+                                remoteUid = callState.remoteUid,
+                                remoteName = callState.remoteName,
+                                remoteImage = callState.remoteImage,
+                                incoming = false,
+                                video = callState.video,
+                                initiallyAccepted = true,
+                                onEndCall = {
+                                    activeRecipient?.let { viewModel.endCall(it, callState.callId) } ?: CallEngine.end()
+                                },
+                                onClose = { navController.popBackStack() }
+                            )
+                        }
+
                         composable("chat") {
                             activeRecipient?.let { recipient ->
                                 ChatScreen(
@@ -140,6 +231,16 @@ class MainActivity : ComponentActivity() {
                                     recipient = recipient,
                                     onBack = {
                                         navController.popBackStack()
+                                    },
+                                    onProfile = {
+                                        viewModel.selectProfile(recipient)
+                                        navController.navigate("profile")
+                                    },
+                                    onCall = {
+                                        viewModel.startAudioCall(recipient) { navController.navigate("call") }
+                                    },
+                                    onVideoCall = {
+                                        viewModel.startVideoCall(recipient) { navController.navigate("call") }
                                     }
                                 )
                             }
@@ -160,8 +261,12 @@ class MainActivity : ComponentActivity() {
 
                 // Process deep link if launched via push notification click
                 LaunchedEffect(intent) {
+                    val notificationType = intent?.getStringExtra("notificationType") ?: "message"
                     val senderId = intent?.getStringExtra("senderId")
-                    if (!senderId.isNullOrBlank()) {
+                    if (notificationType != "message") {
+                        viewModel.requestOpenActivityCenter()
+                        navController.navigate("home") { launchSingleTop = true }
+                    } else if (!senderId.isNullOrBlank()) {
                         // Fetch recipient user profile from Firestore and open chat
                         FirebaseFirestore.getInstance().collection("users")
                             .document(senderId)
@@ -179,6 +284,7 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
                     }
+                }
                 }
             }
         }

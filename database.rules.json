@@ -1,0 +1,47 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "config": {
+      ".read": "auth != null",
+      "app_settings": { ".write": "auth != null" },
+      "flagship": { ".write": "auth != null && auth.token.email === 'mr4425390@gmail.com'" }
+    },
+    "status": {
+      ".read": "auth != null",
+      "$uid": { ".write": "auth != null && auth.uid === $uid" }
+    },
+    "typing": {
+      ".read": "auth != null",
+      "$chatId": { "$uid": { ".write": "auth != null && auth.uid === $uid" } }
+    },
+    "unread_counts": {
+      ".read": "auth != null",
+      ".write": "auth != null"
+    },
+    "notifications": {
+      ".read": "auth != null",
+      ".write": "auth != null"
+    },
+    "delivery_receipts": {
+      ".read": "auth != null",
+      ".write": "auth != null"
+    },
+    "chat_settings": {
+      ".read": "auth != null",
+      ".write": "auth != null"
+    },
+    "chats": {
+      ".read": "auth != null",
+      ".write": "auth != null",
+      "$chatId": { "messages": { ".indexOn": ["timestamp"] } }
+    },
+    "calls": {
+      "$callId": {
+        ".read": "auth != null && (data.child('callerId').val() === auth.uid || data.child('calleeId').val() === auth.uid)",
+        ".write": "auth != null && ((!data.exists() && newData.child('callerId').val() === auth.uid) || data.child('callerId').val() === auth.uid || data.child('calleeId').val() === auth.uid)",
+        ".indexOn": ["status", "createdAt", "expiresAt"]
+      }
+    }
+  }
+}

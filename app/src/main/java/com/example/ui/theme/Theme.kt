@@ -5,139 +5,122 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Shapes
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 
-// Glassmorphism layout helper modifier
+/** Translucent surface used throughout the app. Real device content remains visible below it. */
 @Composable
 fun Modifier.glassmorphic(
-    isDark: Boolean = true,
+    isDark: Boolean = isSystemInDarkTheme(),
     backgroundColor: Color? = null,
     borderColor: Color? = null,
-    shape: androidx.compose.ui.graphics.Shape = RoundedCornerShape(16.dp)
+    shape: Shape = RoundedCornerShape(28.dp)
 ): Modifier {
-    val finalBg = backgroundColor ?: if (isDark) Color.Black.copy(alpha = 0.35f) else Color.White.copy(alpha = 0.65f)
-    val finalBorder = borderColor ?: if (isDark) Color.White.copy(alpha = 0.12f) else Color.Black.copy(alpha = 0.08f)
-    return this
-        .background(finalBg, shape)
-        .border(1.dp, finalBorder, shape)
+    val background = backgroundColor ?: if (isDark) {
+        Color(0xFF151824).copy(alpha = .78f)
+    } else {
+        Color.White.copy(alpha = .72f)
+    }
+    val border = borderColor ?: if (isDark) Color.White.copy(alpha = .13f) else Color.White.copy(alpha = .88f)
+    return shadow(18.dp, shape, ambientColor = Color.Black.copy(alpha = .16f), spotColor = Color.Black.copy(alpha = .10f))
+        .background(background, shape)
+        .border(1.dp, border, shape)
 }
 
-private val DarkColorScheme =
-    darkColorScheme(
-        primary = Purple80,
-        secondary = PurpleGrey80,
-        tertiary = Pink80,
-        background = Color(0xFF000000),      // Pure AMOLED Black
-        surface = Color(0xFF0C0C0C),         // Deep Slate Dark Grey
-        surfaceVariant = Color(0xFF161616),  // Card surfaces
-        onPrimary = Color.Black,
-        onBackground = Color.White,
-        onSurface = Color.White,
-        onSurfaceVariant = Color(0xFFE0E0E0)
-    )
-
-private val LightColorScheme =
-    lightColorScheme(
-        primary = Purple40,
-        secondary = PurpleGrey40,
-        tertiary = Pink40,
-        background = Color(0xFFF3F4F6),      // Premium light grey
-        surface = Color.White,
-        surfaceVariant = Color(0xFFF9FAFB),
-        onPrimary = Color.White,
-        onBackground = Color.Black,
-        onSurface = Color.Black,
-        onSurfaceVariant = Color(0xFF374151)
-    )
-
-// Custom Themes
-
-// 1. Chocolate Cosmic Theme
-private val ChocolateDarkColorScheme = darkColorScheme(
-    primary = Color(0xFFD7CCC8),       // Cream/Warm milk
-    secondary = Color(0xFF8D6E63),     // Light chocolate
-    tertiary = Color(0xFFFFCC80),      // Caramel / Golden Orange
-    background = Color(0xFF0F0705),    // True Chocolate AMOLED dark background
-    surface = Color(0xFF1C0D0A),       // Roasted Cocoa
-    surfaceVariant = Color(0xFF2C1612),  // Cocoa-grey cards
-    onPrimary = Color(0xFF3E2723),     // Bitter cacao
-    onBackground = Color(0xFFEFEBE9),  // Creamy white
-    onSurface = Color(0xFFF5F5F5),     // Pure silk cream
-    onSurfaceVariant = Color(0xFFD7CCC8)
+private val PremiumShapes = Shapes(
+    extraSmall = RoundedCornerShape(12.dp),
+    small = RoundedCornerShape(16.dp),
+    medium = RoundedCornerShape(22.dp),
+    large = RoundedCornerShape(28.dp),
+    extraLarge = RoundedCornerShape(32.dp)
 )
 
-// 2. Ocean Breeze Theme
-private val OceanDarkColorScheme = darkColorScheme(
-    primary = Color(0xFF80DEEA),       // Soft Cyan
-    secondary = Color(0xFF26A69A),     // Sea Teal
-    tertiary = Color(0xFF80CBC4),      // Aquamarine
-    background = Color(0xFF000E14),    // Pure Ocean AMOLED Abyss background
-    surface = Color(0xFF001F2D),       // Abyss Navy Blue
-    surfaceVariant = Color(0xFF002D40),  // Deep Water cards
-    onPrimary = Color(0xFF004D40),     // Dark Forest Teal
-    onBackground = Color(0xFFE0F7FA),  // Coral foam
-    onSurface = Color(0xFFE0F2F1),     // Aqua white
-    onSurfaceVariant = Color(0xFFB2EBF2)
+private val LightColors = lightColorScheme(
+    primary = AuroraViolet,
+    onPrimary = Color.White,
+    primaryContainer = Color(0xFFE9E3FF),
+    onPrimaryContainer = Color(0xFF24134F),
+    secondary = AuroraBlue,
+    onSecondary = Color.White,
+    secondaryContainer = Color(0xFFDDEAFF),
+    onSecondaryContainer = Color(0xFF092A58),
+    tertiary = AuroraPink,
+    background = Mist50,
+    onBackground = Color(0xFF171823),
+    surface = Color.White,
+    onSurface = Color(0xFF191A23),
+    surfaceVariant = Mist100,
+    onSurfaceVariant = Mist700,
+    outline = Color(0xFFBFC3D2),
+    outlineVariant = Color(0xFFDDE0EA)
 )
 
-// 3. Forest Emerald Theme
-private val ForestDarkColorScheme = darkColorScheme(
-    primary = Color(0xFFA5D6A7),       // Sage green
-    secondary = Color(0xFF66BB6A),     // Leaf green
-    tertiary = Color(0xFFC8E6C9),      // Mint sprig
-    background = Color(0xFF050C07),    // Pure Forest AMOLED green-black
-    surface = Color(0xFF0C1D13),       // Primeval forest deep green
-    surfaceVariant = Color(0xFF152E1E),  // Moss stone cards
-    onPrimary = Color(0xFF1B5E20),     // Dark pine
-    onBackground = Color(0xFFE8F5E9),  // Light jade
-    onSurface = Color(0xFFE8F5E9),     // Soft sage white
-    onSurfaceVariant = Color(0xFFC8E6C9)
+private val DarkColors = darkColorScheme(
+    primary = Color(0xFFBEADFF),
+    onPrimary = Color(0xFF281060),
+    primaryContainer = Color(0xFF38246E),
+    onPrimaryContainer = Color(0xFFE9E1FF),
+    secondary = Color(0xFF9FC7FF),
+    onSecondary = Color(0xFF00315F),
+    secondaryContainer = Color(0xFF163C68),
+    onSecondaryContainer = Color(0xFFD7E7FF),
+    tertiary = Color(0xFFFFAFCE),
+    background = Ink900,
+    onBackground = Color(0xFFF2F1FA),
+    surface = Color(0xFF141720),
+    onSurface = Color(0xFFF2F1FA),
+    surfaceVariant = Ink800,
+    onSurfaceVariant = Color(0xFFC8C9D5),
+    outline = Color(0xFF8D8E9C),
+    outlineVariant = Color(0xFF343744)
 )
 
-// 4. Midnight Violet Theme
-private val VioletDarkColorScheme = darkColorScheme(
-    primary = Color(0xFFE1BEE7),       // Soft Lilac
-    secondary = Color(0xFFAB47BC),     // Neon amethyst
-    tertiary = Color(0xFFEA80FC),      // Brilliant violet magenta
-    background = Color(0xFF040108),    // Pure Velvet AMOLED black-purple
-    surface = Color(0xFF0D0314),       // Velvet black-purple
-    surfaceVariant = Color(0xFF1B0A26),  // Deep nebula orchid cards
-    onPrimary = Color(0xFF4A148C),     // Pure royal purple
-    onBackground = Color(0xFFF3E5F5),  // Soft Lavender dust
-    onSurface = Color(0xFFF5F5F5),     // Celestial violet
-    onSurfaceVariant = Color(0xFFE1BEE7)
+private val AmoledColors = DarkColors.copy(
+    background = Color.Black,
+    surface = Color(0xFF090A0F),
+    surfaceVariant = Color(0xFF11131B)
+)
+
+private fun themedDark(primary: Color, secondary: Color, background: Color, surface: Color) = darkColorScheme(
+    primary = primary, secondary = secondary, tertiary = AuroraPink,
+    background = background, surface = surface, surfaceVariant = surface.copy(alpha = .92f),
+    onPrimary = Color(0xFF111218), onBackground = Color(0xFFF6F3FA),
+    onSurface = Color(0xFFF6F3FA), onSurfaceVariant = Color(0xFFD4D0DA)
 )
 
 @Composable
 fun MyApplicationTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
-    dynamicColor: Boolean = false,
-    themeType: String = "default", // default, chocolate, ocean, forest, midnight
+    dynamicColor: Boolean = true,
+    themeType: String = "default",
     content: @Composable () -> Unit,
 ) {
-    val colorScheme = when (themeType.lowercase()) {
-        "chocolate" -> ChocolateDarkColorScheme
-        "ocean" -> OceanDarkColorScheme
-        "forest" -> ForestDarkColorScheme
-        "midnight" -> VioletDarkColorScheme
-        else -> {
-            if (darkTheme) DarkColorScheme else LightColorScheme
-        }
+    val context = LocalContext.current
+    val mode = themeType.lowercase()
+    val colors = when (mode) {
+        "light" -> LightColors
+        "dark" -> DarkColors
+        "amoled" -> AmoledColors
+        "dynamic" -> if (dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+        } else if (darkTheme) DarkColors else LightColors
+        "chocolate" -> themedDark(Color(0xFFE8C7B5), Color(0xFFC89578), Color(0xFF100805), Color(0xFF21120D))
+        "ocean" -> themedDark(Color(0xFF83E6F2), Color(0xFF68D6C9), Color(0xFF001017), Color(0xFF062532))
+        "forest" -> themedDark(Color(0xFFA7E3AE), Color(0xFF75D59A), Color(0xFF050D08), Color(0xFF102319))
+        "midnight" -> themedDark(Color(0xFFE3B9FF), Color(0xFFB996FF), Color(0xFF07030D), Color(0xFF190D28))
+        else -> if (darkTheme) DarkColors else LightColors
     }
 
-    MaterialTheme(
-        colorScheme = colorScheme,
-        typography = Typography,
-        content = content
-    )
+    MaterialTheme(colorScheme = colors, typography = Typography, shapes = PremiumShapes, content = content)
 }

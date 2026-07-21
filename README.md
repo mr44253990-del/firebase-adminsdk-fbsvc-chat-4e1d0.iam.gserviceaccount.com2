@@ -1,5 +1,116 @@
 # FireChat (ফায়ারচ্যাট) Setup & Configuration Guide
 
+## Premium Aurora UI
+
+The app now uses a unified **Glassmorphism + Material 3** design system across onboarding, authentication, feed, stories, direct chat, group chat, admin, profile, dialogs, cards, and navigation.
+
+- Aurora gradient canvas with translucent glass surfaces and soft ambient depth
+- Large 24–32dp corners, pill controls, refined type hierarchy, and accessible touch targets
+- Material You wallpaper colors on Android 12+ through the **Dynamic** appearance mode
+- Explicit **Light**, **Dark**, and true **AMOLED** appearance modes plus themed palettes
+- Edge-to-edge layouts, animated state transitions, premium loading/disabled states, and consistent component styling
+
+Choose an appearance from **Profile & appearance → Choose Application Theme**.
+
+### Social system configuration
+
+1. Enable **Google** in Firebase Authentication → Sign-in providers and add the app's SHA-1/SHA-256 fingerprints.
+2. Replace/publish the included `firestore.rules` before testing activity notifications, friend requests, message requests, profiles, posts, stories, or groups.
+3. Notifications use Firestore as a short-lived delivery queue. The Android client writes each received item to Room and then deletes the remote notification document, keeping history locally without growing Firestore indefinitely.
+4. Friend and message request queries use a single `receiverId` equality filter, so no composite Firestore index is required.
+5. Google provides display name, email, and profile image. Birthday is not included in the standard Google ID token; users can complete it safely from **Profile & appearance**.
+6. Redeploy `cloudflare-worker.js` after this update. The authenticated sender reads the recipient's `users/{uid}.fcmToken` routing field and includes that token with activity type, target ID, sender name, and public profile image URL. Worker `3.2.0` performs no Firestore lookup; it validates the caller's Firebase ID token and sends directly through FCM v1.
+
+### Direct FCM v1 gateway — no n8n
+
+FireChat no longer requires an n8n webhook. The Android client calls the included Cloudflare Worker directly. The Worker exchanges its encrypted service-account credential for an OAuth token and calls FCM v1.
+
+1. Revoke every service-account key ever pasted into chat, source code, an APK, or a public repository.
+2. Generate a fresh Firebase service-account JSON key.
+3. In Cloudflare Worker → Settings → Variables, create an **encrypted secret** named `FIREBASE_SERVICE_ACCOUNT` and paste the fresh JSON there. Never place it in Android resources, BuildConfig, `.env`, `google-services.json`, or Git.
+4. Deploy the current `cloudflare-worker.js`. It sends data-only high-priority messages so Android applies separate Message, Request, and Activity channels with custom vibration and profile imagery.
+5. FireChat defaults to `https://solitary-hill-dcdc.mr44253990.workers.dev/`. The Admin Service panel can run `/health`, save a replacement URL, and send a self-test notification.
+
+A safe deployment helper is included:
+
+```bash
+export CLOUDFLARE_ACCOUNT_ID='your-account-id'
+export CLOUDFLARE_API_TOKEN='a Workers Scripts:Edit token'
+export FIREBASE_SERVICE_ACCOUNT_FILE='/absolute/path/to/a-fresh-service-account.json'
+./deploy-firechat-worker.sh
+```
+
+The new `firechat-fcm-worker.js` supports public health diagnostics and authenticated POST delivery. Use `./test-firechat-worker.sh` for cURL-based health/authenticated tests. Never put either credential in these scripts.
+
+The Google button first uses `GetSignInWithGoogleOption` and falls back to `GetGoogleIdOption` for OEM Credential Manager compatibility. The repository now uses one stable debug keystore so CI fingerprints no longer change on every build. Add these fingerprints to Firebase Android app `com.ebchat`, enable Authentication → Google, then download a fresh `google-services.json` (it must contain an Android OAuth `client_type: 1` entry):
+
+```text
+Debug SHA-1:   92:1B:62:30:48:C5:93:25:09:A5:F7:F9:05:95:83:90:9A:92:AF:F0
+Debug SHA-256: 73:4D:2E:06:28:37:1E:DB:E5:D5:AD:1C:86:6D:CE:99:72:6E:E7:BC:D4:9B:0B:E4:4E:4B:DF:B6:F1:54:43:4F
+```
+
+Release SHA values must also be added from the real release keystore. The currently checked-in `google-services.json` has only Web OAuth `client_type: 3`, so Firebase Console configuration and a fresh download are mandatory.
+
+### Text-only posts
+
+Feed posts are text-only and use a dedicated composer route. Users can choose predefined animated gradient backgrounds, feelings, hashtags, people tags, privacy, and clickable HTTPS links. The ViewModel forcibly clears image/audio/video fields even if an old client attempts to submit them. Story and chat media remain supported. Expired 12-hour stories delete both Firestore metadata and their Supabase image/video objects.
+
+### 1:1 WebRTC audio calls
+
+Audio calls use RTDB for offer/answer/ICE signaling and Cloudflare Realtime TURN only when direct P2P connectivity fails. Worker `4.0.0` exposes an authenticated `/turn-credentials` endpoint and generates one-hour short-lived credentials; long-lived TURN secrets never enter the APK.
+
+Create fresh Cloudflare secrets (rotate every value ever pasted into chat):
+
+```text
+TURN_TOKEN_ID=<fresh TURN key ID>
+TURN_API_TOKEN=<fresh TURN API token>
+CALLS_APP_ID=<fresh Cloudflare Realtime SFU app ID>
+CALLS_APP_TOKEN=<fresh Cloudflare Realtime SFU API token>
+```
+
+Worker `4.1.0` exposes authenticated SFU proxy routes for session creation, local/remote tracks, renegotiation, and track closing. The health endpoint reports `sfuConfigured`; no long-lived Calls/TURN token is embedded in Android. Incoming-call sound uses an explicit single ringtone controller and the silent `firechat_calls_v3` channel, preventing both lock-screen silence and ringtone continuing after Accept/Decline.
+
+Deploy with:
+
+```bash
+export TURN_TOKEN_ID='fresh-id'
+export TURN_API_TOKEN='fresh-token'
+./deploy-firechat-worker.sh
+firebase deploy --only database,firestore:rules
+```
+
+Android 14+ may require the user to enable **Allow full-screen incoming calls** under Profile & appearance. Without that special access, Android correctly falls back to a high-priority CallStyle heads-up notification. Incoming calls ring with the device ringtone, expire after 30 seconds, support accept/decline, mute, speaker, reconnect state, and retain a lightweight call item in local chat history.
+
+FireChat does not run a persistent background-presence service. Foreground means online; background/closed means offline with last-seen. FCM remains responsible for messages and incoming calls. When an incoming-call FCM reaches the callee, the device changes RTDB status from `calling` to `ringing`; the caller then hears ringback. Connecting vibrates briefly, audio calls use the proximity sensor to turn the screen off near the ear, and notification messages support inline replies. Only an active call starts a temporary phone-call foreground service and CPU wake lock, keeping microphone/camera alive with the screen off; it stops immediately when the call ends.
+
+### Cloudflare R2 posts and reels
+
+Stories and chat media retain their existing storage flow. New post photos/videos and reels upload through authenticated Worker `4.2.0` directly to the `MEDIA_BUCKET` R2 binding. Configure:
+
+```text
+R2_BUCKET_NAME=firechat-media
+R2_PUBLIC_BASE_URL=https://pub-....r2.dev
+Worker binding name=MEDIA_BUCKET
+```
+
+Set the bucket public in R2, deploy `r2-lifecycle.json`, and apply the 10-day expiration lifecycle to all post/reel objects. Worker endpoints are `/media/upload`, `/media/delete`, `/media/reels/list`, and `/media/reels/search`. Firestore stores mutable metadata, likes, comments and R2 object keys; R2 stores binaries only.
+
+### App lock and notification privacy
+
+Profile settings can enable a 4–8 digit PBKDF2 PIN and optional Android biometric/device credential. When lock is enabled, notifications hide sender/message content. Long-pressing a conversation toggles mute. The lock closes on app background and reopens through PIN or biometric prompt.
+
+### Release signing
+
+GitHub Actions now restores a protected upload keystore from repository secrets and builds `assembleDebug`, signed `assembleRelease`, and `bundleRelease`. Release SHA fingerprints are stored separately in the private release-signing deliverable; add them to Firebase before using Google login in release builds.
+
+Onboarding pages support left/right swipes, animated transitions, pulsing illustrations, and button navigation. Call windows use `FLAG_SECURE`, preventing standard screenshots and screen recording during audio/video calls.
+
+### Ephemeral chat delivery
+
+Direct messages use RTDB as a delivery envelope and Room as device-owned history. The sender stores a local copy immediately. When the receiver opens the conversation, FireChat stores the incoming text/image/voice metadata locally, writes a lightweight seen receipt for the sender, and removes the delivered message envelope from RTDB. Receipt documents are removed after the sender caches the seen state. A non-destructive Room `2 → 3` migration preserves existing local conversations during app updates.
+
+Remote Supabase media files are intentionally not deleted during acknowledgement. Removing a media object before a verified local file download would break cached image and voice messages. A future server-side retention job may remove media only after both devices submit durable-download acknowledgements.
+
 স্বাগতম! **FireChat** হলো একটি রিয়েল-টাইম চ্যাটিং অ্যান্ড্রয়েড অ্যাপ্লিকেশন যা Jetpack Compose, Kotlin এবং Firebase (Authentication, Firestore, Realtime Database) ব্যবহার করে তৈরি করা হয়েছে। ব্যাকগ্রাউন্ডে এবং অ্যাপ বন্ধ থাকা অবস্থায়ও নোটিফিকেশন পাঠাতে এটি **Cloudflare Workers** এবং **Firebase Cloud Messaging (FCM) v1 API** এর সফল সংযোগ ব্যবহার করে।
 
 এই নির্দেশিকায় সম্পূর্ণ সেটআপ প্রসেস (ফায়ারবেস কনফিগারেশন থেকে শুরু করে ক্লাউডফ্লেয়ার ওয়ার্কার ডিপ্লয়মেন্ট) বিস্তারিত আলোচনা করা হলো।

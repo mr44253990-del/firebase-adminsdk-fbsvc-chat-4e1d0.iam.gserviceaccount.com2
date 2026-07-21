@@ -62,6 +62,8 @@ fun GroupChatScreen(
     val context = LocalContext.current
     val currentUserId = FirebaseAuth.getInstance().currentUser?.uid ?: ""
     val messages by viewModel.groupMessagesState.collectAsState()
+    val allUsers by viewModel.usersState.collectAsState()
+    var showAddMembers by remember { mutableStateOf(false) }
 
     var messageText by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
@@ -239,6 +241,7 @@ fun GroupChatScreen(
     )
 
     Scaffold(
+        containerColor = Color.Transparent,
         contentWindowInsets = androidx.compose.foundation.layout.WindowInsets(0, 0, 0, 0),
         topBar = {
             TopAppBar(
@@ -285,6 +288,11 @@ fun GroupChatScreen(
                 navigationIcon = {
                     IconButton(onClick = onBack, modifier = Modifier.testTag("group_chat_back_button")) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = MaterialTheme.colorScheme.primary)
+                    }
+                },
+                actions = {
+                    IconButton(onClick = { showAddMembers = true }) {
+                        Icon(Icons.Default.PersonAdd, contentDescription = "Add members", tint = MaterialTheme.colorScheme.primary)
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -353,7 +361,7 @@ fun GroupChatScreen(
                             ) {
                                 Surface(
                                     color = MaterialTheme.colorScheme.primary.copy(alpha = 0.08f),
-                                    shape = RoundedCornerShape(12.dp)
+                                    shape = RoundedCornerShape(18.dp)
                                 ) {
                                     Text(
                                         text = msg.text,
@@ -418,7 +426,7 @@ fun GroupChatScreen(
                         modifier = Modifier
                             .weight(1f)
                             .testTag("group_message_input"),
-                        shape = RoundedCornerShape(20.dp),
+                        shape = RoundedCornerShape(28.dp),
                         maxLines = 4,
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedTextColor = MaterialTheme.colorScheme.onSurface,
@@ -466,6 +474,50 @@ fun GroupChatScreen(
             }
         }
     }
+
+    if (showAddMembers) {
+        val selectable = allUsers.filterNot { group.members.contains(it.uid) }
+        val selected = remember { mutableStateListOf<String>() }
+        AlertDialog(
+            onDismissRequest = { showAddMembers = false },
+            title = { Text("Add group members", fontWeight = FontWeight.Bold) },
+            text = {
+                if (selectable.isEmpty()) {
+                    Text("Everyone is already in this group.")
+                } else {
+                    LazyColumn(Modifier.heightIn(max = 380.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        items(selectable, key = { it.uid }) { user ->
+                            val checked = selected.contains(user.uid)
+                            Row(
+                                Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp))
+                                    .clickable { if (checked) selected.remove(user.uid) else selected.add(user.uid) }
+                                    .background(if (checked) MaterialTheme.colorScheme.primaryContainer else Color.Transparent)
+                                    .padding(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Checkbox(checked, null)
+                                Spacer(Modifier.width(8.dp))
+                                Text(user.name)
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        viewModel.addGroupMembers(group, selected.toList()) { ok ->
+                            Toast.makeText(context, if (ok) "Members added" else "Could not add members", Toast.LENGTH_SHORT).show()
+                        }
+                        showAddMembers = false
+                    },
+                    enabled = selected.isNotEmpty()
+                ) { Text("Add") }
+            },
+            dismissButton = { TextButton(onClick = { showAddMembers = false }) { Text("Cancel") } }
+        )
+    }
+
 }
 
 @Composable
@@ -546,7 +598,7 @@ fun GroupMessageBubbleItem(msg: GroupMessage, isSentByMe: Boolean, onDeleteSelec
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(160.dp)
-                                .clip(RoundedCornerShape(8.dp)),
+                                .clip(RoundedCornerShape(14.dp)),
                             contentScale = ContentScale.Crop
                         )
                         Spacer(modifier = Modifier.height(4.dp))
@@ -613,7 +665,7 @@ fun GroupAudioPlayerItem(voiceUrl: String, durationSec: Int) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
-            .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f), RoundedCornerShape(10.dp))
+            .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f), RoundedCornerShape(16.dp))
             .padding(horizontal = 10.dp, vertical = 6.dp)
     ) {
         IconButton(

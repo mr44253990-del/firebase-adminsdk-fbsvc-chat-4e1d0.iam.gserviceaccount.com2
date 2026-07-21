@@ -8,17 +8,24 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkRequest
 import android.net.NetworkCapabilities
+import android.net.Uri
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.R
 import com.example.data.*
+import com.example.call.CallEngine
+import com.google.firebase.auth.AuthCredential
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.database.DataSnapshot
 import com.google.firebase.database.DatabaseError
 import com.google.firebase.database.FirebaseDatabase
 import com.google.firebase.database.ValueEventListener
+import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.ListenerRegistration
 import com.google.firebase.firestore.Query
+import com.google.firebase.firestore.SetOptions
 import com.google.firebase.messaging.FirebaseMessaging
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
@@ -27,11 +34,15 @@ import kotlinx.coroutines.withContext
 import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.RequestBody.Companion.toRequestBody
+import okio.BufferedSink
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
 import java.io.IOException
 import java.text.SimpleDateFormat
 import java.util.*
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.TimeUnit
 
 data class InAppNotificationData(
     val senderId: String = "",
@@ -40,9 +51,72 @@ data class InAppNotificationData(
     val timestamp: Long = 0L
 )
 
+data class GatewayHealth(
+    val checking: Boolean = false,
+    val configured: Boolean = false,
+    val message: String = "Not checked",
+    val projectId: String = "",
+    val version: String = "",
+    val r2Configured: Boolean = false,
+    val turnConfigured: Boolean = false,
+    val sfuConfigured: Boolean = false
+)
+
+data class R2MediaResult(
+    val publicUrl: String,
+    val key: String,
+    val expiresAt: Long,
+    val kind: String
+)
+
+private class ProgressBytesRequestBody(
+    private val bytes: ByteArray,
+    private val type: MediaType?,
+    private val progress: (Int, Long) -> Unit
+) : RequestBody() {
+    override fun contentType() = type
+    override fun contentLength() = bytes.size.toLong()
+    override fun writeTo(sink: BufferedSink) {
+        val started = System.currentTimeMillis()
+        var offset = 0
+        val chunk = 64 * 1024
+        while (offset < bytes.size) {
+            val count = minOf(chunk, bytes.size - offset)
+            sink.write(bytes, offset, count); offset += count
+            val elapsed = (System.currentTimeMillis() - started).coerceAtLeast(1L)
+            val rate = offset * 1000.0 / elapsed
+            val remaining = if (rate > 0) ((bytes.size - offset) / rate).toLong() else 0L
+            progress((offset * 100L / bytes.size).toInt(), remaining)
+        }
+    }
+}
+
+private class ProgressUriRequestBody(
+    private val context: Context, private val uri: Uri, private val length: Long,
+    private val type: MediaType?, private val progress: (Int, Long) -> Unit
+) : RequestBody() {
+    override fun contentType() = type
+    override fun contentLength() = length.takeIf { it >= 0 } ?: -1
+    override fun writeTo(sink: BufferedSink) {
+        val started = System.currentTimeMillis(); var written = 0L
+        context.contentResolver.openInputStream(uri)?.use { input ->
+            val buffer = ByteArray(64 * 1024)
+            while (true) {
+                val count = input.read(buffer); if (count < 0) break
+                sink.write(buffer, 0, count); written += count
+                if (length > 0) {
+                    val rate = written * 1000.0 / (System.currentTimeMillis() - started).coerceAtLeast(1)
+                    progress((written * 100 / length).toInt(), if (rate > 0) ((length - written) / rate).toLong() else 0)
+                }
+            }
+        } ?: error("Could not open selected file")
+    }
+}
+
 class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     private val sharedPrefs = application.getSharedPreferences("firechat_prefs", Context.MODE_PRIVATE)
+    private val localUploadFiles = ConcurrentHashMap<String, String>()
 
     // Offline Cache DB & Dao
     private val appDb = AppDatabase.getDatabase(application)
@@ -51,6 +125,13 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     // Themes
     private val _themeState = MutableStateFlow(sharedPrefs.getString("app_theme", "default") ?: "default")
     val themeState: StateFlow<String> = _themeState.asStateFlow()
+
+    private val _notificationSoundsEnabled = MutableStateFlow(sharedPrefs.getBoolean("notification_sounds", true))
+    val notificationSoundsEnabled: StateFlow<Boolean> = _notificationSoundsEnabled.asStateFlow()
+    private val _typingSoundsEnabled = MutableStateFlow(sharedPrefs.getBoolean("typing_sounds", true))
+    val typingSoundsEnabled: StateFlow<Boolean> = _typingSoundsEnabled.asStateFlow()
+    private val _mutedUserIds = MutableStateFlow(sharedPrefs.getStringSet("muted_users", emptySet())?.toSet() ?: emptySet())
+    val mutedUserIds: StateFlow<Set<String>> = _mutedUserIds.asStateFlow()
 
     // Network tracking (defaults to true for maximum compatibility on emulators)
     private val _isNetworkAvailable = MutableStateFlow(true)
@@ -99,11 +180,40 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private val _unreadCountsState = MutableStateFlow<Map<String, Int>>(emptyMap())
     val unreadCountsState: StateFlow<Map<String, Int>> = _unreadCountsState.asStateFlow()
 
+    private val _conversationUserIds = MutableStateFlow<Set<String>>(emptySet())
+    val conversationUserIds: StateFlow<Set<String>> = _conversationUserIds.asStateFlow()
+
     private val _isRecipientTyping = MutableStateFlow(false)
     val isRecipientTyping: StateFlow<Boolean> = _isRecipientTyping.asStateFlow()
 
+    private val _chatTheme = MutableStateFlow("Aurora")
+    val chatTheme: StateFlow<String> = _chatTheme.asStateFlow()
+
     private val _inAppNotification = MutableStateFlow<InAppNotificationData?>(null)
     val inAppNotification: StateFlow<InAppNotificationData?> = _inAppNotification.asStateFlow()
+
+    private val _activityNotifications = MutableStateFlow<List<ActivityNotification>>(emptyList())
+    val activityNotifications: StateFlow<List<ActivityNotification>> = _activityNotifications.asStateFlow()
+    private val _openActivityCenterSignal = MutableStateFlow(0L)
+    val openActivityCenterSignal: StateFlow<Long> = _openActivityCenterSignal.asStateFlow()
+
+    private val _friendRequests = MutableStateFlow<List<FriendRequest>>(emptyList())
+    val friendRequests: StateFlow<List<FriendRequest>> = _friendRequests.asStateFlow()
+    private val _sentFriendRequestIds = MutableStateFlow<Set<String>>(emptySet())
+    val sentFriendRequestIds: StateFlow<Set<String>> = _sentFriendRequestIds.asStateFlow()
+
+    private val _messageRequests = MutableStateFlow<List<MessageRequest>>(emptyList())
+    val messageRequests: StateFlow<List<MessageRequest>> = _messageRequests.asStateFlow()
+    private val _pendingMessageRequestRecipients = MutableStateFlow<Set<String>>(emptySet())
+    val pendingMessageRequestRecipients: StateFlow<Set<String>> = _pendingMessageRequestRecipients.asStateFlow()
+
+    private val _selectedProfile = MutableStateFlow<User?>(null)
+    val selectedProfile: StateFlow<User?> = _selectedProfile.asStateFlow()
+
+    private val _flagshipConfig = MutableStateFlow(FlagshipConfig())
+    val flagshipConfig: StateFlow<FlagshipConfig> = _flagshipConfig.asStateFlow()
+    private val _featureRequests = MutableStateFlow<List<FeatureRequest>>(emptyList())
+    val featureRequests: StateFlow<List<FeatureRequest>> = _featureRequests.asStateFlow()
 
     private val _authLoading = MutableStateFlow(false)
     val authLoading: StateFlow<Boolean> = _authLoading.asStateFlow()
@@ -121,16 +231,36 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         _currentTabState.value = tab
     }
 
-    private val defaultWebhookUrl = "https://rakibul.n8n-host.com/webhook/ra"
+    private val defaultWebhookUrl = "https://solitary-hill-dcdc.mr44253990.workers.dev/"
 
-    private val _webhookUrl = MutableStateFlow(sharedPrefs.getString("webhook_url", defaultWebhookUrl).orEmpty().ifBlank { defaultWebhookUrl })
+    private val storedGatewayUrl = sharedPrefs.getString("webhook_url", null).orEmpty()
+    private val _webhookUrl = MutableStateFlow(
+        storedGatewayUrl.takeIf { it.startsWith("https://") && !it.contains("n8n", ignoreCase = true) }
+            ?: defaultWebhookUrl
+    )
     val webhookUrl: StateFlow<String> = _webhookUrl.asStateFlow()
+
+    private val _gatewayHealth = MutableStateFlow(GatewayHealth())
+    val gatewayHealth: StateFlow<GatewayHealth> = _gatewayHealth.asStateFlow()
 
     private var activeChatListener: ValueEventListener? = null
     private var activeChatId: String? = null
     private var activeTypingListener: ValueEventListener? = null
+    private var activeChatThemeListener: ValueEventListener? = null
+    private var activeReceiptListener: ValueEventListener? = null
     private var globalNotificationListener: ValueEventListener? = null
     private var presenceListener: ValueEventListener? = null
+    private var activityNotificationListener: ListenerRegistration? = null
+    private var currentUserProfileListener: ListenerRegistration? = null
+    private var flagshipListener: ListenerRegistration? = null
+    private var flagshipRtdbListener: ValueEventListener? = null
+    private var featureRequestListener: ListenerRegistration? = null
+    private var friendRequestListener: ListenerRegistration? = null
+    private var sentFriendRequestListener: ListenerRegistration? = null
+    private var messageRequestListener: ListenerRegistration? = null
+    private var sentMessageRequestListener: ListenerRegistration? = null
+    private var notificationCacheJob: kotlinx.coroutines.Job? = null
+    private var conversationIdsJob: kotlinx.coroutines.Job? = null
 
     private fun getDatabaseInstance(): FirebaseDatabase {
         return try {
@@ -147,6 +277,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     init {
         checkFirebaseConfiguration()
+        listenFlagshipControl()
         registerNetworkCallback(application)
     }
 
@@ -181,6 +312,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             }
             startListeningToChat(user.uid)
             startListeningToTyping(user.uid)
+            startListeningToChatTheme()
         } else {
             stopListeningToChat()
             stopListeningToTyping()
@@ -204,6 +336,202 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         } catch (e: Exception) {
             Log.e("RTDB_CONFIG", "Error updating global config in RTDB: ${e.message}")
         }
+        testFcmGateway(url)
+    }
+
+    fun testFcmGateway(url: String = _webhookUrl.value) {
+        if (!url.startsWith("https://")) {
+            _gatewayHealth.value = GatewayHealth(message = "A valid HTTPS Worker URL is required")
+            return
+        }
+        _gatewayHealth.value = GatewayHealth(checking = true, message = "Checking gateway…")
+        val request = Request.Builder().url(url).get().build()
+        OkHttpClient.Builder().callTimeout(12, TimeUnit.SECONDS).build()
+            .newCall(request).enqueue(object : Callback {
+                override fun onFailure(call: Call, e: IOException) {
+                    _gatewayHealth.value = GatewayHealth(message = "Gateway unreachable: ${e.localizedMessage}")
+                }
+                override fun onResponse(call: Call, response: Response) {
+                    response.use {
+                        val body = it.body?.string().orEmpty()
+                        val json = try { JSONObject(body) } catch (_: Exception) { JSONObject() }
+                        val configured = it.isSuccessful && json.optBoolean("serviceAccountConfigured", false)
+                        _gatewayHealth.value = GatewayHealth(
+                            configured = configured,
+                            message = when {
+                                configured -> "Direct FCM gateway is ready"
+                                it.code == 405 -> "Worker is online but outdated—deploy the new worker file"
+                                else -> json.optString("error", "Worker secret is missing or invalid")
+                            },
+                            projectId = json.optString("projectId"),
+                            version = json.optString("version"),
+                            r2Configured = json.optBoolean("r2Configured"),
+                            turnConfigured = json.optBoolean("turnConfigured"),
+                            sfuConfigured = json.optBoolean("sfuConfigured")
+                        )
+                    }
+                }
+            })
+    }
+
+    fun startAudioCall(recipient: User, onReady: (String) -> Unit) = startCall(recipient, false, onReady)
+    fun startVideoCall(recipient: User, onReady: (String) -> Unit) = startCall(recipient, true, onReady)
+
+    fun endCall(recipient: User, callId: String) {
+        CallEngine.end()
+        val caller = getCurrentUserOrFallback() ?: return
+        withUserFcmToken(recipient.uid, recipient.fcmToken) { token ->
+            triggerFcmGatewayNotification(
+                gatewayUrl = _webhookUrl.value, targetToken = token,
+                senderName = caller.name, messageBody = "Call ended",
+                senderId = caller.uid, senderProfileUrl = caller.profileImageUrl,
+                notificationType = "call_cancelled", targetId = callId
+            )
+        }
+    }
+
+    private fun startCall(recipient: User, video: Boolean, onReady: (String) -> Unit) {
+        val caller = getCurrentUserOrFallback() ?: return
+        try {
+        CallEngine.startOutgoing(getApplication(), recipient.uid, recipient.name, recipient.profileImageUrl, video = video) { callId ->
+            withUserFcmToken(recipient.uid, recipient.fcmToken) { token ->
+                triggerFcmGatewayNotification(
+                    gatewayUrl = _webhookUrl.value,
+                    targetToken = token,
+                    senderName = caller.name,
+                    messageBody = if (video) "Incoming FireChat video call" else "Incoming FireChat audio call",
+                    senderId = caller.uid,
+                    senderProfileUrl = caller.profileImageUrl,
+                    notificationType = if (video) "incoming_video_call" else "incoming_call",
+                    targetId = callId
+                )
+            }
+            val chatId = listOf(caller.uid, recipient.uid).sorted().joinToString("_")
+            val historyMessage = Message(
+                messageId = "call_$callId", senderId = caller.uid, senderName = caller.name,
+                senderUsername = caller.username, text = if (video) "📹 FireChat video call" else "📞 FireChat audio call",
+                timestamp = System.currentTimeMillis(), deliveredToRecipient = recipient.isOnline
+            )
+            getDatabaseInstance().getReference("chats").child(chatId).child("messages")
+                .child(historyMessage.messageId).setValue(historyMessage)
+            viewModelScope.launch(Dispatchers.IO) {
+                cacheDao.insertMessage(CachedMessage.fromMessage(historyMessage, chatId))
+            }
+            onReady(callId)
+            viewModelScope.launch {
+                kotlinx.coroutines.delay(30_000)
+                if (CallEngine.state.value.callId == callId && CallEngine.state.value.status == "ringing") {
+                    CallEngine.timeout()
+                }
+            }
+        }
+        } catch (error: Throwable) {
+            Log.e("CALL_ENGINE", "Call launch failed", error)
+            CallEngine.reportFailure("Could not start call: ${error.message ?: error.javaClass.simpleName}")
+        }
+    }
+
+    fun sendAdminTestNotification() {
+        val admin = getCurrentUserOrFallback() ?: run {
+            _gatewayHealth.value = GatewayHealth(message = "Admin session is not authenticated")
+            return
+        }
+        withUserFcmToken(admin.uid, admin.fcmToken) { token ->
+            triggerFcmGatewayNotification(
+                gatewayUrl = _webhookUrl.value,
+                targetToken = token,
+                senderName = "FireChat Diagnostics",
+                messageBody = "Direct FCM gateway test completed successfully",
+                senderId = admin.uid,
+                senderProfileUrl = admin.profileImageUrl,
+                notificationType = "gateway_test",
+                targetId = "test_${System.currentTimeMillis()}"
+            )
+        }
+    }
+
+    private fun listenFlagshipControl() {
+        flagshipListener?.remove()
+        flagshipListener = FirebaseFirestore.getInstance().collection("app_config").document("flagship")
+            .addSnapshotListener { document, error ->
+                if (error != null) Log.e("FLAGSHIP", "Firestore config listener failed: ${error.message}")
+                else document?.toObject(FlagshipConfig::class.java)?.let { incoming ->
+                    if (incoming.updatedAt >= _flagshipConfig.value.updatedAt) _flagshipConfig.value = incoming
+                }
+            }
+        val ref = getDatabaseInstance().getReference("config").child("flagship")
+        flagshipRtdbListener?.let { ref.removeEventListener(it) }
+        flagshipRtdbListener = object : ValueEventListener {
+            override fun onDataChange(snapshot: DataSnapshot) {
+                snapshot.getValue(FlagshipConfig::class.java)?.let { incoming ->
+                    if (incoming.updatedAt >= _flagshipConfig.value.updatedAt) _flagshipConfig.value = incoming
+                }
+            }
+            override fun onCancelled(error: DatabaseError) { Log.e("FLAGSHIP", "RTDB config failed: ${error.message}") }
+        }.also { ref.addValueEventListener(it) }
+        listenFeatureRequestsIfAdmin()
+    }
+
+    private fun listenFeatureRequestsIfAdmin() {
+        val admin = FirebaseAuth.getInstance().currentUser?.email?.lowercase()?.trim()?.trimEnd('.') == "mr4425390@gmail.com"
+        featureRequestListener?.remove(); featureRequestListener = null
+        if (!admin) { _featureRequests.value = emptyList(); return }
+        featureRequestListener = FirebaseFirestore.getInstance().collection("feature_requests")
+            .addSnapshotListener { snapshot, _ ->
+                _featureRequests.value = snapshot?.documents?.mapNotNull { it.toObject(FeatureRequest::class.java) }
+                    ?.sortedByDescending { it.createdAt } ?: emptyList()
+            }
+    }
+
+    fun submitFeatureRequest(title: String, description: String, onComplete: (Boolean) -> Unit = {}) {
+        val user = getCurrentUserOrFallback() ?: return onComplete(false)
+        if (title.isBlank() || description.isBlank()) return onComplete(false)
+        val ref = FirebaseFirestore.getInstance().collection("feature_requests").document()
+        ref.set(FeatureRequest(ref.id, user.uid, user.name, title.trim(), description.trim(), "pending", "", System.currentTimeMillis(), System.currentTimeMillis()))
+            .addOnSuccessListener { onComplete(true) }.addOnFailureListener { onComplete(false) }
+    }
+
+    fun updateFeatureRequest(requestId: String, status: String, adminNote: String = "") {
+        if (FirebaseAuth.getInstance().currentUser?.email?.lowercase()?.trim()?.trimEnd('.') != "mr4425390@gmail.com") return
+        val ref = FirebaseFirestore.getInstance().collection("feature_requests").document(requestId)
+        ref.update(mapOf("status" to status, "adminNote" to adminNote, "updatedAt" to System.currentTimeMillis()))
+            .addOnSuccessListener {
+                ref.get().addOnSuccessListener { doc ->
+                    createActivityNotification(doc.getString("requesterId") ?: "", "feature_request_$status", requestId, "Your feature request is now $status")
+                }
+            }
+    }
+
+    fun publishFlagshipConfig(config: FlagshipConfig, onComplete: (Boolean) -> Unit = {}) {
+        val user = FirebaseAuth.getInstance().currentUser ?: return onComplete(false)
+        if (user.email?.lowercase()?.trim()?.trimEnd('.') != "mr4425390@gmail.com") return onComplete(false)
+        if (config.updateEnabled && !config.apkUrl.startsWith("https://")) return onComplete(false)
+
+        val now = System.currentTimeMillis()
+        // Publishing an enabled update always starts a new campaign, even when
+        // the APK versionCode is intentionally unchanged. Non-admin users must
+        // complete this campaign once; admins always retain emergency access.
+        val published = if (config.updateEnabled) {
+            config.copy(
+                mandatoryUpdate = true,
+                updateId = UUID.randomUUID().toString(),
+                updatePublishedAt = now,
+                updatedAt = now,
+                updatedBy = user.uid
+            )
+        } else {
+            config.copy(mandatoryUpdate = false, updatedAt = now, updatedBy = user.uid)
+        }
+        FirebaseFirestore.getInstance().collection("app_config").document("flagship")
+            .set(published)
+            .addOnSuccessListener {
+                getDatabaseInstance().getReference("config").child("flagship").setValue(published)
+                    .addOnFailureListener { Log.e("FLAGSHIP", "RTDB mirror failed: ${it.message}") }
+                if (published.updateEnabled) _usersState.value.forEach { target ->
+                    createActivityNotification(target.uid, "app_update", published.updateId, "Required FireChat ${published.versionName} update is available")
+                }
+                onComplete(true)
+            }.addOnFailureListener { onComplete(false) }
     }
 
     private fun listenToGlobalConfig() {
@@ -212,15 +540,17 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             configRef.addValueEventListener(object : ValueEventListener {
                 override fun onDataChange(snapshot: DataSnapshot) {
                     if (snapshot.exists()) {
-                        val url = snapshot.child("webhookUrl").value as? String 
-                                  ?: snapshot.child("workerUrl").value as? String
-                        if (!url.isNullOrBlank()) {
-                            _webhookUrl.value = url
-                            sharedPrefs.edit().putString("webhook_url", url).apply()
-                            Log.d("RTDB_CONFIG", "Loaded webhook URL from RTDB: $url")
-                        } else {
-                            configRef.setValue(mapOf("webhookUrl" to defaultWebhookUrl, "workerUrl" to defaultWebhookUrl))
+                        val configured = (snapshot.child("workerUrl").value as? String)
+                            ?: (snapshot.child("webhookUrl").value as? String)
+                        val url = configured?.takeIf {
+                            it.startsWith("https://") && !it.contains("n8n", ignoreCase = true)
+                        } ?: defaultWebhookUrl
+                        _webhookUrl.value = url
+                        sharedPrefs.edit().putString("webhook_url", url).apply()
+                        if (configured != url) {
+                            configRef.updateChildren(mapOf("webhookUrl" to url, "workerUrl" to url))
                         }
+                        Log.d("RTDB_CONFIG", "Loaded direct FCM gateway URL: $url")
                     } else {
                         configRef.setValue(mapOf("webhookUrl" to defaultWebhookUrl, "workerUrl" to defaultWebhookUrl))
                     }
@@ -288,6 +618,51 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 _authLoading.value = false
             }
         }
+    }
+
+    fun signInWithGoogleCredential(credential: AuthCredential, onSuccess: () -> Unit) {
+        _authLoading.value = true
+        _authError.value = null
+        FirebaseAuth.getInstance().signInWithCredential(credential)
+            .addOnSuccessListener { result ->
+                val authUser = result.user
+                if (authUser == null) {
+                    _authLoading.value = false
+                    _authError.value = "Google account could not be loaded"
+                    return@addOnSuccessListener
+                }
+                val usernameBase = (authUser.email?.substringBefore("@") ?: authUser.displayName ?: "user")
+                    .lowercase().replace("[^a-z0-9_]".toRegex(), "")
+                val profile = User(
+                    uid = authUser.uid,
+                    name = authUser.displayName ?: usernameBase,
+                    username = usernameBase,
+                    profileImageUrl = authUser.photoUrl?.toString() ?: "",
+                    createdAt = authUser.metadata?.creationTimestamp ?: System.currentTimeMillis()
+                )
+                FirebaseFirestore.getInstance().collection("users").document(authUser.uid)
+                    .set(mapOf(
+                        "uid" to profile.uid,
+                        "name" to profile.name,
+                        "username" to profile.username,
+                        "profileImageUrl" to profile.profileImageUrl,
+                        "createdAt" to profile.createdAt
+                    ), SetOptions.merge())
+                    .addOnCompleteListener {
+                        retrieveFCMTokenAndStore(authUser.uid)
+                        loadCurrentUserProfile(authUser.uid)
+                        setupPresence(authUser.uid)
+                        loadAllUsers()
+                        listenToAllPresences()
+                        listenForInAppNotifications()
+                        _authLoading.value = false
+                        onSuccess()
+                    }
+            }
+            .addOnFailureListener {
+                _authLoading.value = false
+                _authError.value = it.localizedMessage ?: "Google sign-in failed"
+            }
     }
 
     fun signup(email: String, name: String, dob: String, password: String, profileImageUrl: String, onSuccess: () -> Unit) {
@@ -384,6 +759,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     .setValue(mapOf("isOnline" to false, "lastActive" to System.currentTimeMillis()))
             }
             FirebaseAuth.getInstance().signOut()
+            currentUserProfileListener?.remove()
+            currentUserProfileListener = null
             _currentUserState.value = null
             _usersState.value = emptyList()
             _filteredUsersState.value = emptyList()
@@ -405,9 +782,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     return@addOnCompleteListener
                 }
                 val token = task.result
-                FirebaseFirestore.getInstance().collection("users")
-                    .document(uid)
-                    .update("fcmToken", token)
+                val firestore = FirebaseFirestore.getInstance()
+                // Recipient routing token is kept on the user profile as requested so an
+                // authenticated sender can include it directly in the Worker POST body.
+                firestore.collection("users").document(uid)
+                    .update(mapOf("fcmToken" to token, "fcmTokenUpdatedAt" to System.currentTimeMillis()))
                     .addOnSuccessListener {
                         _currentUserState.value = _currentUserState.value?.copy(fcmToken = token)
                     }
@@ -418,9 +797,24 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun loadCurrentUserProfile(uid: String) {
-        FirebaseFirestore.getInstance().collection("users")
-            .document(uid)
-            .get()
+        conversationIdsJob?.cancel()
+        conversationIdsJob = viewModelScope.launch {
+            cacheDao.getConversationChatIds().collect { chatIds ->
+                _conversationUserIds.value = chatIds.flatMap { it.split("_") }.filter { it != uid }.toSet()
+            }
+        }
+        val profileRef = FirebaseFirestore.getInstance().collection("users").document(uid)
+        currentUserProfileListener?.remove()
+        currentUserProfileListener = profileRef.addSnapshotListener { document, error ->
+            if (error != null) {
+                Log.e("FIRESTORE_PROFILE", "Live profile failed: ${error.message}")
+            } else if (document != null && document.exists()) {
+                runCatching { document.toObject(User::class.java) }.getOrNull()?.let { liveUser ->
+                    _currentUserState.value = liveUser
+                }
+            }
+        }
+        profileRef.get()
             .addOnSuccessListener { document ->
                 if (document != null && document.exists()) {
                     val user = try {
@@ -442,10 +836,14 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         }
                     }
                     _currentUserState.value = user
+                    listenToActivityCenter(uid)
                     
                     // Identify admin by user email
                     val auth = FirebaseAuth.getInstance()
-                    _userIsAdmin.value = auth.currentUser?.email == "mr4425390@gmail.com"
+                    val admin = auth.currentUser?.email?.lowercase()?.trim()?.trimEnd('.') == "mr4425390@gmail.com"
+                    _userIsAdmin.value = admin
+                    if (admin && user?.role != "moderator") document.reference.update("role", "moderator")
+                    listenFeatureRequestsIfAdmin()
                 }
                 
                 // Load other channels unconditionally
@@ -613,6 +1011,68 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         })
     }
 
+    private fun localizeIncomingMedia(message: Message, chatId: String): Message {
+        fun download(url: String?, suffix: String, deleteAfterSave: Boolean): String? {
+            if (url.isNullOrBlank() || !url.startsWith("http")) return url
+            return try {
+                val extension = url.substringBefore('?').substringAfterLast('.', "bin").take(5)
+                val directory = File(getApplication<Application>().filesDir, "received_media/$chatId").apply { mkdirs() }
+                val file = File(directory, "${message.messageId}_${suffix}.$extension")
+                if (!file.exists() || file.length() == 0L) {
+                    val response = OkHttpClient().newCall(Request.Builder().url(url).get().build()).execute()
+                    response.use {
+                        if (!it.isSuccessful) return url
+                        val bytes = it.body?.bytes() ?: return url
+                        file.writeBytes(bytes)
+                    }
+                }
+                if (file.exists() && file.length() > 0L) {
+                    if (deleteAfterSave) deleteSupabaseObject(url)
+                    file.toURI().toString()
+                } else url
+            } catch (e: Exception) {
+                Log.w("MEDIA_CACHE", "Incoming media download failed: ${e.message}")
+                url
+            }
+        }
+        val originalVoiceUrl = message.voiceUrl?.takeIf { it.startsWith("http") }
+        return message.copy(
+            imageUrl = download(message.imageUrl, "image", deleteAfterSave = true),
+            voiceUrl = download(message.voiceUrl, "voice", deleteAfterSave = false),
+            remoteVoiceUrl = originalVoiceUrl ?: message.remoteVoiceUrl
+        )
+    }
+
+    fun acknowledgeVoicePlayed(messageId: String, remoteVoiceUrl: String?) {
+        if (remoteVoiceUrl.isNullOrBlank() || !remoteVoiceUrl.startsWith("http")) return
+        viewModelScope.launch(Dispatchers.IO) {
+            if (deleteSupabaseObject(remoteVoiceUrl)) {
+                cacheDao.clearRemoteVoiceUrl(messageId)
+                _chatMessagesState.value = _chatMessagesState.value.map {
+                    if (it.messageId == messageId) it.copy(remoteVoiceUrl = null) else it
+                }
+            }
+        }
+    }
+
+    private fun deleteSupabaseObject(publicUrl: String): Boolean {
+        val marker = "/storage/v1/object/public/"
+        val objectPath = publicUrl.substringAfter(marker, "")
+        if (objectPath.isBlank()) return false
+        return try {
+            val request = Request.Builder()
+                .url("https://srfztgcdejfaesrvkarg.supabase.co/storage/v1/object/$objectPath")
+                .header("apikey", "sb_publishable_BcH2xwywnUCVG48LYjPOLQ_8-y2InGA")
+                .header("Authorization", "Bearer sb_publishable_BcH2xwywnUCVG48LYjPOLQ_8-y2InGA")
+                .delete()
+                .build()
+            OkHttpClient().newCall(request).execute().use { it.isSuccessful || it.code == 404 }
+        } catch (e: Exception) {
+            Log.w("SUPABASE_DELETE", "Object cleanup failed: ${e.message}")
+            false
+        }
+    }
+
     // Chat Message Streams
     fun startListeningToChat(recipientUid: String) {
         val currentUid = FirebaseAuth.getInstance().currentUser?.uid ?: return
@@ -661,7 +1121,15 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                                     replyToSenderName = childSnapshot.child("replyToSenderName").value as? String,
                                     imageUrl = childSnapshot.child("imageUrl").value as? String,
                                     voiceUrl = childSnapshot.child("voiceUrl").value as? String,
-                                    voiceDurationSec = (childSnapshot.child("voiceDurationSec").value as? Long)?.toInt()
+                                    voiceDurationSec = (childSnapshot.child("voiceDurationSec").value as? Long)?.toInt(),
+                                    remoteVoiceUrl = childSnapshot.child("remoteVoiceUrl").value as? String,
+                                    fileUrl = childSnapshot.child("fileUrl").value as? String,
+                                    remoteFileUrl = childSnapshot.child("remoteFileUrl").value as? String,
+                                    fileName = childSnapshot.child("fileName").value as? String,
+                                    fileMimeType = childSnapshot.child("fileMimeType").value as? String,
+                                    fileSize = childSnapshot.child("fileSize").value as? Long,
+                                    seenByRecipient = childSnapshot.child("seenByRecipient").value as? Boolean ?: false,
+                                    deliveredToRecipient = childSnapshot.child("deliveredToRecipient").value as? Boolean ?: false
                                 )
                             } catch (ex: Exception) {
                                 null
@@ -671,28 +1139,70 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                             messages.add(message)
                         }
                     }
-                    _chatMessagesState.value = messages
+                    val merged = (_chatMessagesState.value + messages)
+                        .associateBy { it.messageId }.values.sortedBy { it.timestamp }
+                    _chatMessagesState.value = merged
 
-                    // Cache to Room local DB
+                    // Persist before acknowledgement. Incoming RTDB payload is removed only after
+                    // Room confirms the durable local copy; a tiny receipt remains for the sender.
                     viewModelScope.launch(Dispatchers.IO) {
-                        cacheDao.insertMessages(messages.map { CachedMessage.fromMessage(it, chatId) })
+                        val localized = messages.map { remote ->
+                            if (remote.senderId != currentUid) localizeIncomingMedia(remote, chatId)
+                            else _chatMessagesState.value.find { it.messageId == remote.messageId } ?: remote
+                        }
+                        cacheDao.insertMessages(localized.map { CachedMessage.fromMessage(it, chatId) })
+                        _chatMessagesState.value = (_chatMessagesState.value + localized)
+                            .associateBy { it.messageId }.values.sortedBy { it.timestamp }
+                        localized.filter { it.senderId != currentUid }.forEach { incoming ->
+                            getDatabaseInstance().getReference("delivery_receipts")
+                                .child(incoming.senderId).child(chatId).child(incoming.messageId)
+                                .setValue(mapOf("seen" to true, "seenAt" to System.currentTimeMillis()))
+                                .addOnSuccessListener { chatRef.child(incoming.messageId).removeValue() }
+                        }
                     }
                 }
 
                 override fun onCancelled(error: DatabaseError) {}
             })
+
+        val receiptRef = getDatabaseInstance().getReference("delivery_receipts").child(currentUid).child(chatId)
+        activeReceiptListener = receiptRef.addValueEventListener(object : ValueEventListener {
+            override fun onDataChange(snapshot: DataSnapshot) {
+                snapshot.children.forEach { receipt ->
+                    val messageId = receipt.key ?: return@forEach
+                    val seen = receipt.child("seen").getValue(Boolean::class.java) == true
+                    val delivered = seen || receipt.child("delivered").getValue(Boolean::class.java) == true
+                    viewModelScope.launch(Dispatchers.IO) {
+                        if (seen) cacheDao.markMessageSeen(messageId) else if (delivered) cacheDao.markMessageDelivered(messageId)
+                    }
+                    _chatMessagesState.value = _chatMessagesState.value.map {
+                        if (it.messageId == messageId) it.copy(
+                            seenByRecipient = it.seenByRecipient || seen,
+                            deliveredToRecipient = it.deliveredToRecipient || delivered
+                        ) else it
+                    }
+                    receipt.ref.removeValue()
+                }
+            }
+            override fun onCancelled(error: DatabaseError) {}
+        })
     }
 
     fun stopListeningToChat() {
-        val chatId = activeChatId ?: return
-        val listener = activeChatListener ?: return
-        getDatabaseInstance().getReference("chats")
-            .child(chatId)
-            .child("messages")
-            .removeEventListener(listener)
-
+        val chatId = activeChatId
+        if (chatId != null) {
+            activeChatListener?.let {
+                getDatabaseInstance().getReference("chats").child(chatId).child("messages").removeEventListener(it)
+            }
+            activeReceiptListener?.let {
+                val uid = FirebaseAuth.getInstance().currentUser?.uid.orEmpty()
+                getDatabaseInstance().getReference("delivery_receipts").child(uid).child(chatId).removeEventListener(it)
+            }
+        }
         _chatMessagesState.value = emptyList()
         activeChatListener = null
+        activeReceiptListener = null
+        activeChatId = null
     }
 
     // Typing Status Handling
@@ -737,8 +1247,35 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         _isRecipientTyping.value = false
     }
 
+    private fun startListeningToChatTheme() {
+        val chatId = activeChatId ?: return
+        activeChatThemeListener?.let {
+            getDatabaseInstance().getReference("chat_settings").child(chatId).child("theme").removeEventListener(it)
+        }
+        val ref = getDatabaseInstance().getReference("chat_settings").child(chatId).child("theme")
+        activeChatThemeListener = ref.addValueEventListener(object : ValueEventListener {
+            override fun onDataChange(snapshot: DataSnapshot) {
+                _chatTheme.value = snapshot.getValue(String::class.java) ?: "Aurora"
+            }
+            override fun onCancelled(error: DatabaseError) { _chatTheme.value = "Aurora" }
+        })
+    }
+
+    fun updateChatTheme(theme: String) {
+        val chatId = activeChatId ?: return
+        getDatabaseInstance().getReference("chat_settings").child(chatId).child("theme").setValue(theme)
+    }
+
     // Sound effect players
+    fun updateSoundPreferences(notificationSounds: Boolean, typingSounds: Boolean) {
+        _notificationSoundsEnabled.value = notificationSounds
+        _typingSoundsEnabled.value = typingSounds
+        sharedPrefs.edit().putBoolean("notification_sounds", notificationSounds)
+            .putBoolean("typing_sounds", typingSounds).apply()
+    }
+
     fun playNotificationSound() {
+        if (!_notificationSoundsEnabled.value) return
         try {
             val toneG = ToneGenerator(AudioManager.STREAM_NOTIFICATION, 80)
             toneG.startTone(ToneGenerator.TONE_PROP_BEEP, 120)
@@ -747,12 +1284,22 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun toggleMuteUser(uid: String) {
+        val updated = _mutedUserIds.value.toMutableSet().apply { if (!add(uid)) remove(uid) }.toSet()
+        _mutedUserIds.value = updated
+        sharedPrefs.edit().putStringSet("muted_users", updated).apply()
+    }
+
     fun playTypingSound() {
+        if (!_typingSoundsEnabled.value) return
         try {
-            val toneG = ToneGenerator(AudioManager.STREAM_SYSTEM, 35)
-            toneG.startTone(ToneGenerator.TONE_PROP_PROMPT, 50)
+            android.media.MediaPlayer.create(getApplication(), R.raw.typing_soft)?.apply {
+                setVolume(.35f, .35f)
+                setOnCompletionListener { it.release() }
+                start()
+            }
         } catch (e: Exception) {
-            Log.e("SOUND", "Error playing typing click: ${e.message}")
+            Log.e("SOUND", "Error playing typing sound: ${e.message}")
         }
     }
 
@@ -786,6 +1333,253 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         _inAppNotification.value = null
     }
 
+    /**
+     * Firestore is used only as a delivery queue. Every received item is first persisted
+     * in Room and only then acknowledged by deleting the remote document.
+     */
+    private fun listenToActivityCenter(uid: String) {
+        activityNotificationListener?.remove()
+        friendRequestListener?.remove()
+        notificationCacheJob?.cancel()
+
+        notificationCacheJob = viewModelScope.launch {
+            cacheDao.getNotifications(uid).collect { cached ->
+                _activityNotifications.value = cached.map { it.toModel() }
+            }
+        }
+
+        val inbox = FirebaseFirestore.getInstance().collection("users")
+            .document(uid).collection("notifications")
+        activityNotificationListener = inbox.addSnapshotListener { snapshot, error ->
+            if (error != null || snapshot == null) return@addSnapshotListener
+            snapshot.documents.forEach { doc ->
+                val item = try {
+                    ActivityNotification(
+                        id = doc.id,
+                        ownerId = doc.getString("ownerId") ?: uid,
+                        actorId = doc.getString("actorId") ?: "",
+                        actorName = doc.getString("actorName") ?: "Someone",
+                        actorImageUrl = doc.getString("actorImageUrl") ?: "",
+                        type = doc.getString("type") ?: "activity",
+                        targetId = doc.getString("targetId") ?: "",
+                        text = doc.getString("text") ?: "New activity",
+                        timestamp = doc.getLong("timestamp") ?: System.currentTimeMillis()
+                    )
+                } catch (_: Exception) { null }
+                if (item != null) {
+                    viewModelScope.launch(Dispatchers.IO) {
+                        try {
+                            cacheDao.insertNotification(CachedActivityNotification.fromModel(item))
+                            doc.reference.delete()
+                        } catch (e: Exception) {
+                            Log.e("ACTIVITY_CENTER", "Notification cache failed: ${e.message}")
+                        }
+                    }
+                }
+            }
+        }
+
+        friendRequestListener = FirebaseFirestore.getInstance().collection("friend_requests")
+            .whereEqualTo("receiverId", uid)
+            .addSnapshotListener { snapshot, _ ->
+                _friendRequests.value = snapshot?.documents?.mapNotNull { doc ->
+                    try {
+                        FriendRequest(
+                            id = doc.id,
+                            senderId = doc.getString("senderId") ?: return@mapNotNull null,
+                            receiverId = uid,
+                            senderName = doc.getString("senderName") ?: "User",
+                            senderImageUrl = doc.getString("senderImageUrl") ?: "",
+                            status = doc.getString("status") ?: "pending",
+                            timestamp = doc.getLong("timestamp") ?: 0L
+                        )
+                    } catch (_: Exception) { null }
+                }?.filter { it.status == "pending" }?.sortedByDescending { it.timestamp } ?: emptyList()
+            }
+
+        sentFriendRequestListener?.remove()
+        sentFriendRequestListener = FirebaseFirestore.getInstance().collection("friend_requests")
+            .whereEqualTo("senderId", uid)
+            .addSnapshotListener { snapshot, _ ->
+                _sentFriendRequestIds.value = snapshot?.documents
+                    ?.filter { (it.getString("status") ?: "pending") == "pending" }
+                    ?.map { it.id }?.toSet() ?: emptySet()
+            }
+
+        messageRequestListener?.remove()
+        messageRequestListener = FirebaseFirestore.getInstance().collection("message_requests")
+            .whereEqualTo("receiverId", uid)
+            .addSnapshotListener { snapshot, _ ->
+                _messageRequests.value = snapshot?.documents?.mapNotNull { doc ->
+                    try {
+                        MessageRequest(
+                            id = doc.id,
+                            senderId = doc.getString("senderId") ?: return@mapNotNull null,
+                            receiverId = uid,
+                            senderName = doc.getString("senderName") ?: "User",
+                            preview = doc.getString("preview") ?: "Message request",
+                            status = doc.getString("status") ?: "pending",
+                            timestamp = doc.getLong("timestamp") ?: 0L
+                        )
+                    } catch (_: Exception) { null }
+                }?.filter { it.status == "pending" }?.sortedByDescending { it.timestamp } ?: emptyList()
+            }
+
+        sentMessageRequestListener?.remove()
+        sentMessageRequestListener = FirebaseFirestore.getInstance().collection("message_requests")
+            .whereEqualTo("senderId", uid)
+            .addSnapshotListener { snapshot, _ ->
+                _pendingMessageRequestRecipients.value = snapshot?.documents
+                    ?.filter { (it.getString("status") ?: "pending") == "pending" }
+                    ?.mapNotNull { it.getString("receiverId") }?.toSet() ?: emptySet()
+            }
+    }
+
+    private fun withUserFcmToken(uid: String, knownToken: String = "", onToken: (String) -> Unit) {
+        if (knownToken.isNotBlank()) {
+            onToken(knownToken)
+            return
+        }
+        FirebaseFirestore.getInstance().collection("users").document(uid).get()
+            .addOnSuccessListener { document ->
+                val token = document.getString("fcmToken").orEmpty()
+                if (token.isBlank()) {
+                    Log.w("FCM_GATEWAY", "Recipient $uid has no FCM token")
+                    _gatewayHealth.value = GatewayHealth(message = "Recipient has not registered an FCM token yet")
+                } else onToken(token)
+            }
+            .addOnFailureListener {
+                Log.e("FCM_GATEWAY", "Could not load recipient token: ${it.message}")
+                _gatewayHealth.value = GatewayHealth(message = "Could not load recipient notification token")
+            }
+    }
+
+    private fun createActivityNotification(ownerId: String, type: String, targetId: String, text: String) {
+        val actor = getCurrentUserOrFallback() ?: return
+        if (ownerId.isBlank() || ownerId == actor.uid) return
+        val ref = FirebaseFirestore.getInstance().collection("users")
+            .document(ownerId).collection("notifications").document()
+        ref.set(ActivityNotification(
+            id = ref.id,
+            ownerId = ownerId,
+            actorId = actor.uid,
+            actorName = actor.name,
+            actorImageUrl = actor.profileImageUrl,
+            type = type,
+            targetId = targetId,
+            text = text,
+            timestamp = System.currentTimeMillis()
+        )).addOnSuccessListener {
+            withUserFcmToken(ownerId) { recipientToken ->
+                triggerFcmGatewayNotification(
+                    gatewayUrl = _webhookUrl.value,
+                    targetToken = recipientToken,
+                    senderName = actor.name,
+                    messageBody = text,
+                    senderId = actor.uid,
+                    senderProfileUrl = actor.profileImageUrl,
+                    notificationType = type,
+                    targetId = targetId
+                )
+            }
+        }.addOnFailureListener { Log.e("ACTIVITY_CENTER", "Delivery failed: ${it.message}") }
+    }
+
+    fun requestOpenActivityCenter() { _openActivityCenterSignal.value = System.currentTimeMillis() }
+
+    fun markAllActivityRead() {
+        val uid = FirebaseAuth.getInstance().currentUser?.uid ?: return
+        viewModelScope.launch(Dispatchers.IO) { cacheDao.markAllNotificationsRead(uid) }
+    }
+
+    fun markActivityRead(id: String) {
+        viewModelScope.launch(Dispatchers.IO) { cacheDao.markNotificationRead(id) }
+    }
+
+    fun selectProfile(user: User?) { _selectedProfile.value = user }
+
+    fun sendFriendRequest(target: User, onResult: (Boolean, String) -> Unit = { _, _ -> }) {
+        val me = getCurrentUserOrFallback() ?: return onResult(false, "Please sign in again")
+        if (target.uid == me.uid || me.friends.contains(target.uid)) return onResult(false, "Already connected")
+        val requestId = "${me.uid}_${target.uid}"
+        val request = FriendRequest(requestId, me.uid, target.uid, me.name, me.profileImageUrl, "pending", System.currentTimeMillis())
+        FirebaseFirestore.getInstance().collection("friend_requests").document(requestId).set(request)
+            .addOnSuccessListener {
+                createActivityNotification(target.uid, "friend_request", requestId, "sent you a friend request")
+                onResult(true, "Friend request sent")
+            }.addOnFailureListener { onResult(false, it.localizedMessage ?: "Request failed") }
+    }
+
+    fun toggleFollow(target: User) {
+        val me = getCurrentUserOrFallback() ?: return
+        if (target.uid == me.uid) return
+        val following = me.following.contains(target.uid)
+        val firestore = FirebaseFirestore.getInstance()
+        val batch = firestore.batch()
+        batch.update(firestore.collection("users").document(me.uid), "following", if (following) FieldValue.arrayRemove(target.uid) else FieldValue.arrayUnion(target.uid))
+        batch.update(firestore.collection("users").document(target.uid), "followers", if (following) FieldValue.arrayRemove(me.uid) else FieldValue.arrayUnion(me.uid))
+        batch.commit().addOnSuccessListener {
+            if (!following) createActivityNotification(target.uid, "new_follower", me.uid, "started following you")
+        }
+    }
+
+    fun cancelFriendRequest(targetUid: String, onComplete: (Boolean) -> Unit = {}) {
+        val myUid = FirebaseAuth.getInstance().currentUser?.uid ?: return onComplete(false)
+        FirebaseFirestore.getInstance().collection("friend_requests").document("${myUid}_${targetUid}")
+            .delete().addOnSuccessListener { onComplete(true) }.addOnFailureListener { onComplete(false) }
+    }
+
+    fun respondToFriendRequest(request: FriendRequest, accept: Boolean) {
+        val myUid = FirebaseAuth.getInstance().currentUser?.uid ?: return
+        val firestore = FirebaseFirestore.getInstance()
+        if (accept) {
+            val batch = firestore.batch()
+            batch.update(firestore.collection("users").document(myUid), "friends", FieldValue.arrayUnion(request.senderId))
+            batch.update(firestore.collection("users").document(request.senderId), "friends", FieldValue.arrayUnion(myUid))
+            batch.delete(firestore.collection("friend_requests").document(request.id))
+            batch.commit().addOnSuccessListener {
+                _currentUserState.value = _currentUserState.value?.copy(
+                    friends = (_currentUserState.value?.friends.orEmpty() + request.senderId).distinct()
+                )
+                createActivityNotification(request.senderId, "friend_accepted", myUid, "accepted your friend request")
+            }
+        } else {
+            firestore.collection("friend_requests").document(request.id).delete()
+        }
+    }
+
+    fun respondToMessageRequest(request: MessageRequest, accept: Boolean) {
+        val myUid = FirebaseAuth.getInstance().currentUser?.uid ?: return
+        val ref = FirebaseFirestore.getInstance().collection("message_requests").document(request.id)
+        if (!accept) {
+            ref.delete()
+            return
+        }
+        val chatId = listOf(myUid, request.senderId).sorted().joinToString("_")
+        val messageRef = getDatabaseInstance().getReference("chats").child(chatId).child("messages")
+        val messageId = messageRef.push().key ?: UUID.randomUUID().toString()
+        val message = Message(
+            messageId = messageId,
+            senderId = request.senderId,
+            senderName = request.senderName,
+            text = request.preview,
+            timestamp = request.timestamp
+        )
+        messageRef.child(messageId).setValue(message).addOnSuccessListener {
+            ref.delete()
+            createActivityNotification(request.senderId, "message_accepted", myUid, "accepted your message request")
+        }
+    }
+
+    fun recordStoryView(story: Story) {
+        val me = getCurrentUserOrFallback() ?: return
+        if (story.senderId == me.uid || story.viewers.contains(me.uid)) return
+        val ref = FirebaseFirestore.getInstance().collection("stories").document(story.id)
+        ref.update("viewers", FieldValue.arrayUnion(me.uid)).addOnSuccessListener {
+            createActivityNotification(story.senderId, "story_view", story.id, "viewed your story")
+        }
+    }
+
     // Sending, editing, and replying to messages
     fun sendMessage(
         recipientUser: User,
@@ -793,13 +1587,35 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         imageUrl: String? = null,
         voiceUrl: String? = null,
         voiceDurationSec: Int? = null,
+        fileUrl: String? = null,
+        fileName: String? = null,
+        fileMimeType: String? = null,
+        fileSize: Long? = null,
         replyToId: String? = null,
         replyToText: String? = null,
         replyToSenderName: String? = null
     ) {
         val currentUser = _currentUserState.value ?: return
         val chatId = activeChatId ?: return
-        if (text.isBlank() && imageUrl == null && voiceUrl == null) return
+        if (text.isBlank() && imageUrl == null && voiceUrl == null && fileUrl == null) return
+
+        val isEstablishedConversation = currentUser.friends.contains(recipientUser.uid) || _chatMessagesState.value.isNotEmpty()
+        if (!isEstablishedConversation) {
+            val preview = when {
+                text.isNotBlank() -> text.trim()
+                imageUrl != null -> "📷 Photo request"
+                voiceUrl != null -> "🎙️ Voice request"
+                fileUrl != null -> "📎 File request"
+                else -> "Message request"
+            }
+            val requestId = "${currentUser.uid}_${recipientUser.uid}"
+            FirebaseFirestore.getInstance().collection("message_requests").document(requestId)
+                .set(MessageRequest(requestId, currentUser.uid, recipientUser.uid, currentUser.name, preview, "pending", System.currentTimeMillis()))
+                .addOnSuccessListener {
+                    createActivityNotification(recipientUser.uid, "message_request", requestId, "sent you a message request")
+                }
+            return
+        }
 
         val chatRef = getDatabaseInstance().getReference("chats")
             .child(chatId)
@@ -819,8 +1635,22 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             replyToSenderName = replyToSenderName,
             imageUrl = imageUrl,
             voiceUrl = voiceUrl,
-            voiceDurationSec = voiceDurationSec
+            voiceDurationSec = voiceDurationSec,
+            fileUrl = fileUrl, remoteFileUrl = fileUrl, fileName = fileName,
+            fileMimeType = fileMimeType, fileSize = fileSize,
+            deliveredToRecipient = recipientUser.isOnline
         )
+
+        // Sender owns an immediate durable copy; uploaded media points to the app-private file.
+        val localMessage = message.copy(
+            imageUrl = imageUrl?.let { localUploadFiles[it] ?: it },
+            voiceUrl = voiceUrl?.let { localUploadFiles[it] ?: it },
+            fileUrl = fileUrl?.let { localUploadFiles[it] ?: it }
+        )
+        viewModelScope.launch(Dispatchers.IO) {
+            cacheDao.insertMessage(CachedMessage.fromMessage(localMessage, chatId))
+        }
+        _chatMessagesState.value = (_chatMessagesState.value + localMessage).distinctBy { it.messageId }.sortedBy { it.timestamp }
 
         chatRef.child(messageId).setValue(message)
             .addOnSuccessListener {
@@ -837,19 +1667,57 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     .setValue(mapOf(
                         "senderId" to currentUser.uid,
                         "senderName" to currentUser.name,
-                        "text" to if (voiceUrl != null) "🎙️ Voice message" else if (imageUrl != null) "📷 Image attachment" else text,
+                        "text" to if (fileUrl != null) "📎 ${fileName ?: "File"}" else if (voiceUrl != null) "🎙️ Voice message" else if (imageUrl != null) "📷 Image attachment" else text,
                         "timestamp" to System.currentTimeMillis()
                     ))
 
-                // Send FCM trigger call through Webhook (always trigger so admin can see it in n8n)
-                triggerN8NWebhookNotification(
-                    webhookUrl = _webhookUrl.value,
-                    targetToken = recipientUser.fcmToken,
-                    senderName = currentUser.name,
-                    messageBody = if (voiceUrl != null) "🎙️ Voice message" else if (imageUrl != null) "📷 Image attachment" else text,
-                    senderId = currentUser.uid
+                // Sender resolves the recipient profile token and posts it directly to the
+                // authenticated Worker. The Worker performs no Firestore lookup.
+                withUserFcmToken(recipientUser.uid, recipientUser.fcmToken) { recipientToken ->
+                    triggerFcmGatewayNotification(
+                        gatewayUrl = _webhookUrl.value,
+                        targetToken = recipientToken,
+                        senderName = currentUser.name,
+                        messageBody = if (fileUrl != null) "📎 ${fileName ?: "File"}" else if (voiceUrl != null) "🎙️ Voice message" else if (imageUrl != null) "📷 Image attachment" else text,
+                        senderId = currentUser.uid,
+                        senderProfileUrl = currentUser.profileImageUrl,
+                        notificationType = "message",
+                        targetId = messageId
+                    )
+                }
+            }
+    }
+
+    fun forwardMessage(target: User, original: Message) {
+        val sender = getCurrentUserOrFallback() ?: return
+        val chatId = listOf(sender.uid, target.uid).sorted().joinToString("_")
+        val ref = getDatabaseInstance().getReference("chats").child(chatId).child("messages")
+        val id = ref.push().key ?: UUID.randomUUID().toString()
+        val forwardImage = original.imageUrl?.takeIf { it.startsWith("http") }
+        val forwardVoice = (original.remoteVoiceUrl ?: original.voiceUrl)?.takeIf { it.startsWith("http") }
+        val text = when {
+            original.text.isNotBlank() -> original.text
+            forwardImage != null -> "📷 Forwarded photo"
+            forwardVoice != null -> "🎙️ Forwarded voice note"
+            else -> "Forwarded attachment is only available on the original device"
+        }
+        val message = Message(
+            messageId = id, senderId = sender.uid, senderName = sender.name,
+            senderUsername = sender.username, text = text, timestamp = System.currentTimeMillis(),
+            imageUrl = forwardImage, voiceUrl = forwardVoice, voiceDurationSec = original.voiceDurationSec,
+            deliveredToRecipient = target.isOnline
+        )
+        ref.child(id).setValue(message).addOnSuccessListener {
+            viewModelScope.launch(Dispatchers.IO) { cacheDao.insertMessage(CachedMessage.fromMessage(message, chatId)) }
+            withUserFcmToken(target.uid, target.fcmToken) { token ->
+                triggerFcmGatewayNotification(
+                    gatewayUrl = _webhookUrl.value, targetToken = token,
+                    senderName = sender.name, messageBody = "Forwarded: $text",
+                    senderId = sender.uid, senderProfileUrl = sender.profileImageUrl,
+                    notificationType = "message", targetId = id
                 )
             }
+        }
     }
 
     fun editMessage(recipientUid: String, messageId: String, newText: String) {
@@ -898,24 +1766,31 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         name: String,
         dob: String,
         profileImageUrl: String,
+        bio: String? = null,
+        coverImageUrl: String? = null,
         onSuccess: () -> Unit,
         onFailure: (String) -> Unit
     ) {
         val currentUid = FirebaseAuth.getInstance().currentUser?.uid ?: return
         val userRef = FirebaseFirestore.getInstance().collection("users").document(currentUid)
 
-        val updates = mapOf(
+        val updates = mutableMapOf<String, Any>(
             "name" to name,
             "dob" to dob,
             "profileImageUrl" to profileImageUrl
-        )
+        ).apply {
+            bio?.let { put("bio", it) }
+            coverImageUrl?.let { put("coverImageUrl", it) }
+        }
 
         userRef.update(updates)
             .addOnSuccessListener {
                 _currentUserState.value = _currentUserState.value?.copy(
                     name = name,
                     dob = dob,
-                    profileImageUrl = profileImageUrl
+                    profileImageUrl = profileImageUrl,
+                    bio = bio ?: _currentUserState.value?.bio.orEmpty(),
+                    coverImageUrl = coverImageUrl ?: _currentUserState.value?.coverImageUrl.orEmpty()
                 )
                 onSuccess()
             }
@@ -971,6 +1846,118 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private fun cacheOutgoingMedia(publicUrl: String, fileName: String, bytes: ByteArray) {
+        try {
+            val directory = File(getApplication<Application>().filesDir, "sent_media").apply { mkdirs() }
+            val safeName = fileName.substringAfterLast('/').replace("[^A-Za-z0-9._-]".toRegex(), "_")
+            val file = File(directory, safeName)
+            file.writeBytes(bytes)
+            localUploadFiles[publicUrl] = file.toURI().toString()
+        } catch (e: Exception) {
+            Log.w("MEDIA_CACHE", "Could not preserve outgoing media: ${e.message}")
+        }
+    }
+
+    fun uploadMediaToR2(
+        bytes: ByteArray,
+        contentType: String,
+        kind: String,
+        extension: String,
+        tags: String = "",
+        onProgress: (Int, Long) -> Unit = { _, _ -> },
+        onSuccess: (R2MediaResult) -> Unit,
+        onFailure: (String) -> Unit
+    ) {
+        val user = FirebaseAuth.getInstance().currentUser ?: return onFailure("Please sign in again")
+        user.getIdToken(false).addOnSuccessListener { tokenResult ->
+            val idToken = tokenResult.token ?: return@addOnSuccessListener onFailure("Could not authenticate upload")
+            viewModelScope.launch(Dispatchers.IO) {
+                try {
+                    val uploadKind = when (kind) { "reel" -> "reel"; "thumbnail" -> "thumbnail"; "update" -> "update"; else -> "post" }
+                    val url = _webhookUrl.value.trimEnd('/') + "/media/upload?kind=$uploadKind&extension=$extension"
+                    val request = Request.Builder().url(url)
+                        .header("Authorization", "Bearer $idToken")
+                        .header("X-Media-Tags", tags.take(400).replace("[^A-Za-z0-9,# _-]".toRegex(), ""))
+                        .post(ProgressBytesRequestBody(bytes, contentType.toMediaTypeOrNull()) { percent, eta ->
+                            viewModelScope.launch(Dispatchers.Main) { onProgress(percent, eta) }
+                        })
+                        .build()
+                    OkHttpClient.Builder().callTimeout(3, TimeUnit.MINUTES).build().newCall(request).execute().use { response ->
+                        val body = response.body?.string().orEmpty()
+                        if (!response.isSuccessful) return@use withContext(Dispatchers.Main) {
+                            val message = runCatching {
+                                val errorJson = JSONObject(body)
+                                listOf(errorJson.optString("error"), errorJson.optString("details")).filter { it.isNotBlank() }.joinToString(": ")
+                            }.getOrDefault("").ifBlank { "R2 upload failed (${response.code})" }
+                            onFailure(message)
+                        }
+                        val json = JSONObject(body)
+                        val result = R2MediaResult(json.getString("publicUrl"), json.getString("key"), json.getLong("expiresAt"), json.getString("kind"))
+                        withContext(Dispatchers.Main) { onSuccess(result) }
+                    }
+                } catch (e: Exception) {
+                    withContext(Dispatchers.Main) { onFailure(e.localizedMessage ?: "R2 upload failed") }
+                }
+            }
+        }.addOnFailureListener { onFailure(it.localizedMessage ?: "Upload authentication failed") }
+    }
+
+    fun discardR2Media(key: String) = deleteR2Object(key)
+
+    private fun deleteR2Object(key: String, onComplete: (() -> Unit)? = null) {
+        val user = FirebaseAuth.getInstance().currentUser ?: return onComplete?.invoke() ?: Unit
+        user.getIdToken(false).addOnSuccessListener { tokenResult ->
+            val token = tokenResult.token ?: return@addOnSuccessListener onComplete?.invoke() ?: Unit
+            val payload = JSONObject().put("key", key).toString()
+            val request = Request.Builder().url(_webhookUrl.value.trimEnd('/') + "/media/delete")
+                .header("Authorization", "Bearer $token")
+                .post(payload.toRequestBody("application/json".toMediaTypeOrNull())).build()
+            OkHttpClient().newCall(request).enqueue(object : Callback {
+                override fun onFailure(call: Call, e: IOException) { onComplete?.invoke() }
+                override fun onResponse(call: Call, response: Response) { response.close(); onComplete?.invoke() }
+            })
+        }.addOnFailureListener { onComplete?.invoke() }
+    }
+
+    /** Streams arbitrary attachments; there is no app-imposed size cap. */
+    fun uploadUriToSupabase(
+        uri: Uri, fileName: String, contentType: String, contentLength: Long,
+        onProgress: (Int, Long) -> Unit, onSuccess: (String) -> Unit, onFailure: (String) -> Unit
+    ) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val safe = fileName.replace(Regex("[^A-Za-z0-9._-]"), "_").takeLast(180)
+                val objectName = "${FirebaseAuth.getInstance().currentUser?.uid.orEmpty()}/${System.currentTimeMillis()}_${UUID.randomUUID()}_$safe"
+                val encoded = objectName.split('/').joinToString("/") { java.net.URLEncoder.encode(it, "UTF-8").replace("+", "%20") }
+                val base = "https://srfztgcdejfaesrvkarg.supabase.co/storage/v1/object"
+                val body = ProgressUriRequestBody(getApplication(), uri, contentLength, contentType.toMediaTypeOrNull()) { p, eta ->
+                    viewModelScope.launch(Dispatchers.Main) { onProgress(p, eta) }
+                }
+                val request = Request.Builder().url("$base/chat_images/$encoded")
+                    .header("apikey", "sb_publishable_BcH2xwywnUCVG48LYjPOLQ_8-y2InGA")
+                    .header("Authorization", "Bearer sb_publishable_BcH2xwywnUCVG48LYjPOLQ_8-y2InGA")
+                    .post(body).build()
+                OkHttpClient.Builder().callTimeout(30, TimeUnit.MINUTES).build().newCall(request).execute().use { response ->
+                    val result = response.body?.string().orEmpty()
+                    if (!response.isSuccessful) error("Upload failed (${response.code}): ${result.take(160)}")
+                    val publicUrl = "$base/public/chat_images/$encoded"
+                    localUploadFiles[publicUrl] = uri.toString()
+                    withContext(Dispatchers.Main) { onSuccess(publicUrl) }
+                }
+            } catch (e: Throwable) { withContext(Dispatchers.Main) { onFailure(e.localizedMessage ?: "File upload failed") } }
+        }
+    }
+
+    fun acknowledgeFileConsumed(messageId: String, remoteUrl: String?) {
+        if (remoteUrl.isNullOrBlank() || !remoteUrl.startsWith("http")) return
+        viewModelScope.launch(Dispatchers.IO) {
+            if (deleteSupabaseObject(remoteUrl)) {
+                cacheDao.clearRemoteFileUrl(messageId)
+                _chatMessagesState.value = _chatMessagesState.value.map { if (it.messageId == messageId) it.copy(remoteFileUrl = null) else it }
+            }
+        }
+    }
+
     // General file upload helper to Supabase Storage via REST
     fun uploadFileToSupabase(
         bucket: String,
@@ -996,6 +1983,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 client.newCall(request).execute().use { response ->
                     if (response.isSuccessful) {
                         val publicUrl = "https://srfztgcdejfaesrvkarg.supabase.co/storage/v1/object/public/$bucket/$fileName"
+                        cacheOutgoingMedia(publicUrl, fileName, fileBytes)
                         withContext(Dispatchers.Main) {
                             onSuccess(publicUrl)
                         }
@@ -1005,6 +1993,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         // If file already exists, return the public url directly
                         if (response.code == 400 && bodyStr.contains("Duplicate")) {
                             val publicUrl = "https://srfztgcdejfaesrvkarg.supabase.co/storage/v1/object/public/$bucket/$fileName"
+                            cacheOutgoingMedia(publicUrl, fileName, fileBytes)
                             withContext(Dispatchers.Main) {
                                 onSuccess(publicUrl)
                             }
@@ -1024,21 +2013,27 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private fun triggerN8NWebhookNotification(
-        webhookUrl: String,
+    private fun triggerFcmGatewayNotification(
+        gatewayUrl: String,
         targetToken: String,
         senderName: String,
         messageBody: String,
-        senderId: String
+        senderId: String,
+        senderProfileUrl: String = "",
+        notificationType: String = "message",
+        targetId: String = ""
     ) {
-        if (webhookUrl.isBlank() || !webhookUrl.startsWith("http")) {
-            Log.w("WEBHOOK_NOTIF", "Invalid Webhook URL. Cannot trigger push notification.")
+        if (gatewayUrl.isBlank() || !gatewayUrl.startsWith("https://")) {
+            Log.w("FCM_GATEWAY", "Direct FCM gateway URL is not configured.")
             return
         }
 
-        viewModelScope.launch {
-            try {
-                val client = OkHttpClient()
+        val authUser = FirebaseAuth.getInstance().currentUser ?: return
+        authUser.getIdToken(false).addOnSuccessListener { tokenResult ->
+            val callerToken = tokenResult.token ?: return@addOnSuccessListener
+            viewModelScope.launch {
+                try {
+                    val client = OkHttpClient()
                 
                 // Formats in 12-hour AM/PM Bangladesh local time
                 val sdf = SimpleDateFormat("yyyy-MM-dd hh:mm:ss a", Locale.getDefault()).apply {
@@ -1048,35 +2043,50 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
                 val jsonObject = JSONObject().apply {
                     put("token", targetToken)
-                    put("title", "New message from $senderName")
+                    put("title", if (notificationType == "message") "New message from $senderName" else "$senderName • FireChat")
                     put("body", messageBody)
                     put("text", messageBody)
                     put("senderId", senderId)
                     put("senderName", senderName)
+                    put("senderProfileUrl", senderProfileUrl)
+                    put("notificationType", notificationType)
+                    put("targetId", targetId)
                     put("timestamp", System.currentTimeMillis())
                     put("formattedTime", formattedTime)
                 }
 
                 val body = jsonObject.toString().toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull())
                 val request = Request.Builder()
-                    .url(webhookUrl)
+                    .url(gatewayUrl)
+                    .header("Authorization", "Bearer $callerToken")
                     .post(body)
                     .build()
 
                 client.newCall(request).enqueue(object : Callback {
                     override fun onFailure(call: Call, e: IOException) {
-                        Log.e("WEBHOOK_NOTIF", "Failed to contact Webhook: ${e.message}")
+                        Log.e("FCM_GATEWAY", "Gateway request failed: ${e.message}")
+                        _gatewayHealth.value = GatewayHealth(message = "Notification gateway error: ${e.localizedMessage}")
                     }
 
                     override fun onResponse(call: Call, response: Response) {
                         val respBody = response.body?.string() ?: ""
-                        Log.d("WEBHOOK_NOTIF", "Webhook Response [${response.code}]: $respBody")
+                        Log.d("FCM_GATEWAY", "FCM gateway response [${response.code}]: $respBody")
+                        if (response.isSuccessful) {
+                            _gatewayHealth.value = _gatewayHealth.value.copy(
+                                configured = true,
+                                message = if (notificationType == "gateway_test") "Test notification accepted by FCM" else "Direct FCM gateway is ready"
+                            )
+                        } else {
+                            val error = try { JSONObject(respBody).optString("error") } catch (_: Exception) { "HTTP ${response.code}" }
+                            _gatewayHealth.value = GatewayHealth(message = "FCM delivery failed: $error")
+                        }
                     }
                 })
-            } catch (e: Exception) {
-                Log.e("WEBHOOK_NOTIF", "Exception during webhook setup: ${e.message}")
+                } catch (e: Exception) {
+                    Log.e("FCM_GATEWAY", "Exception during FCM gateway request: ${e.message}")
+                }
             }
-        }
+        }.addOnFailureListener { Log.e("FCM_GATEWAY", "Could not authenticate gateway call: ${it.message}") }
     }
 
     // --- Dynamic Themes & Network ---
@@ -1167,7 +2177,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                                 text = doc.getString("text") ?: "",
                                 timestamp = doc.getLong("timestamp") ?: 0L,
                                 reactions = (doc.get("reactions") as? Map<*, *>)?.map { it.key.toString() to it.value.toString() }?.toMap() ?: emptyMap(),
-                                comments = commentsList
+                                comments = commentsList,
+                                viewers = (doc.get("viewers") as? List<*>)?.mapNotNull { it as? String } ?: emptyList()
                             )
                         } catch (e: Exception) {
                             null
@@ -1178,8 +2189,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                             if (now - story.timestamp <= 12 * 60 * 60 * 1000) {
                                 list.add(story)
                             } else {
-                                // Expired story: Auto-remove from DB to clean up
-                                FirebaseFirestore.getInstance().collection("stories").document(story.id).delete()
+                                // Expired story: remove media storage first, then metadata/cache.
+                                viewModelScope.launch(Dispatchers.IO) {
+                                    listOf(story.imageUrl, story.videoUrl).filter { it.isNotBlank() }.forEach(::deleteSupabaseObject)
+                                    cacheDao.deleteStory(story.id)
+                                    FirebaseFirestore.getInstance().collection("stories").document(story.id).delete()
+                                }
                             }
                         }
                     }
@@ -1228,7 +2243,14 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 } else {
                     currentReactions[user.uid] = reactionType
                 }
-                storyRef.update("reactions", currentReactions)
+                storyRef.update("reactions", currentReactions).addOnSuccessListener {
+                    if (currentReactions[user.uid] == reactionType) {
+                        createActivityNotification(
+                            doc.getString("senderId") ?: "", "story_reaction", storyId,
+                            "reacted $reactionType to your story"
+                        )
+                    }
+                }
             }
         }
     }
@@ -1257,19 +2279,26 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 }?.toMutableList() ?: mutableListOf()
 
                 commentsList.add(comment)
-                storyRef.update("comments", commentsList)
+                storyRef.update("comments", commentsList).addOnSuccessListener {
+                    createActivityNotification(
+                        doc.getString("senderId") ?: "", "story_comment", storyId,
+                        "commented on your story"
+                    )
+                }
             }
         }
     }
 
     fun deleteStory(storyId: String) {
-        FirebaseFirestore.getInstance().collection("stories").document(storyId).delete()
-            .addOnSuccessListener {
-                viewModelScope.launch(Dispatchers.IO) {
-                    cacheDao.deleteStory(storyId)
-                }
-                loadStories()
+        val ref = FirebaseFirestore.getInstance().collection("stories").document(storyId)
+        ref.get().addOnSuccessListener { doc ->
+            val media = listOfNotNull(doc.getString("imageUrl"), doc.getString("videoUrl")).filter { it.isNotBlank() }
+            viewModelScope.launch(Dispatchers.IO) {
+                media.forEach(::deleteSupabaseObject)
+                cacheDao.deleteStory(storyId)
+                ref.delete().addOnSuccessListener { loadStories() }
             }
+        }
     }
 
     // --- Social Posts Logic ---
@@ -1325,14 +2354,28 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                                 reactions = (doc.get("reactions") as? Map<*, *>)?.map { it.key.toString() to it.value.toString() }?.toMap() ?: emptyMap(),
                                 comments = commentsList,
                                 viewsCount = doc.getLong("viewsCount")?.toInt() ?: 0,
-                                isPrivate = doc.getBoolean("isPrivate") ?: false
+                                isPrivate = doc.getBoolean("isPrivate") ?: false,
+                                title = doc.getString("title") ?: "",
+                                tags = (doc.get("tags") as? List<*>)?.mapNotNull { it as? String } ?: emptyList(),
+                                taggedUserIds = (doc.get("taggedUserIds") as? List<*>)?.mapNotNull { it as? String } ?: emptyList(),
+                                feeling = doc.getString("feeling") ?: "",
+                                backgroundStyle = doc.getString("backgroundStyle") ?: "glass",
+                                textAnimation = doc.getString("textAnimation") ?: "none",
+                                r2ObjectKeys = (doc.get("r2ObjectKeys") as? List<*>)?.mapNotNull { it as? String } ?: emptyList(),
+                                isReel = doc.getBoolean("isReel") ?: false,
+                                expiresAt = doc.getLong("expiresAt") ?: 0L,
+                                imageUrls = (doc.get("imageUrls") as? List<*>)?.mapNotNull { it as? String } ?: emptyList(),
+                                mediaReactions = (doc.get("mediaReactions") as? Map<*, *>)?.entries?.associate { entry ->
+                                    entry.key.toString() to ((entry.value as? Map<*, *>)?.entries?.associate { it.key.toString() to it.value.toString() } ?: emptyMap())
+                                } ?: emptyMap()
                             )
 
-                            // Apply privacy filters & blocked lists filters
-                            if (!myBlocked.contains(post.senderId)) {
-                                if (!post.isPrivate || post.senderId == currentUid) {
-                                    list.add(post)
-                                }
+                            if (post.expiresAt > 0L && System.currentTimeMillis() >= post.expiresAt) {
+                                post.r2ObjectKeys.forEach(::deleteR2Object)
+                                viewModelScope.launch(Dispatchers.IO) { cacheDao.deletePost(post.id) }
+                                doc.reference.delete()
+                            } else if (!myBlocked.contains(post.senderId)) {
+                                if (!post.isPrivate || post.senderId == currentUid) list.add(post)
                             }
                         } catch (e: Exception) {
                             Log.e("POST_PARSE", "Error parsing post: ${e.message}")
@@ -1350,7 +2393,24 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             }
     }
 
-    fun createPost(text: String, imageUrl: String, audioUrl: String, videoUrl: String, isPrivate: Boolean, onComplete: () -> Unit) {
+    fun createPost(
+        text: String,
+        imageUrl: String,
+        audioUrl: String,
+        videoUrl: String,
+        isPrivate: Boolean,
+        onComplete: () -> Unit,
+        title: String = "",
+        tags: List<String> = emptyList(),
+        taggedUserIds: List<String> = emptyList(),
+        feeling: String = "",
+        backgroundStyle: String = "glass",
+        textAnimation: String = "none",
+        r2ObjectKeys: List<String> = emptyList(),
+        isReel: Boolean = false,
+        expiresAt: Long = 0L,
+        imageUrls: List<String> = emptyList()
+    ) {
         val user = getCurrentUserOrFallback() ?: return
         val postId = UUID.randomUUID().toString()
         val post = Post(
@@ -1360,24 +2420,40 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             senderProfilePic = user.profileImageUrl,
             text = text,
             imageUrl = imageUrl,
-            audioUrl = audioUrl,
+            audioUrl = "",
             videoUrl = videoUrl,
             timestamp = System.currentTimeMillis(),
-            isPrivate = isPrivate
+            isPrivate = isPrivate,
+            title = title,
+            tags = tags,
+            taggedUserIds = taggedUserIds,
+            feeling = feeling,
+            backgroundStyle = backgroundStyle,
+            textAnimation = textAnimation,
+            r2ObjectKeys = r2ObjectKeys,
+            isReel = isReel,
+            expiresAt = expiresAt,
+            imageUrls = imageUrls.ifEmpty { imageUrl.takeIf { it.isNotBlank() }?.let(::listOf).orEmpty() }
         )
 
         // Webhook shouldn't be called according to instruction ("কোন পোস্ট করলে রিকোয়েস্ট যাবে না")
         FirebaseFirestore.getInstance().collection("posts").document(postId)
             .set(post)
             .addOnSuccessListener {
+                taggedUserIds.forEach { taggedUid ->
+                    createActivityNotification(taggedUid, "post_tag", postId, "tagged you in a post${if (title.isNotBlank()) ": $title" else ""}")
+                }
+                if (isReel) user.friends.forEach { friendUid ->
+                    createActivityNotification(friendUid, "new_reel", postId, "published a new reel")
+                }
                 onComplete()
                 loadPosts()
             }
     }
 
-    fun editPost(postId: String, text: String, isPrivate: Boolean, onComplete: () -> Unit) {
+    fun editPost(postId: String, text: String, isPrivate: Boolean, title: String, tags: List<String>, onComplete: () -> Unit) {
         val postRef = FirebaseFirestore.getInstance().collection("posts").document(postId)
-        postRef.update(mapOf("text" to text, "isPrivate" to isPrivate))
+        postRef.update(mapOf("text" to text, "title" to title, "tags" to tags, "isPrivate" to isPrivate, "editedAt" to System.currentTimeMillis()))
             .addOnSuccessListener {
                 onComplete()
                 loadPosts()
@@ -1385,13 +2461,25 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun deletePost(postId: String) {
-        FirebaseFirestore.getInstance().collection("posts").document(postId).delete()
-            .addOnSuccessListener {
-                viewModelScope.launch(Dispatchers.IO) {
-                    cacheDao.deletePost(postId)
+        val postRef = FirebaseFirestore.getInstance().collection("posts").document(postId)
+        postRef.get().addOnSuccessListener { document ->
+            val r2Keys = (document.get("r2ObjectKeys") as? List<*>)?.mapNotNull { it as? String }.orEmpty()
+            val legacyMediaUrls = listOfNotNull(
+                document.getString("imageUrl"), document.getString("videoUrl"), document.getString("audioUrl")
+            ).filter { it.isNotBlank() }
+            r2Keys.forEach(::deleteR2Object)
+            viewModelScope.launch(Dispatchers.IO) {
+                if (r2Keys.isEmpty()) legacyMediaUrls.forEach { url ->
+                    deleteSupabaseObject(url)
+                    localUploadFiles.remove(url)?.let { localUri ->
+                        try { File(java.net.URI(localUri)).delete() } catch (_: Exception) {}
+                    }
                 }
-                loadPosts()
+                cacheDao.deletePost(postId)
+                postRef.delete().addOnSuccessListener { loadPosts() }
+                    .addOnFailureListener { Log.e("POST_DELETE", "Firestore delete failed: ${it.message}") }
             }
+        }.addOnFailureListener { Log.e("POST_DELETE", "Could not load post metadata: ${it.message}") }
     }
 
     fun reactToPost(postId: String, reactionType: String) {
@@ -1405,7 +2493,30 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 } else {
                     currentReactions[user.uid] = reactionType
                 }
-                postRef.update("reactions", currentReactions)
+                postRef.update("reactions", currentReactions).addOnSuccessListener {
+                    if (currentReactions[user.uid] == reactionType) {
+                        createActivityNotification(
+                            doc.getString("senderId") ?: "", "post_reaction", postId,
+                            "reacted $reactionType to your post"
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    fun reactToPostMedia(postId: String, mediaKey: String, reactionType: String = "❤️") {
+        val user = getCurrentUserOrFallback() ?: return
+        val ref = FirebaseFirestore.getInstance().collection("posts").document(postId)
+        ref.get().addOnSuccessListener { doc ->
+            val root = (doc.get("mediaReactions") as? Map<*, *>)?.entries?.associate { entry ->
+                entry.key.toString() to ((entry.value as? Map<*, *>)?.entries?.associate { it.key.toString() to it.value.toString() }?.toMutableMap() ?: mutableMapOf())
+            }?.toMutableMap() ?: mutableMapOf()
+            val reactions = root[mediaKey]?.toMutableMap() ?: mutableMapOf()
+            if (reactions[user.uid] == reactionType) reactions.remove(user.uid) else reactions[user.uid] = reactionType
+            root[mediaKey] = reactions
+            ref.update("mediaReactions", root).addOnSuccessListener {
+                if (reactions[user.uid] == reactionType) createActivityNotification(doc.getString("senderId") ?: "", "media_reaction", postId, "liked a photo in your post")
             }
         }
     }
@@ -1434,7 +2545,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 }?.toMutableList() ?: mutableListOf()
 
                 commentsList.add(comment)
-                postRef.update("comments", commentsList)
+                postRef.update("comments", commentsList).addOnSuccessListener {
+                    createActivityNotification(
+                        doc.getString("senderId") ?: "", "post_comment", postId,
+                        "commented on your post"
+                    )
+                }
             }
         }
     }
@@ -1548,6 +2664,30 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             }
     }
 
+    fun addGroupMembers(group: Group, memberIds: List<String>, onComplete: (Boolean) -> Unit = {}) {
+        val actor = getCurrentUserOrFallback() ?: return onComplete(false)
+        val newMembers = (group.members + memberIds).distinct()
+        val ref = FirebaseFirestore.getInstance().collection("groups").document(group.id)
+        ref.update("members", newMembers).addOnSuccessListener {
+            memberIds.forEach { uid ->
+                createActivityNotification(uid, "group_added", group.id, "added you to ${group.name}")
+            }
+            val messageId = UUID.randomUUID().toString()
+            ref.collection("messages").document(messageId).set(
+                GroupMessage(
+                    messageId = messageId,
+                    groupId = group.id,
+                    senderId = "system",
+                    senderName = "SYSTEM",
+                    text = "${actor.name} added ${memberIds.size} member(s)",
+                    timestamp = System.currentTimeMillis()
+                )
+            )
+            _activeGroup.value = group.copy(members = newMembers)
+            onComplete(true)
+        }.addOnFailureListener { onComplete(false) }
+    }
+
     fun selectGroup(group: Group?) {
         _activeGroup.value = group
         if (group != null) {
@@ -1629,6 +2769,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             .addOnSuccessListener {
                 val lastMsgText = if (voiceUrl != null) "🎙️ Voice message" else if (imageUrl != null) "📷 Image attachment" else text
                 groupRef.update("lastMessage", "${user.name}: $lastMsgText")
+                groupRef.get().addOnSuccessListener { groupDoc ->
+                    val members = (groupDoc.get("members") as? List<*>)?.mapNotNull { it as? String }.orEmpty()
+                    members.filter { it != user.uid }.forEach { uid ->
+                        createActivityNotification(uid, "group_message", groupId, "sent a message in ${groupDoc.getString("name") ?: "your group"}")
+                    }
+                }
             }
     }
 
