@@ -15,7 +15,8 @@ data class User(
     val bio: String = "",
     val coverImageUrl: String = "",
     val followers: List<String> = emptyList(),
-    val following: List<String> = emptyList()
+    val following: List<String> = emptyList(),
+    val role: String = "user"
 )
 
 data class Message(

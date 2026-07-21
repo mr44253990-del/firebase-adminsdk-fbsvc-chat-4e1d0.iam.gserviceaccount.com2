@@ -47,6 +47,7 @@ fun UserProfileScreen(
     val isFriend = currentUser?.friends?.contains(liveUser.uid) == true
     val isFollowing = currentUser?.following?.contains(liveUser.uid) == true
     val isRequested = sentRequests.contains("${currentUser?.uid}_${liveUser.uid}")
+    var showFeatureSuggestion by remember { mutableStateOf(false) }
 
     Scaffold(
         containerColor = Color.Transparent,
@@ -95,7 +96,13 @@ fun UserProfileScreen(
                         )
                     }
                     Spacer(Modifier.height(62.dp))
-                    Text(liveUser.name, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(liveUser.name, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                        if (liveUser.role == "moderator") {
+                            Spacer(Modifier.width(7.dp))
+                            AssistChip(onClick = {}, label = { Text("Moderator") }, leadingIcon = { Icon(Icons.Outlined.Verified, null, Modifier.size(16.dp)) })
+                        }
+                    }
                     Text("@${liveUser.username}", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     if (liveUser.bio.isNotBlank()) {
                         Text(liveUser.bio, modifier = Modifier.padding(horizontal = 28.dp, vertical = 8.dp))
@@ -148,6 +155,11 @@ fun UserProfileScreen(
                             Text(if (isFriend) "Message" else "Message request")
                         }
                     }
+                    if (liveUser.role == "moderator" && liveUser.uid != currentUser?.uid) {
+                        TextButton(onClick = { showFeatureSuggestion = true }) {
+                            Icon(Icons.Outlined.Lightbulb, null); Spacer(Modifier.width(6.dp)); Text("Suggest an app update or feature")
+                        }
+                    }
                 }
             }
             item(key = "about") {
@@ -183,6 +195,31 @@ fun UserProfileScreen(
             }
         }
     }
+
+    if (showFeatureSuggestion) {
+        var title by remember { mutableStateOf("") }
+        var description by remember { mutableStateOf("") }
+        AlertDialog(
+            onDismissRequest = { showFeatureSuggestion = false },
+            title = { Text("Suggest a FireChat feature", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedTextField(title, { title = it.take(100) }, label = { Text("Request title") }, singleLine = true)
+                    OutlinedTextField(description, { description = it.take(1500) }, label = { Text("Describe the update or feature") }, minLines = 5)
+                }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    viewModel.submitFeatureRequest(title, description) { ok ->
+                        Toast.makeText(context, if (ok) "Request sent to the moderator" else "Could not send request", Toast.LENGTH_LONG).show()
+                        if (ok) showFeatureSuggestion = false
+                    }
+                }, enabled = title.isNotBlank() && description.isNotBlank()) { Text("Send request") }
+            },
+            dismissButton = { TextButton(onClick = { showFeatureSuggestion = false }) { Text("Cancel") } }
+        )
+    }
+
 }
 
 @Composable

@@ -79,6 +79,7 @@ import com.example.R
 import com.example.data.ActivityNotification
 import com.example.security.AppLockManager
 import com.example.data.FriendRequest
+import com.example.data.FlagshipConfig
 import com.example.data.Group
 import com.example.data.MessageRequest
 import com.example.data.Post
@@ -115,6 +116,8 @@ fun HomeScreen(
     val posts by viewModel.postsState.collectAsState()
     val webhookUrl by viewModel.webhookUrl.collectAsState()
     val gatewayHealth by viewModel.gatewayHealth.collectAsState()
+    val flagshipConfig by viewModel.flagshipConfig.collectAsState()
+    val featureRequests by viewModel.featureRequests.collectAsState()
     val inAppNotification by viewModel.inAppNotification.collectAsState()
     val activityNotifications by viewModel.activityNotifications.collectAsState()
     val openActivitySignal by viewModel.openActivityCenterSignal.collectAsState()
@@ -137,6 +140,11 @@ fun HomeScreen(
     var lockEnabled by remember { mutableStateOf(AppLockManager.isEnabled(context)) }
     val currentTab by viewModel.currentTabState.collectAsState()
     val isAdmin = FirebaseAuth.getInstance().currentUser?.email?.lowercase()?.trim()?.trimEnd('.') == "mr4425390@gmail.com"
+    val currentVersionCode = com.example.BuildConfig.VERSION_CODE
+    var postponeUpdate by remember(flagshipConfig.updatedAt) { mutableStateOf(false) }
+    var dismissNotice by remember(flagshipConfig.updatedAt) { mutableStateOf(false) }
+    val newerVersion = flagshipConfig.latestVersionCode > currentVersionCode
+    val mandatoryUpdate = flagshipConfig.mandatoryUpdate || currentVersionCode < flagshipConfig.minimumVersionCode
 
     // Dialog & Creation controllers
     var showCreateGroupDialog by remember { mutableStateOf(false) }
@@ -597,8 +605,33 @@ fun HomeScreen(
                             }
                         }
                     } else {
-                        // Admin Dashboard
+                        // Admin Dashboard / Flagship Control
                         LaunchedEffect(webhookUrl) { viewModel.testFcmGateway(webhookUrl) }
+                        var draftUpdateEnabled by remember(flagshipConfig) { mutableStateOf(flagshipConfig.updateEnabled) }
+                        var draftMandatory by remember(flagshipConfig) { mutableStateOf(flagshipConfig.mandatoryUpdate) }
+                        var draftVersionCode by remember(flagshipConfig) { mutableStateOf(flagshipConfig.latestVersionCode.toString()) }
+                        var draftVersionName by remember(flagshipConfig) { mutableStateOf(flagshipConfig.versionName) }
+                        var draftNotes by remember(flagshipConfig) { mutableStateOf(flagshipConfig.releaseNotes) }
+                        var draftApkUrl by remember(flagshipConfig) { mutableStateOf(flagshipConfig.apkUrl) }
+                        var draftApkKey by remember(flagshipConfig) { mutableStateOf(flagshipConfig.apkR2Key) }
+                        var draftNoticeEnabled by remember(flagshipConfig) { mutableStateOf(flagshipConfig.noticeEnabled) }
+                        var draftNoticeTitle by remember(flagshipConfig) { mutableStateOf(flagshipConfig.noticeTitle) }
+                        var draftNoticeBody by remember(flagshipConfig) { mutableStateOf(flagshipConfig.noticeBody) }
+                        var draftMaintenance by remember(flagshipConfig) { mutableStateOf(flagshipConfig.maintenanceMode) }
+                        var updateUploading by remember { mutableStateOf(false) }
+                        var updateUploadProgress by remember { mutableIntStateOf(0) }
+                        val updateApkPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+                            uri ?: return@rememberLauncherForActivityResult
+                            val bytes = runCatching { context.contentResolver.openInputStream(uri)?.use { it.readBytes() } }.getOrNull()
+                            if (bytes == null) Toast.makeText(context, "Could not read APK", Toast.LENGTH_LONG).show()
+                            else {
+                                updateUploading = true
+                                viewModel.uploadMediaToR2(bytes, "application/vnd.android.package-archive", "update", "apk",
+                                    onProgress = { percent, _ -> updateUploadProgress = percent },
+                                    onSuccess = { media -> updateUploading = false; draftApkUrl = media.publicUrl; draftApkKey = media.key },
+                                    onFailure = { error -> updateUploading = false; Toast.makeText(context, error, Toast.LENGTH_LONG).show() })
+                            }
+                        }
                         Column(
                             modifier = Modifier
                                 .fillMaxSize()
@@ -614,6 +647,64 @@ fun HomeScreen(
                             )
 
                             var adminUrlInput by remember { mutableStateOf(webhookUrl) }
+
+                            Card(shape = RoundedCornerShape(28.dp), modifier = Modifier.fillMaxWidth()) {
+                                Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    Text("Flagship Update Control", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                                    Text("Upload a signed APK to R2, publish release notes, force minimum versions, maintenance and notices.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Row(verticalAlignment = Alignment.CenterVertically) { Text("Update enabled", Modifier.weight(1f)); Switch(draftUpdateEnabled, { draftUpdateEnabled = it }) }
+                                    Row(verticalAlignment = Alignment.CenterVertically) { Text("Mandatory update", Modifier.weight(1f)); Switch(draftMandatory, { draftMandatory = it }) }
+                                    Row(verticalAlignment = Alignment.CenterVertically) { Text("Maintenance mode", Modifier.weight(1f)); Switch(draftMaintenance, { draftMaintenance = it }) }
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        OutlinedTextField(draftVersionCode, { draftVersionCode = it.filter(Char::isDigit).take(8) }, label = { Text("Version code") }, singleLine = true, modifier = Modifier.weight(1f))
+                                        OutlinedTextField(draftVersionName, { draftVersionName = it.take(30) }, label = { Text("Version name") }, singleLine = true, modifier = Modifier.weight(1f))
+                                    }
+                                    OutlinedTextField(draftNotes, { draftNotes = it.take(4000) }, label = { Text("What's new / release notes") }, minLines = 4, modifier = Modifier.fillMaxWidth())
+                                    OutlinedButton(onClick = { updateApkPicker.launch("application/vnd.android.package-archive") }, enabled = !updateUploading, modifier = Modifier.fillMaxWidth()) {
+                                        Icon(Icons.Outlined.UploadFile, null); Spacer(Modifier.width(8.dp)); Text(if (draftApkUrl.isBlank()) "Choose signed APK" else "Replace update APK")
+                                    }
+                                    if (updateUploading) { LinearProgressIndicator(progress = { updateUploadProgress / 100f }, modifier = Modifier.fillMaxWidth()); Text("Uploading update • $updateUploadProgress%", fontSize = 11.sp) }
+                                    if (draftApkUrl.isNotBlank()) Text("APK ready: ${draftApkKey.ifBlank { draftApkUrl }}", fontSize = 10.sp, color = Color(0xFF45D483), maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                    HorizontalDivider()
+                                    Row(verticalAlignment = Alignment.CenterVertically) { Text("Show global notice", Modifier.weight(1f)); Switch(draftNoticeEnabled, { draftNoticeEnabled = it }) }
+                                    OutlinedTextField(draftNoticeTitle, { draftNoticeTitle = it.take(100) }, label = { Text("Notice title") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                                    OutlinedTextField(draftNoticeBody, { draftNoticeBody = it.take(1000) }, label = { Text("Notice details") }, minLines = 2, modifier = Modifier.fillMaxWidth())
+                                    Button(onClick = {
+                                        val code = draftVersionCode.toIntOrNull() ?: com.example.BuildConfig.VERSION_CODE
+                                        viewModel.publishFlagshipConfig(
+                                            FlagshipConfig(
+                                                updateEnabled = draftUpdateEnabled, mandatoryUpdate = draftMandatory,
+                                                latestVersionCode = code, minimumVersionCode = if (draftMandatory) code else 1,
+                                                versionName = draftVersionName, apkUrl = draftApkUrl, apkR2Key = draftApkKey,
+                                                releaseNotes = draftNotes, noticeEnabled = draftNoticeEnabled,
+                                                noticeTitle = draftNoticeTitle, noticeBody = draftNoticeBody,
+                                                maintenanceMode = draftMaintenance
+                                            )
+                                        ) { ok -> Toast.makeText(context, if (ok) "Flagship configuration published" else "Publish failed", Toast.LENGTH_LONG).show() }
+                                    }, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Outlined.Publish, null); Spacer(Modifier.width(8.dp)); Text("Publish Flagship config") }
+                                    if (flagshipConfig.updateEnabled) TextButton(onClick = { viewModel.publishFlagshipConfig(flagshipConfig.copy(updateEnabled = false, mandatoryUpdate = false)) }) { Text("Disable current update") }
+                                }
+                            }
+
+                            if (featureRequests.isNotEmpty()) Card(shape = RoundedCornerShape(28.dp), modifier = Modifier.fillMaxWidth()) {
+                                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                                    Text("User feature requests (${featureRequests.size})", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                                    featureRequests.take(20).forEach { request ->
+                                        Surface(color = MaterialTheme.colorScheme.surfaceVariant.copy(.45f), shape = RoundedCornerShape(16.dp)) {
+                                            Column(Modifier.padding(12.dp)) {
+                                                Text(request.title, fontWeight = FontWeight.Bold)
+                                                Text("${request.requesterName} • ${request.status}", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                                Text(request.description, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                                    TextButton(onClick = { viewModel.updateFeatureRequest(request.id, "accepted") }) { Text("Accept") }
+                                                    TextButton(onClick = { viewModel.updateFeatureRequest(request.id, "pending") }) { Text("Pending") }
+                                                    TextButton(onClick = { viewModel.updateFeatureRequest(request.id, "rejected") }) { Text("Reject", color = MaterialTheme.colorScheme.error) }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
 
                             Card(
                                 shape = RoundedCornerShape(28.dp),
@@ -1258,6 +1349,27 @@ fun HomeScreen(
                 }
             }
         }
+    }
+
+    if (!isAdmin && flagshipConfig.maintenanceMode) {
+        Dialog(onDismissRequest = {}, properties = DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false)) {
+            Surface(shape = RoundedCornerShape(30.dp)) {
+                Column(Modifier.padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(Icons.Outlined.Construction, null, Modifier.size(54.dp), tint = MaterialTheme.colorScheme.primary)
+                    Spacer(Modifier.height(12.dp)); Text("FireChat maintenance", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                    Text(flagshipConfig.noticeBody.ifBlank { "We are preparing a better FireChat experience. Please try again later." }, textAlign = TextAlign.Center)
+                }
+            }
+        }
+    } else if (!isAdmin && flagshipConfig.updateEnabled && newerVersion && !postponeUpdate) {
+        FlagshipUpdateDialog(flagshipConfig, mandatoryUpdate) { postponeUpdate = true }
+    } else if (flagshipConfig.noticeEnabled && !dismissNotice && flagshipConfig.noticeTitle.isNotBlank()) {
+        AlertDialog(
+            onDismissRequest = { dismissNotice = true },
+            title = { Text(flagshipConfig.noticeTitle, fontWeight = FontWeight.Bold) },
+            text = { Text(flagshipConfig.noticeBody) },
+            confirmButton = { Button(onClick = { dismissNotice = true }) { Text("Got it") } }
+        )
     }
 
     if (showLockSetup) {
@@ -1950,7 +2062,7 @@ fun ReelsFeedScreen(
             ImmersiveVideoPage(
                 post = source, owner = users.find { it.uid == source.senderId },
                 isActive = pager.currentPage == page, viewModel = viewModel,
-                onProfileSelected = onProfileSelected
+                onProfileSelected = { user -> VideoPlayerManager.pause(); onProfileSelected(user) }
             )
         }
         IconButton(
@@ -2425,12 +2537,13 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
                     )
                     Spacer(modifier = Modifier.width(10.dp))
                     Column {
-                        Text(
-                            post.senderName, 
-                            fontWeight = FontWeight.Bold, 
-                            fontSize = 14.sp,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(post.senderName, fontWeight = FontWeight.Bold, fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurface)
+                            if (postOwner?.role == "moderator") {
+                                Spacer(Modifier.width(5.dp)); Icon(Icons.Outlined.Verified, "Moderator", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(15.dp))
+                                Text(" MOD", color = MaterialTheme.colorScheme.primary, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(
                                 text = if (post.isPrivate) "🔒 Private" else "🌐 Public",
@@ -3048,12 +3161,17 @@ fun ChatConversationUserItem(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = user.name,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = if (hasUnread) FontWeight.ExtraBold else FontWeight.Bold,
-                        color = if (hasUnread) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = user.name,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = if (hasUnread) FontWeight.ExtraBold else FontWeight.Bold,
+                            color = if (hasUnread) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground
+                        )
+                        if (user.role == "moderator") {
+                            Spacer(Modifier.width(4.dp)); Icon(Icons.Outlined.Verified, "Moderator", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(15.dp))
+                        }
+                    }
                     
                     if (hasUnread) {
                         Box(

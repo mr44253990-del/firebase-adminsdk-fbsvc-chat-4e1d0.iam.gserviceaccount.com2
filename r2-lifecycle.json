@@ -1,24 +1,28 @@
 {
   "Rules": [
     {
-      "ID": "Expire all FireChat post and reel media after 10 days",
+      "ID": "Expire post media after 10 days",
       "Status": "Enabled",
-      "Filter": {
-        "Prefix": ""
-      },
-      "Expiration": {
-        "Days": 10
-      }
+      "Filter": { "Prefix": "posts/" },
+      "Expiration": { "Days": 10 }
     },
     {
-      "ID": "Abort incomplete mobile uploads",
+      "ID": "Expire reels after 10 days",
       "Status": "Enabled",
-      "Filter": {
-        "Prefix": ""
-      },
-      "AbortIncompleteMultipartUpload": {
-        "DaysAfterInitiation": 1
-      }
+      "Filter": { "Prefix": "reels/" },
+      "Expiration": { "Days": 10 }
+    },
+    {
+      "ID": "Expire thumbnails after 10 days",
+      "Status": "Enabled",
+      "Filter": { "Prefix": "thumbnails/" },
+      "Expiration": { "Days": 10 }
+    },
+    {
+      "ID": "Abort incomplete uploads",
+      "Status": "Enabled",
+      "Filter": { "Prefix": "" },
+      "AbortIncompleteMultipartUpload": { "DaysAfterInitiation": 1 }
     }
   ]
 }

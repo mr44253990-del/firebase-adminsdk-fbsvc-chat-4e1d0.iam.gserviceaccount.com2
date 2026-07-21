@@ -36,10 +36,12 @@ export default {
       const contentLength = Number(request.headers.get("Content-Length") || 0);
       if (contentLength > 95 * 1024 * 1024) return jsonResponse({ error: "Media exceeds 95 MB limit" }, 413);
       const requestedKind = url.searchParams.get("kind");
-      const kind = requestedKind === "reel" ? "reels" : requestedKind === "thumbnail" ? "thumbnails" : "posts";
+      const isAdmin = auth.caller.email?.toLowerCase().replace(/\.+$/, "") === "mr4425390@gmail.com";
+      if (requestedKind === "update" && !isAdmin) return jsonResponse({ error: "Only the admin can upload app updates" }, 403);
+      const kind = requestedKind === "reel" ? "reels" : requestedKind === "thumbnail" ? "thumbnails" : requestedKind === "update" ? "updates" : "posts";
       const extension = (url.searchParams.get("extension") || mimeExtension(contentType)).replace(/[^a-z0-9]/gi, "").slice(0, 8) || "bin";
       const key = `${kind}/${auth.caller.sub}/${Date.now()}-${crypto.randomUUID()}.${extension}`;
-      const expiresAt = Date.now() + 10 * 24 * 60 * 60 * 1000;
+      const expiresAt = kind === "updates" ? 0 : Date.now() + 10 * 24 * 60 * 60 * 1000;
       await env.MEDIA_BUCKET.put(key, request.body, {
         httpMetadata: { contentType, cacheControl: "public, max-age=3600" },
         customMetadata: {
@@ -75,7 +77,7 @@ export default {
       return new Response(JSON.stringify({
         ok: serviceAccountConfigured,
         service: "FireChat Direct FCM Gateway",
-        version: "4.2.4",
+        version: "4.3.0",
         projectId,
         serviceAccountConfigured,
         turnConfigured: Boolean(env.TURN_TOKEN_ID && env.TURN_API_TOKEN),
@@ -134,7 +136,7 @@ export default {
       if (path === "/media/delete") {
         if (!env.MEDIA_BUCKET || typeof env.MEDIA_BUCKET.delete !== "function") return jsonResponse({ error: "MEDIA_BUCKET must be an R2 bucket binding, not a variable or secret" }, 503);
         const key = String(payload.key || "");
-        if (!key.startsWith("posts/") && !key.startsWith("reels/") && !key.startsWith("thumbnails/")) return jsonResponse({ error: "Invalid media key" }, 400);
+        if (!key.startsWith("posts/") && !key.startsWith("reels/") && !key.startsWith("thumbnails/") && !key.startsWith("updates/")) return jsonResponse({ error: "Invalid media key" }, 400);
         const object = await env.MEDIA_BUCKET.head(key);
         if (!object) return jsonResponse({ success: true, alreadyDeleted: true });
         const isAdmin = caller.email === "mr4425390@gmail.com";

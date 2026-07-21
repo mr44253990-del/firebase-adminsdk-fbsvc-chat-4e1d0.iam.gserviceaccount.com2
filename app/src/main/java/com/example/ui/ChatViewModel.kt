@@ -185,6 +185,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private val _selectedProfile = MutableStateFlow<User?>(null)
     val selectedProfile: StateFlow<User?> = _selectedProfile.asStateFlow()
 
+    private val _flagshipConfig = MutableStateFlow(FlagshipConfig())
+    val flagshipConfig: StateFlow<FlagshipConfig> = _flagshipConfig.asStateFlow()
+    private val _featureRequests = MutableStateFlow<List<FeatureRequest>>(emptyList())
+    val featureRequests: StateFlow<List<FeatureRequest>> = _featureRequests.asStateFlow()
+
     private val _authLoading = MutableStateFlow(false)
     val authLoading: StateFlow<Boolean> = _authLoading.asStateFlow()
 
@@ -222,6 +227,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private var presenceListener: ValueEventListener? = null
     private var activityNotificationListener: ListenerRegistration? = null
     private var currentUserProfileListener: ListenerRegistration? = null
+    private var flagshipListener: ListenerRegistration? = null
+    private var featureRequestListener: ListenerRegistration? = null
     private var friendRequestListener: ListenerRegistration? = null
     private var sentFriendRequestListener: ListenerRegistration? = null
     private var messageRequestListener: ListenerRegistration? = null
@@ -243,6 +250,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     init {
         checkFirebaseConfiguration()
+        listenFlagshipControl()
         registerNetworkCallback(application)
     }
 
@@ -413,6 +421,59 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 targetId = "test_${System.currentTimeMillis()}"
             )
         }
+    }
+
+    private fun listenFlagshipControl() {
+        flagshipListener?.remove()
+        flagshipListener = FirebaseFirestore.getInstance().collection("app_config").document("flagship")
+            .addSnapshotListener { document, error ->
+                if (error != null) Log.e("FLAGSHIP", "Config listener failed: ${error.message}")
+                else _flagshipConfig.value = document?.toObject(FlagshipConfig::class.java) ?: FlagshipConfig()
+            }
+        listenFeatureRequestsIfAdmin()
+    }
+
+    private fun listenFeatureRequestsIfAdmin() {
+        val admin = FirebaseAuth.getInstance().currentUser?.email?.lowercase()?.trim()?.trimEnd('.') == "mr4425390@gmail.com"
+        featureRequestListener?.remove(); featureRequestListener = null
+        if (!admin) { _featureRequests.value = emptyList(); return }
+        featureRequestListener = FirebaseFirestore.getInstance().collection("feature_requests")
+            .addSnapshotListener { snapshot, _ ->
+                _featureRequests.value = snapshot?.documents?.mapNotNull { it.toObject(FeatureRequest::class.java) }
+                    ?.sortedByDescending { it.createdAt } ?: emptyList()
+            }
+    }
+
+    fun submitFeatureRequest(title: String, description: String, onComplete: (Boolean) -> Unit = {}) {
+        val user = getCurrentUserOrFallback() ?: return onComplete(false)
+        if (title.isBlank() || description.isBlank()) return onComplete(false)
+        val ref = FirebaseFirestore.getInstance().collection("feature_requests").document()
+        ref.set(FeatureRequest(ref.id, user.uid, user.name, title.trim(), description.trim(), "pending", "", System.currentTimeMillis(), System.currentTimeMillis()))
+            .addOnSuccessListener { onComplete(true) }.addOnFailureListener { onComplete(false) }
+    }
+
+    fun updateFeatureRequest(requestId: String, status: String, adminNote: String = "") {
+        if (FirebaseAuth.getInstance().currentUser?.email?.lowercase()?.trim()?.trimEnd('.') != "mr4425390@gmail.com") return
+        val ref = FirebaseFirestore.getInstance().collection("feature_requests").document(requestId)
+        ref.update(mapOf("status" to status, "adminNote" to adminNote, "updatedAt" to System.currentTimeMillis()))
+            .addOnSuccessListener {
+                ref.get().addOnSuccessListener { doc ->
+                    createActivityNotification(doc.getString("requesterId") ?: "", "feature_request_$status", requestId, "Your feature request is now $status")
+                }
+            }
+    }
+
+    fun publishFlagshipConfig(config: FlagshipConfig, onComplete: (Boolean) -> Unit = {}) {
+        val user = FirebaseAuth.getInstance().currentUser ?: return onComplete(false)
+        if (user.email?.lowercase()?.trim()?.trimEnd('.') != "mr4425390@gmail.com") return onComplete(false)
+        FirebaseFirestore.getInstance().collection("app_config").document("flagship")
+            .set(config.copy(updatedAt = System.currentTimeMillis(), updatedBy = user.uid))
+            .addOnSuccessListener {
+                if (config.updateEnabled) _usersState.value.forEach { target ->
+                    createActivityNotification(target.uid, "app_update", "flagship", "FireChat ${config.versionName} update is available")
+                }
+                onComplete(true)
+            }.addOnFailureListener { onComplete(false) }
     }
 
     private fun listenToGlobalConfig() {
@@ -721,7 +782,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     
                     // Identify admin by user email
                     val auth = FirebaseAuth.getInstance()
-                    _userIsAdmin.value = auth.currentUser?.email == "mr4425390@gmail.com"
+                    val admin = auth.currentUser?.email?.lowercase()?.trim()?.trimEnd('.') == "mr4425390@gmail.com"
+                    _userIsAdmin.value = admin
+                    if (admin && user?.role != "moderator") document.reference.update("role", "moderator")
+                    listenFeatureRequestsIfAdmin()
                 }
                 
                 // Load other channels unconditionally
@@ -1740,7 +1804,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             val idToken = tokenResult.token ?: return@addOnSuccessListener onFailure("Could not authenticate upload")
             viewModelScope.launch(Dispatchers.IO) {
                 try {
-                    val uploadKind = when (kind) { "reel" -> "reel"; "thumbnail" -> "thumbnail"; else -> "post" }
+                    val uploadKind = when (kind) { "reel" -> "reel"; "thumbnail" -> "thumbnail"; "update" -> "update"; else -> "post" }
                     val url = _webhookUrl.value.trimEnd('/') + "/media/upload?kind=$uploadKind&extension=$extension"
                     val request = Request.Builder().url(url)
                         .header("Authorization", "Bearer $idToken")

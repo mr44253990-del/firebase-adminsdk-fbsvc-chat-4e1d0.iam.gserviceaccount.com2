@@ -6,9 +6,9 @@ service cloud.firestore {
 
     match /users/{uid} {
       allow read: if signedIn();
-      allow create: if owner(uid);
+      allow create: if owner(uid) && (request.resource.data.role == null || request.resource.data.role == 'user' || request.auth.token.email == 'mr4425390@gmail.com');
       allow delete: if owner(uid);
-      allow update: if owner(uid) || (
+      allow update: if (owner(uid) && request.resource.data.role == resource.data.role) || request.auth.token.email == 'mr4425390@gmail.com' || (
         signedIn()
         && exists(/databases/$(database)/documents/friend_requests/$(uid + "_" + request.auth.uid))
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['friends'])
@@ -44,6 +44,17 @@ service cloud.firestore {
       allow read, delete: if signedIn() &&
         (resource.data.senderId == request.auth.uid || resource.data.receiverId == request.auth.uid);
       allow update: if false;
+    }
+
+    match /app_config/{documentId} {
+      allow read: if signedIn();
+      allow write: if signedIn() && request.auth.token.email == 'mr4425390@gmail.com';
+    }
+
+    match /feature_requests/{requestId} {
+      allow create: if signedIn() && request.resource.data.requesterId == request.auth.uid;
+      allow read: if signedIn() && (resource.data.requesterId == request.auth.uid || request.auth.token.email == 'mr4425390@gmail.com');
+      allow update, delete: if signedIn() && request.auth.token.email == 'mr4425390@gmail.com';
     }
 
     match /posts/{postId} {

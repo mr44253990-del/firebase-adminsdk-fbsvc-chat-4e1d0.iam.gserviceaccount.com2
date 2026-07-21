@@ -26,7 +26,8 @@ data class CachedUser(
     val bio: String,
     val coverImageUrl: String,
     val followersJson: String,
-    val followingJson: String
+    val followingJson: String,
+    val role: String
 ) {
     fun toUser(): User {
         val blockedList = mutableListOf<String>()
@@ -42,7 +43,7 @@ data class CachedUser(
             for (i in 0 until array.length()) friendList.add(array.getString(i))
         } catch (_: Exception) {}
         fun parseIds(json: String) = try { JSONArray(json).let { array -> (0 until array.length()).map { array.getString(it) } } } catch (_: Exception) { emptyList() }
-        return User(uid, name, dob, username, fcmToken, profileImageUrl, isOnline, lastActive, blockedList, createdAt, friendList, bio, coverImageUrl, parseIds(followersJson), parseIds(followingJson))
+        return User(uid, name, dob, username, fcmToken, profileImageUrl, isOnline, lastActive, blockedList, createdAt, friendList, bio, coverImageUrl, parseIds(followersJson), parseIds(followingJson), role)
     }
 
     companion object {
@@ -52,7 +53,7 @@ data class CachedUser(
                 user.uid, user.name, user.dob, user.username, user.fcmToken,
                 user.profileImageUrl, user.isOnline, user.lastActive,
                 jsonArray.toString(), user.createdAt, JSONArray(user.friends).toString(), user.bio, user.coverImageUrl,
-                JSONArray(user.followers).toString(), JSONArray(user.following).toString()
+                JSONArray(user.followers).toString(), JSONArray(user.following).toString(), user.role
             )
         }
     }
@@ -482,7 +483,7 @@ interface CacheDao {
         CachedGroupMessage::class,
         CachedActivityNotification::class
     ],
-    version = 8,
+    version = 9,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -527,6 +528,11 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE cached_users ADD COLUMN followingJson TEXT NOT NULL DEFAULT '[]'")
             }
         }
+        private val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE cached_users ADD COLUMN role TEXT NOT NULL DEFAULT 'user'")
+            }
+        }
 
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
@@ -534,7 +540,7 @@ abstract class AppDatabase : RoomDatabase() {
                     context.applicationContext,
                     AppDatabase::class.java,
                     "firechat_offline_cache_db"
-                ).addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8)
+                ).addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9)
                     .fallbackToDestructiveMigration()
                     .build()
                 INSTANCE = instance

@@ -48,29 +48,29 @@ fun OnboardingScreen(
 
     val pages = listOf(
         OnboardingPage(
-            title = "আপনার মানুষ, আপনার জগৎ",
-            description = "রিয়েল-টাইম চ্যাট, ভয়েস নোট, ছবি, গ্রুপ, টাইপিং ইন্ডিকেটর এবং ব্যক্তিগত চ্যাট থিম—সবকিছু একটি দ্রুত ও আধুনিক অভিজ্ঞতায়।",
+            title = "কথা হোক আরও জীবন্ত",
+            description = "দ্রুত মেসেজ, ভয়েস নোট, HD অডিও-ভিডিও কল, স্মার্ট টাইপিং ইন্ডিকেটর এবং ব্যক্তিগত চ্যাট থিম—প্রিয় মানুষদের সঙ্গে সবসময় সহজে যুক্ত থাকুন।",
             icon = Icons.Outlined.ChatBubbleOutline,
             accentColor = MaterialTheme.colorScheme.primary,
             featureBadge = "⚡ স্মার্ট রিয়েল-টাইম চ্যাট"
         ),
         OnboardingPage(
-            title = "স্টোরি, পোস্ট ও ভিডিও",
-            description = "স্টোরি শেয়ার করুন, অনুভূতি ও বন্ধু ট্যাগ করুন, ভিডিও ফিড দেখুন এবং লাইক-কমেন্টের প্রতিটি আপডেট Activity Center-এ পান।",
+            title = "আপনার গল্প, আপনার সৃজনশীলতা",
+            description = "স্টোরি, অ্যানিমেটেড পোস্ট, বহু ছবির ক্যারোসেল ও ফুল-স্ক্রিন রিল শেয়ার করুন। R2 streaming cache দ্রুত playback দেয় এবং প্রতিটি reaction Activity Center-এ পৌঁছে দেয়।",
             icon = Icons.Outlined.Send,
             accentColor = MaterialTheme.colorScheme.tertiary,
             featureBadge = "✨ সম্পূর্ণ সোশ্যাল অভিজ্ঞতা"
         ),
         OnboardingPage(
-            title = "গোপনীয়তা ও অফলাইন সুরক্ষা",
-            description = "Firebase delivery, নিরাপদ friend ও message request, Room offline cache এবং নিয়ন্ত্রিত notification settings আপনার তথ্যকে রাখে দ্রুত ও সুরক্ষিত।",
+            title = "নিরাপত্তা আপনার নিয়ন্ত্রণে",
+            description = "PIN ও বায়োমেট্রিক লক, লুকানো notification content, screenshot-protected calls, local Room history এবং privacy controls আপনার FireChat-কে রাখে ব্যক্তিগত।",
             icon = Icons.Outlined.Lock,
             accentColor = MaterialTheme.colorScheme.secondary,
             featureBadge = "🔒 Privacy First"
         ),
         OnboardingPage(
-            title = "রাকিবুল ইসলামের FireChat",
-            description = "মানুষকে আরও সুন্দর, দ্রুত ও নিরাপদভাবে যুক্ত করার লক্ষ্য নিয়ে রাকিবুল ইসলাম FireChat তৈরি করেছেন। এটি চ্যাট, প্রোফাইল, বন্ধু, গ্রুপ, স্টোরি ও মিডিয়া—সবকিছুর একটি সমন্বিত প্ল্যাটফর্ম।",
+            title = "রাকিবুল ইসলামের তৈরি FireChat",
+            description = "মানুষকে সুন্দর, দ্রুত ও নিরাপদভাবে যুক্ত করার স্বপ্নে তৈরি একটি আধুনিক বাংলাদেশি প্ল্যাটফর্ম। Flagship updates, নতুন feature requests এবং community feedback-এর মাধ্যমে FireChat প্রতিনিয়ত আরও উন্নত হবে।",
             icon = Icons.Outlined.ChatBubbleOutline,
             accentColor = MaterialTheme.colorScheme.primary,
             featureBadge = "🚀 নির্মাতা • রাকিবুল ইসলাম"
