@@ -181,6 +181,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _messageRequests = MutableStateFlow<List<MessageRequest>>(emptyList())
     val messageRequests: StateFlow<List<MessageRequest>> = _messageRequests.asStateFlow()
+    private val _pendingMessageRequestRecipients = MutableStateFlow<Set<String>>(emptySet())
+    val pendingMessageRequestRecipients: StateFlow<Set<String>> = _pendingMessageRequestRecipients.asStateFlow()
 
     private val _selectedProfile = MutableStateFlow<User?>(null)
     val selectedProfile: StateFlow<User?> = _selectedProfile.asStateFlow()
@@ -233,6 +235,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private var friendRequestListener: ListenerRegistration? = null
     private var sentFriendRequestListener: ListenerRegistration? = null
     private var messageRequestListener: ListenerRegistration? = null
+    private var sentMessageRequestListener: ListenerRegistration? = null
     private var notificationCacheJob: kotlinx.coroutines.Job? = null
     private var conversationIdsJob: kotlinx.coroutines.Job? = null
 
@@ -1272,17 +1275,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun playSendSound() {
-        if (!_notificationSoundsEnabled.value) return
-        runCatching {
-            android.media.MediaPlayer.create(getApplication(), R.raw.message_sent)?.apply {
-                setVolume(.45f, .45f)
-                setOnCompletionListener { it.release() }
-                start()
-            }
-        }
-    }
-
     // Global in-app incoming message notifications (For chats other than the active screen)
     fun listenForInAppNotifications() {
         val currentUid = FirebaseAuth.getInstance().currentUser?.uid ?: return
@@ -1403,6 +1395,15 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         )
                     } catch (_: Exception) { null }
                 }?.filter { it.status == "pending" }?.sortedByDescending { it.timestamp } ?: emptyList()
+            }
+
+        sentMessageRequestListener?.remove()
+        sentMessageRequestListener = FirebaseFirestore.getInstance().collection("message_requests")
+            .whereEqualTo("senderId", uid)
+            .addSnapshotListener { snapshot, _ ->
+                _pendingMessageRequestRecipients.value = snapshot?.documents
+                    ?.filter { (it.getString("status") ?: "pending") == "pending" }
+                    ?.mapNotNull { it.getString("receiverId") }?.toSet() ?: emptySet()
             }
     }
 

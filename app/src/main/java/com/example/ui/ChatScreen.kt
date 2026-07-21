@@ -89,6 +89,8 @@ fun ChatScreen(
     val isTyping by viewModel.isRecipientTyping.collectAsState()
     val chatTheme by viewModel.chatTheme.collectAsState()
     val currentUser by viewModel.currentUserState.collectAsState()
+    val pendingRequestRecipients by viewModel.pendingMessageRequestRecipients.collectAsState()
+    val requestPending = recipient.uid in pendingRequestRecipients
     val typingSounds by viewModel.typingSoundsEnabled.collectAsState()
     val notificationSounds by viewModel.notificationSoundsEnabled.collectAsState()
     val callState by CallEngine.state.collectAsState()
@@ -678,6 +680,19 @@ fun ChatScreen(
                 }
             }
 
+            if (requestPending) {
+                Surface(color = MaterialTheme.colorScheme.secondaryContainer, modifier = Modifier.fillMaxWidth()) {
+                    Row(Modifier.padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.HourglassTop, null)
+                        Spacer(Modifier.width(10.dp))
+                        Column {
+                            Text("Message request pending", fontWeight = FontWeight.Bold)
+                            Text("${recipient.name} must confirm before you can continue chatting.", fontSize = 11.sp)
+                        }
+                    }
+                }
+            }
+
             // Interactive dynamic input bar
             Surface(
                 tonalElevation = 8.dp,
@@ -721,7 +736,8 @@ fun ChatScreen(
                     OutlinedTextField(
                         value = messageText,
                         onValueChange = { messageText = it },
-                        placeholder = { Text("Write a message...", color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)) },
+                        enabled = !requestPending,
+                        placeholder = { Text(if (requestPending) "Waiting for confirmation…" else "Write a message...",  color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)) },
                         modifier = Modifier
                             .weight(1f)
                             .testTag("chat_input_text_field"),
@@ -756,10 +772,10 @@ fun ChatScreen(
                                     )
                                     replyingToMessage = null
                                 }
-                                viewModel.playSendSound()
                                 messageText = ""
                             }
                         },
+                        enabled = !requestPending,
                         modifier = Modifier
                             .size(46.dp)
                             .clip(CircleShape)
@@ -795,7 +811,6 @@ fun ChatScreen(
                             },
                             modifier = Modifier.clip(RoundedCornerShape(18.dp)).clickable {
                                 viewModel.forwardMessage(target, original)
-                                viewModel.playSendSound()
                                 Toast.makeText(context, "Forwarded to ${target.name}", Toast.LENGTH_SHORT).show()
                                 forwardingMessage = null
                             }
