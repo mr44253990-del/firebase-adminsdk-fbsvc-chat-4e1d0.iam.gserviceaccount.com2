@@ -1,16 +1,16 @@
-name: Android CI
+name: Android Release CI
 
 on:
   push:
     branches:
       - "**"
-  pull_request:
-    branches:
-      - "**"
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
-  build:
+  release-arm64:
     runs-on: ubuntu-latest
 
     steps:
@@ -26,83 +26,65 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Generate Gradle Wrapper if missing
+      - name: Prepare Gradle wrapper
         run: |
           if [ ! -f "./gradlew" ]; then
             gradle wrapper
           fi
           chmod +x gradlew
 
-      - name: Ensure Debug Keystore Exists
-        run: |
-          if [ ! -f debug.keystore ]; then
-            keytool -genkeypair \
-              -alias androiddebugkey \
-              -keyalg RSA \
-              -keysize 2048 \
-              -validity 10000 \
-              -keystore debug.keystore \
-              -storepass android \
-              -keypass android \
-              -dname "CN=Android Debug,O=Android,C=US"
-          fi
-
-      - name: Build Debug APK
-        run: ./gradlew assembleDebug
-
-      - name: Show SHA-1 & SHA-256 Fingerprints
-        run: |
-          echo "========================================"
-          echo "Android Debug Keystore Fingerprints"
-          echo "========================================"
-          keytool -list -v \
-            -keystore debug.keystore \
-            -alias androiddebugkey \
-            -storepass android \
-            -keypass android | grep -E "SHA1:|SHA-1:|SHA256:|SHA-256:"
-          echo "========================================"
-
-      - name: Upload Debug APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: app-debug-apk
-          path: app/build/outputs/apk/debug/*.apk
-
-      - name: Restore Release Keystore
-        if: github.event_name != 'pull_request'
+      - name: Restore release keystore
         env:
           RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
         run: |
           test -n "$RELEASE_KEYSTORE_BASE64"
-          echo "$RELEASE_KEYSTORE_BASE64" | base64 --decode > release-upload.jks
+          printf '%s' "$RELEASE_KEYSTORE_BASE64" | base64 --decode > release-upload.jks
+          chmod 600 release-upload.jks
 
-      - name: Show Release SHA-1 and SHA-256 Fingerprints
-        if: github.event_name != 'pull_request'
+      - name: Show release certificate fingerprints
         env:
           RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
           RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
         run: |
-          echo "========================================"
-          echo "Android Release Keystore Fingerprints"
-          echo "========================================"
           keytool -list -v \
             -keystore release-upload.jks \
             -alias "$RELEASE_KEY_ALIAS" \
-            -storepass "$RELEASE_STORE_PASSWORD" | grep -E "SHA1:|SHA-1:|SHA256:|SHA-256:"
-          echo "========================================"
+            -storepass "$RELEASE_STORE_PASSWORD" \
+            | grep -E "SHA1:|SHA-1:|SHA256:|SHA-256:"
 
-      - name: Build Signed Release APK
-        if: github.event_name != 'pull_request'
+      - name: Build signed arm64-v8a release APK
         env:
           KEYSTORE_PATH: ${{ github.workspace }}/release-upload.jks
           RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
           RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
           RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
-        run: ./gradlew assembleRelease
+        run: ./gradlew --no-daemon clean assembleRelease
 
-      - name: Upload Signed Release APK
-        if: github.event_name != 'pull_request'
+      - name: Verify release signature and ABI
+        run: |
+          set -euo pipefail
+          APK="$(find app/build/outputs/apk/release -maxdepth 1 -name '*.apk' -print -quit)"
+          test -n "$APK"
+
+          "$ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)/apksigner" verify --verbose --print-certs "$APK"
+
+          mapfile -t ABIS < <(unzip -Z1 "$APK" | sed -n 's#^lib/\([^/]*\)/.*#\1#p' | sort -u)
+          printf 'Packaged native ABIs: %s\n' "${ABIS[*]:-none}"
+          if ((${#ABIS[@]} > 0)); then
+            test "${#ABIS[@]}" -eq 1
+            test "${ABIS[0]}" = "arm64-v8a"
+          fi
+
+          mv "$APK" app/build/outputs/apk/release/FireChat-v2.0.1-arm64-v8a-release.apk
+          sha256sum app/build/outputs/apk/release/FireChat-v2.0.1-arm64-v8a-release.apk \
+            | tee app/build/outputs/apk/release/FireChat-v2.0.1-arm64-v8a-release.apk.sha256
+
+      - name: Upload signed arm64-v8a release APK
         uses: actions/upload-artifact@v4
         with:
-          name: app-release-apk
-          path: app/build/outputs/apk/release/*.apk
+          name: FireChat-v2.0.1-arm64-v8a-release
+          path: |
+            app/build/outputs/apk/release/FireChat-v2.0.1-arm64-v8a-release.apk
+            app/build/outputs/apk/release/FireChat-v2.0.1-arm64-v8a-release.apk.sha256
+          if-no-files-found: error
+          retention-days: 30

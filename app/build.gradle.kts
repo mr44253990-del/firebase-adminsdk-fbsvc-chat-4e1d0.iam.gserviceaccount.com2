@@ -17,8 +17,14 @@ android {
     applicationId = "com.ebchat"
     minSdk = 24
     targetSdk = 36
-    versionCode = 2
-    versionName = "2.0.0"
+    versionCode = 3
+    versionName = "2.0.1"
+
+    // FireChat is distributed as a single modern 64-bit APK. This excludes
+    // armeabi-v7a/x86/x86_64 native libraries pulled in by WebRTC/Media3.
+    ndk {
+      abiFilters += listOf("arm64-v8a")
+    }
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
@@ -31,22 +37,19 @@ android {
       keyAlias = System.getenv("RELEASE_KEY_ALIAS") ?: "upload"
       keyPassword = System.getenv("RELEASE_KEY_PASSWORD") ?: System.getenv("KEY_PASSWORD")
     }
-    create("debugConfig") {
-      storeFile = file("${rootDir}/debug.keystore")
-      storePassword = "android"
-      keyAlias = "androiddebugkey"
-      keyPassword = "android"
-    }
   }
 
   buildTypes {
     release {
       isCrunchPngs = false
+      isDebuggable = false
+      isJniDebuggable = false
+      // Keep reflection-heavy Firebase/Room models stable. R8 obfuscation does
+      // not prevent Play Protect warnings and can break serialized field names.
       isMinifyEnabled = false
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
       signingConfig = signingConfigs.getByName("release")
     }
-    debug { signingConfig = signingConfigs.getByName("debugConfig") }
   }
   compileOptions {
     sourceCompatibility = JavaVersion.VERSION_11
@@ -57,6 +60,13 @@ android {
     buildConfig = true
   }
   testOptions { unitTests { isIncludeAndroidResources = true } }
+}
+
+// Production-only project: do not create or publish a debug APK variant.
+androidComponents {
+  beforeVariants(selector().withBuildType("debug")) { variantBuilder ->
+    variantBuilder.enable = false
+  }
 }
 
 // Configure the Secrets Gradle Plugin to use .env and .env.example files
