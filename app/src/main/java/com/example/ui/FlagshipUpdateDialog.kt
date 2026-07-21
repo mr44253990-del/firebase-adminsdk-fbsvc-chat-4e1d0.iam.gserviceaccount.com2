@@ -24,6 +24,7 @@ import androidx.core.content.FileProvider
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.example.data.FlagshipConfig
+import com.example.update.UpdateInstallTracker
 import kotlinx.coroutines.delay
 import java.io.File
 
@@ -42,6 +43,7 @@ fun FlagshipUpdateDialog(config: FlagshipConfig, mandatory: Boolean, onLater: ()
             return
         }
         val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", file)
+        UpdateInstallTracker.markInstallStarted(context, config)
         context.startActivity(Intent(Intent.ACTION_VIEW).apply {
             setDataAndType(uri, "application/vnd.android.package-archive")
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)

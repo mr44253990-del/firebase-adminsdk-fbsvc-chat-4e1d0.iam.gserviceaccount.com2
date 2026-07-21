@@ -20,6 +20,10 @@ data class FlagshipConfig(
     val versionName: String = "1.0",
     val apkUrl: String = "",
     val apkR2Key: String = "",
+    // A new immutable ID is generated for every published APK campaign. It
+    // allows a same-version signed reinstall to be required exactly once.
+    val updateId: String = "",
+    val updatePublishedAt: Long = 0L,
     val releaseNotes: String = "",
     val noticeEnabled: Boolean = false,
     val noticeTitle: String = "",

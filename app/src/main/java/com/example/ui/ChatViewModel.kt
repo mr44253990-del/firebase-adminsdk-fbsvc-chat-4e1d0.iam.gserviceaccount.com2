@@ -466,11 +466,28 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     fun publishFlagshipConfig(config: FlagshipConfig, onComplete: (Boolean) -> Unit = {}) {
         val user = FirebaseAuth.getInstance().currentUser ?: return onComplete(false)
         if (user.email?.lowercase()?.trim()?.trimEnd('.') != "mr4425390@gmail.com") return onComplete(false)
+        if (config.updateEnabled && !config.apkUrl.startsWith("https://")) return onComplete(false)
+
+        val now = System.currentTimeMillis()
+        // Publishing an enabled update always starts a new campaign, even when
+        // the APK versionCode is intentionally unchanged. Non-admin users must
+        // complete this campaign once; admins always retain emergency access.
+        val published = if (config.updateEnabled) {
+            config.copy(
+                mandatoryUpdate = true,
+                updateId = UUID.randomUUID().toString(),
+                updatePublishedAt = now,
+                updatedAt = now,
+                updatedBy = user.uid
+            )
+        } else {
+            config.copy(mandatoryUpdate = false, updatedAt = now, updatedBy = user.uid)
+        }
         FirebaseFirestore.getInstance().collection("app_config").document("flagship")
-            .set(config.copy(updatedAt = System.currentTimeMillis(), updatedBy = user.uid))
+            .set(published)
             .addOnSuccessListener {
-                if (config.updateEnabled) _usersState.value.forEach { target ->
-                    createActivityNotification(target.uid, "app_update", "flagship", "FireChat ${config.versionName} update is available")
+                if (published.updateEnabled) _usersState.value.forEach { target ->
+                    createActivityNotification(target.uid, "app_update", published.updateId, "Required FireChat ${published.versionName} update is available")
                 }
                 onComplete(true)
             }.addOnFailureListener { onComplete(false) }

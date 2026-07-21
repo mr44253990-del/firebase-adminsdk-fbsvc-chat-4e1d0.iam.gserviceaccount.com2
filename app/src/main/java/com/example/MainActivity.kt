@@ -76,7 +76,9 @@ class MainActivity : FragmentActivity() {
         val imageLoader = ImageLoader.Builder(this)
             .memoryCache {
                 MemoryCache.Builder(this)
-                    .maxSizePercent(0.25)
+                    // Avoid letting image cache consume a quarter of RAM on
+                    // entry-level devices while keeping recent avatars warm.
+                    .maxSizePercent(0.15)
                     .build()
             }
             .diskCache {

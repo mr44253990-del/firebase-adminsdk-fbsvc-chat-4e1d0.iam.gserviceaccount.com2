@@ -8,6 +8,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.ClipboardManager
 import android.content.ClipData
+import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
 import android.media.MediaPlayer
 import android.net.Uri
@@ -85,13 +86,59 @@ import com.example.data.MessageRequest
 import com.example.data.Post
 import com.example.video.SharedCachedVideo
 import com.example.video.VideoPlayerManager
+import com.example.update.UpdateInstallTracker
 import com.example.data.Story
 import com.example.data.User
 import com.google.firebase.auth.FirebaseAuth
+import java.io.File
 import java.io.InputStream
+import java.security.MessageDigest
 import java.text.SimpleDateFormat
 import java.util.*
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+
+private data class VerifiedUpdateApk(val bytes: ByteArray, val versionCode: Long, val versionName: String)
+
+@Suppress("DEPRECATION")
+private fun signerDigests(info: PackageInfo): Set<String> {
+    val signatures = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+        info.signingInfo?.apkContentsSigners.orEmpty()
+    } else {
+        info.signatures.orEmpty()
+    }
+    return signatures.map { signature ->
+        MessageDigest.getInstance("SHA-256").digest(signature.toByteArray())
+            .joinToString("") { "%02x".format(it) }
+    }.toSet()
+}
+
+@Suppress("DEPRECATION")
+private fun verifyUpdateApk(context: Context, uri: Uri): Result<VerifiedUpdateApk> = runCatching {
+    val temp = File(context.cacheDir, "flagship-update-check.apk")
+    try {
+        context.contentResolver.openInputStream(uri)?.use { input ->
+            temp.outputStream().use { output -> input.copyTo(output) }
+        } ?: error("Could not read the selected APK")
+        require(temp.length() in 1..95L * 1024L * 1024L) { "APK must be smaller than 95 MB" }
+
+        val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) PackageManager.GET_SIGNING_CERTIFICATES else PackageManager.GET_SIGNATURES
+        val archive = context.packageManager.getPackageArchiveInfo(temp.absolutePath, flags)
+            ?: error("The selected file is not a valid Android APK")
+        require(archive.packageName == context.packageName) { "APK package must be ${context.packageName}" }
+
+        val installed = context.packageManager.getPackageInfo(context.packageName, flags)
+        require(signerDigests(archive).isNotEmpty() && signerDigests(archive) == signerDigests(installed)) {
+            "APK signing certificate does not match FireChat"
+        }
+        val code = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) archive.longVersionCode else archive.versionCode.toLong()
+        VerifiedUpdateApk(temp.readBytes(), code, archive.versionName.orEmpty())
+    } finally {
+        temp.delete()
+    }
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -104,6 +151,7 @@ fun HomeScreen(
     onSignOut: () -> Unit
 ) {
     val context = LocalContext.current
+    val uiScope = rememberCoroutineScope()
     val isOnlineState by viewModel.isNetworkAvailable.collectAsState()
     val currentUser by viewModel.currentUserState.collectAsState()
     val users by viewModel.filteredUsersState.collectAsState()
@@ -140,11 +188,13 @@ fun HomeScreen(
     var lockEnabled by remember { mutableStateOf(AppLockManager.isEnabled(context)) }
     val currentTab by viewModel.currentTabState.collectAsState()
     val isAdmin = FirebaseAuth.getInstance().currentUser?.email?.lowercase()?.trim()?.trimEnd('.') == "mr4425390@gmail.com"
-    val currentVersionCode = com.example.BuildConfig.VERSION_CODE
-    var postponeUpdate by remember(flagshipConfig.updatedAt) { mutableStateOf(false) }
+    val updateCampaignId = UpdateInstallTracker.campaignId(flagshipConfig)
+    val updateInstalled = remember(updateCampaignId, flagshipConfig.updateEnabled) {
+        UpdateInstallTracker.isInstalled(context, flagshipConfig)
+    }
     var dismissNotice by remember(flagshipConfig.updatedAt) { mutableStateOf(false) }
-    val newerVersion = flagshipConfig.latestVersionCode > currentVersionCode
-    val mandatoryUpdate = flagshipConfig.mandatoryUpdate || currentVersionCode < flagshipConfig.minimumVersionCode
+    val validUpdate = flagshipConfig.updateEnabled && flagshipConfig.apkUrl.startsWith("https://")
+    val updateRequired = !isAdmin && validUpdate && !updateInstalled
 
     // Dialog & Creation controllers
     var showCreateGroupDialog by remember { mutableStateOf(false) }
@@ -608,7 +658,6 @@ fun HomeScreen(
                         // Admin Dashboard / Flagship Control
                         LaunchedEffect(webhookUrl) { viewModel.testFcmGateway(webhookUrl) }
                         var draftUpdateEnabled by remember(flagshipConfig) { mutableStateOf(flagshipConfig.updateEnabled) }
-                        var draftMandatory by remember(flagshipConfig) { mutableStateOf(flagshipConfig.mandatoryUpdate) }
                         var draftVersionCode by remember(flagshipConfig) { mutableStateOf(flagshipConfig.latestVersionCode.toString()) }
                         var draftVersionName by remember(flagshipConfig) { mutableStateOf(flagshipConfig.versionName) }
                         var draftNotes by remember(flagshipConfig) { mutableStateOf(flagshipConfig.releaseNotes) }
@@ -622,14 +671,26 @@ fun HomeScreen(
                         var updateUploadProgress by remember { mutableIntStateOf(0) }
                         val updateApkPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
                             uri ?: return@rememberLauncherForActivityResult
-                            val bytes = runCatching { context.contentResolver.openInputStream(uri)?.use { it.readBytes() } }.getOrNull()
-                            if (bytes == null) Toast.makeText(context, "Could not read APK", Toast.LENGTH_LONG).show()
-                            else {
-                                updateUploading = true
-                                viewModel.uploadMediaToR2(bytes, "application/vnd.android.package-archive", "update", "apk",
-                                    onProgress = { percent, _ -> updateUploadProgress = percent },
-                                    onSuccess = { media -> updateUploading = false; draftApkUrl = media.publicUrl; draftApkKey = media.key },
-                                    onFailure = { error -> updateUploading = false; Toast.makeText(context, error, Toast.LENGTH_LONG).show() })
+                            updateUploading = true
+                            updateUploadProgress = 0
+                            uiScope.launch {
+                                val candidate = withContext(Dispatchers.IO) { verifyUpdateApk(context, uri) }
+                                candidate.onSuccess { apk ->
+                                    draftVersionCode = apk.versionCode.toString()
+                                    if (apk.versionName.isNotBlank()) draftVersionName = apk.versionName
+                                    viewModel.uploadMediaToR2(apk.bytes, "application/vnd.android.package-archive", "update", "apk",
+                                        onProgress = { percent, _ -> updateUploadProgress = percent },
+                                        onSuccess = { media ->
+                                            updateUploading = false
+                                            draftApkUrl = media.publicUrl
+                                            draftApkKey = media.key
+                                            draftUpdateEnabled = true
+                                        },
+                                        onFailure = { error -> updateUploading = false; Toast.makeText(context, error, Toast.LENGTH_LONG).show() })
+                                }.onFailure { error ->
+                                    updateUploading = false
+                                    Toast.makeText(context, error.message ?: "APK verification failed", Toast.LENGTH_LONG).show()
+                                }
                             }
                         }
                         Column(
@@ -651,9 +712,9 @@ fun HomeScreen(
                             Card(shape = RoundedCornerShape(28.dp), modifier = Modifier.fillMaxWidth()) {
                                 Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                                     Text("Flagship Update Control", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                                    Text("Upload a signed APK to R2, publish release notes, force minimum versions, maintenance and notices.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    Row(verticalAlignment = Alignment.CenterVertically) { Text("Update enabled", Modifier.weight(1f)); Switch(draftUpdateEnabled, { draftUpdateEnabled = it }) }
-                                    Row(verticalAlignment = Alignment.CenterVertically) { Text("Mandatory update", Modifier.weight(1f)); Switch(draftMandatory, { draftMandatory = it }) }
+                                    Text("Every published APK starts a new required-update campaign. Each user installs it once; the admin keeps emergency access.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Row(verticalAlignment = Alignment.CenterVertically) { Text("Publish APK update", Modifier.weight(1f)); Switch(draftUpdateEnabled, { draftUpdateEnabled = it }) }
+                                    if (flagshipConfig.updateId.isNotBlank()) Text("Campaign: ${flagshipConfig.updateId.take(8)} • installed users will not be asked twice", fontSize = 10.sp, color = MaterialTheme.colorScheme.primary)
                                     Row(verticalAlignment = Alignment.CenterVertically) { Text("Maintenance mode", Modifier.weight(1f)); Switch(draftMaintenance, { draftMaintenance = it }) }
                                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                         OutlinedTextField(draftVersionCode, { draftVersionCode = it.filter(Char::isDigit).take(8) }, label = { Text("Version code") }, singleLine = true, modifier = Modifier.weight(1f))
@@ -673,8 +734,8 @@ fun HomeScreen(
                                         val code = draftVersionCode.toIntOrNull() ?: com.example.BuildConfig.VERSION_CODE
                                         viewModel.publishFlagshipConfig(
                                             FlagshipConfig(
-                                                updateEnabled = draftUpdateEnabled, mandatoryUpdate = draftMandatory,
-                                                latestVersionCode = code, minimumVersionCode = if (draftMandatory) code else 1,
+                                                updateEnabled = draftUpdateEnabled, mandatoryUpdate = draftUpdateEnabled,
+                                                latestVersionCode = code, minimumVersionCode = if (draftUpdateEnabled) code else 1,
                                                 versionName = draftVersionName, apkUrl = draftApkUrl, apkR2Key = draftApkKey,
                                                 releaseNotes = draftNotes, noticeEnabled = draftNoticeEnabled,
                                                 noticeTitle = draftNoticeTitle, noticeBody = draftNoticeBody,
@@ -1351,7 +1412,11 @@ fun HomeScreen(
         }
     }
 
-    if (!isAdmin && flagshipConfig.maintenanceMode) {
+    // A valid published update has the highest priority. The dialog is truly
+    // blocking for every non-admin user until PackageManager confirms install.
+    if (updateRequired) {
+        FlagshipUpdateDialog(flagshipConfig, mandatory = true, onLater = {})
+    } else if (!isAdmin && flagshipConfig.maintenanceMode) {
         Dialog(onDismissRequest = {}, properties = DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false)) {
             Surface(shape = RoundedCornerShape(30.dp)) {
                 Column(Modifier.padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -1361,8 +1426,6 @@ fun HomeScreen(
                 }
             }
         }
-    } else if (!isAdmin && flagshipConfig.updateEnabled && newerVersion && !postponeUpdate) {
-        FlagshipUpdateDialog(flagshipConfig, mandatoryUpdate) { postponeUpdate = true }
     } else if (flagshipConfig.noticeEnabled && !dismissNotice && flagshipConfig.noticeTitle.isNotBlank()) {
         AlertDialog(
             onDismissRequest = { dismissNotice = true },
@@ -2477,6 +2540,19 @@ fun StoriesHorizontalSection(
 }
 
 @Composable
+private fun animatedPostScale(postId: String, animation: String): Float {
+    if (animation != "pulse" && animation != "breathe") return 1f
+    val motion = rememberInfiniteTransition(label = "post_$postId")
+    val scale by motion.animateFloat(
+        initialValue = if (animation == "pulse") .985f else 1f,
+        targetValue = if (animation == "pulse") 1.015f else 1.008f,
+        animationSpec = infiniteRepeatable(tween(1400, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        label = "post_motion"
+    )
+    return scale
+}
+
+@Composable
 fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (User) -> Unit = {}, autoPlayVideo: Boolean = false) {
     var isCommentsExpanded by remember { mutableStateOf(false) }
     var commentInputText by remember { mutableStateOf("") }
@@ -2485,8 +2561,6 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
     val currentUserId = FirebaseAuth.getInstance().currentUser?.uid ?: ""
     val isDark = isSystemInDarkTheme()
     val allUsers by viewModel.usersState.collectAsState()
-    val allPosts by viewModel.postsState.collectAsState()
-    val videoPosts = allPosts.filter { it.videoUrl.isNotBlank() }
 
     // Register simple visual view count increment on render
     LaunchedEffect(post.id) {
@@ -2499,13 +2573,9 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
     val postOwner = allUsers.find { it.uid == post.senderId }
     val mediaImages = post.imageUrls.ifEmpty { post.imageUrl.takeIf { it.isNotBlank() }?.let(::listOf).orEmpty() }
     val styledPost = post.backgroundStyle != "glass"
-    val postMotion = rememberInfiniteTransition(label = "post_${post.id}")
-    val postScale by postMotion.animateFloat(
-        initialValue = if (post.textAnimation == "pulse") .985f else 1f,
-        targetValue = if (post.textAnimation == "pulse") 1.015f else if (post.textAnimation == "breathe") 1.008f else 1f,
-        animationSpec = infiniteRepeatable(tween(1400, easing = FastOutSlowInEasing), RepeatMode.Reverse),
-        label = "post_motion"
-    )
+    // Static posts should not own an infinite animation clock. This removes a
+    // large amount of per-frame work in long feeds on low/mid-range phones.
+    val postScale = animatedPostScale(post.id, post.textAnimation)
     val postShape = RoundedCornerShape(26.dp)
     val postContainerModifier = (if (styledPost) {
         Modifier.fillMaxWidth()
