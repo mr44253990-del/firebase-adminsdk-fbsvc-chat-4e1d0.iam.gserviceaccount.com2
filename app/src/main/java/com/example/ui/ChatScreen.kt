@@ -2,15 +2,19 @@ package com.example.ui
 
 import android.Manifest
 import android.app.DownloadManager
+import android.graphics.Bitmap
+import android.graphics.pdf.PdfRenderer
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.MediaPlayer
 import android.media.MediaRecorder
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
+import android.provider.OpenableColumns
 import android.util.Log
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -45,6 +49,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
@@ -72,6 +77,9 @@ import java.io.File
 import java.io.InputStream
 import java.text.SimpleDateFormat
 import java.util.*
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -101,6 +109,11 @@ fun ChatScreen(
     val updatedRecipient = users.find { it.uid == recipient.uid } ?: recipient
 
     var messageText by remember { mutableStateOf("") }
+    var showAttachmentMenu by remember { mutableStateOf(false) }
+    var fileUploading by remember { mutableStateOf(false) }
+    var fileProgress by remember { mutableIntStateOf(0) }
+    var fileEta by remember { mutableLongStateOf(0L) }
+    val conversationAccepted = currentUser?.friends?.contains(recipient.uid) == true || messages.isNotEmpty()
     val listState = rememberLazyListState()
 
     // Message edit, reply, and block helper states
@@ -221,6 +234,29 @@ fun ChatScreen(
                 Toast.makeText(context, "Error loading file: ${e.message}", Toast.LENGTH_SHORT).show()
             }
         }
+    }
+
+    val filePickerLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+        uri ?: return@rememberLauncherForActivityResult
+        if (!conversationAccepted) return@rememberLauncherForActivityResult
+        runCatching { context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+        var fileName = "attachment_${System.currentTimeMillis()}"
+        var fileSize = -1L
+        context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE), null, null, null)?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                fileName = cursor.getString(0) ?: fileName
+                if (!cursor.isNull(1)) fileSize = cursor.getLong(1)
+            }
+        }
+        val mime = context.contentResolver.getType(uri) ?: "application/octet-stream"
+        fileUploading = true; fileProgress = 0
+        viewModel.uploadUriToSupabase(uri, fileName, mime, fileSize,
+            onProgress = { percent, eta -> fileProgress = percent; fileEta = eta },
+            onSuccess = { url ->
+                fileUploading = false
+                viewModel.sendMessage(recipient, "", fileUrl = url, fileName = fileName, fileMimeType = mime, fileSize = fileSize)
+            },
+            onFailure = { error -> fileUploading = false; Toast.makeText(context, error, Toast.LENGTH_LONG).show() })
     }
 
     // Voice recording helpers
@@ -574,6 +610,7 @@ fun ChatScreen(
                             onVoicePlayed = {
                                 viewModel.acknowledgeVoicePlayed(msg.messageId, msg.remoteVoiceUrl)
                             },
+                            onFileConsumed = { viewModel.acknowledgeFileConsumed(msg.messageId, msg.remoteFileUrl) },
                             onForward = { forwardingMessage = msg }
                         )
                     }
@@ -698,6 +735,15 @@ fun ChatScreen(
                 }
             }
 
+            if (fileUploading) {
+                Surface(color = MaterialTheme.colorScheme.surfaceVariant, modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+                        LinearProgressIndicator(progress = { fileProgress / 100f }, modifier = Modifier.fillMaxWidth())
+                        Text("Uploading file • $fileProgress% • about ${fileEta}s left", fontSize = 11.sp)
+                    }
+                }
+            }
+
             // Interactive dynamic input bar
             Surface(
                 tonalElevation = 8.dp,
@@ -716,19 +762,28 @@ fun ChatScreen(
                         .padding(10.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // Attachment Plus Button
-                    IconButton(onClick = { photoPickerLauncher.launch("image/*") }) {
-                        Icon(Icons.Default.AddPhotoAlternate, contentDescription = "Attach picture", tint = MaterialTheme.colorScheme.primary)
+                    Box {
+                        IconButton(onClick = {
+                            if (!conversationAccepted) Toast.makeText(context, "Send a text request and wait for confirmation first", Toast.LENGTH_LONG).show()
+                            else showAttachmentMenu = true
+                        }, enabled = !requestPending && !fileUploading) {
+                            Icon(Icons.Default.MoreHoriz, contentDescription = "Attachments", tint = MaterialTheme.colorScheme.primary)
+                        }
+                        DropdownMenu(showAttachmentMenu, { showAttachmentMenu = false }) {
+                            DropdownMenuItem(text = { Text("Photo") }, leadingIcon = { Icon(Icons.Default.AddPhotoAlternate, null) }, onClick = {
+                                showAttachmentMenu = false; photoPickerLauncher.launch("image/*")
+                            })
+                            DropdownMenuItem(text = { Text("Document, PDF, APK or audio") }, leadingIcon = { Icon(Icons.Default.AttachFile, null) }, onClick = {
+                                showAttachmentMenu = false; filePickerLauncher.launch(arrayOf("*/*"))
+                            })
+                        }
                     }
 
                     // Voice Note Recording Trigger Button
                     IconButton(onClick = {
-                        if (isRecording) {
-                            stopAndSendVoice()
-                        } else {
-                            startRecording()
-                        }
-                    }) {
+                        if (!conversationAccepted) Toast.makeText(context, "Wait until the message request is confirmed", Toast.LENGTH_LONG).show()
+                        else if (isRecording) stopAndSendVoice() else startRecording()
+                    }, enabled = !requestPending && !fileUploading) {
                         Icon(
                             imageVector = if (isRecording) Icons.Default.Stop else Icons.Default.Mic,
                             contentDescription = "Record Voice",
@@ -741,7 +796,7 @@ fun ChatScreen(
                     OutlinedTextField(
                         value = messageText,
                         onValueChange = { messageText = it },
-                        enabled = !requestPending,
+                        enabled = !requestPending && !fileUploading,
                         placeholder = { Text(if (requestPending) "Waiting for confirmation…" else "Write a message...",  color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)) },
                         modifier = Modifier
                             .weight(1f)
@@ -780,7 +835,7 @@ fun ChatScreen(
                                 messageText = ""
                             }
                         },
-                        enabled = !requestPending,
+                        enabled = !requestPending && !fileUploading,
                         modifier = Modifier
                             .size(46.dp)
                             .clip(CircleShape)
@@ -862,6 +917,7 @@ fun MessageBubbleItem(
     onDeleteSelect: () -> Unit,
     onReactSelect: (String) -> Unit,
     onVoicePlayed: () -> Unit,
+    onFileConsumed: () -> Unit,
     onForward: () -> Unit
 ) {
     var showMenu by remember { mutableStateOf(false) }
@@ -1004,6 +1060,11 @@ fun MessageBubbleItem(
                         Spacer(modifier = Modifier.height(4.dp))
                     }
 
+                    if (!message.fileUrl.isNullOrBlank()) {
+                        GenericFileBubble(message, onFileConsumed)
+                        Spacer(Modifier.height(5.dp))
+                    }
+
                     // Render text message if present
                     if (message.text.isNotBlank()) {
                         LinkifiedChatText(message.text, textColor)
@@ -1136,6 +1197,93 @@ fun MessageBubbleItem(
                         showMenu = false
                     }
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PdfFirstPage(uri: Uri) {
+    val context = LocalContext.current
+    val preview by produceState<Bitmap?>(null, uri) {
+        value = withContext(Dispatchers.IO) {
+            runCatching {
+                context.contentResolver.openFileDescriptor(uri, "r")!!.use { descriptor ->
+                    PdfRenderer(descriptor).use { renderer ->
+                        renderer.openPage(0).use { page ->
+                            val bitmap = Bitmap.createBitmap(480, (480f * page.height / page.width).toInt(), Bitmap.Config.ARGB_8888)
+                            bitmap.eraseColor(android.graphics.Color.WHITE)
+                            page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                            bitmap
+                        }
+                    }
+                }
+            }.getOrNull()
+        }
+    }
+    preview?.let { androidx.compose.foundation.Image(it.asImageBitmap(), "PDF first page preview", Modifier.fillMaxWidth().heightIn(max = 220.dp).clip(RoundedCornerShape(12.dp)), contentScale = ContentScale.Fit) }
+}
+
+@Composable
+private fun GenericFileBubble(message: Message, onConsumed: () -> Unit) {
+    val context = LocalContext.current
+    val mime = message.fileMimeType ?: "application/octet-stream"
+    val name = message.fileName ?: "Attachment"
+    if (mime.startsWith("audio/")) {
+        VoicePlayerBubble(message.fileUrl.orEmpty(), 0, onPlaybackStarted = onConsumed)
+        return
+    }
+    var downloadId by remember(message.messageId) { mutableLongStateOf(0L) }
+    var progress by remember(message.messageId) { mutableIntStateOf(0) }
+    var localUri by remember(message.messageId) { mutableStateOf<Uri?>(null) }
+    LaunchedEffect(downloadId) {
+        if (downloadId <= 0) return@LaunchedEffect
+        val manager = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+        while (localUri == null) {
+            manager.query(DownloadManager.Query().setFilterById(downloadId)).use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val total = cursor.getLong(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_TOTAL_SIZE_BYTES))
+                    val done = cursor.getLong(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR))
+                    if (total > 0) progress = (done * 100 / total).toInt()
+                    when (cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS))) {
+                        DownloadManager.STATUS_SUCCESSFUL -> { localUri = manager.getUriForDownloadedFile(downloadId); onConsumed() }
+                        DownloadManager.STATUS_FAILED -> return@LaunchedEffect
+                    }
+                }
+            }
+            delay(500)
+        }
+    }
+    Surface(color = MaterialTheme.colorScheme.surface.copy(.55f), shape = RoundedCornerShape(16.dp)) {
+        Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+            if (mime == "application/pdf" && localUri != null) PdfFirstPage(localUri!!)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(if (mime == "application/pdf") Icons.Default.PictureAsPdf else if (name.endsWith(".apk", true)) Icons.Default.Android else Icons.Default.Description, null, tint = MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.width(8.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(name, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Text(if (mime == "application/pdf") "PDF • preview after download" else mime.substringAfter('/').uppercase(), fontSize = 10.sp)
+                }
+            }
+            if (downloadId > 0 && localUri == null) {
+                LinearProgressIndicator(progress = { progress / 100f }, modifier = Modifier.fillMaxWidth())
+                Text("Saving to Downloads • $progress%", fontSize = 10.sp)
+            } else Button(onClick = {
+                localUri?.let { uri ->
+                    runCatching { context.startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(uri, mime).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)) }
+                } ?: run {
+                    val source = message.remoteFileUrl ?: message.fileUrl
+                    if (source?.startsWith("http") == true) {
+                        val safeName = name.replace(Regex("[\\/:*?\"<>|]"), "_")
+                        val request = DownloadManager.Request(Uri.parse(source)).setTitle(name).setMimeType(mime)
+                            .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+                            .setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, "FireChat_$safeName")
+                        downloadId = (context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager).enqueue(request)
+                    }
+                }
+            }, modifier = Modifier.fillMaxWidth()) {
+                Icon(if (localUri == null) Icons.Default.Download else Icons.Default.OpenInNew, null)
+                Spacer(Modifier.width(6.dp)); Text(if (localUri == null) "Download / Save" else "Open ${if (mime == "application/pdf") "PDF" else "file"}")
             }
         }
     }
