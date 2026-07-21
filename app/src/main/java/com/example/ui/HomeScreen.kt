@@ -134,6 +134,9 @@ private fun verifyUpdateApk(context: Context, uri: Uri): Result<VerifiedUpdateAp
             "APK signing certificate does not match FireChat"
         }
         val code = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) archive.longVersionCode else archive.versionCode.toLong()
+        require(code >= com.example.BuildConfig.VERSION_CODE) {
+            "Old APK rejected: selected code $code, admin app code ${com.example.BuildConfig.VERSION_CODE}. Choose the newest signed Release APK."
+        }
         VerifiedUpdateApk(temp.readBytes(), code, archive.versionName.orEmpty())
     } finally {
         temp.delete()

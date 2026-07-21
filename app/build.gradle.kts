@@ -17,8 +17,8 @@ android {
     applicationId = "com.ebchat"
     minSdk = 24
     targetSdk = 36
-    versionCode = 4
-    versionName = "2.0.2"
+    versionCode = 5
+    versionName = "2.0.3"
 
     // FireChat is distributed as a single modern 64-bit APK. This excludes
     // armeabi-v7a/x86/x86_64 native libraries pulled in by WebRTC/Media3.

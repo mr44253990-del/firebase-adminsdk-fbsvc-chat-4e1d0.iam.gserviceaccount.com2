@@ -4,7 +4,8 @@
     ".write": false,
     "config": {
       ".read": "auth != null",
-      ".write": "auth != null"
+      "app_settings": { ".write": "auth != null" },
+      "flagship": { ".write": "auth != null && auth.token.email === 'mr4425390@gmail.com'" }
     },
     "status": {
       ".read": "auth != null",

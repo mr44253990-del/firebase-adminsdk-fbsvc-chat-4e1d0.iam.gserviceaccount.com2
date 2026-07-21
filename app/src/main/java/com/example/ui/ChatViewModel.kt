@@ -228,6 +228,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private var activityNotificationListener: ListenerRegistration? = null
     private var currentUserProfileListener: ListenerRegistration? = null
     private var flagshipListener: ListenerRegistration? = null
+    private var flagshipRtdbListener: ValueEventListener? = null
     private var featureRequestListener: ListenerRegistration? = null
     private var friendRequestListener: ListenerRegistration? = null
     private var sentFriendRequestListener: ListenerRegistration? = null
@@ -427,9 +428,21 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         flagshipListener?.remove()
         flagshipListener = FirebaseFirestore.getInstance().collection("app_config").document("flagship")
             .addSnapshotListener { document, error ->
-                if (error != null) Log.e("FLAGSHIP", "Config listener failed: ${error.message}")
-                else _flagshipConfig.value = document?.toObject(FlagshipConfig::class.java) ?: FlagshipConfig()
+                if (error != null) Log.e("FLAGSHIP", "Firestore config listener failed: ${error.message}")
+                else document?.toObject(FlagshipConfig::class.java)?.let { incoming ->
+                    if (incoming.updatedAt >= _flagshipConfig.value.updatedAt) _flagshipConfig.value = incoming
+                }
             }
+        val ref = getDatabaseInstance().getReference("config").child("flagship")
+        flagshipRtdbListener?.let { ref.removeEventListener(it) }
+        flagshipRtdbListener = object : ValueEventListener {
+            override fun onDataChange(snapshot: DataSnapshot) {
+                snapshot.getValue(FlagshipConfig::class.java)?.let { incoming ->
+                    if (incoming.updatedAt >= _flagshipConfig.value.updatedAt) _flagshipConfig.value = incoming
+                }
+            }
+            override fun onCancelled(error: DatabaseError) { Log.e("FLAGSHIP", "RTDB config failed: ${error.message}") }
+        }.also { ref.addValueEventListener(it) }
         listenFeatureRequestsIfAdmin()
     }
 
@@ -486,6 +499,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         FirebaseFirestore.getInstance().collection("app_config").document("flagship")
             .set(published)
             .addOnSuccessListener {
+                getDatabaseInstance().getReference("config").child("flagship").setValue(published)
+                    .addOnFailureListener { Log.e("FLAGSHIP", "RTDB mirror failed: ${it.message}") }
                 if (published.updateEnabled) _usersState.value.forEach { target ->
                     createActivityNotification(target.uid, "app_update", published.updateId, "Required FireChat ${published.versionName} update is available")
                 }
