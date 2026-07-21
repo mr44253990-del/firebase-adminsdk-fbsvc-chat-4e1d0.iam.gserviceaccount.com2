@@ -948,36 +948,21 @@ fun HomeScreen(
                                     "Midnight" to Color(0xFF4A148C)
                                 )
 
-                                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                    themes.forEach { (themeName, themeColor) ->
-                                        Row(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .clip(RoundedCornerShape(16.dp))
-                                                .background(if (currentTheme == themeName) MaterialTheme.colorScheme.primaryContainer else Color.Transparent)
-                                                .clickable {
-                                                    viewModel.updateTheme(themeName)
-                                                    Toast.makeText(context, "$themeName theme applied!", Toast.LENGTH_SHORT).show()
-                                                }
-                                                .padding(horizontal = 12.dp, vertical = 10.dp),
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.SpaceBetween
-                                        ) {
-                                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                                Box(
-                                                    modifier = Modifier
-                                                        .size(24.dp)
-                                                        .clip(CircleShape)
-                                                        .background(themeColor)
-                                                )
-                                                Spacer(modifier = Modifier.width(12.dp))
-                                                Text(
-                                                    text = themeName,
-                                                    fontWeight = if (currentTheme == themeName) FontWeight.Bold else FontWeight.Normal
-                                                )
+                                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    items(themes, key = { it.first }) { (themeName, themeColor) ->
+                                        Surface(
+                                            color = if (currentTheme == themeName) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(.45f),
+                                            shape = RoundedCornerShape(16.dp),
+                                            modifier = Modifier.width(78.dp).clickable {
+                                                viewModel.updateTheme(themeName)
+                                                Toast.makeText(context, "$themeName theme applied!", Toast.LENGTH_SHORT).show()
                                             }
-                                            if (currentTheme == themeName) {
-                                                Icon(Icons.Default.Check, contentDescription = "Active", tint = MaterialTheme.colorScheme.primary)
+                                        ) {
+                                            Column(Modifier.padding(vertical = 10.dp, horizontal = 5.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                                                Box(Modifier.size(27.dp).clip(CircleShape).background(themeColor).border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape))
+                                                Spacer(Modifier.height(5.dp))
+                                                Text(themeName, fontSize = 10.sp, maxLines = 1, fontWeight = if (currentTheme == themeName) FontWeight.ExtraBold else FontWeight.Medium)
+                                                if (currentTheme == themeName) Icon(Icons.Default.Check, "Active", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(14.dp))
                                             }
                                         }
                                     }
@@ -2556,11 +2541,12 @@ private fun animatedPostScale(postId: String, animation: String): Float {
 }
 
 @Composable
-fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (User) -> Unit = {}, autoPlayVideo: Boolean = false) {
+fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (User) -> Unit = {}, autoPlayVideo: Boolean = false, allowInlineVideo: Boolean = false) {
     var isCommentsExpanded by remember { mutableStateOf(false) }
     var commentInputText by remember { mutableStateOf("") }
     var showPostMenu by remember { mutableStateOf(false) }
     var showEditPost by remember { mutableStateOf(false) }
+    var playInlineVideo by remember(post.id) { mutableStateOf(false) }
     val currentUserId = FirebaseAuth.getInstance().currentUser?.uid ?: ""
     val isDark = isSystemInDarkTheme()
     val allUsers by viewModel.usersState.collectAsState()
@@ -2725,16 +2711,20 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
                         .clip(RoundedCornerShape(24.dp))
                         .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(24.dp))
                         .background(Color.Black)
-                        .clickable { viewModel.setCurrentTab(6) },
+                        .clickable { if (allowInlineVideo) playInlineVideo = true else viewModel.setCurrentTab(6) },
                     contentAlignment = Alignment.Center
                 ) {
+                    val videoActive = autoPlayVideo || playInlineVideo
                     SharedCachedVideo(
                         ownerId = "feed_${post.id}", videoUrl = post.videoUrl,
-                        thumbnailUrl = post.imageUrl, active = autoPlayVideo,
-                        playWhenReady = autoPlayVideo, sound = autoPlayVideo,
+                        thumbnailUrl = post.imageUrl, active = videoActive,
+                        playWhenReady = videoActive, sound = videoActive,
                         modifier = Modifier.fillMaxSize()
                     )
-                    Box(Modifier.fillMaxSize().clickable { viewModel.setCurrentTab(6) })
+                    Box(Modifier.fillMaxSize().clickable { if (allowInlineVideo) playInlineVideo = true else viewModel.setCurrentTab(6) })
+                    if (!videoActive) Surface(color = Color.Black.copy(.58f), shape = CircleShape, modifier = Modifier.align(Alignment.Center)) {
+                        Icon(Icons.Default.PlayArrow, "Play video", tint = Color.White, modifier = Modifier.padding(13.dp).size(30.dp))
+                    }
                     Row(
                         modifier = Modifier
                             .align(Alignment.BottomEnd)

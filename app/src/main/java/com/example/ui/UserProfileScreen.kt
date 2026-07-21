@@ -209,7 +209,7 @@ fun UserProfileScreen(
                 }
             } else {
                 items(userPosts, key = { it.id }) { post ->
-                    Box(Modifier.padding(horizontal = 14.dp)) { SocialPostItem(post, viewModel, onProfileSelected = {}, autoPlayVideo = false) }
+                    Box(Modifier.padding(horizontal = 14.dp)) { SocialPostItem(post, viewModel, onProfileSelected = {}, autoPlayVideo = false, allowInlineVideo = true) }
                 }
             }
         }

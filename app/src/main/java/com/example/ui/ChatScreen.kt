@@ -326,6 +326,11 @@ fun ChatScreen(
         "Ocean" -> Brush.verticalGradient(listOf(Color(0xFF001B2E), Color(0xFF004E64), Color(0xFF00A5CF).copy(alpha = .45f)))
         "Forest" -> Brush.verticalGradient(listOf(Color(0xFF071A12), Color(0xFF174A35), Color(0xFF5BC88A).copy(alpha = .35f)))
         "Midnight" -> Brush.verticalGradient(listOf(Color.Black, Color(0xFF171029), Color(0xFF35205E)))
+        "Sakura" -> Brush.linearGradient(listOf(Color(0xFF351625), Color(0xFF8E3E62), Color(0xFFFFA9C6).copy(alpha = .62f)))
+        "Neon" -> Brush.linearGradient(listOf(Color(0xFF050816), Color(0xFF172554), Color(0xFF00FFD5).copy(alpha = .38f), Color(0xFFFF3DF2).copy(alpha = .28f)))
+        "Desert" -> Brush.verticalGradient(listOf(Color(0xFF2C1A12), Color(0xFF875B3A), Color(0xFFE8B26A).copy(alpha = .48f)))
+        "Galaxy" -> Brush.radialGradient(listOf(Color(0xFF7D4DFF).copy(.55f), Color(0xFF14102A), Color(0xFF03040B)))
+        "Pearl" -> Brush.linearGradient(listOf(Color(0xFFF7F1FF), Color(0xFFDDEEFF), Color(0xFFFCE8F3)))
         else -> Brush.verticalGradient(listOf(MaterialTheme.colorScheme.background, MaterialTheme.colorScheme.primary.copy(alpha = .12f), MaterialTheme.colorScheme.surfaceVariant))
     }
 
@@ -335,7 +340,7 @@ fun ChatScreen(
             title = { Text("Choose chat theme", fontWeight = FontWeight.Bold) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    listOf("Aurora", "Sunset", "Ocean", "Forest", "Midnight").forEach { theme ->
+                    listOf("Aurora", "Sunset", "Ocean", "Forest", "Midnight", "Sakura", "Neon", "Desert", "Galaxy", "Pearl").forEach { theme ->
                         Row(
                             Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp))
                                 .background(if (chatTheme == theme) MaterialTheme.colorScheme.primaryContainer else Color.Transparent)
