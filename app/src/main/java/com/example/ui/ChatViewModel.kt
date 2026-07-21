@@ -8,6 +8,7 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkRequest
 import android.net.NetworkCapabilities
+import android.net.Uri
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -87,6 +88,28 @@ private class ProgressBytesRequestBody(
             val remaining = if (rate > 0) ((bytes.size - offset) / rate).toLong() else 0L
             progress((offset * 100L / bytes.size).toInt(), remaining)
         }
+    }
+}
+
+private class ProgressUriRequestBody(
+    private val context: Context, private val uri: Uri, private val length: Long,
+    private val type: MediaType?, private val progress: (Int, Long) -> Unit
+) : RequestBody() {
+    override fun contentType() = type
+    override fun contentLength() = length.takeIf { it >= 0 } ?: -1
+    override fun writeTo(sink: BufferedSink) {
+        val started = System.currentTimeMillis(); var written = 0L
+        context.contentResolver.openInputStream(uri)?.use { input ->
+            val buffer = ByteArray(64 * 1024)
+            while (true) {
+                val count = input.read(buffer); if (count < 0) break
+                sink.write(buffer, 0, count); written += count
+                if (length > 0) {
+                    val rate = written * 1000.0 / (System.currentTimeMillis() - started).coerceAtLeast(1)
+                    progress((written * 100 / length).toInt(), if (rate > 0) ((length - written) / rate).toLong() else 0)
+                }
+            }
+        } ?: error("Could not open selected file")
     }
 }
 
@@ -1100,6 +1123,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                                     voiceUrl = childSnapshot.child("voiceUrl").value as? String,
                                     voiceDurationSec = (childSnapshot.child("voiceDurationSec").value as? Long)?.toInt(),
                                     remoteVoiceUrl = childSnapshot.child("remoteVoiceUrl").value as? String,
+                                    fileUrl = childSnapshot.child("fileUrl").value as? String,
+                                    remoteFileUrl = childSnapshot.child("remoteFileUrl").value as? String,
+                                    fileName = childSnapshot.child("fileName").value as? String,
+                                    fileMimeType = childSnapshot.child("fileMimeType").value as? String,
+                                    fileSize = childSnapshot.child("fileSize").value as? Long,
                                     seenByRecipient = childSnapshot.child("seenByRecipient").value as? Boolean ?: false,
                                     deliveredToRecipient = childSnapshot.child("deliveredToRecipient").value as? Boolean ?: false
                                 )
@@ -1559,13 +1587,17 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         imageUrl: String? = null,
         voiceUrl: String? = null,
         voiceDurationSec: Int? = null,
+        fileUrl: String? = null,
+        fileName: String? = null,
+        fileMimeType: String? = null,
+        fileSize: Long? = null,
         replyToId: String? = null,
         replyToText: String? = null,
         replyToSenderName: String? = null
     ) {
         val currentUser = _currentUserState.value ?: return
         val chatId = activeChatId ?: return
-        if (text.isBlank() && imageUrl == null && voiceUrl == null) return
+        if (text.isBlank() && imageUrl == null && voiceUrl == null && fileUrl == null) return
 
         val isEstablishedConversation = currentUser.friends.contains(recipientUser.uid) || _chatMessagesState.value.isNotEmpty()
         if (!isEstablishedConversation) {
@@ -1573,6 +1605,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 text.isNotBlank() -> text.trim()
                 imageUrl != null -> "📷 Photo request"
                 voiceUrl != null -> "🎙️ Voice request"
+                fileUrl != null -> "📎 File request"
                 else -> "Message request"
             }
             val requestId = "${currentUser.uid}_${recipientUser.uid}"
@@ -1603,13 +1636,16 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             imageUrl = imageUrl,
             voiceUrl = voiceUrl,
             voiceDurationSec = voiceDurationSec,
+            fileUrl = fileUrl, remoteFileUrl = fileUrl, fileName = fileName,
+            fileMimeType = fileMimeType, fileSize = fileSize,
             deliveredToRecipient = recipientUser.isOnline
         )
 
         // Sender owns an immediate durable copy; uploaded media points to the app-private file.
         val localMessage = message.copy(
             imageUrl = imageUrl?.let { localUploadFiles[it] ?: it },
-            voiceUrl = voiceUrl?.let { localUploadFiles[it] ?: it }
+            voiceUrl = voiceUrl?.let { localUploadFiles[it] ?: it },
+            fileUrl = fileUrl?.let { localUploadFiles[it] ?: it }
         )
         viewModelScope.launch(Dispatchers.IO) {
             cacheDao.insertMessage(CachedMessage.fromMessage(localMessage, chatId))
@@ -1631,7 +1667,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     .setValue(mapOf(
                         "senderId" to currentUser.uid,
                         "senderName" to currentUser.name,
-                        "text" to if (voiceUrl != null) "🎙️ Voice message" else if (imageUrl != null) "📷 Image attachment" else text,
+                        "text" to if (fileUrl != null) "📎 ${fileName ?: "File"}" else if (voiceUrl != null) "🎙️ Voice message" else if (imageUrl != null) "📷 Image attachment" else text,
                         "timestamp" to System.currentTimeMillis()
                     ))
 
@@ -1642,7 +1678,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         gatewayUrl = _webhookUrl.value,
                         targetToken = recipientToken,
                         senderName = currentUser.name,
-                        messageBody = if (voiceUrl != null) "🎙️ Voice message" else if (imageUrl != null) "📷 Image attachment" else text,
+                        messageBody = if (fileUrl != null) "📎 ${fileName ?: "File"}" else if (voiceUrl != null) "🎙️ Voice message" else if (imageUrl != null) "📷 Image attachment" else text,
                         senderId = currentUser.uid,
                         senderProfileUrl = currentUser.profileImageUrl,
                         notificationType = "message",
@@ -1881,6 +1917,45 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 override fun onResponse(call: Call, response: Response) { response.close(); onComplete?.invoke() }
             })
         }.addOnFailureListener { onComplete?.invoke() }
+    }
+
+    /** Streams arbitrary attachments; there is no app-imposed size cap. */
+    fun uploadUriToSupabase(
+        uri: Uri, fileName: String, contentType: String, contentLength: Long,
+        onProgress: (Int, Long) -> Unit, onSuccess: (String) -> Unit, onFailure: (String) -> Unit
+    ) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val safe = fileName.replace(Regex("[^A-Za-z0-9._-]"), "_").takeLast(180)
+                val objectName = "${FirebaseAuth.getInstance().currentUser?.uid.orEmpty()}/${System.currentTimeMillis()}_${UUID.randomUUID()}_$safe"
+                val encoded = objectName.split('/').joinToString("/") { java.net.URLEncoder.encode(it, "UTF-8").replace("+", "%20") }
+                val base = "https://srfztgcdejfaesrvkarg.supabase.co/storage/v1/object"
+                val body = ProgressUriRequestBody(getApplication(), uri, contentLength, contentType.toMediaTypeOrNull()) { p, eta ->
+                    viewModelScope.launch(Dispatchers.Main) { onProgress(p, eta) }
+                }
+                val request = Request.Builder().url("$base/chat_images/$encoded")
+                    .header("apikey", "sb_publishable_BcH2xwywnUCVG48LYjPOLQ_8-y2InGA")
+                    .header("Authorization", "Bearer sb_publishable_BcH2xwywnUCVG48LYjPOLQ_8-y2InGA")
+                    .post(body).build()
+                OkHttpClient.Builder().callTimeout(30, TimeUnit.MINUTES).build().newCall(request).execute().use { response ->
+                    val result = response.body?.string().orEmpty()
+                    if (!response.isSuccessful) error("Upload failed (${response.code}): ${result.take(160)}")
+                    val publicUrl = "$base/public/chat_images/$encoded"
+                    localUploadFiles[publicUrl] = uri.toString()
+                    withContext(Dispatchers.Main) { onSuccess(publicUrl) }
+                }
+            } catch (e: Throwable) { withContext(Dispatchers.Main) { onFailure(e.localizedMessage ?: "File upload failed") } }
+        }
+    }
+
+    fun acknowledgeFileConsumed(messageId: String, remoteUrl: String?) {
+        if (remoteUrl.isNullOrBlank() || !remoteUrl.startsWith("http")) return
+        viewModelScope.launch(Dispatchers.IO) {
+            if (deleteSupabaseObject(remoteUrl)) {
+                cacheDao.clearRemoteFileUrl(messageId)
+                _chatMessagesState.value = _chatMessagesState.value.map { if (it.messageId == messageId) it.copy(remoteFileUrl = null) else it }
+            }
+        }
     }
 
     // General file upload helper to Supabase Storage via REST
@@ -2692,7 +2767,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val groupRef = FirebaseFirestore.getInstance().collection("groups").document(groupId)
         groupRef.collection("messages").document(messageId).set(msg)
             .addOnSuccessListener {
-                val lastMsgText = if (voiceUrl != null) "🎙️ Voice message" else if (imageUrl != null) "📷 Image attachment" else text
+                val lastMsgText = if (fileUrl != null) "📎 ${fileName ?: "File"}" else if (voiceUrl != null) "🎙️ Voice message" else if (imageUrl != null) "📷 Image attachment" else text
                 groupRef.update("lastMessage", "${user.name}: $lastMsgText")
                 groupRef.get().addOnSuccessListener { groupDoc ->
                     val members = (groupDoc.get("members") as? List<*>)?.mapNotNull { it as? String }.orEmpty()
