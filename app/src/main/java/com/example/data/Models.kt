@@ -34,6 +34,11 @@ data class Message(
     val voiceUrl: String? = null,
     val voiceDurationSec: Int? = null,
     val remoteVoiceUrl: String? = null,
+    val fileUrl: String? = null,
+    val remoteFileUrl: String? = null,
+    val fileName: String? = null,
+    val fileMimeType: String? = null,
+    val fileSize: Long? = null,
     val seenByRecipient: Boolean = false,
     val deliveredToRecipient: Boolean = false,
     val reactions: Map<String, String> = emptyMap()
