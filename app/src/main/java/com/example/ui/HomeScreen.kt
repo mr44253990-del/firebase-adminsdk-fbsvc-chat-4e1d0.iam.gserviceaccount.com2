@@ -151,6 +151,7 @@ fun HomeScreen(
     onProfileSelected: (User) -> Unit,
     onCreatePost: () -> Unit,
     onGroupSelected: (Group) -> Unit,
+    onAssistant: () -> Unit,
     onSignOut: () -> Unit
 ) {
     val context = LocalContext.current
@@ -511,6 +512,28 @@ fun HomeScreen(
                             .padding(horizontal = 16.dp)
                     ) {
                         Spacer(modifier = Modifier.height(12.dp))
+
+                        if (flagshipConfig.assistantEnabled) {
+                            Card(
+                                onClick = onAssistant,
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(24.dp),
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+                            ) {
+                                Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Box(Modifier.size(48.dp).clip(CircleShape).background(Brush.linearGradient(listOf(Color(0xFF7C5CFC), Color(0xFF19D5C5), Color(0xFFFF65B3)))), contentAlignment = Alignment.Center) {
+                                        Icon(Icons.Default.AutoAwesome, "AI Assistant", tint = Color.White)
+                                    }
+                                    Spacer(Modifier.width(12.dp))
+                                    Column(Modifier.weight(1f)) {
+                                        Text(flagshipConfig.aiDisplayName, fontWeight = FontWeight.ExtraBold)
+                                        Text("Account insights • people search • smart actions • memory", fontSize = 11.sp, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                                    }
+                                    Icon(Icons.Default.ChevronRight, null)
+                                }
+                            }
+                            Spacer(Modifier.height(12.dp))
+                        }
                         
                         // Search contacts bar
                         OutlinedTextField(
@@ -670,6 +693,10 @@ fun HomeScreen(
                         var draftNoticeTitle by remember(flagshipConfig) { mutableStateOf(flagshipConfig.noticeTitle) }
                         var draftNoticeBody by remember(flagshipConfig) { mutableStateOf(flagshipConfig.noticeBody) }
                         var draftMaintenance by remember(flagshipConfig) { mutableStateOf(flagshipConfig.maintenanceMode) }
+                        var draftAssistantEnabled by remember(flagshipConfig) { mutableStateOf(flagshipConfig.assistantEnabled) }
+                        var draftAiModel by remember(flagshipConfig) { mutableStateOf(flagshipConfig.aiModel) }
+                        var draftAiName by remember(flagshipConfig) { mutableStateOf(flagshipConfig.aiDisplayName) }
+                        var draftAiPrompt by remember(flagshipConfig) { mutableStateOf(flagshipConfig.aiSystemPrompt) }
                         var updateUploading by remember { mutableStateOf(false) }
                         var updateUploadProgress by remember { mutableIntStateOf(0) }
                         val updateApkPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
@@ -730,6 +757,13 @@ fun HomeScreen(
                                     if (updateUploading) { LinearProgressIndicator(progress = { updateUploadProgress / 100f }, modifier = Modifier.fillMaxWidth()); Text("Uploading update • $updateUploadProgress%", fontSize = 11.sp) }
                                     if (draftApkUrl.isNotBlank()) Text("APK ready: ${draftApkKey.ifBlank { draftApkUrl }}", fontSize = 10.sp, color = Color(0xFF45D483), maxLines = 2, overflow = TextOverflow.Ellipsis)
                                     HorizontalDivider()
+                                    Text("Mistral AI Assistant", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                                    Row(verticalAlignment = Alignment.CenterVertically) { Text("Show assistant to all users", Modifier.weight(1f)); Switch(draftAssistantEnabled, { draftAssistantEnabled = it }) }
+                                    OutlinedTextField(draftAiName, { draftAiName = it.take(60) }, label = { Text("Assistant name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                                    OutlinedTextField(draftAiModel, { draftAiModel = it.filter { c -> c.isLetterOrDigit() || c in "-_." }.take(80) }, label = { Text("Mistral model") }, supportingText = { Text("Example: mistral-small-latest") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                                    OutlinedTextField(draftAiPrompt, { draftAiPrompt = it.take(2000) }, label = { Text("Safe system instructions") }, minLines = 3, modifier = Modifier.fillMaxWidth())
+                                    Text("API key is never stored in Android/Firestore. Set Worker secret MISTRAL_API_KEY.", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    HorizontalDivider()
                                     Row(verticalAlignment = Alignment.CenterVertically) { Text("Show global notice", Modifier.weight(1f)); Switch(draftNoticeEnabled, { draftNoticeEnabled = it }) }
                                     OutlinedTextField(draftNoticeTitle, { draftNoticeTitle = it.take(100) }, label = { Text("Notice title") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                                     OutlinedTextField(draftNoticeBody, { draftNoticeBody = it.take(1000) }, label = { Text("Notice details") }, minLines = 2, modifier = Modifier.fillMaxWidth())
@@ -742,7 +776,11 @@ fun HomeScreen(
                                                 versionName = draftVersionName, apkUrl = draftApkUrl, apkR2Key = draftApkKey,
                                                 releaseNotes = draftNotes, noticeEnabled = draftNoticeEnabled,
                                                 noticeTitle = draftNoticeTitle, noticeBody = draftNoticeBody,
-                                                maintenanceMode = draftMaintenance
+                                                maintenanceMode = draftMaintenance,
+                                                assistantEnabled = draftAssistantEnabled,
+                                                aiModel = draftAiModel.ifBlank { "mistral-small-latest" },
+                                                aiDisplayName = draftAiName.ifBlank { "FireChat Assistant" },
+                                                aiSystemPrompt = draftAiPrompt
                                             )
                                         ) { ok -> Toast.makeText(context, if (ok) "Flagship configuration published" else "Publish failed", Toast.LENGTH_LONG).show() }
                                     }, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Outlined.Publish, null); Spacer(Modifier.width(8.dp)); Text("Publish Flagship config") }

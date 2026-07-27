@@ -18,6 +18,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.compose.ui.platform.LocalContext
 import com.example.ui.AuthScreen
+import com.example.ui.AssistantScreen
 import com.example.ui.ChatScreen
 import com.example.call.CallScreen
 import com.example.call.CallEngine
@@ -178,10 +179,22 @@ class MainActivity : FragmentActivity() {
                                     viewModel.selectGroup(group)
                                     navController.navigate("group_chat")
                                 },
+                                onAssistant = { navController.navigate("assistant") },
                                 onSignOut = {
                                     navController.navigate("auth") {
                                         popUpTo("home") { inclusive = true }
                                     }
+                                }
+                            )
+                        }
+
+                        composable("assistant") {
+                            AssistantScreen(
+                                viewModel = viewModel,
+                                onBack = { navController.popBackStack() },
+                                onOpenUser = { user ->
+                                    viewModel.selectRecipient(user)
+                                    navController.navigate("chat")
                                 }
                             )
                         }

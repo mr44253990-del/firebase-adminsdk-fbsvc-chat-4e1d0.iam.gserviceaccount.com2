@@ -77,11 +77,12 @@ export default {
       return new Response(JSON.stringify({
         ok: serviceAccountConfigured,
         service: "FireChat Direct FCM Gateway",
-        version: "4.3.0",
+        version: "4.4.0",
         projectId,
         serviceAccountConfigured,
         turnConfigured: Boolean(env.TURN_TOKEN_ID && env.TURN_API_TOKEN),
         sfuConfigured: Boolean(env.CALLS_APP_ID && env.CALLS_APP_TOKEN),
+        aiConfigured: Boolean(env.MISTRAL_API_KEY),
         r2Configured: Boolean(env.MEDIA_BUCKET && typeof env.MEDIA_BUCKET.put === "function" && typeof env.MEDIA_BUCKET.list === "function" && env.R2_PUBLIC_BASE_URL),
         mediaRetentionDays: 10,
         authenticatedCallsRequired: true,
@@ -131,6 +132,33 @@ export default {
           status: 401,
           headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
         });
+      }
+
+      if (path === "/ai/chat") {
+        if (!env.MISTRAL_API_KEY) return jsonResponse({ error: "MISTRAL_API_KEY Worker secret is not configured" }, 503);
+        const allowedModels = new Set(["mistral-small-latest", "mistral-medium-latest", "mistral-large-latest", "open-mistral-nemo"]);
+        const model = allowedModels.has(String(payload.model || "")) ? String(payload.model) : "mistral-small-latest";
+        const message = String(payload.message || "").trim().slice(0, 4000);
+        if (!message) return jsonResponse({ error: "Message is required" }, 400);
+        const memory = Array.isArray(payload.memory) ? payload.memory.slice(-20).map(item => String(item).slice(0, 1000)) : [];
+        const system = `You are FireChat Assistant. Be concise, safe, and helpful. Never claim an app action succeeded unless the Android client confirms it. Never reveal secrets. ${String(payload.systemPrompt || "").slice(0, 1200)}`;
+        const upstream = await fetch("https://api.mistral.ai/v1/chat/completions", {
+          method: "POST",
+          headers: { "Authorization": `Bearer ${env.MISTRAL_API_KEY}`, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model,
+            temperature: 0.35,
+            max_tokens: 900,
+            messages: [
+              { role: "system", content: system },
+              ...memory.map(content => ({ role: content.startsWith("user:") ? "user" : "assistant", content: content.replace(/^(user|assistant):\s*/, "") })),
+              { role: "user", content: message }
+            ]
+          })
+        });
+        const result = await upstream.json();
+        if (!upstream.ok) return jsonResponse({ error: result?.message || "Mistral request failed", upstreamStatus: upstream.status }, 502);
+        return jsonResponse({ success: true, model, reply: result?.choices?.[0]?.message?.content || "" });
       }
 
       if (path === "/media/delete") {

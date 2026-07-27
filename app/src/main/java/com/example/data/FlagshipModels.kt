@@ -29,6 +29,10 @@ data class FlagshipConfig(
     val noticeTitle: String = "",
     val noticeBody: String = "",
     val maintenanceMode: Boolean = false,
+    val assistantEnabled: Boolean = true,
+    val aiModel: String = "mistral-small-latest",
+    val aiDisplayName: String = "FireChat Assistant",
+    val aiSystemPrompt: String = "Help users manage FireChat safely and clearly.",
     val updatedAt: Long = 0L,
     val updatedBy: String = ""
 )

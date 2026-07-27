@@ -431,6 +431,35 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun askAssistant(prompt: String, memory: List<String>, onResult: (String) -> Unit) {
+        val user = FirebaseAuth.getInstance().currentUser ?: return onResult("Please sign in again.")
+        if (!_flagshipConfig.value.assistantEnabled) return onResult("Assistant is currently disabled by the admin.")
+        user.getIdToken(false).addOnSuccessListener { tokenResult ->
+            val token = tokenResult.token ?: return@addOnSuccessListener onResult("Could not authenticate assistant.")
+            viewModelScope.launch(Dispatchers.IO) {
+                try {
+                    val payload = JSONObject().apply {
+                        put("message", prompt.take(4000))
+                        put("model", _flagshipConfig.value.aiModel)
+                        put("systemPrompt", _flagshipConfig.value.aiSystemPrompt.take(2000))
+                        put("memory", JSONArray(memory.takeLast(20)))
+                    }
+                    val request = Request.Builder().url(_webhookUrl.value.trimEnd('/') + "/ai/chat")
+                        .header("Authorization", "Bearer $token")
+                        .post(payload.toString().toRequestBody("application/json".toMediaTypeOrNull())).build()
+                    OkHttpClient.Builder().callTimeout(90, TimeUnit.SECONDS).build().newCall(request).execute().use { response ->
+                        val body = response.body?.string().orEmpty()
+                        val text = if (response.isSuccessful) JSONObject(body).optString("reply")
+                        else JSONObject(body.ifBlank { "{}" }).optString("error", "Assistant unavailable (${response.code})")
+                        withContext(Dispatchers.Main) { onResult(text.ifBlank { "I could not generate a response." }) }
+                    }
+                } catch (error: Throwable) {
+                    withContext(Dispatchers.Main) { onResult(error.localizedMessage ?: "Assistant connection failed") }
+                }
+            }
+        }.addOnFailureListener { onResult(it.localizedMessage ?: "Assistant authentication failed") }
+    }
+
     fun sendAdminTestNotification() {
         val admin = getCurrentUserOrFallback() ?: run {
             _gatewayHealth.value = GatewayHealth(message = "Admin session is not authenticated")
