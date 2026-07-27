@@ -27,6 +27,7 @@ import com.example.ui.HomeScreen
 import com.example.ui.GroupChatScreen
 import com.example.ui.OnboardingScreen
 import com.example.ui.PostComposerScreen
+import com.example.ui.PremiumScreen
 import com.example.ui.SplashScreen
 import com.example.ui.UserProfileScreen
 import com.example.ui.isOnboardingCompleted
@@ -180,10 +181,22 @@ class MainActivity : FragmentActivity() {
                                     navController.navigate("group_chat")
                                 },
                                 onAssistant = { navController.navigate("assistant") },
+                                onPremium = { navController.navigate("premium") },
                                 onSignOut = {
                                     navController.navigate("auth") {
                                         popUpTo("home") { inclusive = true }
                                     }
+                                }
+                            )
+                        }
+
+                        composable("premium") {
+                            PremiumScreen(
+                                viewModel = viewModel,
+                                onBack = { navController.popBackStack() },
+                                onChatAdmin = { admin ->
+                                    viewModel.selectRecipient(admin)
+                                    navController.navigate("chat")
                                 }
                             )
                         }

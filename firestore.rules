@@ -6,9 +6,14 @@ service cloud.firestore {
 
     match /users/{uid} {
       allow read: if signedIn();
-      allow create: if owner(uid) && (request.resource.data.role == null || request.resource.data.role == 'user' || request.auth.token.email == 'mr4425390@gmail.com');
+      allow create: if owner(uid)
+        && (request.resource.data.role == null || request.resource.data.role == 'user' || request.auth.token.email == 'mr4425390@gmail.com')
+        && (request.resource.data.isPremium == null || request.resource.data.isPremium == false);
       allow delete: if owner(uid);
-      allow update: if (owner(uid) && request.resource.data.role == resource.data.role) || request.auth.token.email == 'mr4425390@gmail.com' || (
+      allow update: if (owner(uid)
+        && request.resource.data.role == resource.data.role
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['isPremium', 'premiumPlan', 'premiumUntil', 'premiumApprovedAt']))
+        || request.auth.token.email == 'mr4425390@gmail.com' || (
         signedIn()
         && exists(/databases/$(database)/documents/friend_requests/$(uid + "_" + request.auth.uid))
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['friends'])
@@ -54,6 +59,16 @@ service cloud.firestore {
     match /feature_requests/{requestId} {
       allow create: if signedIn() && request.resource.data.requesterId == request.auth.uid;
       allow read: if signedIn() && (resource.data.requesterId == request.auth.uid || request.auth.token.email == 'mr4425390@gmail.com');
+      allow update, delete: if signedIn() && request.auth.token.email == 'mr4425390@gmail.com';
+    }
+
+    match /premium_requests/{requestId} {
+      allow create: if signedIn()
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.status == 'pending'
+        && request.resource.data.transactionId is string
+        && request.resource.data.transactionId.size() >= 6;
+      allow read: if signedIn() && (resource.data.userId == request.auth.uid || request.auth.token.email == 'mr4425390@gmail.com');
       allow update, delete: if signedIn() && request.auth.token.email == 'mr4425390@gmail.com';
     }
 

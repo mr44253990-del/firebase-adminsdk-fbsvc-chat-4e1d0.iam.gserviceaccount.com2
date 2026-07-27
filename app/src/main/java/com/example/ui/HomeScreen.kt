@@ -152,6 +152,7 @@ fun HomeScreen(
     onCreatePost: () -> Unit,
     onGroupSelected: (Group) -> Unit,
     onAssistant: () -> Unit,
+    onPremium: () -> Unit,
     onSignOut: () -> Unit
 ) {
     val context = LocalContext.current
@@ -170,6 +171,7 @@ fun HomeScreen(
     val gatewayHealth by viewModel.gatewayHealth.collectAsState()
     val flagshipConfig by viewModel.flagshipConfig.collectAsState()
     val featureRequests by viewModel.featureRequests.collectAsState()
+    val premiumRequests by viewModel.premiumRequests.collectAsState()
     val inAppNotification by viewModel.inAppNotification.collectAsState()
     val activityNotifications by viewModel.activityNotifications.collectAsState()
     val openActivitySignal by viewModel.openActivityCenterSignal.collectAsState()
@@ -278,6 +280,9 @@ fun HomeScreen(
                         }
                     },
                     actions = {
+                        IconButton(onClick = onPremium) {
+                            Icon(Icons.Default.WorkspacePremium, contentDescription = "FireChat Premium", tint = Color(0xFFFFB300))
+                        }
                         IconButton(onClick = { showGlobalSearch = true }) {
                             Icon(Icons.Outlined.Search, contentDescription = "Search people and media")
                         }
@@ -697,6 +702,14 @@ fun HomeScreen(
                         var draftAiModel by remember(flagshipConfig) { mutableStateOf(flagshipConfig.aiModel) }
                         var draftAiName by remember(flagshipConfig) { mutableStateOf(flagshipConfig.aiDisplayName) }
                         var draftAiPrompt by remember(flagshipConfig) { mutableStateOf(flagshipConfig.aiSystemPrompt) }
+                        var draftPremiumEnabled by remember(flagshipConfig) { mutableStateOf(flagshipConfig.premiumEnabled) }
+                        var draftPaymentNumber by remember(flagshipConfig) { mutableStateOf(flagshipConfig.premiumPaymentNumber) }
+                        var draftMonthlyPrice by remember(flagshipConfig) { mutableStateOf(flagshipConfig.premiumMonthlyPrice.toString()) }
+                        var draftYearlyPrice by remember(flagshipConfig) { mutableStateOf(flagshipConfig.premiumYearlyPrice.toString()) }
+                        var draftLifetimePrice by remember(flagshipConfig) { mutableStateOf(flagshipConfig.premiumLifetimePrice.toString()) }
+                        var draftBkash by remember(flagshipConfig) { mutableStateOf(flagshipConfig.premiumBkashEnabled) }
+                        var draftNagad by remember(flagshipConfig) { mutableStateOf(flagshipConfig.premiumNagadEnabled) }
+                        var draftRocket by remember(flagshipConfig) { mutableStateOf(flagshipConfig.premiumRocketEnabled) }
                         var updateUploading by remember { mutableStateOf(false) }
                         var updateUploadProgress by remember { mutableIntStateOf(0) }
                         val updateApkPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
@@ -764,6 +777,20 @@ fun HomeScreen(
                                     OutlinedTextField(draftAiPrompt, { draftAiPrompt = it.take(2000) }, label = { Text("Safe system instructions") }, minLines = 3, modifier = Modifier.fillMaxWidth())
                                     Text("API key is never stored in Android/Firestore. Set Worker secret MISTRAL_API_KEY.", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     HorizontalDivider()
+                                    Text("Premium payment control", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                                    Row(verticalAlignment = Alignment.CenterVertically) { Text("Premium purchase enabled", Modifier.weight(1f)); Switch(draftPremiumEnabled, { draftPremiumEnabled = it }) }
+                                    OutlinedTextField(draftPaymentNumber, { draftPaymentNumber = it.filter(Char::isDigit).take(15) }, label = { Text("Payment number") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        OutlinedTextField(draftMonthlyPrice, { draftMonthlyPrice = it.filter(Char::isDigit).take(7) }, label = { Text("Monthly ৳") }, modifier = Modifier.weight(1f))
+                                        OutlinedTextField(draftYearlyPrice, { draftYearlyPrice = it.filter(Char::isDigit).take(7) }, label = { Text("Yearly ৳") }, modifier = Modifier.weight(1f))
+                                        OutlinedTextField(draftLifetimePrice, { draftLifetimePrice = it.filter(Char::isDigit).take(7) }, label = { Text("Lifetime ৳") }, modifier = Modifier.weight(1f))
+                                    }
+                                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        FilterChip(draftBkash, { draftBkash = !draftBkash }, { Text("bKash") })
+                                        FilterChip(draftNagad, { draftNagad = !draftNagad }, { Text("Nagad") })
+                                        FilterChip(draftRocket, { draftRocket = !draftRocket }, { Text("Rocket") })
+                                    }
+                                    HorizontalDivider()
                                     Row(verticalAlignment = Alignment.CenterVertically) { Text("Show global notice", Modifier.weight(1f)); Switch(draftNoticeEnabled, { draftNoticeEnabled = it }) }
                                     OutlinedTextField(draftNoticeTitle, { draftNoticeTitle = it.take(100) }, label = { Text("Notice title") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                                     OutlinedTextField(draftNoticeBody, { draftNoticeBody = it.take(1000) }, label = { Text("Notice details") }, minLines = 2, modifier = Modifier.fillMaxWidth())
@@ -780,11 +807,41 @@ fun HomeScreen(
                                                 assistantEnabled = draftAssistantEnabled,
                                                 aiModel = draftAiModel.ifBlank { "mistral-small-latest" },
                                                 aiDisplayName = draftAiName.ifBlank { "FireChat Assistant" },
-                                                aiSystemPrompt = draftAiPrompt
+                                                aiSystemPrompt = draftAiPrompt,
+                                                premiumEnabled = draftPremiumEnabled,
+                                                premiumPaymentNumber = draftPaymentNumber.ifBlank { "01755070708" },
+                                                premiumMonthlyPrice = draftMonthlyPrice.toIntOrNull() ?: 199,
+                                                premiumYearlyPrice = draftYearlyPrice.toIntOrNull() ?: 1499,
+                                                premiumLifetimePrice = draftLifetimePrice.toIntOrNull() ?: 3999,
+                                                premiumBkashEnabled = draftBkash,
+                                                premiumNagadEnabled = draftNagad,
+                                                premiumRocketEnabled = draftRocket
                                             )
                                         ) { ok -> Toast.makeText(context, if (ok) "Flagship configuration published" else "Publish failed", Toast.LENGTH_LONG).show() }
                                     }, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Outlined.Publish, null); Spacer(Modifier.width(8.dp)); Text("Publish Flagship config") }
                                     if (flagshipConfig.updateEnabled) TextButton(onClick = { viewModel.publishFlagshipConfig(flagshipConfig.copy(updateEnabled = false, mandatoryUpdate = false)) }) { Text("Disable current update") }
+                                }
+                            }
+
+                            if (premiumRequests.isNotEmpty()) Card(shape = RoundedCornerShape(28.dp), modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
+                                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    Text("Premium payment approvals (${premiumRequests.size})", fontWeight = FontWeight.ExtraBold)
+                                    premiumRequests.take(30).forEach { request ->
+                                        Surface(shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.surface.copy(.75f)) {
+                                            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                                    AsyncImage(request.userImageUrl.ifBlank { null }, request.userName, Modifier.size(38.dp).clip(CircleShape))
+                                                    Spacer(Modifier.width(8.dp)); Column { Text(request.userName, fontWeight = FontWeight.Bold); Text(request.userEmail, fontSize = 10.sp) }
+                                                }
+                                                Text("${request.plan.uppercase()} • ৳${request.amount} • ${request.paymentMethod.uppercase()}")
+                                                Text("Transaction: ${request.transactionId}", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                                    Button(onClick = { viewModel.reviewPremiumRequest(request, true) }, modifier = Modifier.weight(1f)) { Text("Approve") }
+                                                    OutlinedButton(onClick = { viewModel.reviewPremiumRequest(request, false) }, modifier = Modifier.weight(1f)) { Text("Reject") }
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                             }
 
@@ -953,6 +1010,14 @@ fun HomeScreen(
                             color = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.align(Alignment.Start)
                         )
+
+                        Card(onClick = onPremium, shape = RoundedCornerShape(24.dp), modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
+                            Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.WorkspacePremium, null, tint = Color(0xFFFFA000), modifier = Modifier.size(34.dp))
+                                Spacer(Modifier.width(12.dp)); Column(Modifier.weight(1f)) { Text("FireChat Premium", fontWeight = FontWeight.ExtraBold); Text("Plans, verified badge and exclusive tools", fontSize = 11.sp) }
+                                Icon(Icons.Default.ChevronRight, null)
+                            }
+                        }
 
                         // 1. Theme selection block
                         Card(
@@ -3271,6 +3336,8 @@ fun ChatConversationUserItem(
                         )
                         if (user.role == "moderator") {
                             Spacer(Modifier.width(4.dp)); Icon(Icons.Outlined.Verified, "Moderator", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(15.dp))
+                        } else if (user.isPremium && (user.premiumPlan == "lifetime" || user.premiumUntil > System.currentTimeMillis())) {
+                            Spacer(Modifier.width(4.dp)); Icon(Icons.Outlined.Verified, "Premium", tint = Color(0xFFFFA000), modifier = Modifier.size(15.dp))
                         }
                     }
                     

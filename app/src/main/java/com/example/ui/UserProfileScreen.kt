@@ -116,6 +116,13 @@ fun UserProfileScreen(
                                         Spacer(Modifier.width(5.dp)); Text("Moderator", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold, fontSize = 11.sp)
                                     }
                                 }
+                            } else if (liveUser.isPremium && (liveUser.premiumPlan == "lifetime" || liveUser.premiumUntil > System.currentTimeMillis())) {
+                                Surface(color = Color(0xFFFFE082), shape = CircleShape) {
+                                    Row(Modifier.padding(horizontal = 9.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(Icons.Outlined.Verified, null, Modifier.size(16.dp), tint = Color(0xFF7A4E00))
+                                        Spacer(Modifier.width(4.dp)); Text("Premium", color = Color(0xFF7A4E00), fontWeight = FontWeight.ExtraBold, fontSize = 10.sp)
+                                    }
+                                }
                             }
                         }
                         Text("@${liveUser.username}  •  ${if (liveUser.isOnline) "Active now" else "Offline"}", color = MaterialTheme.colorScheme.onSurfaceVariant)

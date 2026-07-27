@@ -27,7 +27,11 @@ data class CachedUser(
     val coverImageUrl: String,
     val followersJson: String,
     val followingJson: String,
-    val role: String
+    val role: String,
+    val isPremium: Boolean,
+    val premiumPlan: String,
+    val premiumUntil: Long,
+    val premiumApprovedAt: Long
 ) {
     fun toUser(): User {
         val blockedList = mutableListOf<String>()
@@ -43,7 +47,7 @@ data class CachedUser(
             for (i in 0 until array.length()) friendList.add(array.getString(i))
         } catch (_: Exception) {}
         fun parseIds(json: String) = try { JSONArray(json).let { array -> (0 until array.length()).map { array.getString(it) } } } catch (_: Exception) { emptyList() }
-        return User(uid, name, dob, username, fcmToken, profileImageUrl, isOnline, lastActive, blockedList, createdAt, friendList, bio, coverImageUrl, parseIds(followersJson), parseIds(followingJson), role)
+        return User(uid, name, dob, username, fcmToken, profileImageUrl, isOnline, lastActive, blockedList, createdAt, friendList, bio, coverImageUrl, parseIds(followersJson), parseIds(followingJson), role, isPremium, premiumPlan, premiumUntil, premiumApprovedAt)
     }
 
     companion object {
@@ -53,7 +57,8 @@ data class CachedUser(
                 user.uid, user.name, user.dob, user.username, user.fcmToken,
                 user.profileImageUrl, user.isOnline, user.lastActive,
                 jsonArray.toString(), user.createdAt, JSONArray(user.friends).toString(), user.bio, user.coverImageUrl,
-                JSONArray(user.followers).toString(), JSONArray(user.following).toString(), user.role
+                JSONArray(user.followers).toString(), JSONArray(user.following).toString(), user.role,
+                user.isPremium, user.premiumPlan, user.premiumUntil, user.premiumApprovedAt
             )
         }
     }
@@ -494,7 +499,7 @@ interface CacheDao {
         CachedGroupMessage::class,
         CachedActivityNotification::class
     ],
-    version = 10,
+    version = 11,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -553,6 +558,14 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE cached_messages ADD COLUMN fileSize INTEGER")
             }
         }
+        private val MIGRATION_10_11 = object : Migration(10, 11) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE cached_users ADD COLUMN isPremium INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE cached_users ADD COLUMN premiumPlan TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE cached_users ADD COLUMN premiumUntil INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE cached_users ADD COLUMN premiumApprovedAt INTEGER NOT NULL DEFAULT 0")
+            }
+        }
 
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
@@ -560,7 +573,7 @@ abstract class AppDatabase : RoomDatabase() {
                     context.applicationContext,
                     AppDatabase::class.java,
                     "firechat_offline_cache_db"
-                ).addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10)
+                ).addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11)
                     .fallbackToDestructiveMigration()
                     .build()
                 INSTANCE = instance

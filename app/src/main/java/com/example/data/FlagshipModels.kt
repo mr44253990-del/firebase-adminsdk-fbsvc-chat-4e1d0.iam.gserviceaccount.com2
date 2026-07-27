@@ -12,6 +12,23 @@ data class FeatureRequest(
     val updatedAt: Long = 0L
 )
 
+data class PremiumRequest(
+    val id: String = "",
+    val userId: String = "",
+    val userName: String = "",
+    val userEmail: String = "",
+    val userImageUrl: String = "",
+    val plan: String = "monthly",
+    val paymentMethod: String = "bkash",
+    val transactionId: String = "",
+    val amount: Int = 0,
+    val status: String = "pending",
+    val createdAt: Long = 0L,
+    val reviewedAt: Long = 0L,
+    val reviewedBy: String = "",
+    val adminNote: String = ""
+)
+
 data class FlagshipConfig(
     val updateEnabled: Boolean = false,
     val mandatoryUpdate: Boolean = false,
@@ -33,6 +50,14 @@ data class FlagshipConfig(
     val aiModel: String = "mistral-small-latest",
     val aiDisplayName: String = "FireChat Assistant",
     val aiSystemPrompt: String = "Help users manage FireChat safely and clearly.",
+    val premiumEnabled: Boolean = true,
+    val premiumPaymentNumber: String = "01755070708",
+    val premiumMonthlyPrice: Int = 199,
+    val premiumYearlyPrice: Int = 1499,
+    val premiumLifetimePrice: Int = 3999,
+    val premiumBkashEnabled: Boolean = true,
+    val premiumNagadEnabled: Boolean = true,
+    val premiumRocketEnabled: Boolean = true,
     val updatedAt: Long = 0L,
     val updatedBy: String = ""
 )

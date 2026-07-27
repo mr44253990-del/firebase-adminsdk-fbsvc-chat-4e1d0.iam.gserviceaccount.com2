@@ -214,6 +214,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     val flagshipConfig: StateFlow<FlagshipConfig> = _flagshipConfig.asStateFlow()
     private val _featureRequests = MutableStateFlow<List<FeatureRequest>>(emptyList())
     val featureRequests: StateFlow<List<FeatureRequest>> = _featureRequests.asStateFlow()
+    private val _premiumRequests = MutableStateFlow<List<PremiumRequest>>(emptyList())
+    val premiumRequests: StateFlow<List<PremiumRequest>> = _premiumRequests.asStateFlow()
 
     private val _authLoading = MutableStateFlow(false)
     val authLoading: StateFlow<Boolean> = _authLoading.asStateFlow()
@@ -255,6 +257,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private var flagshipListener: ListenerRegistration? = null
     private var flagshipRtdbListener: ValueEventListener? = null
     private var featureRequestListener: ListenerRegistration? = null
+    private var premiumRequestListener: ListenerRegistration? = null
     private var friendRequestListener: ListenerRegistration? = null
     private var sentFriendRequestListener: ListenerRegistration? = null
     private var messageRequestListener: ListenerRegistration? = null
@@ -504,12 +507,57 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private fun listenFeatureRequestsIfAdmin() {
         val admin = FirebaseAuth.getInstance().currentUser?.email?.lowercase()?.trim()?.trimEnd('.') == "mr4425390@gmail.com"
         featureRequestListener?.remove(); featureRequestListener = null
-        if (!admin) { _featureRequests.value = emptyList(); return }
+        premiumRequestListener?.remove(); premiumRequestListener = null
+        if (!admin) { _featureRequests.value = emptyList(); _premiumRequests.value = emptyList(); return }
         featureRequestListener = FirebaseFirestore.getInstance().collection("feature_requests")
             .addSnapshotListener { snapshot, _ ->
                 _featureRequests.value = snapshot?.documents?.mapNotNull { it.toObject(FeatureRequest::class.java) }
                     ?.sortedByDescending { it.createdAt } ?: emptyList()
             }
+        premiumRequestListener = FirebaseFirestore.getInstance().collection("premium_requests")
+            .whereEqualTo("status", "pending")
+            .addSnapshotListener { snapshot, _ ->
+                _premiumRequests.value = snapshot?.documents?.mapNotNull { it.toObject(PremiumRequest::class.java) }
+                    ?.sortedByDescending { it.createdAt } ?: emptyList()
+            }
+    }
+
+    fun submitPremiumRequest(plan: String, method: String, transactionId: String, onComplete: (Boolean, String) -> Unit) {
+        val user = getCurrentUserOrFallback() ?: return onComplete(false, "Please sign in again")
+        val config = _flagshipConfig.value
+        val normalizedPlan = plan.lowercase().takeIf { it in setOf("monthly", "yearly", "lifetime") } ?: return onComplete(false, "Invalid plan")
+        val normalizedMethod = method.lowercase().takeIf {
+            (it == "bkash" && config.premiumBkashEnabled) || (it == "nagad" && config.premiumNagadEnabled) || (it == "rocket" && config.premiumRocketEnabled)
+        } ?: return onComplete(false, "Payment method is unavailable")
+        val cleanTx = transactionId.trim().uppercase().replace(Regex("[^A-Z0-9-]"), "").take(40)
+        if (cleanTx.length < 6) return onComplete(false, "Enter a valid transaction ID")
+        val amount = when (normalizedPlan) { "monthly" -> config.premiumMonthlyPrice; "yearly" -> config.premiumYearlyPrice; else -> config.premiumLifetimePrice }
+        val requestKey = "${normalizedMethod}_${cleanTx}".lowercase()
+        val ref = FirebaseFirestore.getInstance().collection("premium_requests").document(requestKey)
+        val request = PremiumRequest(ref.id, user.uid, user.name, FirebaseAuth.getInstance().currentUser?.email.orEmpty(), user.profileImageUrl, normalizedPlan, normalizedMethod, cleanTx, amount, "pending", System.currentTimeMillis())
+        FirebaseFirestore.getInstance().runTransaction { transaction ->
+            if (transaction.get(ref).exists()) error("This transaction ID was already submitted")
+            transaction.set(ref, request)
+        }.addOnSuccessListener { onComplete(true, "Premium request submitted") }
+            .addOnFailureListener { onComplete(false, it.localizedMessage ?: "Request failed") }
+    }
+
+    fun reviewPremiumRequest(request: PremiumRequest, approve: Boolean, note: String = "", onComplete: (Boolean) -> Unit = {}) {
+        val admin = FirebaseAuth.getInstance().currentUser ?: return onComplete(false)
+        if (admin.email?.lowercase()?.trim()?.trimEnd('.') != "mr4425390@gmail.com") return onComplete(false)
+        val now = System.currentTimeMillis()
+        val until = when (request.plan) {
+            "monthly" -> now + 30L * 24 * 60 * 60 * 1000
+            "yearly" -> now + 365L * 24 * 60 * 60 * 1000
+            else -> Long.MAX_VALUE
+        }
+        val firestore = FirebaseFirestore.getInstance(); val batch = firestore.batch()
+        batch.update(firestore.collection("premium_requests").document(request.id), mapOf("status" to if (approve) "approved" else "rejected", "reviewedAt" to now, "reviewedBy" to admin.uid, "adminNote" to note.take(500)))
+        if (approve) batch.update(firestore.collection("users").document(request.userId), mapOf("isPremium" to true, "premiumPlan" to request.plan, "premiumUntil" to until, "premiumApprovedAt" to now))
+        batch.commit().addOnSuccessListener {
+            createActivityNotification(request.userId, if (approve) "premium_approved" else "premium_rejected", request.id, if (approve) "আপনার FireChat Premium চালু হয়েছে 🎉" else "Premium request was not approved")
+            onComplete(true)
+        }.addOnFailureListener { onComplete(false) }
     }
 
     fun submitFeatureRequest(title: String, description: String, onComplete: (Boolean) -> Unit = {}) {
@@ -1023,8 +1071,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 }
 
                 // Sort active (online) users at the very top, sorted by activity time descending
+                val now = System.currentTimeMillis()
                 val sortedUsers = updatedUsers.sortedWith(
-                    compareByDescending<User> { it.isOnline }.thenByDescending { it.lastActive }
+                    compareByDescending<User> { it.role == "moderator" }
+                        .thenByDescending { it.isPremium && (it.premiumPlan == "lifetime" || it.premiumUntil > now) }
+                        .thenByDescending { it.isOnline }
+                        .thenByDescending { it.lastActive }
                 )
                 _usersState.value = sortedUsers
 

@@ -16,7 +16,11 @@ data class User(
     val coverImageUrl: String = "",
     val followers: List<String> = emptyList(),
     val following: List<String> = emptyList(),
-    val role: String = "user"
+    val role: String = "user",
+    val isPremium: Boolean = false,
+    val premiumPlan: String = "",
+    val premiumUntil: Long = 0L,
+    val premiumApprovedAt: Long = 0L
 )
 
 data class Message(
