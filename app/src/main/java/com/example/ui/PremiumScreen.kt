@@ -1,6 +1,13 @@
 package com.example.ui
 
 import android.widget.Toast
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.net.Uri
+import android.provider.OpenableColumns
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -37,17 +44,31 @@ fun PremiumScreen(viewModel: ChatViewModel, onBack: () -> Unit, onChatAdmin: (Us
     var method by remember { mutableStateOf("bkash") }
     var transaction by remember { mutableStateOf("") }
     var sending by remember { mutableStateOf(false) }
-    val plans = listOf(
-        Triple("monthly", "মাসিক", config.premiumMonthlyPrice),
-        Triple("yearly", "বার্ষিক", config.premiumYearlyPrice),
-        Triple("lifetime", "লাইফটাইম", config.premiumLifetimePrice)
-    )
+    var proofUploading by remember { mutableStateOf(false) }
+    var proofProgress by remember { mutableIntStateOf(0) }
+    var proofUrl by remember { mutableStateOf("") }
+    val proofPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
+        uri ?: return@rememberLauncherForActivityResult
+        var size = -1L
+        context.contentResolver.query(uri, arrayOf(OpenableColumns.SIZE), null, null, null)?.use { if (it.moveToFirst() && !it.isNull(0)) size = it.getLong(0) }
+        proofUploading = true; proofProgress = 0
+        viewModel.uploadUriToSupabase(uri, "premium_proof_${System.currentTimeMillis()}.jpg", context.contentResolver.getType(uri) ?: "image/jpeg", size,
+            onProgress = { p, _ -> proofProgress = p },
+            onSuccess = { proofUploading = false; proofUrl = it },
+            onFailure = { proofUploading = false; Toast.makeText(context, it, Toast.LENGTH_LONG).show() })
+    }
+    val plans = buildList {
+        if (config.premiumMonthlyEnabled) add(Triple("monthly", "মাসিক", config.premiumMonthlyPrice))
+        if (config.premiumYearlyEnabled) add(Triple("yearly", "বার্ষিক", config.premiumYearlyPrice))
+        if (config.premiumLifetimeEnabled) add(Triple("lifetime", "লাইফটাইম", config.premiumLifetimePrice))
+    }
     val methods = buildList {
         if (config.premiumBkashEnabled) add("bkash" to "বিকাশ")
         if (config.premiumNagadEnabled) add("nagad" to "নগদ")
         if (config.premiumRocketEnabled) add("rocket" to "রকেট")
     }
     LaunchedEffect(methods) { if (methods.none { it.first == method }) method = methods.firstOrNull()?.first.orEmpty() }
+    LaunchedEffect(plans) { if (plans.none { it.first == plan }) plan = plans.firstOrNull()?.first.orEmpty() }
 
     Scaffold(topBar = { TopAppBar(title = { Text("FireChat Premium", fontWeight = FontWeight.ExtraBold) }, navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } }) }) { padding ->
         LazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -98,17 +119,28 @@ fun PremiumScreen(viewModel: ChatViewModel, onBack: () -> Unit, onChatAdmin: (Us
                             }
                             HorizontalDivider()
                             Text("২. Payment method", fontWeight = FontWeight.ExtraBold)
-                            Text("Send Money করুন: ${config.premiumPaymentNumber}", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("Send Money: ${config.premiumPaymentNumber}", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                                IconButton(onClick = {
+                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                    clipboard.setPrimaryClip(ClipData.newPlainText("Payment number", config.premiumPaymentNumber))
+                                    Toast.makeText(context, "Number copied", Toast.LENGTH_SHORT).show()
+                                }) { Icon(Icons.Default.ContentCopy, "Copy number") }
+                            }
                             Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                                 methods.forEach { (id, label) -> FilterChip(selected = method == id, onClick = { method = id }, label = { Text(label) }) }
                             }
                             OutlinedTextField(transaction, { transaction = it.uppercase().filter { c -> c.isLetterOrDigit() || c == '-' }.take(40) }, label = { Text("Transaction ID") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                            OutlinedButton(onClick = { proofPicker.launch("image/*") }, enabled = !proofUploading, modifier = Modifier.fillMaxWidth()) {
+                                Icon(if (proofUrl.isBlank()) Icons.Default.AddPhotoAlternate else Icons.Default.CheckCircle, null); Spacer(Modifier.width(7.dp))
+                                Text(when { proofUploading -> "Uploading proof • $proofProgress%"; proofUrl.isNotBlank() -> "Payment screenshot attached"; else -> "Payment screenshot (optional)" })
+                            }
                             Button(onClick = {
                                 sending = true
-                                viewModel.submitPremiumRequest(plan, method, transaction) { ok, message ->
-                                    sending = false; Toast.makeText(context, if (ok) "$message • Admin approval pending" else message, Toast.LENGTH_LONG).show(); if (ok) transaction = ""
+                                viewModel.submitPremiumRequest(plan, method, transaction, proofUrl) { ok, message ->
+                                    sending = false; Toast.makeText(context, if (ok) "$message • Admin approval pending" else message, Toast.LENGTH_LONG).show(); if (ok) { transaction = ""; proofUrl = "" }
                                 }
-                            }, enabled = !sending && transaction.length >= 6 && method.isNotBlank(), modifier = Modifier.fillMaxWidth()) {
+                            }, enabled = !sending && !proofUploading && transaction.length >= 6 && method.isNotBlank() && plan.isNotBlank(), modifier = Modifier.fillMaxWidth()) {
                                 if (sending) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp) else Icon(Icons.Default.Send, null)
                                 Spacer(Modifier.width(8.dp)); Text("Request Premium")
                             }

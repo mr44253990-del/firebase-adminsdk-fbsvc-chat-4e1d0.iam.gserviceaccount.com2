@@ -120,7 +120,8 @@ fun UserProfileScreen(
                                 Surface(color = Color(0xFFFFE082), shape = CircleShape) {
                                     Row(Modifier.padding(horizontal = 9.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                                         Icon(Icons.Outlined.Verified, null, Modifier.size(16.dp), tint = Color(0xFF7A4E00))
-                                        Spacer(Modifier.width(4.dp)); Text("Premium", color = Color(0xFF7A4E00), fontWeight = FontWeight.ExtraBold, fontSize = 10.sp)
+                                        val remaining = if (liveUser.premiumPlan == "lifetime") "∞" else "${((liveUser.premiumUntil - System.currentTimeMillis()).coerceAtLeast(0L) / 86_400_000L) + 1}d"
+                                        Spacer(Modifier.width(4.dp)); Text("Premium $remaining", color = Color(0xFF7A4E00), fontWeight = FontWeight.ExtraBold, fontSize = 10.sp)
                                     }
                                 }
                             }

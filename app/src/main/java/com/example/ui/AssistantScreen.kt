@@ -1,6 +1,8 @@
 package com.example.ui
 
 import android.content.Context
+import android.content.ClipData
+import android.content.ClipboardManager
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -74,19 +76,24 @@ fun AssistantScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenUser: (U
         val normalized = prompt.lowercase()
         val myPosts = posts.filter { it.senderId == uid }
         when {
-            listOf("my account", "আমার অ্যাকাউন্ট", "আমার পোস্ট", "total like", "মোট লাইক", "কবে অ্যাকাউন্ট").any(normalized::contains) -> {
-                val likes = myPosts.sumOf { post -> post.reactions.size + post.mediaReactions.values.sumOf { reactions -> reactions.size } }
-                val joined = currentUser?.createdAt?.takeIf { it > 0 }?.let { SimpleDateFormat("dd MMMM yyyy", Locale.getDefault()).format(Date(it)) } ?: "unknown"
-                answer("📊 আপনার অ্যাকাউন্ট রিপোর্ট\n• পোস্ট: ${myPosts.size}\n• মোট লাইক/রিঅ্যাকশন: $likes\n• Followers: ${currentUser?.followers?.size ?: 0}\n• Friends: ${currentUser?.friends?.size ?: 0}\n• অ্যাকাউন্ট খোলা: $joined")
-            }
             normalized.contains("delete post") || normalized.contains("পোস্ট ডিলিট") || normalized.contains("পোস্ট মুছ") -> {
                 deleteChoices = myPosts.sortedByDescending { it.timestamp }.take(12)
                 answer(if (deleteChoices.isEmpty()) "আপনার কোনো পোস্ট পাওয়া যায়নি।" else "নিরাপত্তার জন্য নিচের তালিকা থেকে পোস্ট নির্বাচন করে Confirm করুন।")
             }
-            normalized.contains("find ") || normalized.contains("search ") || normalized.contains("খুঁজ") || normalized.contains("ইউজার") -> {
-                val query = normalized.replace(Regex("find|search|user|ইউজার|খুঁজে|খুঁজ|বের|করো|দাও"), " ").trim()
-                matches = users.filter { query.isNotBlank() && (it.name.contains(query, true) || it.username.contains(query, true)) }.take(15)
-                answer(if (matches.isEmpty()) "‘$query’ নামে কোনো ব্যবহারকারী পাইনি।" else "${matches.size} জন ব্যবহারকারী পেয়েছি। প্রোফাইল বা Message খুলতে নিচে ট্যাপ করুন।")
+            listOf("my account", "আমার অ্যাকাউন্ট", "পোস্ট", "post", "like", "লাইক", "followers", "কবে অ্যাকাউন্ট").any(normalized::contains) -> {
+                val likes = myPosts.sumOf { post -> post.reactions.size + post.mediaReactions.values.sumOf { reactions -> reactions.size } }
+                val joined = currentUser?.createdAt?.takeIf { it > 0 }?.let { SimpleDateFormat("dd MMMM yyyy", Locale.getDefault()).format(Date(it)) } ?: "unknown"
+                answer("📊 আপনার অ্যাকাউন্ট রিপোর্ট\n• পোস্ট: ${myPosts.size}\n• মোট লাইক/রিঅ্যাকশন: $likes\n• Followers: ${currentUser?.followers?.size ?: 0}\n• Friends: ${currentUser?.friends?.size ?: 0}\n• অ্যাকাউন্ট খোলা: $joined")
+            }
+            normalized.contains("find") || normalized.contains("search") || normalized.contains("খুঁজ") || normalized.contains("ইউজার") || normalized.contains("user") -> {
+                val stopWords = setOf("find","search","user","please","show","me","ইউজার","খুঁজে","খুঁজ","বের","করো","দাও","নামে","নাম","কে","আছে")
+                val tokens = normalized.split(Regex("[^\\p{L}\\p{N}_]+")) .filter { it.length >= 2 && it !in stopWords }
+                matches = users.map { user ->
+                    val haystack = "${user.name} ${user.username}".lowercase()
+                    user to tokens.count { token -> haystack.contains(token) || token.contains(user.username.lowercase()) }
+                }.filter { it.second > 0 }.sortedWith(compareByDescending<Pair<User, Int>> { it.second }.thenBy { it.first.name }).map { it.first }.take(20)
+                val query = tokens.joinToString(" ").ifBlank { normalized }
+                answer(if (matches.isEmpty()) "‘$query’ অনুযায়ী কোনো ব্যবহারকারী পাইনি। নামের আরও কিছু অক্ষর লিখুন।" else "${matches.size} জন matching ব্যবহারকারী পেয়েছি। ছবিসহ তালিকা থেকে প্রোফাইল বা chat খুলুন।")
             }
             else -> {
                 thinking = true
@@ -131,7 +138,15 @@ fun AssistantScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenUser: (U
             items(lines) { line ->
                 Box(Modifier.fillMaxWidth(), contentAlignment = if (line.role == "user") Alignment.CenterEnd else Alignment.CenterStart) {
                     Surface(color = if (line.role == "user") MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(20.dp), modifier = Modifier.widthIn(max = 330.dp)) {
-                        Text(line.text, Modifier.padding(12.dp))
+                        Column(Modifier.padding(12.dp)) {
+                            Text(line.text)
+                            if (line.role == "assistant") {
+                                TextButton(onClick = {
+                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                    clipboard.setPrimaryClip(ClipData.newPlainText("FireChat Assistant", line.text))
+                                }, modifier = Modifier.align(Alignment.End)) { Icon(Icons.Default.ContentCopy, null, Modifier.size(14.dp)); Spacer(Modifier.width(4.dp)); Text("Copy", fontSize = 10.sp) }
+                            }
+                        }
                     }
                 }
             }

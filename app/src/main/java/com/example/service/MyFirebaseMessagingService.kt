@@ -16,6 +16,8 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.Person
 import androidx.core.app.RemoteInput
+import androidx.core.content.pm.ShortcutInfoCompat
+import androidx.core.content.pm.ShortcutManagerCompat
 import androidx.core.graphics.drawable.IconCompat
 import com.example.MainActivity
 import com.example.R
@@ -243,6 +245,30 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
             notificationBuilder.addAction(NotificationCompat.Action.Builder(android.R.drawable.ic_menu_send, "Reply", replyPending).addRemoteInput(replyInput).setAllowGeneratedReplies(true).build())
         }
 
+        val bubblesEnabled = getSharedPreferences("firechat_prefs", Context.MODE_PRIVATE).getBoolean("bubble_notifications", false)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && bubblesEnabled && notificationType == "message" && senderId.isNotBlank()) {
+            val bubblePerson = Person.Builder().setName(title).setKey(senderId).build()
+            val shortcutId = "chat_$senderId"
+            ShortcutManagerCompat.pushDynamicShortcut(
+                this,
+                ShortcutInfoCompat.Builder(this, shortcutId)
+                    .setShortLabel(title.take(30))
+                    .setLongLived(true)
+                    .setPerson(bubblePerson)
+                    .setIcon(IconCompat.createWithResource(this, R.mipmap.ic_launcher))
+                    .setIntent(Intent(this, MainActivity::class.java).setAction(Intent.ACTION_VIEW).putExtra("senderId", senderId))
+                    .build()
+            )
+            notificationBuilder
+                .setShortcutId(shortcutId)
+                .setBubbleMetadata(
+                    NotificationCompat.BubbleMetadata.Builder(
+                        pendingIntent,
+                        IconCompat.createWithResource(this, R.mipmap.ic_launcher)
+                    ).setDesiredHeight(640).setAutoExpandBubble(false).setSuppressNotification(false).build()
+                )
+        }
+
         loadBitmap(senderProfileUrl)?.let { notificationBuilder.setLargeIcon(it) }
 
         val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -264,6 +290,7 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
                 enableLights(true)
                 lightColor = 0xFF8A72FF.toInt()
                 setShowBadge(true)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && channelId == "firechat_messages_v3") setAllowBubbles(true)
             }
             notificationManager.createNotificationChannel(channel)
         }

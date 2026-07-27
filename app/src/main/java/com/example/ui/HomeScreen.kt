@@ -86,7 +86,6 @@ import com.example.data.MessageRequest
 import com.example.data.Post
 import com.example.video.SharedCachedVideo
 import com.example.video.VideoPlayerManager
-import com.example.update.UpdateInstallTracker
 import com.example.data.Story
 import com.example.data.User
 import com.google.firebase.auth.FirebaseAuth
@@ -181,6 +180,7 @@ fun HomeScreen(
     val currentTheme by viewModel.themeState.collectAsState()
     val notificationSounds by viewModel.notificationSoundsEnabled.collectAsState()
     val typingSounds by viewModel.typingSoundsEnabled.collectAsState()
+    val bubbleNotifications by viewModel.bubbleNotificationsEnabled.collectAsState()
     val mutedUsers by viewModel.mutedUserIds.collectAsState()
     val allUsers by viewModel.usersState.collectAsState()
     val conversationUserIds by viewModel.conversationUserIds.collectAsState()
@@ -194,13 +194,11 @@ fun HomeScreen(
     var lockEnabled by remember { mutableStateOf(AppLockManager.isEnabled(context)) }
     val currentTab by viewModel.currentTabState.collectAsState()
     val isAdmin = FirebaseAuth.getInstance().currentUser?.email?.lowercase()?.trim()?.trimEnd('.') == "mr4425390@gmail.com"
-    val updateCampaignId = UpdateInstallTracker.campaignId(flagshipConfig)
-    val updateInstalled = remember(updateCampaignId, flagshipConfig.updateEnabled) {
-        UpdateInstallTracker.isInstalled(context, flagshipConfig)
-    }
     var dismissNotice by remember(flagshipConfig.updatedAt) { mutableStateOf(false) }
     val validUpdate = flagshipConfig.updateEnabled && flagshipConfig.apkUrl.startsWith("https://")
-    val updateRequired = !isAdmin && validUpdate && !updateInstalled
+    // Version code is the single source of truth. A republished campaign must
+    // never force users who already run the configured (or newer) version.
+    val updateRequired = !isAdmin && validUpdate && flagshipConfig.latestVersionCode > com.example.BuildConfig.VERSION_CODE
 
     // Dialog & Creation controllers
     var showCreateGroupDialog by remember { mutableStateOf(false) }
@@ -707,6 +705,9 @@ fun HomeScreen(
                         var draftMonthlyPrice by remember(flagshipConfig) { mutableStateOf(flagshipConfig.premiumMonthlyPrice.toString()) }
                         var draftYearlyPrice by remember(flagshipConfig) { mutableStateOf(flagshipConfig.premiumYearlyPrice.toString()) }
                         var draftLifetimePrice by remember(flagshipConfig) { mutableStateOf(flagshipConfig.premiumLifetimePrice.toString()) }
+                        var draftMonthlyEnabled by remember(flagshipConfig) { mutableStateOf(flagshipConfig.premiumMonthlyEnabled) }
+                        var draftYearlyEnabled by remember(flagshipConfig) { mutableStateOf(flagshipConfig.premiumYearlyEnabled) }
+                        var draftLifetimeEnabled by remember(flagshipConfig) { mutableStateOf(flagshipConfig.premiumLifetimeEnabled) }
                         var draftBkash by remember(flagshipConfig) { mutableStateOf(flagshipConfig.premiumBkashEnabled) }
                         var draftNagad by remember(flagshipConfig) { mutableStateOf(flagshipConfig.premiumNagadEnabled) }
                         var draftRocket by remember(flagshipConfig) { mutableStateOf(flagshipConfig.premiumRocketEnabled) }
@@ -781,6 +782,11 @@ fun HomeScreen(
                                     Row(verticalAlignment = Alignment.CenterVertically) { Text("Premium purchase enabled", Modifier.weight(1f)); Switch(draftPremiumEnabled, { draftPremiumEnabled = it }) }
                                     OutlinedTextField(draftPaymentNumber, { draftPaymentNumber = it.filter(Char::isDigit).take(15) }, label = { Text("Payment number") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        FilterChip(draftMonthlyEnabled, { draftMonthlyEnabled = !draftMonthlyEnabled }, { Text("Monthly") })
+                                        FilterChip(draftYearlyEnabled, { draftYearlyEnabled = !draftYearlyEnabled }, { Text("Yearly") })
+                                        FilterChip(draftLifetimeEnabled, { draftLifetimeEnabled = !draftLifetimeEnabled }, { Text("Lifetime") })
+                                    }
+                                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                         OutlinedTextField(draftMonthlyPrice, { draftMonthlyPrice = it.filter(Char::isDigit).take(7) }, label = { Text("Monthly ৳") }, modifier = Modifier.weight(1f))
                                         OutlinedTextField(draftYearlyPrice, { draftYearlyPrice = it.filter(Char::isDigit).take(7) }, label = { Text("Yearly ৳") }, modifier = Modifier.weight(1f))
                                         OutlinedTextField(draftLifetimePrice, { draftLifetimePrice = it.filter(Char::isDigit).take(7) }, label = { Text("Lifetime ৳") }, modifier = Modifier.weight(1f))
@@ -813,6 +819,9 @@ fun HomeScreen(
                                                 premiumMonthlyPrice = draftMonthlyPrice.toIntOrNull() ?: 199,
                                                 premiumYearlyPrice = draftYearlyPrice.toIntOrNull() ?: 1499,
                                                 premiumLifetimePrice = draftLifetimePrice.toIntOrNull() ?: 3999,
+                                                premiumMonthlyEnabled = draftMonthlyEnabled,
+                                                premiumYearlyEnabled = draftYearlyEnabled,
+                                                premiumLifetimeEnabled = draftLifetimeEnabled,
                                                 premiumBkashEnabled = draftBkash,
                                                 premiumNagadEnabled = draftNagad,
                                                 premiumRocketEnabled = draftRocket
@@ -835,9 +844,10 @@ fun HomeScreen(
                                                 }
                                                 Text("${request.plan.uppercase()} • ৳${request.amount} • ${request.paymentMethod.uppercase()}")
                                                 Text("Transaction: ${request.transactionId}", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                                                if (request.paymentProofUrl.isNotBlank()) AsyncImage(request.paymentProofUrl, "Payment screenshot", Modifier.fillMaxWidth().height(160.dp).clip(RoundedCornerShape(14.dp)), contentScale = ContentScale.Crop)
                                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                                    Button(onClick = { viewModel.reviewPremiumRequest(request, true) }, modifier = Modifier.weight(1f)) { Text("Approve") }
-                                                    OutlinedButton(onClick = { viewModel.reviewPremiumRequest(request, false) }, modifier = Modifier.weight(1f)) { Text("Reject") }
+                                                    Button(onClick = { viewModel.reviewPremiumRequest(request, true) { Toast.makeText(context, if (it) "Premium activated" else "Approval failed", Toast.LENGTH_LONG).show() } }, modifier = Modifier.weight(1f)) { Text("Approve") }
+                                                    OutlinedButton(onClick = { viewModel.reviewPremiumRequest(request, false) { Toast.makeText(context, if (it) "Request rejected" else "Reject failed", Toast.LENGTH_LONG).show() } }, modifier = Modifier.weight(1f)) { Text("Reject") }
                                                 }
                                             }
                                         }
@@ -1297,6 +1307,11 @@ fun HomeScreen(
                                         checked = typingSounds,
                                         onCheckedChange = { viewModel.updateSoundPreferences(notificationSounds, it) }
                                     )
+                                }
+                                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Icons.Outlined.ChatBubbleOutline, null, tint = MaterialTheme.colorScheme.primary)
+                                    Column(Modifier.padding(start = 12.dp).weight(1f)) { Text("Message bubbles"); Text("Show supported chats over other apps", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                                    Switch(checked = bubbleNotifications, onCheckedChange = viewModel::setBubbleNotifications)
                                 }
                                 if (Build.VERSION.SDK_INT >= 34) {
                                     val manager = context.getSystemService(android.app.NotificationManager::class.java)

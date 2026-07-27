@@ -130,6 +130,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     val notificationSoundsEnabled: StateFlow<Boolean> = _notificationSoundsEnabled.asStateFlow()
     private val _typingSoundsEnabled = MutableStateFlow(sharedPrefs.getBoolean("typing_sounds", true))
     val typingSoundsEnabled: StateFlow<Boolean> = _typingSoundsEnabled.asStateFlow()
+    private val _bubbleNotificationsEnabled = MutableStateFlow(sharedPrefs.getBoolean("bubble_notifications", false))
+    val bubbleNotificationsEnabled: StateFlow<Boolean> = _bubbleNotificationsEnabled.asStateFlow()
     private val _mutedUserIds = MutableStateFlow(sharedPrefs.getStringSet("muted_users", emptySet())?.toSet() ?: emptySet())
     val mutedUserIds: StateFlow<Set<String>> = _mutedUserIds.asStateFlow()
 
@@ -522,10 +524,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             }
     }
 
-    fun submitPremiumRequest(plan: String, method: String, transactionId: String, onComplete: (Boolean, String) -> Unit) {
+    fun submitPremiumRequest(plan: String, method: String, transactionId: String, paymentProofUrl: String = "", onComplete: (Boolean, String) -> Unit) {
         val user = getCurrentUserOrFallback() ?: return onComplete(false, "Please sign in again")
         val config = _flagshipConfig.value
-        val normalizedPlan = plan.lowercase().takeIf { it in setOf("monthly", "yearly", "lifetime") } ?: return onComplete(false, "Invalid plan")
+        val normalizedPlan = plan.lowercase().takeIf {
+            (it == "monthly" && config.premiumMonthlyEnabled) || (it == "yearly" && config.premiumYearlyEnabled) || (it == "lifetime" && config.premiumLifetimeEnabled)
+        } ?: return onComplete(false, "Plan is unavailable")
         val normalizedMethod = method.lowercase().takeIf {
             (it == "bkash" && config.premiumBkashEnabled) || (it == "nagad" && config.premiumNagadEnabled) || (it == "rocket" && config.premiumRocketEnabled)
         } ?: return onComplete(false, "Payment method is unavailable")
@@ -534,7 +538,13 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val amount = when (normalizedPlan) { "monthly" -> config.premiumMonthlyPrice; "yearly" -> config.premiumYearlyPrice; else -> config.premiumLifetimePrice }
         val requestKey = "${normalizedMethod}_${cleanTx}".lowercase()
         val ref = FirebaseFirestore.getInstance().collection("premium_requests").document(requestKey)
-        val request = PremiumRequest(ref.id, user.uid, user.name, FirebaseAuth.getInstance().currentUser?.email.orEmpty(), user.profileImageUrl, normalizedPlan, normalizedMethod, cleanTx, amount, "pending", System.currentTimeMillis())
+        val request = PremiumRequest(
+            id = ref.id, userId = user.uid, userName = user.name,
+            userEmail = FirebaseAuth.getInstance().currentUser?.email.orEmpty(), userImageUrl = user.profileImageUrl,
+            plan = normalizedPlan, paymentMethod = normalizedMethod, transactionId = cleanTx,
+            paymentProofUrl = paymentProofUrl.takeIf { it.startsWith("https://") }.orEmpty(),
+            amount = amount, status = "pending", createdAt = System.currentTimeMillis()
+        )
         FirebaseFirestore.getInstance().runTransaction { transaction ->
             if (transaction.get(ref).exists()) error("This transaction ID was already submitted")
             transaction.set(ref, request)
@@ -886,7 +896,13 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             if (error != null) {
                 Log.e("FIRESTORE_PROFILE", "Live profile failed: ${error.message}")
             } else if (document != null && document.exists()) {
-                runCatching { document.toObject(User::class.java) }.getOrNull()?.let { liveUser ->
+                runCatching { document.toObject(User::class.java) }.getOrNull()?.let { parsed ->
+                    val liveUser = parsed.copy(
+                        isPremium = document.getBoolean("isPremium") ?: parsed.isPremium,
+                        premiumPlan = document.getString("premiumPlan") ?: parsed.premiumPlan,
+                        premiumUntil = document.getLong("premiumUntil") ?: parsed.premiumUntil,
+                        premiumApprovedAt = document.getLong("premiumApprovedAt") ?: parsed.premiumApprovedAt
+                    )
                     _currentUserState.value = liveUser
                 }
             }
@@ -912,7 +928,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                             null
                         }
                     }
-                    _currentUserState.value = user
+                    _currentUserState.value = user?.copy(
+                        isPremium = document.getBoolean("isPremium") ?: user.isPremium,
+                        premiumPlan = document.getString("premiumPlan") ?: user.premiumPlan,
+                        premiumUntil = document.getLong("premiumUntil") ?: user.premiumUntil,
+                        premiumApprovedAt = document.getLong("premiumApprovedAt") ?: user.premiumApprovedAt
+                    )
                     listenToActivityCenter(uid)
                     
                     // Identify admin by user email
@@ -1000,8 +1021,14 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                                 null
                             }
                         }
-                        if (user != null && user.uid != currentUid) {
-                            allUsersList.add(user)
+                        val hydratedUser = user?.copy(
+                            isPremium = doc.getBoolean("isPremium") ?: user.isPremium,
+                            premiumPlan = doc.getString("premiumPlan") ?: user.premiumPlan,
+                            premiumUntil = doc.getLong("premiumUntil") ?: user.premiumUntil,
+                            premiumApprovedAt = doc.getLong("premiumApprovedAt") ?: user.premiumApprovedAt
+                        )
+                        if (hydratedUser != null && hydratedUser.uid != currentUid) {
+                            allUsersList.add(hydratedUser)
                         }
                     }
                     _usersState.value = allUsersList
@@ -1353,6 +1380,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         _typingSoundsEnabled.value = typingSounds
         sharedPrefs.edit().putBoolean("notification_sounds", notificationSounds)
             .putBoolean("typing_sounds", typingSounds).apply()
+    }
+
+    fun setBubbleNotifications(enabled: Boolean) {
+        _bubbleNotificationsEnabled.value = enabled
+        sharedPrefs.edit().putBoolean("bubble_notifications", enabled).apply()
     }
 
     fun playNotificationSound() {
