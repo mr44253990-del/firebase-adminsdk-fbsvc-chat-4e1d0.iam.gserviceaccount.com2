@@ -2330,10 +2330,23 @@ fun ReelsFeedScreen(
         }
     }
     if (reels.isEmpty()) {
-        Column(Modifier.fillMaxSize().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-            Icon(Icons.Outlined.VideoLibrary, null, Modifier.size(72.dp), tint = MaterialTheme.colorScheme.primary)
-            Spacer(Modifier.height(12.dp)); Text("No reels yet", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-            Text("Upload a video and enable ‘Publish video as Reel’.", color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
+        Column(Modifier.fillMaxSize().background(Color.Black).windowInsetsPadding(WindowInsets.statusBars).padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = onClose) { Icon(Icons.Default.ArrowBack, "Back", tint = Color.White) }
+                Text("Reels", color = Color.White, fontWeight = FontWeight.Black, fontSize = 27.sp, modifier = Modifier.weight(1f))
+                IconButton(onClick = onCreateReel) { Icon(Icons.Default.Add, "Create reel", tint = Color.White) }
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                listOf("For You", "Following", "Trending").forEach { tab ->
+                    FilterChip(selected = reelTab == tab, onClick = { reelTab = tab }, label = { Text(tab) })
+                }
+            }
+            Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                Icon(Icons.Outlined.VideoLibrary, null, Modifier.size(72.dp), tint = MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.height(12.dp)); Text(if (reelTab == "Following") "No reels from followed people" else "No reels yet", color = Color.White, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                Text("Create a reel or switch feed.", color = Color.White.copy(.65f), textAlign = TextAlign.Center)
+                Spacer(Modifier.height(12.dp)); Button(onClick = onCreateReel) { Icon(Icons.Default.Add, null); Spacer(Modifier.width(6.dp)); Text("Create Reel") }
+            }
         }
         return
     }
