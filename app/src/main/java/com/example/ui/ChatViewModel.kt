@@ -241,6 +241,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _selectedReelPostId = MutableStateFlow<String?>(null)
     val selectedReelPostId: StateFlow<String?> = _selectedReelPostId.asStateFlow()
+    private var pendingComposerMode: String = "post"
+
+    fun prepareComposer(mode: String) { pendingComposerMode = mode }
+    fun consumeComposerMode(): String = pendingComposerMode.also { pendingComposerMode = "post" }
 
     fun setCurrentTab(tab: Int) { _currentTabState.value = tab }
 

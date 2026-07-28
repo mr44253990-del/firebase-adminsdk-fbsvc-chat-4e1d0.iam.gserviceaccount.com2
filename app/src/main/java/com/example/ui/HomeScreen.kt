@@ -211,6 +211,7 @@ fun HomeScreen(
 
     // Dialog & Creation controllers
     var showCreateGroupDialog by remember { mutableStateOf(false) }
+    var showCreateHub by remember { mutableStateOf(false) }
     var selectedStoryIndex by remember { mutableStateOf<Int?>(null) }
 
     LaunchedEffect(openActivitySignal) {
@@ -396,9 +397,9 @@ fun HomeScreen(
                 )
                 NavigationBarItem(
                     selected = false,
-                    onClick = onCreatePost,
+                    onClick = { showCreateHub = true },
                     icon = {
-                        Box(Modifier.size(50.dp).clip(CircleShape).background(Brush.linearGradient(listOf(Color(0xFF674CFF), Color(0xFFFF36BE)))), contentAlignment = Alignment.Center) {
+                        Box(Modifier.size(54.dp).clip(CircleShape).background(Brush.linearGradient(listOf(Color(0xFF674CFF), Color(0xFFFF36BE)))), contentAlignment = Alignment.Center) {
                             Icon(Icons.Default.Add, contentDescription = "Create", tint = Color.White, modifier = Modifier.size(28.dp))
                         }
                     },
@@ -449,8 +450,15 @@ fun HomeScreen(
                     val activeFeedPostId by remember(feedState, postIds) {
                         derivedStateOf {
                             val center = (feedState.layoutInfo.viewportStartOffset + feedState.layoutInfo.viewportEndOffset) / 2
-                            feedState.layoutInfo.visibleItemsInfo
-                                .filter { it.key in postIds }
+                            val layout = feedState.layoutInfo
+                            layout.visibleItemsInfo
+                                .filter { item ->
+                                    item.key in postIds && run {
+                                        val visibleTop = maxOf(item.offset, layout.viewportStartOffset)
+                                        val visibleBottom = minOf(item.offset + item.size, layout.viewportEndOffset)
+                                        (visibleBottom - visibleTop).coerceAtLeast(0) >= item.size * 0.82f
+                                    }
+                                }
                                 .minByOrNull { kotlin.math.abs((it.offset + it.size / 2) - center) }
                                 ?.key as? String
                         }
@@ -463,7 +471,7 @@ fun HomeScreen(
                         contentPadding = PaddingValues(bottom = 14.dp),
                         verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        item(key = "stories") {
+                        if (storyPlaybackQueue.isNotEmpty()) item(key = "stories") {
                             StoriesHorizontalSection(
                                 viewModel = viewModel,
                                 stories = storyPlaybackQueue,
@@ -508,7 +516,15 @@ fun HomeScreen(
                                             Triple(Icons.Outlined.EmojiEmotions, "Feeling", Color(0xFFFFC145)),
                                             Triple(Icons.Outlined.Poll, "Poll", Color(0xFF37D8E7))
                                         ).forEach { (icon, label, tint) ->
-                                            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.clickable(onClick = onCreatePost).padding(4.dp)) { Icon(icon, label, tint = tint, modifier = Modifier.size(20.dp)); Text(label, fontSize = 9.sp, fontWeight = FontWeight.SemiBold) }
+                                            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.clickable {
+                                                when (label) {
+                                                    "Photo" -> viewModel.prepareComposer("photo")
+                                                    "Video" -> viewModel.prepareComposer("video")
+                                                    "Reel" -> viewModel.prepareComposer("reel")
+                                                    else -> viewModel.prepareComposer("post")
+                                                }
+                                                onCreatePost()
+                                            }.padding(4.dp)) { Icon(icon, label, tint = tint, modifier = Modifier.size(20.dp)); Text(label, fontSize = 9.sp, fontWeight = FontWeight.SemiBold) }
                                         }
                                     }
                                 }
@@ -1488,6 +1504,7 @@ fun HomeScreen(
                         viewModel = viewModel,
                         initialPostId = selectedReelPostId,
                         onProfileSelected = onProfileSelected,
+                        onCreateReel = { viewModel.prepareComposer("reel"); onCreatePost() },
                         onClose = { viewModel.setCurrentTab(0) }
                     )
                 }
@@ -1495,7 +1512,11 @@ fun HomeScreen(
                     var peopleQuery by remember { mutableStateOf("") }
                     val visiblePeople = allUsers.filter {
                         peopleQuery.isBlank() || it.name.contains(peopleQuery, true) || it.username.contains(peopleQuery, true)
-                    }.sortedByDescending { it.createdAt }
+                    }.sortedWith(
+                        compareByDescending<User> { it.role == "moderator" }
+                            .thenByDescending { it.isPremium && (it.premiumPlan == "lifetime" || it.premiumUntil > System.currentTimeMillis()) }
+                            .thenByDescending { it.createdAt }
+                    )
                     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
                         Spacer(Modifier.height(12.dp))
                         Text("Discover people", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
@@ -1802,6 +1823,10 @@ fun HomeScreen(
                 }
             }
         )
+    }
+
+    if (showCreateHub) {
+        CreateHubSheet(viewModel = viewModel, onDismiss = { showCreateHub = false }, onCreatePost = onCreatePost)
     }
 
     selectedStoryIndex?.let { index ->
@@ -2290,14 +2315,19 @@ fun ReelsFeedScreen(
     viewModel: ChatViewModel,
     initialPostId: String? = null,
     onProfileSelected: (User) -> Unit,
+    onCreateReel: () -> Unit,
     onClose: () -> Unit
 ) {
     val context = LocalContext.current
-    // Never shuffle again when a like/comment updates Firestore; doing so made
-    // the same pager index suddenly point at a different video.
-    val reels = remember(posts) {
-        posts.filter { it.videoUrl.isNotBlank() && (it.isReel || it.r2ObjectKeys.isNotEmpty()) }
-            .sortedWith(compareByDescending<Post> { it.timestamp }.thenBy { it.id })
+    val currentUser by viewModel.currentUserState.collectAsState()
+    var reelTab by rememberSaveable { mutableStateOf("For You") }
+    val reels = remember(posts, reelTab, currentUser?.following) {
+        val base = posts.filter { it.videoUrl.isNotBlank() && (it.isReel || it.r2ObjectKeys.isNotEmpty()) }
+        when (reelTab) {
+            "Following" -> base.filter { it.senderId in currentUser?.following.orEmpty() }.sortedByDescending { it.timestamp }
+            "Trending" -> base.sortedByDescending { it.reactions.size * 3 + it.comments.size * 2 + it.viewsCount }
+            else -> base.sortedWith(compareByDescending<Post> { it.timestamp }.thenBy { it.id })
+        }
     }
     if (reels.isEmpty()) {
         Column(Modifier.fillMaxSize().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
@@ -2326,10 +2356,23 @@ fun ReelsFeedScreen(
                 onProfileSelected = { user -> VideoPlayerManager.pause(); onProfileSelected(user) }
             )
         }
-        IconButton(
-            onClick = onClose,
-            modifier = Modifier.align(Alignment.TopStart).windowInsetsPadding(WindowInsets.statusBars).padding(12.dp).background(Color.Black.copy(.45f), CircleShape)
-        ) { Icon(Icons.Default.ArrowBack, "Back", tint = Color.White) }
+        Column(
+            Modifier.align(Alignment.TopCenter).fillMaxWidth().background(Brush.verticalGradient(listOf(Color.Black.copy(.88f), Color.Black.copy(.48f), Color.Transparent))).windowInsetsPadding(WindowInsets.statusBars).padding(horizontal = 12.dp, vertical = 6.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = onClose, modifier = Modifier.background(Color.White.copy(.12f), CircleShape)) { Icon(Icons.Default.ArrowBack, "Back", tint = Color.White) }
+                Spacer(Modifier.width(10.dp)); Text("Reels", color = Color.White, fontWeight = FontWeight.Black, fontSize = 27.sp, modifier = Modifier.weight(1f))
+                IconButton(onClick = { reelTab = "Trending" }) { Icon(Icons.Default.AutoFixHigh, "Trending reels", tint = Color.White) }
+                IconButton(onClick = onCreateReel) { Icon(Icons.Default.Add, "Create reel", tint = Color.White, modifier = Modifier.size(30.dp)) }
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                listOf("For You", "Following", "Trending").forEach { tab ->
+                    Surface(onClick = { reelTab = tab }, color = if (reelTab == tab) MaterialTheme.colorScheme.primary else Color.Black.copy(.28f), shape = CircleShape) {
+                        Text(tab, color = Color.White, fontWeight = if (reelTab == tab) FontWeight.ExtraBold else FontWeight.Medium, modifier = Modifier.padding(horizontal = 22.dp, vertical = 9.dp))
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -2741,32 +2784,6 @@ fun StoriesHorizontalSection(
         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
         modifier = Modifier.fillMaxWidth()
     ) {
-        // "Add Story" first card bubble
-        item {
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier
-                    .width(82.dp)
-                    .clickable { showAddStoryDialog = true }
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(68.dp)
-                        .clip(CircleShape)
-                        .background(Brush.linearGradient(listOf(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.secondary))),
-                    contentAlignment = Alignment.Center
-                ) {
-                    if (isUploadingStoryMedia) {
-                        CircularProgressIndicator(modifier = Modifier.size(24.dp))
-                    } else {
-                        Icon(Icons.Default.Add, contentDescription = "Add story", tint = Color.White)
-                    }
-                }
-                Spacer(modifier = Modifier.height(4.dp))
-                Text("Your Story", fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1)
-            }
-        }
-
         items(groupedStories, key = { it.first().senderId }) { group ->
             val story = group.first()
             val preview = group.firstOrNull { it.imageUrl.isNotBlank() }?.imageUrl ?: story.senderProfilePic

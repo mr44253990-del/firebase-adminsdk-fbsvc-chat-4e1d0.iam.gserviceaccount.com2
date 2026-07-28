@@ -39,6 +39,10 @@ fun SharedCachedVideo(
             override fun onPlayerError(error: PlaybackException) { failed = true; buffering = false }
         }
         player?.addListener(listener)
+        player?.let { current ->
+            buffering = current.playbackState == Player.STATE_BUFFERING || current.playbackState == Player.STATE_IDLE
+            if (current.playbackState == Player.STATE_READY) failed = false
+        }
         onDispose {
             player?.removeListener(listener)
             if (active) VideoPlayerManager.detach(ownerId)
@@ -50,9 +54,9 @@ fun SharedCachedVideo(
     }
 
     Box(modifier.background(Color.Black), contentAlignment = Alignment.Center) {
-        if (!thumbnailUrl.isBlank() && (buffering || !active || failed)) {
-            AsyncImage(thumbnailUrl, "Video thumbnail", contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize())
-            Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = .22f)))
+        if (buffering || !active || failed) {
+            AsyncImage(thumbnailUrl.takeIf { it.isNotBlank() } ?: com.example.R.drawable.img_app_logo, "Video thumbnail", contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize())
+            Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = if (thumbnailUrl.isBlank()) .58f else .22f)))
         }
         if (active && player != null) {
             AndroidView(

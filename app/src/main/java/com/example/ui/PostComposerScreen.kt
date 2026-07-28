@@ -63,6 +63,7 @@ private val postCanvasStyles = listOf(
 @Composable
 fun PostComposerScreen(viewModel: ChatViewModel, onBack: () -> Unit, onPublished: () -> Unit) {
     val context = LocalContext.current
+    val initialMode = remember { viewModel.consumeComposerMode() }
     val users by viewModel.usersState.collectAsState()
     var text by remember { mutableStateOf("") }
     var title by remember { mutableStateOf("") }
@@ -129,6 +130,13 @@ fun PostComposerScreen(viewModel: ChatViewModel, onBack: () -> Unit, onPublished
         uris.take((5 - imageMedia.size).coerceAtLeast(0)).forEach { uri -> upload(uri, false) }
     }
     val videoPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { it?.let { uri -> upload(uri, true) } }
+    LaunchedEffect(initialMode) {
+        when (initialMode) {
+            "photo" -> imagePicker.launch("image/*")
+            "video" -> videoPicker.launch("video/*")
+            "reel" -> { isReel = true; videoPicker.launch("video/*") }
+        }
+    }
 
     Scaffold(
         containerColor = Color.Transparent,
