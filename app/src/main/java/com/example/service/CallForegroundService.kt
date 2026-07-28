@@ -22,6 +22,7 @@ class CallForegroundService : Service() {
         val name = intent?.getStringExtra("remoteName") ?: "FireChat user"
         val video = intent?.getBooleanExtra("video", false) == true
         val callId = intent?.getStringExtra("callId").orEmpty()
+        val screenShare = intent?.getBooleanExtra("screenShare", false) == true
         val openIntent = packageManager.getLaunchIntentForPackage(packageName)
         val content = PendingIntent.getActivity(this, callId.hashCode(), openIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val endIntent = PendingIntent.getBroadcast(
@@ -39,7 +40,8 @@ class CallForegroundService : Service() {
             .build()
         if (Build.VERSION.SDK_INT >= 29) {
             var type = android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE or android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL
-            if (video) type = type or android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
+            if (video && !screenShare) type = type or android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
+            if (screenShare && Build.VERSION.SDK_INT >= 29) type = type or android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
             startForeground(NOTIFICATION_ID, notification, type)
         } else startForeground(NOTIFICATION_ID, notification)
         return START_NOT_STICKY
@@ -50,9 +52,9 @@ class CallForegroundService : Service() {
     companion object {
         private const val CHANNEL = "firechat_ongoing_call_v1"
         private const val NOTIFICATION_ID = 9044
-        fun start(context: Context, callId: String, remoteName: String, video: Boolean) {
+        fun start(context: Context, callId: String, remoteName: String, video: Boolean, screenShare: Boolean = false) {
             val intent = Intent(context, CallForegroundService::class.java)
-                .putExtra("callId", callId).putExtra("remoteName", remoteName).putExtra("video", video)
+                .putExtra("callId", callId).putExtra("remoteName", remoteName).putExtra("video", video).putExtra("screenShare", screenShare)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) context.startForegroundService(intent) else context.startService(intent)
         }
         fun stop(context: Context) { context.stopService(Intent(context, CallForegroundService::class.java)) }

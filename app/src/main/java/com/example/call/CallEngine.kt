@@ -1,6 +1,8 @@
 package com.example.call
 
 import android.content.Context
+import android.content.Intent
+import android.media.projection.MediaProjection
 import android.media.AudioManager
 import android.media.ToneGenerator
 import android.os.Build
@@ -35,6 +37,7 @@ data class CallState(
     val speaker: Boolean = false,
     val video: Boolean = false,
     val cameraOff: Boolean = false,
+    val screenSharing: Boolean = false,
     val connectedAt: Long = 0L,
     val error: String? = null
 )
@@ -53,6 +56,7 @@ object CallEngine {
     private var audioTrack: AudioTrack? = null
     private var localVideoTrack: VideoTrack? = null
     private var remoteVideoTrack: VideoTrack? = null
+    private var videoSource: VideoSource? = null
     private var videoCapturer: VideoCapturer? = null
     private var surfaceTextureHelper: SurfaceTextureHelper? = null
     private var localRenderer: SurfaceViewRenderer? = null
@@ -183,9 +187,47 @@ object CallEngine {
     }
 
     fun toggleCamera() {
+        if (_state.value.screenSharing) return
         val off = !_state.value.cameraOff
         localVideoTrack?.setEnabled(!off)
         _state.value = _state.value.copy(cameraOff = off)
+    }
+
+    fun startScreenShare(permissionData: Intent): Boolean {
+        val context = appContext ?: return false
+        val source = videoSource ?: return false
+        return runCatching {
+            runCatching { videoCapturer?.stopCapture() }
+            videoCapturer?.dispose()
+            CallForegroundService.start(context, _state.value.callId, _state.value.remoteName, true, screenShare = true)
+            val screenCapturer = ScreenCapturerAndroid(permissionData, object : MediaProjection.Callback() {
+                override fun onStop() { mainHandler.post { stopScreenShare() } }
+            })
+            val metrics = context.resources.displayMetrics
+            screenCapturer.initialize(surfaceTextureHelper, context, source.capturerObserver)
+            screenCapturer.startCapture(metrics.widthPixels.coerceAtLeast(720), metrics.heightPixels.coerceAtLeast(1280), 15)
+            videoCapturer = screenCapturer
+            localVideoTrack?.setEnabled(true)
+            _state.value = _state.value.copy(screenSharing = true, cameraOff = false)
+            true
+        }.onFailure { Log.e("CALL_ENGINE", "Screen share failed", it) }.getOrDefault(false)
+    }
+
+    fun stopScreenShare(): Boolean {
+        val context = appContext ?: return false
+        val source = videoSource ?: return false
+        if (!_state.value.screenSharing) return true
+        return runCatching {
+            runCatching { videoCapturer?.stopCapture() }
+            videoCapturer?.dispose()
+            val camera = createCameraCapturer(context) ?: error("No camera available")
+            camera.initialize(surfaceTextureHelper, context, source.capturerObserver)
+            camera.startCapture(720, 1280, 24)
+            videoCapturer = camera
+            _state.value = _state.value.copy(screenSharing = false, cameraOff = false)
+            CallForegroundService.start(context, _state.value.callId, _state.value.remoteName, true, screenShare = false)
+            true
+        }.onFailure { Log.e("CALL_ENGINE", "Could not restore camera", it) }.getOrDefault(false)
     }
 
     fun toggleSpeaker() {
@@ -238,8 +280,8 @@ object CallEngine {
             val context = appContext ?: throw IllegalStateException("Missing call context")
             videoCapturer = createCameraCapturer(context) ?: throw IllegalStateException("No usable camera found")
             surfaceTextureHelper = SurfaceTextureHelper.create("FireChatCamera", eglBase!!.eglBaseContext)
-            val videoSource = factory?.createVideoSource(false) ?: throw IllegalStateException("Could not create video source")
-            videoCapturer?.initialize(surfaceTextureHelper, context, videoSource.capturerObserver)
+            videoSource = factory?.createVideoSource(false) ?: throw IllegalStateException("Could not create video source")
+            videoCapturer?.initialize(surfaceTextureHelper, context, videoSource!!.capturerObserver)
             videoCapturer?.startCapture(720, 1280, 24)
             localVideoTrack = factory?.createVideoTrack("firechat_video_$myUid", videoSource)?.also { track ->
                 peer?.addTrack(track, listOf("firechat"))
@@ -425,6 +467,7 @@ object CallEngine {
         runCatching { videoCapturer?.stopCapture() }; videoCapturer?.dispose(); videoCapturer = null
         surfaceTextureHelper?.dispose(); surfaceTextureHelper = null
         localVideoTrack?.dispose(); localVideoTrack = null; remoteVideoTrack = null
+        videoSource?.dispose(); videoSource = null
         peer?.close(); peer?.dispose(); peer = null
         audioTrack?.dispose(); audioTrack = null
         if (wasConnected) vibrateCallEnded()

@@ -4,6 +4,7 @@ import android.Manifest
 import android.app.Activity
 import android.content.Context
 import android.content.pm.PackageManager
+import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.Bundle
 import android.view.WindowManager
@@ -15,7 +16,6 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -102,7 +102,6 @@ fun CallScreen(
     val state by CallEngine.state.collectAsState()
     val effectiveVideo = video || state.video
     var elapsedSeconds by remember { mutableLongStateOf(0L) }
-    BackHandler(enabled = state.status !in listOf("idle", "ended", "declined", "missed", "failed")) { onMinimize() }
     DisposableEffect(effectiveVideo) {
         val window = (view.context as? Activity)?.window
         window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
@@ -119,7 +118,13 @@ fun CallScreen(
         }
     }
     var accepted by remember { mutableStateOf(initiallyAccepted || !incoming) }
+    BackHandler(enabled = true) { if (accepted) onMinimize() }
     var pendingAccept by remember { mutableStateOf(false) }
+    val screenShareLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        if (result.resultCode == Activity.RESULT_OK && result.data != null) {
+            if (!CallEngine.startScreenShare(result.data!!)) android.widget.Toast.makeText(context, "Could not start screen sharing", android.widget.Toast.LENGTH_LONG).show()
+        }
+    }
     val callPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { results ->
         val granted = results[Manifest.permission.RECORD_AUDIO] == true && (!effectiveVideo || results[Manifest.permission.CAMERA] == true)
         if (granted && pendingAccept) {
@@ -194,12 +199,23 @@ fun CallScreen(
                     }
                 }
             } else {
-                Row(Modifier.fillMaxWidth().horizontalScroll(androidx.compose.foundation.rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                    CallCircleButton(Color.White.copy(.15f), if (state.muted) Icons.Default.MicOff else Icons.Default.Mic, "Mute") { CallEngine.toggleMute() }
-                    if (effectiveVideo) CallCircleButton(Color.White.copy(.15f), if (state.cameraOff) Icons.Default.VideocamOff else Icons.Default.Videocam, if (state.cameraOff) "Camera on" else "Camera off") { CallEngine.toggleCamera() }
-                    CallCircleButton(Color.White.copy(.15f), if (state.speaker) Icons.Default.VolumeUp else Icons.Default.Hearing, "Speaker") { CallEngine.toggleSpeaker() }
-                    if (effectiveVideo) CallCircleButton(Color.White.copy(.15f), Icons.Default.Cameraswitch, "Flip") { CallEngine.switchCamera() }
-                    CallCircleButton(Color(0xFFE53935), Icons.Default.CallEnd, "End") { onEndCall(); onClose() }
+                Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                        CallCircleButton(Color.White.copy(.15f), if (state.muted) Icons.Default.MicOff else Icons.Default.Mic, "Mute") { CallEngine.toggleMute() }
+                        CallCircleButton(Color(0xFFE53935), Icons.Default.CallEnd, "End") { onEndCall(); onClose() }
+                        CallCircleButton(Color.White.copy(.15f), if (state.speaker) Icons.Default.VolumeUp else Icons.Default.Hearing, "Speaker") { CallEngine.toggleSpeaker() }
+                    }
+                    if (effectiveVideo) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                        CallCircleButton(Color.White.copy(.15f), if (state.cameraOff) Icons.Default.VideocamOff else Icons.Default.Videocam, if (state.cameraOff) "Camera on" else "Camera off") { CallEngine.toggleCamera() }
+                        CallCircleButton(Color.White.copy(.15f), Icons.Default.Cameraswitch, "Flip") { CallEngine.switchCamera() }
+                        CallCircleButton(if (state.screenSharing) Color(0xFF6D5CFF) else Color.White.copy(.15f), if (state.screenSharing) Icons.Default.StopScreenShare else Icons.Default.ScreenShare, if (state.screenSharing) "Stop share" else "Share screen") {
+                            if (state.screenSharing) CallEngine.stopScreenShare()
+                            else {
+                                val manager = context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+                                screenShareLauncher.launch(manager.createScreenCaptureIntent())
+                            }
+                        }
+                    }
                 }
             }
             Spacer(Modifier.height(30.dp))
