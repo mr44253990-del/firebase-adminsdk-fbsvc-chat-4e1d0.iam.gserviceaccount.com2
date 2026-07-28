@@ -5,6 +5,7 @@ import android.content.Context
 import android.media.AudioAttributes
 import android.media.Ringtone
 import android.media.RingtoneManager
+import android.net.Uri
 import android.os.*
 
 /** Single source of truth for incoming-call sound/vibration; avoids channel caching and double audio. */
@@ -20,8 +21,11 @@ object CallRingtoneController {
         stop(context, activeCallId, cancelNotification = false)
         activeCallId = callId
         runCatching {
-            val ringtoneUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
-            ringtone = RingtoneManager.getRingtone(context.applicationContext, ringtoneUri)?.apply {
+            val customUri = context.getSharedPreferences("firechat_prefs", Context.MODE_PRIVATE).getString("premium_ringtone_uri", null)
+                ?.takeIf { it.startsWith("content:") || it.startsWith("file:") }?.let(Uri::parse)
+            val ringtoneUri = customUri ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
+            ringtone = (RingtoneManager.getRingtone(context.applicationContext, ringtoneUri)
+                ?: RingtoneManager.getRingtone(context.applicationContext, RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)))?.apply {
                 audioAttributes = AudioAttributes.Builder()
                     .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
                     .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)

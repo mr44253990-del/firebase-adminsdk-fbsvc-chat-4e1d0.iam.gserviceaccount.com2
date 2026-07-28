@@ -17,6 +17,7 @@ import android.provider.Settings
 import android.util.Log
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.compose.BackHandler
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
 import androidx.compose.foundation.BorderStroke
@@ -162,8 +163,11 @@ fun HomeScreen(
     val groups by viewModel.groupsState.collectAsState()
     val stories by viewModel.storiesState.collectAsState()
     val storyPlaybackQueue = remember(stories) {
-        stories.groupBy { it.senderId }.values.sortedByDescending { group -> group.maxOfOrNull { it.timestamp } ?: 0L }
-            .flatMap { group -> group.sortedBy { it.timestamp } }
+        val now = System.currentTimeMillis()
+        stories.groupBy { it.senderId }.values.sortedWith(
+            compareByDescending<List<Story>> { group -> group.any { it.spotlightUntil > now } }
+                .thenByDescending { group -> group.maxOfOrNull { it.timestamp } ?: 0L }
+        ).flatMap { group -> group.sortedBy { it.timestamp } }
     }
     val posts by viewModel.postsState.collectAsState()
     val webhookUrl by viewModel.webhookUrl.collectAsState()
@@ -193,6 +197,8 @@ fun HomeScreen(
     var showLockSetup by remember { mutableStateOf(false) }
     var lockEnabled by remember { mutableStateOf(AppLockManager.isEnabled(context)) }
     val currentTab by viewModel.currentTabState.collectAsState()
+    val selectedReelPostId by viewModel.selectedReelPostId.collectAsState()
+    BackHandler(enabled = currentTab == 6) { viewModel.setCurrentTab(0) }
     val isAdmin = FirebaseAuth.getInstance().currentUser?.email?.lowercase()?.trim()?.trimEnd('.') == "mr4425390@gmail.com"
     var dismissNotice by remember(flagshipConfig.updatedAt) { mutableStateOf(false) }
     val validUpdate = flagshipConfig.updateEnabled && flagshipConfig.apkUrl.startsWith("https://")
@@ -316,6 +322,11 @@ fun HomeScreen(
                                 onDismissRequest = { showAccountMenu = false }
                             ) {
                                 DropdownMenuItem(
+                                    text = { Text("Groups") },
+                                    leadingIcon = { Icon(Icons.Outlined.Groups, null) },
+                                    onClick = { showAccountMenu = false; viewModel.setCurrentTab(2) }
+                                )
+                                DropdownMenuItem(
                                     text = { Text("Profile & appearance") },
                                     leadingIcon = { Icon(Icons.Outlined.Person, null) },
                                     onClick = {
@@ -371,10 +382,10 @@ fun HomeScreen(
                     label = { Text("Chats", fontSize = 10.sp) }
                 )
                 NavigationBarItem(
-                    selected = currentTab == 2,
-                    onClick = { viewModel.setCurrentTab(2) },
-                    icon = { Icon(Icons.Default.Group, contentDescription = "Groups") },
-                    label = { Text("Groups", fontSize = 10.sp) }
+                    selected = currentTab == 6,
+                    onClick = { viewModel.openReel() },
+                    icon = { Icon(Icons.Default.SmartDisplay, contentDescription = "Reels") },
+                    label = { Text("Reels", fontSize = 10.sp) }
                 )
                 NavigationBarItem(
                     selected = currentTab == 5,
@@ -383,10 +394,10 @@ fun HomeScreen(
                     label = { Text("Friends", fontSize = 10.sp) }
                 )
                 NavigationBarItem(
-                    selected = currentTab == 4,
+                    selected = currentTab == 4 || currentTab == 2,
                     onClick = { viewModel.setCurrentTab(4) },
-                    icon = { Icon(Icons.Default.Person, contentDescription = "Profile") },
-                    label = { Text("Profile", fontSize = 10.sp) }
+                    icon = { Icon(Icons.Default.MoreHoriz, contentDescription = "More") },
+                    label = { Text("More", fontSize = 10.sp) }
                 )
             }
         },
@@ -1021,6 +1032,15 @@ fun HomeScreen(
                             modifier = Modifier.align(Alignment.Start)
                         )
 
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Card(onClick = { currentUser?.let(onProfileSelected) }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(22.dp)) {
+                                Column(Modifier.padding(14.dp), horizontalAlignment = Alignment.CenterHorizontally) { Icon(Icons.Outlined.AccountCircle, null, tint = MaterialTheme.colorScheme.primary); Spacer(Modifier.height(5.dp)); Text("View my profile", fontWeight = FontWeight.Bold, fontSize = 12.sp) }
+                            }
+                            Card(onClick = { viewModel.setCurrentTab(2) }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(22.dp)) {
+                                Column(Modifier.padding(14.dp), horizontalAlignment = Alignment.CenterHorizontally) { Icon(Icons.Outlined.Groups, null, tint = MaterialTheme.colorScheme.primary); Spacer(Modifier.height(5.dp)); Text("Groups", fontWeight = FontWeight.Bold, fontSize = 12.sp) }
+                            }
+                        }
+
                         Card(onClick = onPremium, shape = RoundedCornerShape(24.dp), modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
                             Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                                 Icon(Icons.Default.WorkspacePremium, null, tint = Color(0xFFFFA000), modifier = Modifier.size(34.dp))
@@ -1311,7 +1331,12 @@ fun HomeScreen(
                                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                                     Icon(Icons.Outlined.ChatBubbleOutline, null, tint = MaterialTheme.colorScheme.primary)
                                     Column(Modifier.padding(start = 12.dp).weight(1f)) { Text("Message bubbles"); Text("Show supported chats over other apps", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                                    Switch(checked = bubbleNotifications, onCheckedChange = viewModel::setBubbleNotifications)
+                                    Switch(checked = bubbleNotifications, onCheckedChange = { enabled ->
+                                        viewModel.setBubbleNotifications(enabled)
+                                        if (enabled && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                                            runCatching { context.startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_BUBBLE_SETTINGS, Uri.parse("package:${context.packageName}"))) }
+                                        }
+                                    })
                                 }
                                 if (Build.VERSION.SDK_INT >= 34) {
                                     val manager = context.getSystemService(android.app.NotificationManager::class.java)
@@ -1408,6 +1433,7 @@ fun HomeScreen(
                         posts = posts,
                         users = allUsers,
                         viewModel = viewModel,
+                        initialPostId = selectedReelPostId,
                         onProfileSelected = onProfileSelected,
                         onClose = { viewModel.setCurrentTab(0) }
                     )
@@ -1741,7 +1767,8 @@ fun HomeScreen(
             onDelete = { story ->
                 viewModel.deleteStory(story.id)
                 selectedStoryIndex = null
-            }
+            },
+            onSpotlight = { story -> viewModel.spotlightStory(story) { _, message -> Toast.makeText(context, message, Toast.LENGTH_LONG).show() } }
         )
     }
 
@@ -1991,7 +2018,8 @@ fun FullScreenStoryViewer(
     onDismiss: () -> Unit,
     onReact: (Story, String) -> Unit,
     onComment: (Story, String) -> Unit,
-    onDelete: (Story) -> Unit
+    onDelete: (Story) -> Unit,
+    onSpotlight: (Story) -> Unit
 ) {
     var replyText by remember(storyIndex) { mutableStateOf("") }
     Dialog(
@@ -2122,6 +2150,10 @@ fun FullScreenStoryViewer(
                             )
                         }
                         if (story.senderId == FirebaseAuth.getInstance().currentUser?.uid) {
+                            val totalViews = story.viewCounts.values.sum()
+                            val rewatches = (totalViews - story.viewers.size).coerceAtLeast(0)
+                            Column(horizontalAlignment = Alignment.End) { Text("${story.viewers.size} viewers", color = Color.White, fontSize = 10.sp); Text("$rewatches rewatches", color = Color(0xFFFFD166), fontSize = 9.sp) }
+                            IconButton(onClick = { onSpotlight(story) }) { Icon(Icons.Default.AutoAwesome, "Weekly story spotlight", tint = Color(0xFFFFD166)) }
                             IconButton(onClick = { onDelete(story) }) {
                                 Icon(Icons.Outlined.Delete, "Delete story", tint = Color.White)
                             }
@@ -2150,7 +2182,7 @@ fun FullScreenStoryViewer(
                         Spacer(Modifier.height(14.dp))
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        listOf("👍", "❤️", "😂", "😮", "😢").forEach { emoji ->
+                        listOf("👍", "❤️", "😂", "😮", "😢", "💖✨").forEach { emoji ->
                             Surface(
                                 onClick = { onReact(story, emoji) },
                                 color = Color.White.copy(alpha = .13f),
@@ -2203,12 +2235,16 @@ fun ReelsFeedScreen(
     posts: List<Post>,
     users: List<User>,
     viewModel: ChatViewModel,
+    initialPostId: String? = null,
     onProfileSelected: (User) -> Unit,
     onClose: () -> Unit
 ) {
     val context = LocalContext.current
+    // Never shuffle again when a like/comment updates Firestore; doing so made
+    // the same pager index suddenly point at a different video.
     val reels = remember(posts) {
-        posts.filter { it.videoUrl.isNotBlank() && (it.isReel || it.r2ObjectKeys.isNotEmpty()) }.shuffled()
+        posts.filter { it.videoUrl.isNotBlank() && (it.isReel || it.r2ObjectKeys.isNotEmpty()) }
+            .sortedWith(compareByDescending<Post> { it.timestamp }.thenBy { it.id })
     }
     if (reels.isEmpty()) {
         Column(Modifier.fillMaxSize().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
@@ -2218,7 +2254,10 @@ fun ReelsFeedScreen(
         }
         return
     }
-    val startPage = remember(reels) { (Int.MAX_VALUE / 2).let { it - (it % reels.size) } }
+    val startPage = remember(reels.map { it.id }, initialPostId) {
+        val base = (Int.MAX_VALUE / 2).let { it - (it % reels.size) }
+        base + reels.indexOfFirst { it.id == initialPostId }.coerceAtLeast(0)
+    }
     val pager = rememberPagerState(initialPage = startPage, pageCount = { Int.MAX_VALUE })
     LaunchedEffect(reels, pager) {
         snapshotFlow { pager.currentPage }.collect { page ->
@@ -2292,6 +2331,7 @@ private fun ImmersiveVideoPage(
     viewModel: ChatViewModel,
     onProfileSelected: (User) -> Unit
 ) {
+    val context = LocalContext.current
     var isPaused by remember(post.id) { mutableStateOf(false) }
     var comment by remember(post.id) { mutableStateOf("") }
     var showComments by remember(post.id) { mutableStateOf(false) }
@@ -2370,6 +2410,13 @@ private fun ImmersiveVideoPage(
                 Icon(Icons.Outlined.ChatBubbleOutline, "Comments", tint = Color.White)
             }
             Text(post.comments.size.toString(), color = Color.White, fontWeight = FontWeight.Bold)
+            IconButton(onClick = {
+                val shareText = listOf(post.title, post.text, post.videoUrl).filter { it.isNotBlank() }.joinToString("\n")
+                context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply { type = "text/plain"; putExtra(Intent.EXTRA_TEXT, shareText) }, "Share reel"))
+            }, modifier = Modifier.background(Color.Black.copy(alpha = .38f), CircleShape)) {
+                Icon(Icons.Default.Share, "Share reel", tint = Color.White)
+            }
+            Text("Share", color = Color.White, fontSize = 10.sp)
             if (owner != null && owner.uid != currentUser?.uid && !isFriend) {
                 if (requested) {
                     IconButton(onClick = { viewModel.cancelFriendRequest(owner.uid) }, modifier = Modifier.background(Color.Black.copy(alpha = .38f), CircleShape)) {
@@ -2829,7 +2876,7 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
                         .clip(RoundedCornerShape(24.dp))
                         .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(24.dp))
                         .background(Color.Black)
-                        .clickable { if (allowInlineVideo) playInlineVideo = true else viewModel.setCurrentTab(6) },
+                        .clickable { if (allowInlineVideo) playInlineVideo = true else viewModel.openReel(post.id) },
                     contentAlignment = Alignment.Center
                 ) {
                     val videoActive = autoPlayVideo || playInlineVideo
@@ -2839,7 +2886,7 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
                         playWhenReady = videoActive, sound = videoActive,
                         modifier = Modifier.fillMaxSize()
                     )
-                    Box(Modifier.fillMaxSize().clickable { if (allowInlineVideo) playInlineVideo = true else viewModel.setCurrentTab(6) })
+                    Box(Modifier.fillMaxSize().clickable { if (allowInlineVideo) playInlineVideo = true else viewModel.openReel(post.id) })
                     if (!videoActive) Surface(color = Color.Black.copy(.58f), shape = CircleShape, modifier = Modifier.align(Alignment.Center)) {
                         Icon(Icons.Default.PlayArrow, "Play video", tint = Color.White, modifier = Modifier.padding(13.dp).size(30.dp))
                     }

@@ -59,7 +59,9 @@ data class Story(
     val timestamp: Long = 0L,
     val reactions: Map<String, String> = emptyMap(), // userId to reaction symbol (like, love, etc)
     val comments: List<StoryComment> = emptyList(),
-    val viewers: List<String> = emptyList()
+    val viewers: List<String> = emptyList(),
+    val viewCounts: Map<String, Int> = emptyMap(),
+    val spotlightUntil: Long = 0L
 )
 
 data class StoryComment(

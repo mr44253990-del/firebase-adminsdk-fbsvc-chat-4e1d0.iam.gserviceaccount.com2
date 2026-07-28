@@ -367,6 +367,9 @@ fun ChatScreen(
         "Desert" -> Brush.verticalGradient(listOf(Color(0xFF2C1A12), Color(0xFF875B3A), Color(0xFFE8B26A).copy(alpha = .48f)))
         "Galaxy" -> Brush.radialGradient(listOf(Color(0xFF7D4DFF).copy(.55f), Color(0xFF14102A), Color(0xFF03040B)))
         "Pearl" -> Brush.linearGradient(listOf(Color(0xFFF7F1FF), Color(0xFFDDEEFF), Color(0xFFFCE8F3)))
+        "Royal Gold" -> Brush.linearGradient(listOf(Color(0xFF120D05), Color(0xFF5B3A08), Color(0xFFFFD166).copy(.58f)))
+        "Cyber Lime" -> Brush.linearGradient(listOf(Color.Black, Color(0xFF102A20), Color(0xFFA7FF4F).copy(.42f)))
+        "Rose Quartz" -> Brush.linearGradient(listOf(Color(0xFF2A101F), Color(0xFF7A3157), Color(0xFFFFB4D7).copy(.55f)))
         else -> Brush.verticalGradient(listOf(MaterialTheme.colorScheme.background, MaterialTheme.colorScheme.primary.copy(alpha = .12f), MaterialTheme.colorScheme.surfaceVariant))
     }
 
@@ -376,7 +379,9 @@ fun ChatScreen(
             title = { Text("Choose chat theme", fontWeight = FontWeight.Bold) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    listOf("Aurora", "Sunset", "Ocean", "Forest", "Midnight", "Sakura", "Neon", "Desert", "Galaxy", "Pearl").forEach { theme ->
+                    val premiumActive = currentUser?.isPremium == true && (currentUser?.premiumPlan == "lifetime" || (currentUser?.premiumUntil ?: 0L) > System.currentTimeMillis())
+                    val availableThemes = listOf("Aurora", "Sunset", "Ocean", "Forest", "Midnight", "Sakura", "Neon", "Desert", "Galaxy", "Pearl") + if (premiumActive) listOf("Royal Gold", "Cyber Lime", "Rose Quartz") else emptyList()
+                    availableThemes.forEach { theme ->
                         Row(
                             Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp))
                                 .background(if (chatTheme == theme) MaterialTheme.colorScheme.primaryContainer else Color.Transparent)

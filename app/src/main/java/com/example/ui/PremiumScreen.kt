@@ -4,6 +4,7 @@ import android.widget.Toast
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
 import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -47,6 +48,16 @@ fun PremiumScreen(viewModel: ChatViewModel, onBack: () -> Unit, onChatAdmin: (Us
     var proofUploading by remember { mutableStateOf(false) }
     var proofProgress by remember { mutableIntStateOf(0) }
     var proofUrl by remember { mutableStateOf("") }
+    val premiumPrefs = remember { context.getSharedPreferences("firechat_prefs", Context.MODE_PRIVATE) }
+    var anonymousStories by remember { mutableStateOf(premiumPrefs.getBoolean("premium_anonymous_story", false)) }
+    var customRingtoneSet by remember { mutableStateOf(premiumPrefs.getString("premium_ringtone_uri", null) != null) }
+    val ringtonePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+        uri ?: return@rememberLauncherForActivityResult
+        runCatching { context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+        context.getSharedPreferences("firechat_prefs", Context.MODE_PRIVATE).edit().putString("premium_ringtone_uri", uri.toString()).apply()
+        customRingtoneSet = true
+        Toast.makeText(context, "Premium incoming-call ringtone saved", Toast.LENGTH_LONG).show()
+    }
     val proofPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
         uri ?: return@rememberLauncherForActivityResult
         var size = -1L
@@ -105,8 +116,21 @@ fun PremiumScreen(viewModel: ChatViewModel, onBack: () -> Unit, onChatAdmin: (Us
             }
             if (activePremium) {
                 item {
-                    Button(onClick = { users.find { it.role == "moderator" || it.username.equals("admin", true) }?.let(onChatAdmin) ?: Toast.makeText(context, "Admin profile is not available", Toast.LENGTH_SHORT).show() }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp)) {
-                        Icon(Icons.Default.SupportAgent, null); Spacer(Modifier.width(8.dp)); Text("সরাসরি Admin-এর সাথে Chat")
+                    Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                        Button(onClick = { users.find { it.role == "moderator" || it.username.equals("admin", true) }?.let(onChatAdmin) ?: Toast.makeText(context, "Admin profile is not available", Toast.LENGTH_SHORT).show() }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp)) {
+                            Icon(Icons.Default.SupportAgent, null); Spacer(Modifier.width(8.dp)); Text("সরাসরি Admin-এর সাথে Chat")
+                        }
+                        OutlinedButton(onClick = { ringtonePicker.launch(arrayOf("audio/*")) }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp)) {
+                            Icon(Icons.Default.MusicNote, null); Spacer(Modifier.width(8.dp)); Text(if (customRingtoneSet) "Change custom call ringtone" else "Set custom call ringtone")
+                        }
+                        if (customRingtoneSet) TextButton(onClick = { premiumPrefs.edit().remove("premium_ringtone_uri").apply(); customRingtoneSet = false }, modifier = Modifier.fillMaxWidth()) { Text("Use device default ringtone") }
+                        Card(shape = RoundedCornerShape(18.dp)) {
+                            Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.VisibilityOff, null, tint = MaterialTheme.colorScheme.primary)
+                                Spacer(Modifier.width(9.dp)); Column(Modifier.weight(1f)) { Text("Anonymous story preview", fontWeight = FontWeight.Bold); Text("Your name will not be added to the viewer list", fontSize = 10.sp) }
+                                Switch(anonymousStories, { anonymousStories = it; premiumPrefs.edit().putBoolean("premium_anonymous_story", it).apply() })
+                            }
+                        }
                     }
                 }
             } else if (config.premiumEnabled) {

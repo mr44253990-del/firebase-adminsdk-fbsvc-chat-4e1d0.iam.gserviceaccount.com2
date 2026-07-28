@@ -51,12 +51,12 @@ fun SharedCachedVideo(
 
     Box(modifier.background(Color.Black), contentAlignment = Alignment.Center) {
         if (!thumbnailUrl.isBlank() && (buffering || !active || failed)) {
-            AsyncImage(thumbnailUrl, "Video thumbnail", contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+            AsyncImage(thumbnailUrl, "Video thumbnail", contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize())
             Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = .22f)))
         }
         if (active && player != null) {
             AndroidView(
-                factory = { ctx -> PlayerView(ctx).apply { useController = false; resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM; this.player = player } },
+                factory = { ctx -> PlayerView(ctx).apply { useController = false; resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT; this.player = player } },
                 update = { it.player = player },
                 onRelease = { it.player = null },
                 modifier = Modifier.fillMaxSize()

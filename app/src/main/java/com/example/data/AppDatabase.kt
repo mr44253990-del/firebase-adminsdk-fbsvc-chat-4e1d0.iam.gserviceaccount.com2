@@ -128,7 +128,9 @@ data class CachedStory(
     val timestamp: Long,
     val reactionsJson: String, // Map<String, String> as JSON
     val commentsJson: String,  // List<StoryComment> as JSON
-    val viewersJson: String
+    val viewersJson: String,
+    val viewCountsJson: String,
+    val spotlightUntil: Long
 ) {
     fun toStory(): Story {
         val reactionsMap = mutableMapOf<String, String>()
@@ -164,7 +166,9 @@ data class CachedStory(
             for (i in 0 until array.length()) viewerList.add(array.getString(i))
         } catch (_: Exception) {}
 
-        return Story(id, senderId, senderName, senderProfilePic, imageUrl, videoUrl, text, timestamp, reactionsMap, commentList, viewerList)
+        val counts = mutableMapOf<String, Int>()
+        runCatching { JSONObject(viewCountsJson).let { obj -> obj.keys().forEach { key -> counts[key] = obj.optInt(key, 0) } } }
+        return Story(id = id, senderId = senderId, senderName = senderName, senderProfilePic = senderProfilePic, imageUrl = imageUrl, videoUrl = videoUrl, text = text, timestamp = timestamp, reactions = reactionsMap, comments = commentList, viewers = viewerList, viewCounts = counts, spotlightUntil = spotlightUntil)
     }
 
     companion object {
@@ -187,7 +191,8 @@ data class CachedStory(
             return CachedStory(
                 story.id, story.senderId, story.senderName, story.senderProfilePic,
                 story.imageUrl, story.videoUrl, story.text, story.timestamp,
-                reactionsObj.toString(), commentsArr.toString(), JSONArray(story.viewers).toString()
+                reactionsObj.toString(), commentsArr.toString(), JSONArray(story.viewers).toString(),
+                JSONObject(story.viewCounts).toString(), story.spotlightUntil
             )
         }
     }
@@ -499,7 +504,7 @@ interface CacheDao {
         CachedGroupMessage::class,
         CachedActivityNotification::class
     ],
-    version = 11,
+    version = 12,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -566,6 +571,12 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE cached_users ADD COLUMN premiumApprovedAt INTEGER NOT NULL DEFAULT 0")
             }
         }
+        private val MIGRATION_11_12 = object : Migration(11, 12) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE cached_stories ADD COLUMN viewCountsJson TEXT NOT NULL DEFAULT '{}'")
+                db.execSQL("ALTER TABLE cached_stories ADD COLUMN spotlightUntil INTEGER NOT NULL DEFAULT 0")
+            }
+        }
 
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
@@ -573,7 +584,7 @@ abstract class AppDatabase : RoomDatabase() {
                     context.applicationContext,
                     AppDatabase::class.java,
                     "firechat_offline_cache_db"
-                ).addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11)
+                ).addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12)
                     .fallbackToDestructiveMigration()
                     .build()
                 INSTANCE = instance

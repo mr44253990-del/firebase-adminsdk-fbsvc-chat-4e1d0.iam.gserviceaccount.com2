@@ -245,9 +245,12 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
             notificationBuilder.addAction(NotificationCompat.Action.Builder(android.R.drawable.ic_menu_send, "Reply", replyPending).addRemoteInput(replyInput).setAllowGeneratedReplies(true).build())
         }
 
+        val notificationAvatar = loadBitmap(senderProfileUrl)
         val bubblesEnabled = getSharedPreferences("firechat_prefs", Context.MODE_PRIVATE).getBoolean("bubble_notifications", false)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && bubblesEnabled && notificationType == "message" && senderId.isNotBlank()) {
-            val bubblePerson = Person.Builder().setName(title).setKey(senderId).build()
+            val bubbleIcon = notificationAvatar?.let { IconCompat.createWithAdaptiveBitmap(it) }
+                ?: IconCompat.createWithResource(this, R.mipmap.ic_launcher)
+            val bubblePerson = Person.Builder().setName(title).setKey(senderId).setIcon(bubbleIcon).build()
             val shortcutId = "chat_$senderId"
             ShortcutManagerCompat.pushDynamicShortcut(
                 this,
@@ -255,7 +258,7 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
                     .setShortLabel(title.take(30))
                     .setLongLived(true)
                     .setPerson(bubblePerson)
-                    .setIcon(IconCompat.createWithResource(this, R.mipmap.ic_launcher))
+                    .setIcon(bubbleIcon)
                     .setIntent(Intent(this, MainActivity::class.java).setAction(Intent.ACTION_VIEW).putExtra("senderId", senderId))
                     .build()
             )
@@ -264,12 +267,12 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
                 .setBubbleMetadata(
                     NotificationCompat.BubbleMetadata.Builder(
                         pendingIntent,
-                        IconCompat.createWithResource(this, R.mipmap.ic_launcher)
+                        bubbleIcon
                     ).setDesiredHeight(640).setAutoExpandBubble(false).setSuppressNotification(false).build()
                 )
         }
 
-        loadBitmap(senderProfileUrl)?.let { notificationBuilder.setLargeIcon(it) }
+        notificationAvatar?.let { notificationBuilder.setLargeIcon(it) }
 
         val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 

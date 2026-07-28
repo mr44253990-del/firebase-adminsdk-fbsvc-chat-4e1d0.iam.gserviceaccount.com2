@@ -231,8 +231,14 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private val _currentTabState = MutableStateFlow(0)
     val currentTabState: StateFlow<Int> = _currentTabState.asStateFlow()
 
-    fun setCurrentTab(tab: Int) {
-        _currentTabState.value = tab
+    private val _selectedReelPostId = MutableStateFlow<String?>(null)
+    val selectedReelPostId: StateFlow<String?> = _selectedReelPostId.asStateFlow()
+
+    fun setCurrentTab(tab: Int) { _currentTabState.value = tab }
+
+    fun openReel(postId: String? = null) {
+        _selectedReelPostId.value = postId
+        _currentTabState.value = 6
     }
 
     private val defaultWebhookUrl = "https://solitary-hill-dcdc.mr44253990.workers.dev/"
@@ -1684,12 +1690,30 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun spotlightStory(story: Story, onResult: (Boolean, String) -> Unit = { _, _ -> }) {
+        val me = getCurrentUserOrFallback() ?: return onResult(false, "Sign in again")
+        val active = me.isPremium && (me.premiumPlan == "lifetime" || me.premiumUntil > System.currentTimeMillis())
+        if (!active || story.senderId != me.uid) return onResult(false, "Premium is required")
+        val weekAgo = System.currentTimeMillis() - 7L * 24 * 60 * 60 * 1000
+        val usedThisWeek = _storiesState.value.any { it.senderId == me.uid && it.spotlightUntil > weekAgo }
+        if (usedThisWeek) return onResult(false, "Weekly spotlight already used")
+        val until = System.currentTimeMillis() + 24L * 60 * 60 * 1000
+        FirebaseFirestore.getInstance().collection("stories").document(story.id).update("spotlightUntil", until)
+            .addOnSuccessListener { onResult(true, "Story spotlighted for 24 hours") }
+            .addOnFailureListener { onResult(false, it.localizedMessage ?: "Spotlight failed") }
+    }
+
     fun recordStoryView(story: Story) {
         val me = getCurrentUserOrFallback() ?: return
-        if (story.senderId == me.uid || story.viewers.contains(me.uid)) return
+        val premiumActive = me.isPremium && (me.premiumPlan == "lifetime" || me.premiumUntil > System.currentTimeMillis())
+        val anonymous = premiumActive && sharedPrefs.getBoolean("premium_anonymous_story", false)
+        if (story.senderId == me.uid || anonymous) return
         val ref = FirebaseFirestore.getInstance().collection("stories").document(story.id)
-        ref.update("viewers", FieldValue.arrayUnion(me.uid)).addOnSuccessListener {
-            createActivityNotification(story.senderId, "story_view", story.id, "viewed your story")
+        ref.update(mapOf(
+            "viewers" to FieldValue.arrayUnion(me.uid),
+            "viewCounts.${me.uid}" to FieldValue.increment(1)
+        )).addOnSuccessListener {
+            if (!story.viewers.contains(me.uid)) createActivityNotification(story.senderId, "story_view", story.id, "viewed your story")
         }
     }
 
@@ -2291,7 +2315,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                                 timestamp = doc.getLong("timestamp") ?: 0L,
                                 reactions = (doc.get("reactions") as? Map<*, *>)?.map { it.key.toString() to it.value.toString() }?.toMap() ?: emptyMap(),
                                 comments = commentsList,
-                                viewers = (doc.get("viewers") as? List<*>)?.mapNotNull { it as? String } ?: emptyList()
+                                viewers = (doc.get("viewers") as? List<*>)?.mapNotNull { it as? String } ?: emptyList(),
+                                viewCounts = (doc.get("viewCounts") as? Map<*, *>)?.mapNotNull { (key, value) -> (value as? Number)?.toInt()?.let { key.toString() to it } }?.toMap() ?: emptyMap(),
+                                spotlightUntil = doc.getLong("spotlightUntil") ?: 0L
                             )
                         } catch (e: Exception) {
                             null
@@ -2347,6 +2373,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     fun reactToStory(storyId: String, reactionType: String) {
         val user = getCurrentUserOrFallback() ?: return
+        if (reactionType == "💖✨" && (!user.isPremium || (user.premiumPlan != "lifetime" && user.premiumUntil <= System.currentTimeMillis()))) return
         val storyRef = FirebaseFirestore.getInstance().collection("stories").document(storyId)
         storyRef.get().addOnSuccessListener { doc ->
             if (doc.exists()) {
