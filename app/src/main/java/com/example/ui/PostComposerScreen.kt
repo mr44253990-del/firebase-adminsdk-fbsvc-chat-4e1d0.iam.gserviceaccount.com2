@@ -65,12 +65,13 @@ fun PostComposerScreen(viewModel: ChatViewModel, onBack: () -> Unit, onPublished
     val context = LocalContext.current
     val initialMode = remember { viewModel.consumeComposerMode() }
     val users by viewModel.usersState.collectAsState()
-    var text by remember { mutableStateOf("") }
-    var title by remember { mutableStateOf("") }
-    var tags by remember { mutableStateOf("") }
+    val draftPrefs = remember { context.getSharedPreferences("convo_post_draft", android.content.Context.MODE_PRIVATE) }
+    var text by remember { mutableStateOf(draftPrefs.getString("text", "").orEmpty()) }
+    var title by remember { mutableStateOf(draftPrefs.getString("title", "").orEmpty()) }
+    var tags by remember { mutableStateOf(draftPrefs.getString("tags", "").orEmpty()) }
     var tagQuery by remember { mutableStateOf("") }
     val taggedIds = remember { mutableStateListOf<String>() }
-    var feeling by remember { mutableStateOf("") }
+    var feeling by remember { mutableStateOf(draftPrefs.getString("feeling", "").orEmpty()) }
     var style by remember { mutableStateOf(postCanvasStyles.first()) }
     var animation by remember { mutableStateOf("none") }
     var privatePost by remember { mutableStateOf(false) }
@@ -80,8 +81,13 @@ fun PostComposerScreen(viewModel: ChatViewModel, onBack: () -> Unit, onPublished
     var uploadPercent by remember { mutableIntStateOf(0) }
     var uploadEtaSeconds by remember { mutableLongStateOf(0L) }
     var isReel by remember { mutableStateOf(false) }
+    var aiGenerating by remember { mutableStateOf(false) }
     val imageMedia = remember { mutableStateListOf<R2MediaResult>() }
     var videoMedia by remember { mutableStateOf<R2MediaResult?>(null) }
+
+    LaunchedEffect(text, title, tags, feeling) {
+        draftPrefs.edit().putString("text", text).putString("title", title).putString("tags", tags).putString("feeling", feeling).apply()
+    }
 
     fun finishOneUpload() {
         pendingUploads = (pendingUploads - 1).coerceAtLeast(0)
@@ -153,7 +159,7 @@ fun PostComposerScreen(viewModel: ChatViewModel, onBack: () -> Unit, onPublished
                             viewModel.createPost(
                                 text = text.trim(), imageUrl = imageMedia.firstOrNull()?.publicUrl.orEmpty(), audioUrl = "", videoUrl = videoMedia?.publicUrl.orEmpty(),
                                 isPrivate = privatePost,
-                                onComplete = { publishing = false; onPublished() },
+                                onComplete = { publishing = false; draftPrefs.edit().clear().apply(); onPublished() },
                                 title = title.trim(),
                                 tags = tags.split(",", " ").map { it.trim().removePrefix("#") }.filter { it.isNotBlank() }.distinct(),
                                 taggedUserIds = taggedIds.toList(), feeling = feeling,
@@ -212,6 +218,23 @@ fun PostComposerScreen(viewModel: ChatViewModel, onBack: () -> Unit, onPublished
                             IconButton(onClick = { viewModel.discardR2Media(media.key); videoMedia = null }, modifier = Modifier.align(Alignment.TopEnd).background(Color.Black.copy(.5f), CircleShape)) { Icon(Icons.Outlined.Delete, "Remove", tint = Color.White) }
                         }
                     }
+                }
+            }
+            Card(shape = RoundedCornerShape(22.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(.58f))) {
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Outlined.AutoAwesome, null, tint = MaterialTheme.colorScheme.primary); Spacer(Modifier.width(8.dp)); Text("Convo Smart Studio", fontWeight = FontWeight.ExtraBold) }
+                    Text("Generate a polished caption or keep an automatic local draft.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = {
+                            aiGenerating = true
+                            val prompt = "Write one engaging social post caption. Title: $title. Tags: $tags. Existing idea: $text. Return only the caption, under 700 characters."
+                            viewModel.askAssistant(prompt, emptyList()) { reply -> aiGenerating = false; if (!reply.contains("unavailable", true) && !reply.contains("failed", true)) text = reply.take(1200) else Toast.makeText(context, reply, Toast.LENGTH_LONG).show() }
+                        }, enabled = !aiGenerating, modifier = Modifier.weight(1f)) {
+                            if (aiGenerating) CircularProgressIndicator(Modifier.size(17.dp), strokeWidth = 2.dp) else Icon(Icons.Outlined.AutoAwesome, null, Modifier.size(17.dp)); Spacer(Modifier.width(6.dp)); Text("AI caption")
+                        }
+                        OutlinedButton(onClick = { text = ""; title = ""; tags = ""; feeling = ""; draftPrefs.edit().clear().apply() }, modifier = Modifier.weight(1f)) { Icon(Icons.Outlined.Delete, null, Modifier.size(17.dp)); Spacer(Modifier.width(6.dp)); Text("Clear draft") }
+                    }
+                    if (text.isNotBlank() || title.isNotBlank()) Text("Draft saved automatically", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelSmall)
                 }
             }
             PostCanvasPreview(style, animation, title, text.ifBlank { if (imageMedia.isNotEmpty() || videoMedia != null) "Add a caption…" else "Write something meaningful…" }, feeling)

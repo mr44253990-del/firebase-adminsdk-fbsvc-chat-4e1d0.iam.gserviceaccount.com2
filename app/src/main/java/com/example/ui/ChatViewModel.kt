@@ -506,7 +506,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             .addSnapshotListener { document, error ->
                 if (error != null) Log.e("FLAGSHIP", "Firestore config listener failed: ${error.message}")
                 else document?.toObject(FlagshipConfig::class.java)?.let { incoming ->
-                    if (incoming.updatedAt >= _flagshipConfig.value.updatedAt) _flagshipConfig.value = incoming
+                    val legacyBrand = "Fire" + "Chat"
+                    val normalized = incoming.copy(
+                        aiDisplayName = incoming.aiDisplayName.replace(legacyBrand, "Convo Chat"),
+                        aiSystemPrompt = incoming.aiSystemPrompt.replace(legacyBrand, "Convo Chat")
+                    )
+                    if (normalized.updatedAt >= _flagshipConfig.value.updatedAt) _flagshipConfig.value = normalized
                 }
             }
         val ref = getDatabaseInstance().getReference("config").child("flagship")
@@ -514,7 +519,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         flagshipRtdbListener = object : ValueEventListener {
             override fun onDataChange(snapshot: DataSnapshot) {
                 snapshot.getValue(FlagshipConfig::class.java)?.let { incoming ->
-                    if (incoming.updatedAt >= _flagshipConfig.value.updatedAt) _flagshipConfig.value = incoming
+                    val legacyBrand = "Fire" + "Chat"
+                    val normalized = incoming.copy(
+                        aiDisplayName = incoming.aiDisplayName.replace(legacyBrand, "Convo Chat"),
+                        aiSystemPrompt = incoming.aiSystemPrompt.replace(legacyBrand, "Convo Chat")
+                    )
+                    if (normalized.updatedAt >= _flagshipConfig.value.updatedAt) _flagshipConfig.value = normalized
                 }
             }
             override fun onCancelled(error: DatabaseError) { Log.e("FLAGSHIP", "RTDB config failed: ${error.message}") }
