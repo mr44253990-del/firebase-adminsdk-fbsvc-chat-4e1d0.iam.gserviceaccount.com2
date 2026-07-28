@@ -1,6 +1,7 @@
 package com.example
 
 import android.os.Bundle
+import android.content.Intent
 import androidx.fragment.app.FragmentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -44,11 +45,19 @@ import coil.Coil
 import coil.ImageLoader
 import coil.disk.DiskCache
 import coil.memory.MemoryCache
+import kotlinx.coroutines.flow.MutableStateFlow
 
 @androidx.media3.common.util.UnstableApi
 class MainActivity : FragmentActivity() {
 
     private val viewModel: ChatViewModel by viewModels()
+    private val pendingChatSenderId = MutableStateFlow<String?>(null)
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        pendingChatSenderId.value = intent.getStringExtra("senderId")?.takeIf { it.isNotBlank() }
+    }
 
     override fun onStart() {
         super.onStart()
@@ -71,6 +80,7 @@ class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
         super.onCreate(savedInstanceState)
+        pendingChatSenderId.value = intent?.getStringExtra("senderId")?.takeIf { it.isNotBlank() }
         AppLockManager.initialize(this)
         enableEdgeToEdge()
 
@@ -103,6 +113,8 @@ class MainActivity : FragmentActivity() {
                     AppLockScreen(this@MainActivity)
                 } else {
                 val navController = rememberNavController()
+                val pendingSenderId by pendingChatSenderId.collectAsState()
+                val knownUsers by viewModel.usersState.collectAsState()
                 val activeRecipient by viewModel.activeRecipientUser.collectAsState()
                 val activeGroup by viewModel.activeGroup.collectAsState()
                 val selectedProfile by viewModel.selectedProfile.collectAsState()
@@ -121,6 +133,15 @@ class MainActivity : FragmentActivity() {
                         }
                     } catch (e: Exception) {
                         "auth"
+                    }
+                }
+
+                LaunchedEffect(pendingSenderId, knownUsers) {
+                    val senderId = pendingSenderId ?: return@LaunchedEffect
+                    knownUsers.find { it.uid == senderId }?.let { sender ->
+                        viewModel.selectRecipient(sender)
+                        navController.navigate("chat") { launchSingleTop = true }
+                        pendingChatSenderId.value = null
                     }
                 }
 
