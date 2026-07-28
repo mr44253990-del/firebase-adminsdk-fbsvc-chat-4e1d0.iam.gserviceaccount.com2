@@ -2397,6 +2397,7 @@ fun VerticalVideoFeedDialog(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ImmersiveVideoPage(
     post: Post,
