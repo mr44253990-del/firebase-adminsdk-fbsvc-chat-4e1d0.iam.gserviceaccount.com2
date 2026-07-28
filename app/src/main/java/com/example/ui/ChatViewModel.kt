@@ -134,6 +134,14 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     val bubbleNotificationsEnabled: StateFlow<Boolean> = _bubbleNotificationsEnabled.asStateFlow()
     private val _mutedUserIds = MutableStateFlow(sharedPrefs.getStringSet("muted_users", emptySet())?.toSet() ?: emptySet())
     val mutedUserIds: StateFlow<Set<String>> = _mutedUserIds.asStateFlow()
+    private val _savedPostIds = MutableStateFlow(sharedPrefs.getStringSet("saved_posts", emptySet())?.toSet() ?: emptySet())
+    val savedPostIds: StateFlow<Set<String>> = _savedPostIds.asStateFlow()
+
+    fun toggleSavedPost(postId: String) {
+        val updated = _savedPostIds.value.toMutableSet().apply { if (!add(postId)) remove(postId) }.toSet()
+        _savedPostIds.value = updated
+        sharedPrefs.edit().putStringSet("saved_posts", updated).apply()
+    }
 
     // Network tracking (defaults to true for maximum compatibility on emulators)
     private val _isNetworkAvailable = MutableStateFlow(true)

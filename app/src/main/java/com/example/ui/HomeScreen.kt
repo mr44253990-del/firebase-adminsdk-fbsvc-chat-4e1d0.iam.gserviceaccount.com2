@@ -52,6 +52,7 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import com.example.ui.theme.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -186,11 +187,13 @@ fun HomeScreen(
     val typingSounds by viewModel.typingSoundsEnabled.collectAsState()
     val bubbleNotifications by viewModel.bubbleNotificationsEnabled.collectAsState()
     val mutedUsers by viewModel.mutedUserIds.collectAsState()
+    val savedPostIds by viewModel.savedPostIds.collectAsState()
     val allUsers by viewModel.usersState.collectAsState()
     val conversationUserIds by viewModel.conversationUserIds.collectAsState()
     val unreadCounts by viewModel.unreadCountsState.collectAsState()
 
     var searchQuery by remember { mutableStateOf("") }
+    var feedFilter by rememberSaveable { mutableStateOf("All Posts") }
     var showAccountMenu by remember { mutableStateOf(false) }
     var showActivityCenter by remember { mutableStateOf(false) }
     var showGlobalSearch by remember { mutableStateOf(false) }
@@ -269,18 +272,24 @@ fun HomeScreen(
                 TopAppBar(
                     title = {
                         Column {
-                            Text(
-                                text = "FireChat",
-                                fontWeight = FontWeight.ExtraBold,
-                                fontSize = 22.sp,
-                                color = MaterialTheme.colorScheme.primary,
-                                letterSpacing = (-0.5).sp
-                            )
-                            Text(
-                                text = if (isOnlineState) "Online" else "Offline Cache Active",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = "FireChat",
+                                    fontWeight = FontWeight.Black,
+                                    fontSize = 25.sp,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    letterSpacing = (-0.8).sp
+                                )
+                                Spacer(Modifier.width(5.dp)); Icon(Icons.Default.Verified, "Verified FireChat", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(19.dp))
+                            }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(Modifier.size(8.dp).clip(CircleShape).background(if (isOnlineState) Color(0xFF26E86F) else Color(0xFFFF5252)))
+                                Spacer(Modifier.width(6.dp)); Text(
+                                    text = if (isOnlineState) "Online" else "Offline Cache Active",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
                         }
                     },
                     actions = {
@@ -290,6 +299,10 @@ fun HomeScreen(
                         IconButton(onClick = { showGlobalSearch = true }) {
                             Icon(Icons.Outlined.Search, contentDescription = "Search people and media")
                         }
+                        if (flagshipConfig.assistantEnabled) IconButton(
+                            onClick = onAssistant,
+                            modifier = Modifier.background(Brush.radialGradient(listOf(MaterialTheme.colorScheme.primary.copy(.32f), Color.Transparent)), CircleShape)
+                        ) { Icon(Icons.Default.AutoAwesome, "AI Assistant", tint = MaterialTheme.colorScheme.primary) }
                         if (isAdmin) IconButton(onClick = { viewModel.setCurrentTab(3) }) {
                             Icon(Icons.Outlined.AdminPanelSettings, contentDescription = "Admin tools", tint = MaterialTheme.colorScheme.primary)
                         }
@@ -382,6 +395,16 @@ fun HomeScreen(
                     label = { Text("Chats", fontSize = 10.sp) }
                 )
                 NavigationBarItem(
+                    selected = false,
+                    onClick = onCreatePost,
+                    icon = {
+                        Box(Modifier.size(50.dp).clip(CircleShape).background(Brush.linearGradient(listOf(Color(0xFF674CFF), Color(0xFFFF36BE)))), contentAlignment = Alignment.Center) {
+                            Icon(Icons.Default.Add, contentDescription = "Create", tint = Color.White, modifier = Modifier.size(28.dp))
+                        }
+                    },
+                    label = null
+                )
+                NavigationBarItem(
                     selected = currentTab == 6,
                     onClick = { viewModel.openReel() },
                     icon = { Icon(Icons.Default.SmartDisplay, contentDescription = "Reels") },
@@ -390,14 +413,8 @@ fun HomeScreen(
                 NavigationBarItem(
                     selected = currentTab == 5,
                     onClick = { viewModel.setCurrentTab(5) },
-                    icon = { Icon(Icons.Default.PersonAdd, contentDescription = "Friends") },
+                    icon = { Icon(Icons.Default.PeopleAlt, contentDescription = "Friends") },
                     label = { Text("Friends", fontSize = 10.sp) }
-                )
-                NavigationBarItem(
-                    selected = currentTab == 4 || currentTab == 2,
-                    onClick = { viewModel.setCurrentTab(4) },
-                    icon = { Icon(Icons.Default.MoreHoriz, contentDescription = "More") },
-                    label = { Text("More", fontSize = 10.sp) }
                 )
             }
         },
@@ -412,7 +429,23 @@ fun HomeScreen(
             when (currentTab) {
                 0 -> {
                     val feedState = rememberLazyListState()
-                    val postIds = remember(posts) { posts.map { it.id }.toSet() }
+                    val visibleFeedPosts = remember(posts, feedFilter, currentUser?.friends, currentUser?.following, savedPostIds) {
+                        when (feedFilter) {
+                            "Friends" -> posts.filter { it.senderId in currentUser?.friends.orEmpty() }
+                            "Following" -> posts.filter { it.senderId in currentUser?.following.orEmpty() }
+                            "Saved" -> posts.filter { it.id in savedPostIds }
+                            else -> posts
+                        }
+                    }
+                    val suggestions = remember(allUsers, currentUser) {
+                        val me = currentUser
+                        allUsers.filter { person -> person.uid != me?.uid && person.uid !in me?.friends.orEmpty() && person.uid !in me?.following.orEmpty() }
+                            .sortedWith(compareByDescending<User> { it.role == "moderator" }
+                                .thenByDescending { it.isPremium && (it.premiumPlan == "lifetime" || it.premiumUntil > System.currentTimeMillis()) }
+                                .thenByDescending { person -> person.friends.count { it in me?.friends.orEmpty() } })
+                            .take(10)
+                    }
+                    val postIds = remember(visibleFeedPosts) { visibleFeedPosts.map { it.id }.toSet() }
                     val activeFeedPostId by remember(feedState, postIds) {
                         derivedStateOf {
                             val center = (feedState.layoutInfo.viewportStartOffset + feedState.layoutInfo.viewportEndOffset) / 2
@@ -448,25 +481,35 @@ fun HomeScreen(
                                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = .70f)),
                                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = .65f))
                             ) {
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    AsyncImage(
-                                        model = currentUser?.profileImageUrl?.ifBlank { null },
-                                        contentDescription = "Your profile",
-                                        error = painterResource(id = R.drawable.img_app_logo),
-                                        modifier = Modifier.size(44.dp).clip(CircleShape)
-                                    )
-                                    Spacer(Modifier.width(12.dp))
-                                    Column(Modifier.weight(1f).padding(start = 12.dp)) {
-                                        Text("Write a text post…", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 15.sp)
-                                        Text("Backgrounds • feelings • tags", color = MaterialTheme.colorScheme.primary, fontSize = 10.sp)
+                                Column {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        AsyncImage(
+                                            model = currentUser?.profileImageUrl?.ifBlank { null },
+                                            contentDescription = "Your profile",
+                                            error = painterResource(id = R.drawable.img_app_logo),
+                                            modifier = Modifier.size(46.dp).clip(CircleShape).border(2.dp, MaterialTheme.colorScheme.primary, CircleShape)
+                                        )
+                                        Spacer(Modifier.width(11.dp))
+                                        Column(Modifier.weight(1f)) {
+                                            Text("What's on your mind, ${currentUser?.name?.substringBefore(' ') ?: "friend"}? ✨", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp)
+                                            Text("Share a moment with your community", color = MaterialTheme.colorScheme.primary, fontSize = 10.sp)
+                                        }
+                                        Box(Modifier.size(50.dp).clip(CircleShape).background(Brush.linearGradient(listOf(Color(0xFF5C53FF), Color(0xFFFF35BE)))), contentAlignment = Alignment.Center) { Icon(Icons.Default.Send, "Create post", tint = Color.White) }
                                     }
-                                    Icon(Icons.Outlined.Palette, "Choose post background", tint = MaterialTheme.colorScheme.primary)
-                                    Spacer(Modifier.width(10.dp))
-                                    Surface(color = MaterialTheme.colorScheme.primary, shape = CircleShape) {
-                                        Text("Post", Modifier.padding(horizontal = 18.dp, vertical = 10.dp), color = MaterialTheme.colorScheme.onPrimary, fontWeight = FontWeight.Bold)
+                                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(.5f))
+                                    Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 9.dp), horizontalArrangement = Arrangement.SpaceAround) {
+                                        listOf(
+                                            Triple(Icons.Outlined.Photo, "Photo", Color(0xFF3EE07A)),
+                                            Triple(Icons.Outlined.Videocam, "Video", Color(0xFFFF3F6C)),
+                                            Triple(Icons.Outlined.SmartDisplay, "Reel", Color(0xFFD85CFF)),
+                                            Triple(Icons.Outlined.EmojiEmotions, "Feeling", Color(0xFFFFC145)),
+                                            Triple(Icons.Outlined.Poll, "Poll", Color(0xFF37D8E7))
+                                        ).forEach { (icon, label, tint) ->
+                                            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.clickable(onClick = onCreatePost).padding(4.dp)) { Icon(icon, label, tint = tint, modifier = Modifier.size(20.dp)); Text(label, fontSize = 9.sp, fontWeight = FontWeight.SemiBold) }
+                                        }
                                     }
                                 }
                             }
@@ -477,10 +520,10 @@ fun HomeScreen(
                                 contentPadding = PaddingValues(horizontal = 16.dp),
                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                items(listOf("All Posts", "Friends", "Groups", "Following")) { label ->
+                                items(listOf("All Posts", "Friends", "Groups", "Following", "Saved")) { label ->
                                     FilterChip(
-                                        selected = label == "All Posts",
-                                        onClick = { },
+                                        selected = feedFilter == label,
+                                        onClick = { if (label == "Groups") viewModel.setCurrentTab(2) else feedFilter = label },
                                         label = { Text(label) },
                                         leadingIcon = if (label == "All Posts") { { Icon(Icons.Outlined.DynamicFeed, null, Modifier.size(17.dp)) } } else null,
                                         shape = CircleShape
@@ -488,7 +531,17 @@ fun HomeScreen(
                                 }
                             }
                         }
-                        if (posts.isEmpty()) {
+                        if (suggestions.isNotEmpty() && feedFilter == "All Posts") {
+                            item(key = "suggestions") {
+                                SuggestedPeopleStrip(
+                                    suggestions = suggestions,
+                                    myFriendIds = currentUser?.friends.orEmpty(),
+                                    onFollow = viewModel::toggleFollow,
+                                    onOpen = onProfileSelected
+                                )
+                            }
+                        }
+                        if (visibleFeedPosts.isEmpty()) {
                             item(key = "empty") {
                                 Column(
                                     modifier = Modifier.fillParentMaxHeight(.62f).fillMaxWidth(),
@@ -502,7 +555,7 @@ fun HomeScreen(
                                 }
                             }
                         } else {
-                            items(posts, key = { it.id }) { post ->
+                            items(visibleFeedPosts, key = { it.id }) { post ->
                                 Box(Modifier.padding(horizontal = 14.dp)) {
                                     SocialPostItem(post = post, viewModel = viewModel, onProfileSelected = onProfileSelected, autoPlayVideo = post.id == activeFeedPostId && selectedStoryIndex == null)
                                 }
@@ -2527,12 +2580,64 @@ fun FullScreenVideoPlayer(videoUrl: String, onDismiss: () -> Unit) {
 }
 
 @Composable
+private fun SuggestedPeopleStrip(
+    suggestions: List<User>,
+    myFriendIds: List<String>,
+    onFollow: (User) -> Unit,
+    onOpen: (User) -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp),
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = .68f)),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(.65f))
+    ) {
+        Column(Modifier.padding(vertical = 12.dp)) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.PersonSearch, null, tint = MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.width(8.dp)); Text("Suggested for you", fontWeight = FontWeight.ExtraBold, modifier = Modifier.weight(1f))
+                Text("Smart matches", color = MaterialTheme.colorScheme.primary, fontSize = 10.sp)
+            }
+            Spacer(Modifier.height(9.dp))
+            LazyRow(contentPadding = PaddingValues(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                items(suggestions, key = { it.uid }) { person ->
+                    val mutual = person.friends.count { it in myFriendIds }
+                    Surface(
+                        shape = RoundedCornerShape(20.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(.48f),
+                        modifier = Modifier.width(145.dp)
+                    ) {
+                        Column(Modifier.padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                            Box(contentAlignment = Alignment.BottomEnd) {
+                                AsyncImage(person.profileImageUrl.ifBlank { null }, person.name, error = painterResource(R.drawable.img_app_logo), contentScale = ContentScale.Crop, modifier = Modifier.size(56.dp).clip(CircleShape).clickable { onOpen(person) }.border(2.dp, MaterialTheme.colorScheme.primary, CircleShape))
+                                if (person.isOnline) Box(Modifier.size(14.dp).clip(CircleShape).background(Color(0xFF35E86F)).border(2.dp, MaterialTheme.colorScheme.surface, CircleShape))
+                            }
+                            Spacer(Modifier.height(7.dp))
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(person.name, fontWeight = FontWeight.ExtraBold, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                if (person.role == "moderator" || (person.isPremium && (person.premiumPlan == "lifetime" || person.premiumUntil > System.currentTimeMillis()))) {
+                                    Spacer(Modifier.width(3.dp)); Icon(Icons.Default.Verified, null, tint = if (person.role == "moderator") MaterialTheme.colorScheme.primary else Color(0xFFFFB300), modifier = Modifier.size(13.dp))
+                                }
+                            }
+                            Text(if (mutual > 0) "$mutual mutual friends" else "@${person.username}", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                            Spacer(Modifier.height(7.dp))
+                            Button(onClick = { onFollow(person) }, modifier = Modifier.fillMaxWidth().height(34.dp), contentPadding = PaddingValues(0.dp), shape = CircleShape) { Text("Follow", fontSize = 11.sp) }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 fun StoriesHorizontalSection(
     viewModel: ChatViewModel,
     stories: List<Story>,
     onStorySelected: (Story) -> Unit
 ) {
     val context = LocalContext.current
+    val users by viewModel.usersState.collectAsState()
     val groupedStories = remember(stories) { stories.groupBy { it.senderId }.values.map { it.sortedBy { story -> story.timestamp } } }
     var isUploadingStoryMedia by remember { mutableStateOf(false) }
     var showAddStoryDialog by remember { mutableStateOf(false) }
@@ -2684,6 +2789,9 @@ fun StoriesHorizontalSection(
                             Text(group.size.toString(), color = MaterialTheme.colorScheme.onPrimary, fontSize = 9.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp))
                         }
                     }
+                    if (users.find { it.uid == story.senderId }?.isOnline == true) {
+                        Box(Modifier.align(Alignment.BottomEnd).size(16.dp).clip(CircleShape).background(Color(0xFF2BE56C)).border(2.dp, MaterialTheme.colorScheme.surface, CircleShape))
+                    }
                 }
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(story.senderName.split(" ").firstOrNull() ?: story.senderName, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -2713,6 +2821,8 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
     var showEditPost by remember { mutableStateOf(false) }
     var playInlineVideo by remember(post.id) { mutableStateOf(false) }
     val currentUserId = FirebaseAuth.getInstance().currentUser?.uid ?: ""
+    val savedPostIds by viewModel.savedPostIds.collectAsState()
+    val postSaved = post.id in savedPostIds
     val isDark = isSystemInDarkTheme()
     val allUsers by viewModel.usersState.collectAsState()
 
@@ -3110,6 +3220,9 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontSize = 12.sp
                     )
+                }
+                IconButton(onClick = { viewModel.toggleSavedPost(post.id) }) {
+                    Icon(if (postSaved) Icons.Default.Bookmark else Icons.Outlined.BookmarkBorder, if (postSaved) "Remove saved post" else "Save post", tint = if (postSaved) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
 
