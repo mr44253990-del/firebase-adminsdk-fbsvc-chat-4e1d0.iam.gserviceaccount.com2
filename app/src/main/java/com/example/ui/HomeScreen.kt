@@ -2462,50 +2462,36 @@ private fun ImmersiveVideoPage(
         )
 
         Column(
-            Modifier.align(Alignment.CenterEnd).padding(end = 14.dp, bottom = 150.dp),
+            Modifier.align(Alignment.BottomEnd).windowInsetsPadding(WindowInsets.navigationBars).padding(end = 10.dp, bottom = 82.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             owner?.let { person ->
-                AsyncImage(
-                    person.profileImageUrl.ifBlank { null }, person.name,
-                    error = painterResource(R.drawable.img_app_logo),
-                    modifier = Modifier.size(52.dp).clip(CircleShape).border(2.dp, Color.White, CircleShape).clickable { onProfileSelected(person) }
-                )
-            }
-            IconButton(onClick = {
-                optimisticReaction = !reacted
-                viewModel.reactToPost(post.id, "❤️")
-            }, modifier = Modifier.background(Color.Black.copy(alpha = .38f), CircleShape)) {
-                Icon(if (reacted) Icons.Default.Favorite else Icons.Outlined.FavoriteBorder, "Like", tint = if (reacted) Color(0xFFFF4F78) else Color.White)
-            }
-            Text(displayedReactionCount.toString(), color = Color.White, fontWeight = FontWeight.Bold)
-            IconButton(onClick = { showComments = true }, modifier = Modifier.background(Color.Black.copy(alpha = .38f), CircleShape)) {
-                Icon(Icons.Outlined.ChatBubbleOutline, "Comments", tint = Color.White)
-            }
-            Text(post.comments.size.toString(), color = Color.White, fontWeight = FontWeight.Bold)
-            IconButton(onClick = {
-                val shareText = listOf(post.title, post.text, post.videoUrl).filter { it.isNotBlank() }.joinToString("\n")
-                context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply { type = "text/plain"; putExtra(Intent.EXTRA_TEXT, shareText) }, "Share reel"))
-            }, modifier = Modifier.background(Color.Black.copy(alpha = .38f), CircleShape)) {
-                Icon(Icons.Default.Share, "Share reel", tint = Color.White)
-            }
-            Text("Share", color = Color.White, fontSize = 10.sp)
-            if (owner != null && owner.uid != currentUser?.uid && !isFriend) {
-                if (requested) {
-                    IconButton(onClick = { viewModel.cancelFriendRequest(owner.uid) }, modifier = Modifier.background(Color.Black.copy(alpha = .38f), CircleShape)) {
-                        Icon(Icons.Default.PersonRemove, "Cancel request", tint = Color.White)
-                    }
-                } else {
-                    IconButton(onClick = { viewModel.sendFriendRequest(owner) }, modifier = Modifier.background(MaterialTheme.colorScheme.primary, CircleShape)) {
-                        Icon(Icons.Default.PersonAdd, "Add friend", tint = MaterialTheme.colorScheme.onPrimary)
+                Box(contentAlignment = Alignment.BottomCenter) {
+                    AsyncImage(
+                        person.profileImageUrl.ifBlank { null }, person.name,
+                        error = painterResource(R.drawable.img_app_logo),
+                        modifier = Modifier.size(44.dp).clip(CircleShape).border(2.dp, Color.White, CircleShape).clickable { onProfileSelected(person) }
+                    )
+                    if (person.uid != currentUser?.uid && !isFriend) {
+                        Box(Modifier.offset(y = 7.dp).size(18.dp).clip(CircleShape).background(Color(0xFFFF315F)).clickable { if (requested) viewModel.cancelFriendRequest(person.uid) else viewModel.sendFriendRequest(person) }, contentAlignment = Alignment.Center) {
+                            Icon(if (requested) Icons.Default.Check else Icons.Default.Add, "Follow", tint = Color.White, modifier = Modifier.size(13.dp))
+                        }
                     }
                 }
+            }
+            ReelSideAction(if (reacted) Icons.Default.Favorite else Icons.Outlined.FavoriteBorder, displayedReactionCount.toString(), if (reacted) Color(0xFFFF3F69) else Color.White) {
+                optimisticReaction = !reacted; viewModel.reactToPost(post.id, "❤️")
+            }
+            ReelSideAction(Icons.Outlined.ChatBubbleOutline, post.comments.size.toString()) { showComments = true }
+            ReelSideAction(Icons.Default.Share, "Share") {
+                val shareText = listOf(post.title, post.text, post.videoUrl).filter { it.isNotBlank() }.joinToString("\n")
+                context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply { type = "text/plain"; putExtra(Intent.EXTRA_TEXT, shareText) }, "Share reel"))
             }
         }
 
         Column(
-            Modifier.align(Alignment.BottomStart).fillMaxWidth().windowInsetsPadding(WindowInsets.navigationBars).padding(18.dp)
+            Modifier.align(Alignment.BottomStart).fillMaxWidth().windowInsetsPadding(WindowInsets.navigationBars).padding(start = 16.dp, end = 68.dp, bottom = 16.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(post.senderName, color = Color.White, fontWeight = FontWeight.ExtraBold, style = MaterialTheme.typography.titleMedium)
@@ -2522,35 +2508,62 @@ private fun ImmersiveVideoPage(
     }
 
     if (showComments) {
-        AlertDialog(
+        val commentsSheet = rememberModalBottomSheetState(skipPartiallyExpanded = false)
+        ModalBottomSheet(
             onDismissRequest = { showComments = false },
-            title = { Text("Comments (${post.comments.size})", fontWeight = FontWeight.Bold) },
-            text = {
-                Column(Modifier.heightIn(max = 480.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    LazyColumn(Modifier.weight(1f, fill = false), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        if (post.comments.isEmpty()) item { Text("No comments yet", color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                        items(post.comments, key = { it.commentId }) { item ->
-                            Surface(color = MaterialTheme.colorScheme.surfaceVariant.copy(.45f), shape = RoundedCornerShape(16.dp)) {
-                                Column(Modifier.padding(10.dp)) { Text(item.senderName, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary); Text(item.text) }
-                            }
+            sheetState = commentsSheet,
+            dragHandle = { BottomSheetDefaults.DragHandle() },
+            containerColor = MaterialTheme.colorScheme.surface,
+            shape = RoundedCornerShape(topStart = 30.dp, topEnd = 30.dp)
+        ) {
+            Column(Modifier.fillMaxWidth().heightIn(min = 360.dp, max = 560.dp).padding(horizontal = 16.dp).padding(bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Comments", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold, modifier = Modifier.weight(1f))
+                    Text(post.comments.size.toString(), color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                }
+                HorizontalDivider()
+                LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (post.comments.isEmpty()) item { Box(Modifier.fillParentMaxWidth().padding(36.dp), contentAlignment = Alignment.Center) { Text("No comments yet — start the conversation", color = MaterialTheme.colorScheme.onSurfaceVariant) } }
+                    items(post.comments, key = { it.commentId }) { item ->
+                        Surface(color = MaterialTheme.colorScheme.surfaceVariant.copy(.52f), shape = RoundedCornerShape(18.dp)) {
+                            Column(Modifier.padding(11.dp)) { Text(item.senderName, fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.primary); Spacer(Modifier.height(2.dp)); Text(item.text) }
                         }
                     }
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        OutlinedTextField(comment, { comment = it }, modifier = Modifier.weight(1f), placeholder = { Text("Add a comment…") }, singleLine = true, shape = CircleShape)
-                        IconButton(onClick = { if (comment.isNotBlank()) { viewModel.commentOnPost(post.id, comment.trim()); comment = "" } }) { Icon(Icons.Default.Send, "Send") }
-                    }
                 }
-            },
-            confirmButton = { TextButton(onClick = { showComments = false }) { Text("Close") } }
-        )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedTextField(comment, { comment = it.take(600) }, modifier = Modifier.weight(1f), placeholder = { Text("Add a comment…") }, maxLines = 3, shape = RoundedCornerShape(24.dp))
+                    Spacer(Modifier.width(6.dp))
+                    FilledIconButton(onClick = { if (comment.isNotBlank()) { viewModel.commentOnPost(post.id, comment.trim()); comment = "" } }) { Icon(Icons.Default.Send, "Send") }
+                }
+            }
+        }
     }
     if (showDescription) {
-        AlertDialog(
+        val descriptionSheet = rememberModalBottomSheetState(skipPartiallyExpanded = false)
+        ModalBottomSheet(
             onDismissRequest = { showDescription = false },
-            title = { Text(post.title.ifBlank { post.senderName }, fontWeight = FontWeight.Bold) },
-            text = { Column(Modifier.verticalScroll(rememberScrollState())) { Text(post.text); if (post.tags.isNotEmpty()) { Spacer(Modifier.height(12.dp)); Text(post.tags.joinToString(" ") { "#$it" }, color = MaterialTheme.colorScheme.primary) } } },
-            confirmButton = { TextButton(onClick = { showDescription = false }) { Text("Done") } }
-        )
+            sheetState = descriptionSheet,
+            dragHandle = { BottomSheetDefaults.DragHandle() },
+            containerColor = MaterialTheme.colorScheme.surface,
+            shape = RoundedCornerShape(topStart = 30.dp, topEnd = 30.dp)
+        ) {
+            Column(Modifier.fillMaxWidth().heightIn(min = 260.dp, max = 460.dp).verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 28.dp)) {
+                Text(post.title.ifBlank { post.senderName }, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold)
+                Spacer(Modifier.height(8.dp)); Text(post.text, style = MaterialTheme.typography.bodyLarge)
+                if (post.tags.isNotEmpty()) { Spacer(Modifier.height(14.dp)); Text(post.tags.joinToString(" ") { "#$it" }, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold) }
+                Spacer(Modifier.height(14.dp)); Text("${post.reactions.size} reactions • ${post.comments.size} comments • ${post.viewsCount} views", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ReelSideAction(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, tint: Color = Color.White, onClick: () -> Unit) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(1.dp)) {
+        IconButton(onClick = onClick, modifier = Modifier.size(42.dp).background(Color.Black.copy(.30f), CircleShape)) {
+            Icon(icon, label, tint = tint, modifier = Modifier.size(23.dp))
+        }
+        Text(label, color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.SemiBold)
     }
 }
 

@@ -23,10 +23,10 @@ PAYLOAD=$(python3 - <<'PY'
 import json,os,time
 print(json.dumps({
   "targetUid": os.environ["TARGET_UID"],
-  "title": "FireChat Worker Test",
+  "title": "Convo Chat Worker Test",
   "body": "Authenticated direct FCM v1 notification is working",
   "senderId": os.environ.get("SENDER_UID", os.environ["TARGET_UID"]),
-  "senderName": "FireChat Diagnostics",
+  "senderName": "Convo Chat Diagnostics",
   "senderProfileUrl": "",
   "notificationType": "gateway_test",
   "targetId": f"curl_{int(time.time()*1000)}"

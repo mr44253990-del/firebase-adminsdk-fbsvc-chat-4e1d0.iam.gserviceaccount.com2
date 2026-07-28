@@ -1,5 +1,5 @@
 /**
- * FireChat Cloudflare Worker
+ * Convo Chat Cloudflare Worker
  * Handles FCM v1 Push Notification Delivery with Zero-Dependencies.
  *
  * This worker accepts a POST request with the target FCM token, title, and body,
@@ -76,7 +76,7 @@ export default {
       } catch (_) {}
       return new Response(JSON.stringify({
         ok: serviceAccountConfigured,
-        service: "FireChat Direct FCM Gateway",
+        service: "Convo Chat Direct FCM Gateway",
         version: "4.4.0",
         projectId,
         serviceAccountConfigured,
@@ -141,7 +141,7 @@ export default {
         const message = String(payload.message || "").trim().slice(0, 4000);
         if (!message) return jsonResponse({ error: "Message is required" }, 400);
         const memory = Array.isArray(payload.memory) ? payload.memory.slice(-20).map(item => String(item).slice(0, 1000)) : [];
-        const system = `You are FireChat Assistant. Be concise, safe, and helpful. Never claim an app action succeeded unless the Android client confirms it. Never reveal secrets. ${String(payload.systemPrompt || "").slice(0, 1200)}`;
+        const system = `You are Convo Chat Assistant. Be concise, safe, and helpful. Never claim an app action succeeded unless the Android client confirms it. Never reveal secrets. ${String(payload.systemPrompt || "").slice(0, 1200)}`;
         const upstream = await fetch("https://api.mistral.ai/v1/chat/completions", {
           method: "POST",
           headers: { "Authorization": `Bearer ${env.MISTRAL_API_KEY}`, "Content-Type": "application/json" },
@@ -271,7 +271,7 @@ export default {
           // Data-only high-priority payload: Android always routes this through
           // MyFirebaseMessagingService so message/request/activity styles stay distinct.
           data: {
-            title: title || "FireChat",
+            title: title || "Convo Chat",
             body: body || "You have a new update",
             senderId: senderId || "",
             senderName: senderName || "",

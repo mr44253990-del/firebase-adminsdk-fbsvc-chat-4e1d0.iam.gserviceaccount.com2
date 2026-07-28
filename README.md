@@ -1,4 +1,4 @@
-# FireChat (ফায়ারচ্যাট) Setup & Configuration Guide
+# Convo Chat (ফায়ারচ্যাট) Setup & Configuration Guide
 
 ## Premium Aurora UI
 
@@ -23,13 +23,13 @@ Choose an appearance from **Profile & appearance → Choose Application Theme**.
 
 ### Direct FCM v1 gateway — no n8n
 
-FireChat no longer requires an n8n webhook. The Android client calls the included Cloudflare Worker directly. The Worker exchanges its encrypted service-account credential for an OAuth token and calls FCM v1.
+Convo Chat no longer requires an n8n webhook. The Android client calls the included Cloudflare Worker directly. The Worker exchanges its encrypted service-account credential for an OAuth token and calls FCM v1.
 
 1. Revoke every service-account key ever pasted into chat, source code, an APK, or a public repository.
 2. Generate a fresh Firebase service-account JSON key.
 3. In Cloudflare Worker → Settings → Variables, create an **encrypted secret** named `FIREBASE_SERVICE_ACCOUNT` and paste the fresh JSON there. Never place it in Android resources, BuildConfig, `.env`, `google-services.json`, or Git.
 4. Deploy the current `cloudflare-worker.js`. It sends data-only high-priority messages so Android applies separate Message, Request, and Activity channels with custom vibration and profile imagery.
-5. FireChat defaults to `https://solitary-hill-dcdc.mr44253990.workers.dev/`. The Admin Service panel can run `/health`, save a replacement URL, and send a self-test notification.
+5. Convo Chat defaults to `https://solitary-hill-dcdc.mr44253990.workers.dev/`. The Admin Service panel can run `/health`, save a replacement URL, and send a self-test notification.
 
 A safe deployment helper is included:
 
@@ -81,7 +81,7 @@ firebase deploy --only database,firestore:rules
 
 Android 14+ may require the user to enable **Allow full-screen incoming calls** under Profile & appearance. Without that special access, Android correctly falls back to a high-priority CallStyle heads-up notification. Incoming calls ring with the device ringtone, expire after 30 seconds, support accept/decline, mute, speaker, reconnect state, and retain a lightweight call item in local chat history.
 
-FireChat does not run a persistent background-presence service. Foreground means online; background/closed means offline with last-seen. FCM remains responsible for messages and incoming calls. When an incoming-call FCM reaches the callee, the device changes RTDB status from `calling` to `ringing`; the caller then hears ringback. Connecting vibrates briefly, audio calls use the proximity sensor to turn the screen off near the ear, and notification messages support inline replies. Only an active call starts a temporary phone-call foreground service and CPU wake lock, keeping microphone/camera alive with the screen off; it stops immediately when the call ends.
+Convo Chat does not run a persistent background-presence service. Foreground means online; background/closed means offline with last-seen. FCM remains responsible for messages and incoming calls. When an incoming-call FCM reaches the callee, the device changes RTDB status from `calling` to `ringing`; the caller then hears ringback. Connecting vibrates briefly, audio calls use the proximity sensor to turn the screen off near the ear, and notification messages support inline replies. Only an active call starts a temporary phone-call foreground service and CPU wake lock, keeping microphone/camera alive with the screen off; it stops immediately when the call ends.
 
 ### Cloudflare R2 posts and reels
 
@@ -107,11 +107,11 @@ Onboarding pages support left/right swipes, animated transitions, pulsing illust
 
 ### Ephemeral chat delivery
 
-Direct messages use RTDB as a delivery envelope and Room as device-owned history. The sender stores a local copy immediately. When the receiver opens the conversation, FireChat stores the incoming text/image/voice metadata locally, writes a lightweight seen receipt for the sender, and removes the delivered message envelope from RTDB. Receipt documents are removed after the sender caches the seen state. A non-destructive Room `2 → 3` migration preserves existing local conversations during app updates.
+Direct messages use RTDB as a delivery envelope and Room as device-owned history. The sender stores a local copy immediately. When the receiver opens the conversation, Convo Chat stores the incoming text/image/voice metadata locally, writes a lightweight seen receipt for the sender, and removes the delivered message envelope from RTDB. Receipt documents are removed after the sender caches the seen state. A non-destructive Room `2 → 3` migration preserves existing local conversations during app updates.
 
 Remote Supabase media files are intentionally not deleted during acknowledgement. Removing a media object before a verified local file download would break cached image and voice messages. A future server-side retention job may remove media only after both devices submit durable-download acknowledgements.
 
-স্বাগতম! **FireChat** হলো একটি রিয়েল-টাইম চ্যাটিং অ্যান্ড্রয়েড অ্যাপ্লিকেশন যা Jetpack Compose, Kotlin এবং Firebase (Authentication, Firestore, Realtime Database) ব্যবহার করে তৈরি করা হয়েছে। ব্যাকগ্রাউন্ডে এবং অ্যাপ বন্ধ থাকা অবস্থায়ও নোটিফিকেশন পাঠাতে এটি **Cloudflare Workers** এবং **Firebase Cloud Messaging (FCM) v1 API** এর সফল সংযোগ ব্যবহার করে।
+স্বাগতম! **Convo Chat** হলো একটি রিয়েল-টাইম চ্যাটিং অ্যান্ড্রয়েড অ্যাপ্লিকেশন যা Jetpack Compose, Kotlin এবং Firebase (Authentication, Firestore, Realtime Database) ব্যবহার করে তৈরি করা হয়েছে। ব্যাকগ্রাউন্ডে এবং অ্যাপ বন্ধ থাকা অবস্থায়ও নোটিফিকেশন পাঠাতে এটি **Cloudflare Workers** এবং **Firebase Cloud Messaging (FCM) v1 API** এর সফল সংযোগ ব্যবহার করে।
 
 এই নির্দেশিকায় সম্পূর্ণ সেটআপ প্রসেস (ফায়ারবেস কনফিগারেশন থেকে শুরু করে ক্লাউডফ্লেয়ার ওয়ার্কার ডিপ্লয়মেন্ট) বিস্তারিত আলোচনা করা হলো।
 

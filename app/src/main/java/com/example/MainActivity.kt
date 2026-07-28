@@ -8,6 +8,11 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.compose.foundation.layout.*
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.core.tween
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.MaterialTheme
@@ -246,7 +251,13 @@ class MainActivity : FragmentActivity() {
                             )
                         }
 
-                        composable("profile") {
+                        composable(
+                            route = "profile",
+                            enterTransition = { slideInHorizontally(tween(360)) { it } + fadeIn(tween(300)) },
+                            exitTransition = { slideOutHorizontally(tween(300)) { -it / 4 } + fadeOut(tween(240)) },
+                            popEnterTransition = { slideInHorizontally(tween(320)) { -it / 4 } + fadeIn(tween(260)) },
+                            popExitTransition = { slideOutHorizontally(tween(340)) { it } + fadeOut(tween(260)) }
+                        ) {
                             selectedProfile?.let { profile ->
                                 UserProfileScreen(
                                     viewModel = viewModel,

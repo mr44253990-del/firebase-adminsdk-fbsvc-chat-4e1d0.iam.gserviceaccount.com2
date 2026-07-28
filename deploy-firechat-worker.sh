@@ -78,4 +78,4 @@ fi
 
 echo "Testing ${WORKER_URL}..."
 curl -fsS "${WORKER_URL}" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(json.dumps(d,indent=2)); assert d.get("ok") is True, "Worker health check failed"'
-echo "FireChat Direct FCM Gateway is ready: ${WORKER_URL}"
+echo "Convo Chat Direct FCM Gateway is ready: ${WORKER_URL}"
