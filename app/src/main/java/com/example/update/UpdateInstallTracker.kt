@@ -48,7 +48,7 @@ object UpdateInstallTracker {
         val completedPendingInstall = pendingId == id && packageInfo.lastUpdateTime > beforeInstall
 
         // Handles a fresh install of the published APK on a new device, where
-        // there was no previous FireChat process to save a pending marker.
+        // there was no previous Convo Chat process to save a pending marker.
         val publishedAt = config.updatePublishedAt.takeIf { it > 0L } ?: config.updatedAt
         val installedAfterPublish = BuildConfig.VERSION_CODE >= config.latestVersionCode &&
             publishedAt > 0L && packageInfo.lastUpdateTime >= publishedAt

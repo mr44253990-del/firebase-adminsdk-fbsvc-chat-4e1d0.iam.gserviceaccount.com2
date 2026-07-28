@@ -62,7 +62,7 @@ fun FlagshipUpdateDialog(config: FlagshipConfig, mandatory: Boolean, onLater: ()
                     if (total > 0) progress = (done * 100 / total).toInt()
                     if (status == DownloadManager.STATUS_SUCCESSFUL) {
                         downloading = false; progress = 100
-                        downloaded = File(context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), "FireChat-${config.versionName}.apk")
+                        downloaded = File(context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), "Convo Chat-${config.versionName}.apk")
                     } else if (status == DownloadManager.STATUS_FAILED) downloading = false
                 }
             }
@@ -76,7 +76,7 @@ fun FlagshipUpdateDialog(config: FlagshipConfig, mandatory: Boolean, onLater: ()
     ) {
         Surface(shape = RoundedCornerShape(30.dp), tonalElevation = 8.dp) {
             Column(Modifier.padding(22.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(if (mandatory) "Required FireChat update" else "New FireChat update", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold)
+                Text(if (mandatory) "Required Convo Chat update" else "New Convo Chat update", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold)
                 Text("Version ${config.versionName} • Code ${config.latestVersionCode}", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
                 Text(config.releaseNotes.ifBlank { "Performance, security and feature improvements." })
                 if (downloading) {
@@ -87,9 +87,9 @@ fun FlagshipUpdateDialog(config: FlagshipConfig, mandatory: Boolean, onLater: ()
                     Button(onClick = ::install, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Outlined.InstallMobile, null); Spacer(Modifier.width(8.dp)); Text("Install update") }
                 } ?: Button(
                     onClick = {
-                        val file = File(context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), "FireChat-${config.versionName}.apk").apply { if (exists()) delete() }
-                        val request = DownloadManager.Request(Uri.parse(config.apkUrl)).setTitle("FireChat ${config.versionName}")
-                            .setDescription("Downloading signed FireChat update")
+                        val file = File(context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), "Convo Chat-${config.versionName}.apk").apply { if (exists()) delete() }
+                        val request = DownloadManager.Request(Uri.parse(config.apkUrl)).setTitle("Convo Chat ${config.versionName}")
+                            .setDescription("Downloading signed Convo Chat update")
                             .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
                             .setDestinationUri(Uri.fromFile(file))
                         downloadId = (context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager).enqueue(request)

@@ -34,7 +34,7 @@ fun AppLockScreen(activity: FragmentActivity) {
             override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) { AppLockManager.unlock() }
         })
         prompt.authenticate(
-            BiometricPrompt.PromptInfo.Builder().setTitle("Unlock FireChat")
+            BiometricPrompt.PromptInfo.Builder().setTitle("Unlock Convo Chat")
                 .setSubtitle("Use fingerprint, face, or device credential")
                 .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG or BiometricManager.Authenticators.DEVICE_CREDENTIAL)
                 .build()
@@ -50,7 +50,7 @@ fun AppLockScreen(activity: FragmentActivity) {
             Box(Modifier.size(92.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer), contentAlignment = Alignment.Center) {
                 Icon(Icons.Outlined.Lock, null, Modifier.size(42.dp), tint = MaterialTheme.colorScheme.primary)
             }
-            Spacer(Modifier.height(22.dp)); Text("FireChat locked", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(22.dp)); Text("Convo Chat locked", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
             Text(if (error) "Incorrect PIN" else "Enter your PIN", color = if (error) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.height(24.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {

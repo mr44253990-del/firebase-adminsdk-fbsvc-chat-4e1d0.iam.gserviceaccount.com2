@@ -55,7 +55,7 @@ class IncomingCallActivity : ComponentActivity() {
         }
         val callId = intent.getStringExtra("callId").orEmpty()
         val callerId = intent.getStringExtra("callerId").orEmpty()
-        val callerName = intent.getStringExtra("callerName") ?: "FireChat user"
+        val callerName = intent.getStringExtra("callerName") ?: "Convo Chat user"
         val callerImage = intent.getStringExtra("callerImage").orEmpty()
         val videoCall = intent.getBooleanExtra("videoCall", false)
         val canRecord = ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
@@ -172,7 +172,7 @@ fun CallScreen(
             Text(
                 when {
                     state.error != null -> state.error!!
-                    !accepted && incoming -> if (effectiveVideo) "Incoming FireChat video call" else "Incoming FireChat audio call"
+                    !accepted && incoming -> if (effectiveVideo) "Incoming Convo Chat video call" else "Incoming Convo Chat audio call"
                     state.status == "connected" -> "Connected • %02d:%02d".format(elapsedSeconds / 60, elapsedSeconds % 60)
                     state.status == "calling" -> "Calling…"
                     state.status == "ringing" -> "Ringing…"

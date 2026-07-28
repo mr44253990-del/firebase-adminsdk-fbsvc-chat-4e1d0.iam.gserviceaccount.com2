@@ -11,7 +11,7 @@ class CallForegroundService : Service() {
         super.onCreate()
         val manager = getSystemService(NotificationManager::class.java)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            manager.createNotificationChannel(NotificationChannel(CHANNEL, "Ongoing FireChat calls", NotificationManager.IMPORTANCE_LOW).apply {
+            manager.createNotificationChannel(NotificationChannel(CHANNEL, "Ongoing Convo Chat calls", NotificationManager.IMPORTANCE_LOW).apply {
                 description = "Keeps microphone and camera active while a call is connected"
                 setSound(null, null); enableVibration(false); setShowBadge(false)
             })
@@ -19,7 +19,7 @@ class CallForegroundService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val name = intent?.getStringExtra("remoteName") ?: "FireChat user"
+        val name = intent?.getStringExtra("remoteName") ?: "Convo Chat user"
         val video = intent?.getBooleanExtra("video", false) == true
         val callId = intent?.getStringExtra("callId").orEmpty()
         val screenShare = intent?.getBooleanExtra("screenShare", false) == true
@@ -32,7 +32,7 @@ class CallForegroundService : Service() {
         )
         val notification = NotificationCompat.Builder(this, CHANNEL)
             .setSmallIcon(if (video) android.R.drawable.presence_video_online else android.R.drawable.sym_call_outgoing)
-            .setContentTitle(if (video) "FireChat video call" else "FireChat audio call")
+            .setContentTitle(if (video) "Convo Chat video call" else "Convo Chat audio call")
             .setContentText("Connected with $name")
             .setCategory(NotificationCompat.CATEGORY_CALL).setOngoing(true).setSilent(true)
             .setContentIntent(content)

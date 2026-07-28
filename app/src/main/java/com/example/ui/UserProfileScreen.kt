@@ -228,7 +228,7 @@ fun UserProfileScreen(
         var description by remember { mutableStateOf("") }
         AlertDialog(
             onDismissRequest = { showFeatureSuggestion = false },
-            title = { Text("Suggest a FireChat feature", fontWeight = FontWeight.Bold) },
+            title = { Text("Suggest a Convo Chat feature", fontWeight = FontWeight.Bold) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     OutlinedTextField(title, { title = it.take(100) }, label = { Text("Request title") }, singleLine = true)

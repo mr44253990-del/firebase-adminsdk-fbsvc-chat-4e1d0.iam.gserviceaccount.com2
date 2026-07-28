@@ -988,7 +988,7 @@ fun MessageBubbleItem(
                     onDoubleClick = {
                         if (message.text.isNotBlank()) {
                             val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                            clipboard.setPrimaryClip(ClipData.newPlainText("FireChat message", message.text))
+                            clipboard.setPrimaryClip(ClipData.newPlainText("Convo Chat message", message.text))
                             Toast.makeText(context, "Message copied", Toast.LENGTH_SHORT).show()
                         }
                     }
@@ -1176,7 +1176,7 @@ fun MessageBubbleItem(
                     leadingIcon = { Icon(Icons.Default.ContentCopy, null) },
                     onClick = {
                         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                        clipboard.setPrimaryClip(ClipData.newPlainText("FireChat message", message.text))
+                        clipboard.setPrimaryClip(ClipData.newPlainText("Convo Chat message", message.text))
                         showMenu = false
                     }
                 )
@@ -1285,7 +1285,7 @@ private fun GenericFileBubble(message: Message, onConsumed: () -> Unit) {
                         val safeName = name.replace(Regex("[\\/:*?\"<>|]"), "_")
                         val request = DownloadManager.Request(Uri.parse(source)).setTitle(name).setMimeType(mime)
                             .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-                            .setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, "FireChat_$safeName")
+                            .setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, "Convo Chat_$safeName")
                         downloadId = (context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager).enqueue(request)
                     }
                 }
@@ -1415,9 +1415,9 @@ private fun FullScreenChatImage(imageUrl: String, onDismiss: () -> Unit) {
                     onClick = {
                         if (imageUrl.startsWith("http")) {
                             val request = DownloadManager.Request(Uri.parse(imageUrl))
-                                .setTitle("FireChat image")
+                                .setTitle("Convo Chat image")
                                 .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-                                .setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, "FireChat_${System.currentTimeMillis()}.jpg")
+                                .setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, "Convo Chat_${System.currentTimeMillis()}.jpg")
                             (context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager).enqueue(request)
                             Toast.makeText(context, "Download started", Toast.LENGTH_SHORT).show()
                         } else Toast.makeText(context, "Image is already saved on this device", Toast.LENGTH_SHORT).show()

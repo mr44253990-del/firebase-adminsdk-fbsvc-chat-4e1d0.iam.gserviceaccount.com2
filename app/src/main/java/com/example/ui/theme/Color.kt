@@ -2,7 +2,7 @@ package com.example.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-// FireChat Aurora — shared flagship palette
+// Convo Chat Aurora — shared flagship palette
 val AuroraViolet = Color(0xFF7C5CFC)
 val AuroraBlue = Color(0xFF3D8BFF)
 val AuroraCyan = Color(0xFF35D6C7)

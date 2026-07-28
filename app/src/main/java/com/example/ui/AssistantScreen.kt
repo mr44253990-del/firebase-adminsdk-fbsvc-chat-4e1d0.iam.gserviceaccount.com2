@@ -121,7 +121,7 @@ fun AssistantScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenUser: (U
         bottomBar = {
             Surface(tonalElevation = 8.dp) {
                 Row(Modifier.fillMaxWidth().padding(10.dp).navigationBarsPadding(), verticalAlignment = Alignment.CenterVertically) {
-                    OutlinedTextField(input, { input = it.take(4000) }, enabled = config.assistantEnabled && !thinking, placeholder = { Text("Ask FireChat Assistant…") }, modifier = Modifier.weight(1f), maxLines = 4, shape = RoundedCornerShape(24.dp))
+                    OutlinedTextField(input, { input = it.take(4000) }, enabled = config.assistantEnabled && !thinking, placeholder = { Text("Ask Convo Chat Assistant…") }, modifier = Modifier.weight(1f), maxLines = 4, shape = RoundedCornerShape(24.dp))
                     Spacer(Modifier.width(7.dp)); FilledIconButton(onClick = ::submit, enabled = input.isNotBlank() && !thinking) { Icon(Icons.Default.AutoAwesome, "Ask") }
                 }
             }
@@ -135,7 +135,7 @@ fun AssistantScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenUser: (U
                             Box(Modifier.size(46.dp).clip(CircleShape).background(Brush.linearGradient(listOf(Color(0xFF7C5CFC), Color(0xFF19D5C5), Color(0xFFFF65B3)))), contentAlignment = Alignment.Center) { Icon(Icons.Default.AutoAwesome, null, tint = Color.White) }
                             Spacer(Modifier.width(10.dp)); Text("আমি কী করতে পারি", fontWeight = FontWeight.ExtraBold)
                         }
-                        Text("📊 Account stats ও মোট likes  •  🔎 User search  •  🗑️ নিজের post delete (confirmation সহ)  •  💬 FireChat help  •  🧠 এই ডিভাইসে chat memory", fontSize = 12.sp)
+                        Text("📊 Account stats ও মোট likes  •  🔎 User search  •  🗑️ নিজের post delete (confirmation সহ)  •  💬 Convo Chat help  •  🧠 এই ডিভাইসে chat memory", fontSize = 12.sp)
                         if (!config.assistantEnabled) Text("Admin বর্তমানে Assistant বন্ধ রেখেছেন।", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
                     }
                 }
@@ -149,7 +149,7 @@ fun AssistantScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenUser: (U
                             if (line.role == "assistant") {
                                 TextButton(onClick = {
                                     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                    clipboard.setPrimaryClip(ClipData.newPlainText("FireChat Assistant", line.text))
+                                    clipboard.setPrimaryClip(ClipData.newPlainText("Convo Chat Assistant", line.text))
                                 }, modifier = Modifier.align(Alignment.End)) { Icon(Icons.Default.ContentCopy, null, Modifier.size(14.dp)); Spacer(Modifier.width(4.dp)); Text("Copy", fontSize = 10.sp) }
                             }
                         }

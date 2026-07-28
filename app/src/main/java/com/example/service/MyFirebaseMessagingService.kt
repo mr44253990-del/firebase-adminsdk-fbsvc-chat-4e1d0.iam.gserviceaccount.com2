@@ -68,8 +68,8 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         val rawTitle = remoteMessage.notification?.title ?: remoteMessage.data["title"] ?: "New Message"
         val rawBody = remoteMessage.notification?.body ?: remoteMessage.data["body"] ?: "You received a new message"
         val hideContent = AppLockManager.isEnabled(this)
-        val title = if (hideContent) "FireChat" else rawTitle
-        val body = if (hideContent) "New notification received — unlock FireChat to view" else rawBody
+        val title = if (hideContent) "Convo Chat" else rawTitle
+        val body = if (hideContent) "New notification received — unlock Convo Chat to view" else rawBody
         val senderId = remoteMessage.data["senderId"] ?: ""
         val notificationType = remoteMessage.data["notificationType"] ?: "message"
         val targetId = remoteMessage.data["targetId"] ?: ""
@@ -84,7 +84,7 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         val muted = getSharedPreferences("firechat_prefs", Context.MODE_PRIVATE).getStringSet("muted_users", emptySet())?.contains(senderId) == true
         if (muted && notificationType == "message") return
         val senderProfileUrl = remoteMessage.data["senderProfileUrl"] ?: ""
-        val senderName = if (hideContent) "FireChat user" else remoteMessage.data["senderName"] ?: title
+        val senderName = if (hideContent) "Convo Chat user" else remoteMessage.data["senderName"] ?: title
 
         if (notificationType == "call_cancelled") {
             if (targetId.isNotBlank()) {
@@ -164,8 +164,8 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         val channelId = "firechat_calls_v3"
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            manager.createNotificationChannel(NotificationChannel(channelId, "FireChat Incoming Calls", NotificationManager.IMPORTANCE_HIGH).apply {
-                description = "Full-screen incoming FireChat calls"
+            manager.createNotificationChannel(NotificationChannel(channelId, "Convo Chat Incoming Calls", NotificationManager.IMPORTANCE_HIGH).apply {
+                description = "Full-screen incoming Convo Chat calls"
                 setSound(null, null)
                 enableVibration(false)
                 lockscreenVisibility = NotificationCompat.VISIBILITY_PUBLIC
@@ -174,7 +174,7 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         }
         val builder = NotificationCompat.Builder(this, channelId)
             .setSmallIcon(android.R.drawable.sym_call_incoming)
-            .setContentTitle(if (videoCall) "Incoming FireChat video call" else "Incoming FireChat audio call")
+            .setContentTitle(if (videoCall) "Incoming Convo Chat video call" else "Incoming Convo Chat audio call")
             .setContentText(callerName)
             .setCategory(NotificationCompat.CATEGORY_CALL)
             .setPriority(NotificationCompat.PRIORITY_MAX)
@@ -248,7 +248,7 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(channelId, "FireChat • $channelName", NotificationManager.IMPORTANCE_HIGH).apply {
+            val channel = NotificationChannel(channelId, "Convo Chat • $channelName", NotificationManager.IMPORTANCE_HIGH).apply {
                 description = when (channelId) {
                     "firechat_messages_v3" -> "Direct and group chat messages"
                     "firechat_requests_v2" -> "Friend and message requests"

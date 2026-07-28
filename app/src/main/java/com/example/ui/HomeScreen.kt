@@ -132,7 +132,7 @@ private fun verifyUpdateApk(context: Context, uri: Uri): Result<VerifiedUpdateAp
 
         val installed = context.packageManager.getPackageInfo(context.packageName, flags)
         require(signerDigests(archive).isNotEmpty() && signerDigests(archive) == signerDigests(installed)) {
-            "APK signing certificate does not match FireChat"
+            "APK signing certificate does not match Convo Chat"
         }
         val code = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) archive.longVersionCode else archive.versionCode.toLong()
         require(code >= com.example.BuildConfig.VERSION_CODE) {
@@ -274,13 +274,13 @@ fun HomeScreen(
                         Column {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text(
-                                    text = "FireChat",
+                                    text = "Convo Chat",
                                     fontWeight = FontWeight.Black,
                                     fontSize = 25.sp,
                                     color = MaterialTheme.colorScheme.primary,
                                     letterSpacing = (-0.8).sp
                                 )
-                                Spacer(Modifier.width(5.dp)); Icon(Icons.Default.Verified, "Verified FireChat", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(19.dp))
+                                Spacer(Modifier.width(5.dp)); Icon(Icons.Default.Verified, "Verified Convo Chat", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(19.dp))
                             }
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Box(Modifier.size(8.dp).clip(CircleShape).background(if (isOnlineState) Color(0xFF26E86F) else Color(0xFFFF5252)))
@@ -294,7 +294,7 @@ fun HomeScreen(
                     },
                     actions = {
                         IconButton(onClick = onPremium) {
-                            Icon(Icons.Default.WorkspacePremium, contentDescription = "FireChat Premium", tint = Color(0xFFFFB300))
+                            Icon(Icons.Default.WorkspacePremium, contentDescription = "Convo Chat Premium", tint = Color(0xFFFFB300))
                         }
                         IconButton(onClick = { showGlobalSearch = true }) {
                             Icon(Icons.Outlined.Search, contentDescription = "Search people and media")
@@ -891,7 +891,7 @@ fun HomeScreen(
                                                 maintenanceMode = draftMaintenance,
                                                 assistantEnabled = draftAssistantEnabled,
                                                 aiModel = draftAiModel.ifBlank { "mistral-small-latest" },
-                                                aiDisplayName = draftAiName.ifBlank { "FireChat Assistant" },
+                                                aiDisplayName = draftAiName.ifBlank { "Convo Chat Assistant" },
                                                 aiSystemPrompt = draftAiPrompt,
                                                 premiumEnabled = draftPremiumEnabled,
                                                 premiumPaymentNumber = draftPaymentNumber.ifBlank { "01755070708" },
@@ -1112,7 +1112,7 @@ fun HomeScreen(
                         Card(onClick = onPremium, shape = RoundedCornerShape(24.dp), modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
                             Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                                 Icon(Icons.Default.WorkspacePremium, null, tint = Color(0xFFFFA000), modifier = Modifier.size(34.dp))
-                                Spacer(Modifier.width(12.dp)); Column(Modifier.weight(1f)) { Text("FireChat Premium", fontWeight = FontWeight.ExtraBold); Text("Plans, verified badge and exclusive tools", fontSize = 11.sp) }
+                                Spacer(Modifier.width(12.dp)); Column(Modifier.weight(1f)) { Text("Convo Chat Premium", fontWeight = FontWeight.ExtraBold); Text("Plans, verified badge and exclusive tools", fontSize = 11.sp) }
                                 Icon(Icons.Default.ChevronRight, null)
                             }
                         }
@@ -1361,7 +1361,7 @@ fun HomeScreen(
                                     Icon(Icons.Outlined.Lock, null, tint = MaterialTheme.colorScheme.primary)
                                     Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
                                         Text("App lock", fontWeight = FontWeight.Bold)
-                                        Text(if (lockEnabled) "PIN and notification privacy enabled" else "Protect FireChat with PIN or biometrics", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text(if (lockEnabled) "PIN and notification privacy enabled" else "Protect Convo Chat with PIN or biometrics", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                     Switch(checked = lockEnabled, onCheckedChange = {
                                         if (it) showLockSetup = true else { AppLockManager.disable(context); lockEnabled = false }
@@ -1616,8 +1616,8 @@ fun HomeScreen(
             Surface(shape = RoundedCornerShape(30.dp)) {
                 Column(Modifier.padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                     Icon(Icons.Outlined.Construction, null, Modifier.size(54.dp), tint = MaterialTheme.colorScheme.primary)
-                    Spacer(Modifier.height(12.dp)); Text("FireChat maintenance", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                    Text(flagshipConfig.noticeBody.ifBlank { "We are preparing a better FireChat experience. Please try again later." }, textAlign = TextAlign.Center)
+                    Spacer(Modifier.height(12.dp)); Text("Convo Chat maintenance", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                    Text(flagshipConfig.noticeBody.ifBlank { "We are preparing a better Convo Chat experience. Please try again later." }, textAlign = TextAlign.Center)
                 }
             }
         }
@@ -1636,7 +1636,7 @@ fun HomeScreen(
         var biometric by remember { mutableStateOf(AppLockManager.canUseBiometric(context)) }
         AlertDialog(
             onDismissRequest = { showLockSetup = false },
-            title = { Text("Set FireChat lock", fontWeight = FontWeight.Bold) },
+            title = { Text("Set Convo Chat lock", fontWeight = FontWeight.Bold) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text("Choose a 4–8 digit PIN. Notification content will be hidden while lock is enabled.")

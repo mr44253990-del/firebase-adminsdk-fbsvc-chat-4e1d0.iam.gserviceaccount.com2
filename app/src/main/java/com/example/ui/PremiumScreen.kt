@@ -81,13 +81,13 @@ fun PremiumScreen(viewModel: ChatViewModel, onBack: () -> Unit, onChatAdmin: (Us
     LaunchedEffect(methods) { if (methods.none { it.first == method }) method = methods.firstOrNull()?.first.orEmpty() }
     LaunchedEffect(plans) { if (plans.none { it.first == plan }) plan = plans.firstOrNull()?.first.orEmpty() }
 
-    Scaffold(topBar = { TopAppBar(title = { Text("FireChat Premium", fontWeight = FontWeight.ExtraBold) }, navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } }) }) { padding ->
+    Scaffold(topBar = { TopAppBar(title = { Text("Convo Chat Premium", fontWeight = FontWeight.ExtraBold) }, navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } }) }) { padding ->
         LazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             item {
                 Card(shape = RoundedCornerShape(30.dp), colors = CardDefaults.cardColors(containerColor = Color.Transparent)) {
                     Column(Modifier.fillMaxWidth().background(Brush.linearGradient(listOf(Color(0xFF6B4EFF), Color(0xFFE64DAB), Color(0xFFFFA726)))).padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                         Icon(Icons.Default.WorkspacePremium, null, tint = Color.White, modifier = Modifier.size(58.dp))
-                        Text(if (activePremium) "Premium Active ✨" else "আপনার FireChat আরও শক্তিশালী করুন", color = Color.White, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold, textAlign = TextAlign.Center)
+                        Text(if (activePremium) "Premium Active ✨" else "আপনার Convo Chat আরও শক্তিশালী করুন", color = Color.White, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold, textAlign = TextAlign.Center)
                         if (activePremium) {
                             val expiry = if (me?.premiumPlan == "lifetime") "Lifetime" else SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(me?.premiumUntil ?: 0L))
                             Text("${me?.premiumPlan?.uppercase()} • $expiry পর্যন্ত", color = Color.White.copy(.9f))

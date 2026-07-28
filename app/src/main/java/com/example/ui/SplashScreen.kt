@@ -86,7 +86,7 @@ fun SplashScreen(onFinished: () -> Unit) {
                 ) {
                     Image(
                         painter = painterResource(R.drawable.img_app_logo),
-                        contentDescription = "FireChat logo",
+                        contentDescription = "Convo Chat logo",
                         modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(28.dp))
                     )
                     Box(
@@ -96,7 +96,7 @@ fun SplashScreen(onFinished: () -> Unit) {
                 }
             }
             Spacer(Modifier.height(32.dp))
-            Text("FireChat", color = Color.White, style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.ExtraBold)
+            Text("Convo Chat", color = Color.White, style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.ExtraBold)
             Text("Connect • Share • Belong", color = Color.White.copy(alpha = .66f), style = MaterialTheme.typography.bodyMedium)
             Spacer(Modifier.height(34.dp))
             Box(

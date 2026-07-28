@@ -279,7 +279,7 @@ object CallEngine {
         if (_state.value.video) {
             val context = appContext ?: throw IllegalStateException("Missing call context")
             videoCapturer = createCameraCapturer(context) ?: throw IllegalStateException("No usable camera found")
-            surfaceTextureHelper = SurfaceTextureHelper.create("FireChatCamera", eglBase!!.eglBaseContext)
+            surfaceTextureHelper = SurfaceTextureHelper.create("Convo ChatCamera", eglBase!!.eglBaseContext)
             videoSource = factory?.createVideoSource(false) ?: throw IllegalStateException("Could not create video source")
             videoCapturer?.initialize(surfaceTextureHelper, context, videoSource!!.capturerObserver)
             videoCapturer?.startCapture(720, 1280, 24)
@@ -399,7 +399,7 @@ object CallEngine {
         runCatching { CallForegroundService.start(context, _state.value.callId, _state.value.remoteName, _state.value.video) }
         if (callCpuWakeLock?.isHeld != true) {
             val power = context.getSystemService(Context.POWER_SERVICE) as PowerManager
-            callCpuWakeLock = power.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "FireChat:ActiveCallCpu").apply {
+            callCpuWakeLock = power.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Convo Chat:ActiveCallCpu").apply {
                 setReferenceCounted(false)
                 acquire(2 * 60 * 60 * 1000L)
             }
@@ -444,7 +444,7 @@ object CallEngine {
         if (shouldUse && proximityWakeLock?.isHeld != true) {
             val power = context.getSystemService(Context.POWER_SERVICE) as PowerManager
             if (power.isWakeLockLevelSupported(PowerManager.PROXIMITY_SCREEN_OFF_WAKE_LOCK)) {
-                proximityWakeLock = power.newWakeLock(PowerManager.PROXIMITY_SCREEN_OFF_WAKE_LOCK, "FireChat:CallProximity").apply { acquire() }
+                proximityWakeLock = power.newWakeLock(PowerManager.PROXIMITY_SCREEN_OFF_WAKE_LOCK, "Convo Chat:CallProximity").apply { acquire() }
             }
         } else if (!shouldUse && proximityWakeLock?.isHeld == true) {
             proximityWakeLock?.release(); proximityWakeLock = null

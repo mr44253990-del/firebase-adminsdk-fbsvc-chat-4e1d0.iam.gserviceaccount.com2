@@ -420,7 +420,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     gatewayUrl = _webhookUrl.value,
                     targetToken = token,
                     senderName = caller.name,
-                    messageBody = if (video) "Incoming FireChat video call" else "Incoming FireChat audio call",
+                    messageBody = if (video) "Incoming Convo Chat video call" else "Incoming Convo Chat audio call",
                     senderId = caller.uid,
                     senderProfileUrl = caller.profileImageUrl,
                     notificationType = if (video) "incoming_video_call" else "incoming_call",
@@ -430,7 +430,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             val chatId = listOf(caller.uid, recipient.uid).sorted().joinToString("_")
             val historyMessage = Message(
                 messageId = "call_$callId", senderId = caller.uid, senderName = caller.name,
-                senderUsername = caller.username, text = if (video) "📹 FireChat video call" else "📞 FireChat audio call",
+                senderUsername = caller.username, text = if (video) "📹 Convo Chat video call" else "📞 Convo Chat audio call",
                 timestamp = System.currentTimeMillis(), deliveredToRecipient = recipient.isOnline
             )
             getDatabaseInstance().getReference("chats").child(chatId).child("messages")
@@ -490,7 +490,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             triggerFcmGatewayNotification(
                 gatewayUrl = _webhookUrl.value,
                 targetToken = token,
-                senderName = "FireChat Diagnostics",
+                senderName = "Convo Chat Diagnostics",
                 messageBody = "Direct FCM gateway test completed successfully",
                 senderId = admin.uid,
                 senderProfileUrl = admin.profileImageUrl,
@@ -581,7 +581,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         batch.update(firestore.collection("premium_requests").document(request.id), mapOf("status" to if (approve) "approved" else "rejected", "reviewedAt" to now, "reviewedBy" to admin.uid, "adminNote" to note.take(500)))
         if (approve) batch.update(firestore.collection("users").document(request.userId), mapOf("isPremium" to true, "premiumPlan" to request.plan, "premiumUntil" to until, "premiumApprovedAt" to now))
         batch.commit().addOnSuccessListener {
-            createActivityNotification(request.userId, if (approve) "premium_approved" else "premium_rejected", request.id, if (approve) "আপনার FireChat Premium চালু হয়েছে 🎉" else "Premium request was not approved")
+            createActivityNotification(request.userId, if (approve) "premium_approved" else "premium_rejected", request.id, if (approve) "আপনার Convo Chat Premium চালু হয়েছে 🎉" else "Premium request was not approved")
             onComplete(true)
         }.addOnFailureListener { onComplete(false) }
     }
@@ -631,7 +631,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 getDatabaseInstance().getReference("config").child("flagship").setValue(published)
                     .addOnFailureListener { Log.e("FLAGSHIP", "RTDB mirror failed: ${it.message}") }
                 if (published.updateEnabled) _usersState.value.forEach { target ->
-                    createActivityNotification(target.uid, "app_update", published.updateId, "Required FireChat ${published.versionName} update is available")
+                    createActivityNotification(target.uid, "app_update", published.updateId, "Required Convo Chat ${published.versionName} update is available")
                 }
                 onComplete(true)
             }.addOnFailureListener { onComplete(false) }
@@ -2185,7 +2185,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
                 val jsonObject = JSONObject().apply {
                     put("token", targetToken)
-                    put("title", if (notificationType == "message") "New message from $senderName" else "$senderName • FireChat")
+                    put("title", if (notificationType == "message") "New message from $senderName" else "$senderName • Convo Chat")
                     put("body", messageBody)
                     put("text", messageBody)
                     put("senderId", senderId)
