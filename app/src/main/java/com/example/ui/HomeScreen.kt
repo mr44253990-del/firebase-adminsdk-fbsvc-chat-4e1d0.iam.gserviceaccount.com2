@@ -2963,12 +2963,17 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
                 val imageLikes = post.mediaReactions[mediaKey].orEmpty()
                 val imageLiked = imageLikes.containsKey(currentUserId)
                 Box(
-                    Modifier.fillMaxWidth().height(260.dp).clip(RoundedCornerShape(24.dp))
+                    Modifier.fillMaxWidth().then(if (mediaImages.size == 1) Modifier.heightIn(min = 180.dp, max = 540.dp) else Modifier.height(320.dp)).clip(RoundedCornerShape(24.dp))
                         .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(24.dp))
                 ) {
-                    HorizontalPager(state = imagePager, modifier = Modifier.fillMaxSize()) { page ->
+                    if (mediaImages.size == 1) {
                         AsyncImage(
-                            model = mediaImages[page], contentDescription = "Post image ${page + 1}", contentScale = ContentScale.Crop,
+                            model = mediaImages.first(), contentDescription = "Post image", contentScale = ContentScale.Fit,
+                            modifier = Modifier.fillMaxWidth().wrapContentHeight().align(Alignment.Center).pointerInput(post.id) { detectTapGestures(onDoubleTap = { viewModel.reactToPostMedia(post.id, "0", "❤️") }) }
+                        )
+                    } else HorizontalPager(state = imagePager, modifier = Modifier.fillMaxSize()) { page ->
+                        AsyncImage(
+                            model = mediaImages[page], contentDescription = "Post image ${page + 1}", contentScale = ContentScale.Fit,
                             modifier = Modifier.fillMaxSize().pointerInput(post.id, page) {
                                 detectTapGestures(onDoubleTap = { viewModel.reactToPostMedia(post.id, page.toString(), "❤️") })
                             }

@@ -11,6 +11,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.animation.core.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
@@ -76,6 +77,10 @@ fun AssistantScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenUser: (U
         val normalized = prompt.lowercase()
         val myPosts = posts.filter { it.senderId == uid }
         when {
+            normalized.contains("who created") || normalized.contains("who made") || normalized.contains("কে তৈরি") || normalized.contains("creator") -> {
+                matches = users.filter { it.role == "moderator" || it.name.contains("Rakib", true) }.take(3)
+                answer("✨ আমাকে তৈরি ও পরিচালনা করেছেন ADMIN RAKIB। নিচে তাঁর verified profile দেখানো হয়েছে—সেখান থেকে profile বা chat খুলতে পারবেন।")
+            }
             normalized.contains("delete post") || normalized.contains("পোস্ট ডিলিট") || normalized.contains("পোস্ট মুছ") -> {
                 deleteChoices = myPosts.sortedByDescending { it.timestamp }.take(12)
                 answer(if (deleteChoices.isEmpty()) "আপনার কোনো পোস্ট পাওয়া যায়নি।" else "নিরাপত্তার জন্য নিচের তালিকা থেকে পোস্ট নির্বাচন করে Confirm করুন।")
@@ -97,7 +102,8 @@ fun AssistantScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenUser: (U
             }
             else -> {
                 thinking = true
-                viewModel.askAssistant(prompt, lines.takeLast(20).map { "${it.role}: ${it.text}" }) { reply ->
+                val accountContext = "account_context: name=${currentUser?.name}, username=${currentUser?.username}, posts=${myPosts.size}, likes=${myPosts.sumOf { it.reactions.size + it.mediaReactions.values.sumOf { reactions -> reactions.size } }}, followers=${currentUser?.followers?.size}, following=${currentUser?.following?.size}, friends=${currentUser?.friends?.size}, joined=${currentUser?.createdAt}, premium=${currentUser?.isPremium}"
+                viewModel.askAssistant(prompt, listOf(accountContext) + lines.takeLast(19).map { "${it.role}: ${it.text}" }) { reply ->
                     thinking = false; answer(reply)
                 }
             }
@@ -150,7 +156,7 @@ fun AssistantScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenUser: (U
                     }
                 }
             }
-            if (thinking) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
+            if (thinking) item { AssistantTypingGlass(config.aiDisplayName) }
             items(matches, key = { it.uid }) { user ->
                 ListItem(
                     headlineContent = { Text(user.name, fontWeight = FontWeight.Bold) },
@@ -177,5 +183,25 @@ fun AssistantScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenUser: (U
             confirmButton = { Button(onClick = { viewModel.deletePost(post.id); deleteChoices = deleteChoices.filterNot { it.id == post.id }; confirmDelete = null; answer("✅ পোস্টটি ডিলিট করা হয়েছে।") }) { Text("Confirm delete") } },
             dismissButton = { TextButton(onClick = { confirmDelete = null }) { Text("Cancel") } }
         )
+    }
+}
+
+@Composable
+private fun AssistantTypingGlass(name: String) {
+    val transition = rememberInfiniteTransition(label = "assistant_typing")
+    val phases = (0..2).map { index ->
+        transition.animateFloat(
+            initialValue = .3f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(tween(620, delayMillis = index * 130), RepeatMode.Reverse),
+            label = "dot_$index"
+        )
+    }
+    Surface(shape = RoundedCornerShape(22.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(.72f), tonalElevation = 5.dp) {
+        Row(Modifier.padding(horizontal = 15.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(30.dp).background(Brush.linearGradient(listOf(Color(0xFF6B52FF), Color(0xFFFF45BA))), CircleShape), contentAlignment = Alignment.Center) { Icon(Icons.Default.AutoAwesome, null, tint = Color.White, modifier = Modifier.size(16.dp)) }
+            Spacer(Modifier.width(9.dp)); Text("$name is thinking", fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
+            Spacer(Modifier.width(9.dp)); phases.forEach { alpha -> Box(Modifier.padding(2.dp).size(6.dp).background(MaterialTheme.colorScheme.primary.copy(alpha.value), CircleShape)) }
+        }
     }
 }
