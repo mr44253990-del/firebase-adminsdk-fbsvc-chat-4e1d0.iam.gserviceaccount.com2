@@ -9,11 +9,13 @@ import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -74,6 +76,7 @@ class IncomingCallActivity : ComponentActivity() {
                     callId = callId, remoteUid = callerId, remoteName = callerName,
                     remoteImage = callerImage, incoming = true, video = videoCall,
                     initiallyAccepted = intent.action == "com.ebchat.ACCEPT_CALL" && canUseMedia,
+                    onMinimize = { finish() },
                     onClose = { finish() }
                 )
             }
@@ -91,6 +94,7 @@ fun CallScreen(
     video: Boolean = false,
     initiallyAccepted: Boolean = false,
     onEndCall: () -> Unit = { CallEngine.end() },
+    onMinimize: () -> Unit = {},
     onClose: () -> Unit
 ) {
     val context = LocalContext.current
@@ -98,6 +102,7 @@ fun CallScreen(
     val state by CallEngine.state.collectAsState()
     val effectiveVideo = video || state.video
     var elapsedSeconds by remember { mutableLongStateOf(0L) }
+    BackHandler(enabled = state.status !in listOf("idle", "ended", "declined", "missed", "failed")) { onMinimize() }
     DisposableEffect(effectiveVideo) {
         val window = (view.context as? Activity)?.window
         window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
@@ -141,6 +146,10 @@ fun CallScreen(
                 onRelease = CallEngine::detachRenderer
             )
         }
+        if (accepted) IconButton(
+            onClick = onMinimize,
+            modifier = Modifier.align(Alignment.TopStart).windowInsetsPadding(WindowInsets.statusBars).padding(12.dp).background(Color.Black.copy(.42f), CircleShape)
+        ) { Icon(Icons.Default.KeyboardArrowDown, "Minimize call", tint = Color.White, modifier = Modifier.size(30.dp)) }
         Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).padding(28.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             Spacer(Modifier.weight(if (effectiveVideo && accepted) .06f else .18f))
             AnimatedVisibility(visible = !effectiveVideo || !accepted) {
@@ -185,11 +194,12 @@ fun CallScreen(
                     }
                 }
             } else {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                Row(Modifier.fillMaxWidth().horizontalScroll(androidx.compose.foundation.rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                     CallCircleButton(Color.White.copy(.15f), if (state.muted) Icons.Default.MicOff else Icons.Default.Mic, "Mute") { CallEngine.toggleMute() }
-                    CallCircleButton(Color(0xFFE53935), Icons.Default.CallEnd, "End") { onEndCall(); onClose() }
+                    if (effectiveVideo) CallCircleButton(Color.White.copy(.15f), if (state.cameraOff) Icons.Default.VideocamOff else Icons.Default.Videocam, if (state.cameraOff) "Camera on" else "Camera off") { CallEngine.toggleCamera() }
                     CallCircleButton(Color.White.copy(.15f), if (state.speaker) Icons.Default.VolumeUp else Icons.Default.Hearing, "Speaker") { CallEngine.toggleSpeaker() }
                     if (effectiveVideo) CallCircleButton(Color.White.copy(.15f), Icons.Default.Cameraswitch, "Flip") { CallEngine.switchCamera() }
+                    CallCircleButton(Color(0xFFE53935), Icons.Default.CallEnd, "End") { onEndCall(); onClose() }
                 }
             }
             Spacer(Modifier.height(30.dp))

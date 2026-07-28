@@ -69,11 +69,11 @@ fun OnboardingScreen(
             featureBadge = "🔒 Privacy First"
         ),
         OnboardingPage(
-            title = "রাকিবুল ইসলামের তৈরি FireChat",
+            title = "ADMIN RAKIB-এর তৈরি FireChat",
             description = "মানুষকে সুন্দর, দ্রুত ও নিরাপদভাবে যুক্ত করার স্বপ্নে তৈরি একটি আধুনিক বাংলাদেশি প্ল্যাটফর্ম। Flagship updates, নতুন feature requests এবং community feedback-এর মাধ্যমে FireChat প্রতিনিয়ত আরও উন্নত হবে।",
             icon = Icons.Outlined.ChatBubbleOutline,
             accentColor = MaterialTheme.colorScheme.primary,
-            featureBadge = "🚀 নির্মাতা • রাকিবুল ইসলাম"
+            featureBadge = "🚀 নির্মাতা • ADMIN RAKIB"
         )
     )
 

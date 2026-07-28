@@ -114,7 +114,7 @@ fun SplashScreen(onFinished: () -> Unit) {
         }
 
         Text(
-            "Designed by Rakibul Islam",
+            "Designed by ADMIN RAKIB",
             modifier = Modifier.align(Alignment.BottomCenter).windowInsetsPadding(WindowInsets.navigationBars).padding(22.dp),
             color = Color.White.copy(alpha = .42f),
             style = MaterialTheme.typography.labelSmall

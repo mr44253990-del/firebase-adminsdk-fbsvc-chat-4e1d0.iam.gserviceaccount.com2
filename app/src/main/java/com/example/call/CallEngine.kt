@@ -34,6 +34,7 @@ data class CallState(
     val muted: Boolean = false,
     val speaker: Boolean = false,
     val video: Boolean = false,
+    val cameraOff: Boolean = false,
     val connectedAt: Long = 0L,
     val error: String? = null
 )
@@ -179,6 +180,12 @@ object CallEngine {
     fun switchCamera() {
         runCatching { (videoCapturer as? CameraVideoCapturer)?.switchCamera(null) }
             .onFailure { Log.w("CALL_ENGINE", "Camera switch failed", it) }
+    }
+
+    fun toggleCamera() {
+        val off = !_state.value.cameraOff
+        localVideoTrack?.setEnabled(!off)
+        _state.value = _state.value.copy(cameraOff = off)
     }
 
     fun toggleSpeaker() {

@@ -391,7 +391,10 @@ fun ChatScreen(
                                 }.padding(12.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(Icons.Default.Palette, null, tint = MaterialTheme.colorScheme.primary)
+                            val previewColors = when (theme) {
+                                "Sunset" -> listOf(Color(0xFF7B2D45), Color(0xFFFF8A5B)); "Ocean" -> listOf(Color(0xFF004E64), Color(0xFF00A5CF)); "Forest" -> listOf(Color(0xFF174A35), Color(0xFF5BC88A)); "Midnight" -> listOf(Color.Black, Color(0xFF35205E)); "Sakura" -> listOf(Color(0xFF8E3E62), Color(0xFFFFA9C6)); "Neon" -> listOf(Color(0xFF00FFD5), Color(0xFFFF3DF2)); "Desert" -> listOf(Color(0xFF875B3A), Color(0xFFE8B26A)); "Galaxy" -> listOf(Color(0xFF7D4DFF), Color(0xFF14102A)); "Pearl" -> listOf(Color(0xFFF7F1FF), Color(0xFFDDEEFF)); "Royal Gold" -> listOf(Color(0xFF5B3A08), Color(0xFFFFD166)); "Cyber Lime" -> listOf(Color.Black, Color(0xFFA7FF4F)); "Rose Quartz" -> listOf(Color(0xFF7A3157), Color(0xFFFFB4D7)); else -> listOf(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.secondary)
+                            }
+                            Box(Modifier.size(width = 48.dp, height = 32.dp).clip(RoundedCornerShape(10.dp)).background(Brush.linearGradient(previewColors)).border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(10.dp)))
                             Spacer(Modifier.width(10.dp))
                             Text(theme, fontWeight = if (chatTheme == theme) FontWeight.Bold else FontWeight.Normal)
                             Spacer(Modifier.weight(1f))

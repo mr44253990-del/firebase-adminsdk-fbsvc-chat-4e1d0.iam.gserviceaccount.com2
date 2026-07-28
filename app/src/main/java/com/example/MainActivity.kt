@@ -7,22 +7,25 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.*
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.unit.dp
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.compose.ui.platform.LocalContext
 import com.example.ui.AuthScreen
 import com.example.ui.AssistantScreen
 import com.example.ui.ChatScreen
 import com.example.call.CallScreen
 import com.example.call.CallEngine
+import com.example.call.CallMiniOverlay
 import com.example.ui.ChatViewModel
 import com.example.ui.HomeScreen
 import com.example.ui.GroupChatScreen
@@ -146,6 +149,8 @@ class MainActivity : FragmentActivity() {
                 }
 
                 PremiumBackground {
+                    val currentRoute = navController.currentBackStackEntryAsState().value?.destination?.route
+                    Box(Modifier.fillMaxSize()) {
                     NavHost(
                         navController = navController,
                         startDestination = "splash",
@@ -267,6 +272,7 @@ class MainActivity : FragmentActivity() {
                                 onEndCall = {
                                     activeRecipient?.let { viewModel.endCall(it, callState.callId) } ?: CallEngine.end()
                                 },
+                                onMinimize = { navController.popBackStack() },
                                 onClose = { navController.popBackStack() }
                             )
                         }
@@ -303,6 +309,16 @@ class MainActivity : FragmentActivity() {
                                 )
                             }
                         }
+                    }
+                    if (currentRoute != "call" && callState.status !in listOf("idle", "ended", "declined", "missed", "failed")) {
+                        Box(Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(12.dp)) {
+                            CallMiniOverlay(
+                                state = callState,
+                                onExpand = { navController.navigate("call") { launchSingleTop = true } },
+                                onEnd = { activeRecipient?.let { viewModel.endCall(it, callState.callId) } ?: CallEngine.end() }
+                            )
+                        }
+                    }
                     }
                 }
 

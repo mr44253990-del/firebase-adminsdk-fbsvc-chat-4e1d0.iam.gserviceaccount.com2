@@ -130,8 +130,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     val notificationSoundsEnabled: StateFlow<Boolean> = _notificationSoundsEnabled.asStateFlow()
     private val _typingSoundsEnabled = MutableStateFlow(sharedPrefs.getBoolean("typing_sounds", true))
     val typingSoundsEnabled: StateFlow<Boolean> = _typingSoundsEnabled.asStateFlow()
-    private val _bubbleNotificationsEnabled = MutableStateFlow(sharedPrefs.getBoolean("bubble_notifications", false))
-    val bubbleNotificationsEnabled: StateFlow<Boolean> = _bubbleNotificationsEnabled.asStateFlow()
     private val _mutedUserIds = MutableStateFlow(sharedPrefs.getStringSet("muted_users", emptySet())?.toSet() ?: emptySet())
     val mutedUserIds: StateFlow<Set<String>> = _mutedUserIds.asStateFlow()
     private val _savedPostIds = MutableStateFlow(sharedPrefs.getStringSet("saved_posts", emptySet())?.toSet() ?: emptySet())
@@ -1398,11 +1396,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         _typingSoundsEnabled.value = typingSounds
         sharedPrefs.edit().putBoolean("notification_sounds", notificationSounds)
             .putBoolean("typing_sounds", typingSounds).apply()
-    }
-
-    fun setBubbleNotifications(enabled: Boolean) {
-        _bubbleNotificationsEnabled.value = enabled
-        sharedPrefs.edit().putBoolean("bubble_notifications", enabled).apply()
     }
 
     fun playNotificationSound() {

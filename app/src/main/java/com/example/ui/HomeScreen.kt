@@ -185,7 +185,6 @@ fun HomeScreen(
     val currentTheme by viewModel.themeState.collectAsState()
     val notificationSounds by viewModel.notificationSoundsEnabled.collectAsState()
     val typingSounds by viewModel.typingSoundsEnabled.collectAsState()
-    val bubbleNotifications by viewModel.bubbleNotificationsEnabled.collectAsState()
     val mutedUsers by viewModel.mutedUserIds.collectAsState()
     val savedPostIds by viewModel.savedPostIds.collectAsState()
     val allUsers by viewModel.usersState.collectAsState()
@@ -245,7 +244,7 @@ fun HomeScreen(
         containerColor = Color.Transparent,
         contentWindowInsets = androidx.compose.foundation.layout.WindowInsets(0, 0, 0, 0),
         topBar = {
-            Column(modifier = Modifier.fillMaxWidth()) {
+            if (currentTab != 6) Column(modifier = Modifier.fillMaxWidth()) {
                 // WiFi Offline Mode indicator banner
                 if (!isOnlineState) {
                     Box(
@@ -1397,16 +1396,6 @@ fun HomeScreen(
                                         onCheckedChange = { viewModel.updateSoundPreferences(notificationSounds, it) }
                                     )
                                 }
-                                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(Icons.Outlined.ChatBubbleOutline, null, tint = MaterialTheme.colorScheme.primary)
-                                    Column(Modifier.padding(start = 12.dp).weight(1f)) { Text("Message bubbles"); Text("Show supported chats over other apps", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                                    Switch(checked = bubbleNotifications, onCheckedChange = { enabled ->
-                                        viewModel.setBubbleNotifications(enabled)
-                                        if (enabled && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                                            runCatching { context.startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_BUBBLE_SETTINGS, Uri.parse("package:${context.packageName}"))) }
-                                        }
-                                    })
-                                }
                                 if (Build.VERSION.SDK_INT >= 34) {
                                     val manager = context.getSystemService(android.app.NotificationManager::class.java)
                                     if (!manager.canUseFullScreenIntent()) {
@@ -2319,15 +2308,9 @@ fun ReelsFeedScreen(
     onClose: () -> Unit
 ) {
     val context = LocalContext.current
-    val currentUser by viewModel.currentUserState.collectAsState()
-    var reelTab by rememberSaveable { mutableStateOf("For You") }
-    val reels = remember(posts, reelTab, currentUser?.following) {
-        val base = posts.filter { it.videoUrl.isNotBlank() && (it.isReel || it.r2ObjectKeys.isNotEmpty()) }
-        when (reelTab) {
-            "Following" -> base.filter { it.senderId in currentUser?.following.orEmpty() }.sortedByDescending { it.timestamp }
-            "Trending" -> base.sortedByDescending { it.reactions.size * 3 + it.comments.size * 2 + it.viewsCount }
-            else -> base.sortedWith(compareByDescending<Post> { it.timestamp }.thenBy { it.id })
-        }
+    val reels = remember(posts) {
+        posts.filter { it.videoUrl.isNotBlank() && (it.isReel || it.r2ObjectKeys.isNotEmpty()) }
+            .sortedWith(compareByDescending<Post> { it.timestamp }.thenBy { it.id })
     }
     if (reels.isEmpty()) {
         Column(Modifier.fillMaxSize().background(Color.Black).windowInsetsPadding(WindowInsets.statusBars).padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -2336,14 +2319,9 @@ fun ReelsFeedScreen(
                 Text("Reels", color = Color.White, fontWeight = FontWeight.Black, fontSize = 27.sp, modifier = Modifier.weight(1f))
                 IconButton(onClick = onCreateReel) { Icon(Icons.Default.Add, "Create reel", tint = Color.White) }
             }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-                listOf("For You", "Following", "Trending").forEach { tab ->
-                    FilterChip(selected = reelTab == tab, onClick = { reelTab = tab }, label = { Text(tab) })
-                }
-            }
             Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
                 Icon(Icons.Outlined.VideoLibrary, null, Modifier.size(72.dp), tint = MaterialTheme.colorScheme.primary)
-                Spacer(Modifier.height(12.dp)); Text(if (reelTab == "Following") "No reels from followed people" else "No reels yet", color = Color.White, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(12.dp)); Text("No reels yet", color = Color.White, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                 Text("Create a reel or switch feed.", color = Color.White.copy(.65f), textAlign = TextAlign.Center)
                 Spacer(Modifier.height(12.dp)); Button(onClick = onCreateReel) { Icon(Icons.Default.Add, null); Spacer(Modifier.width(6.dp)); Text("Create Reel") }
             }
@@ -2369,23 +2347,10 @@ fun ReelsFeedScreen(
                 onProfileSelected = { user -> VideoPlayerManager.pause(); onProfileSelected(user) }
             )
         }
-        Column(
-            Modifier.align(Alignment.TopCenter).fillMaxWidth().background(Brush.verticalGradient(listOf(Color.Black.copy(.88f), Color.Black.copy(.48f), Color.Transparent))).windowInsetsPadding(WindowInsets.statusBars).padding(horizontal = 12.dp, vertical = 6.dp)
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = onClose, modifier = Modifier.background(Color.White.copy(.12f), CircleShape)) { Icon(Icons.Default.ArrowBack, "Back", tint = Color.White) }
-                Spacer(Modifier.width(10.dp)); Text("Reels", color = Color.White, fontWeight = FontWeight.Black, fontSize = 27.sp, modifier = Modifier.weight(1f))
-                IconButton(onClick = { reelTab = "Trending" }) { Icon(Icons.Default.AutoFixHigh, "Trending reels", tint = Color.White) }
-                IconButton(onClick = onCreateReel) { Icon(Icons.Default.Add, "Create reel", tint = Color.White, modifier = Modifier.size(30.dp)) }
-            }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-                listOf("For You", "Following", "Trending").forEach { tab ->
-                    Surface(onClick = { reelTab = tab }, color = if (reelTab == tab) MaterialTheme.colorScheme.primary else Color.Black.copy(.28f), shape = CircleShape) {
-                        Text(tab, color = Color.White, fontWeight = if (reelTab == tab) FontWeight.ExtraBold else FontWeight.Medium, modifier = Modifier.padding(horizontal = 22.dp, vertical = 9.dp))
-                    }
-                }
-            }
-        }
+        IconButton(
+            onClick = onClose,
+            modifier = Modifier.align(Alignment.TopStart).windowInsetsPadding(WindowInsets.statusBars).padding(10.dp).background(Color.Black.copy(.28f), CircleShape)
+        ) { Icon(Icons.Default.ArrowBack, "Back", tint = Color.White) }
     }
 }
 
