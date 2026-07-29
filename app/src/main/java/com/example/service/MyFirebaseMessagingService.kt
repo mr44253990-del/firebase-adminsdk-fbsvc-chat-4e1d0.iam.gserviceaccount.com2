@@ -69,9 +69,12 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         val rawBody = remoteMessage.notification?.body ?: remoteMessage.data["body"] ?: "You received a new message"
         val hideContent = AppLockManager.isEnabled(this)
         val title = if (hideContent) "Convo Chat" else rawTitle
-        val body = if (hideContent) "New notification received — unlock Convo Chat to view" else rawBody
         val senderId = remoteMessage.data["senderId"] ?: ""
         val notificationType = remoteMessage.data["notificationType"] ?: "message"
+        val sentAt = remoteMessage.data["sentAt"]?.toLongOrNull() ?: System.currentTimeMillis()
+        val minutesLate = ((System.currentTimeMillis() - sentAt).coerceAtLeast(0L) / 60_000L)
+        val age = when { minutesLate < 1 -> "now"; minutesLate < 60 -> "$minutesLate min ago"; minutesLate < 1440 -> "${minutesLate / 60} hr ago"; else -> "${minutesLate / 1440} day ago" }
+        val body = if (hideContent) "New notification received — unlock Convo Chat to view" else if (notificationType == "message") "$rawBody • $age" else rawBody
         val targetId = remoteMessage.data["targetId"] ?: ""
         if (notificationType == "message" && senderId.isNotBlank() && targetId.isNotBlank()) {
             FirebaseAuth.getInstance().currentUser?.uid?.let { receiverUid ->
@@ -161,7 +164,7 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         val person = personBuilder.build()
         // v3 is intentionally silent at channel level. CallRingtoneController owns
         // ringtone/vibration so full-screen launch cannot stop it and accept cannot double-play it.
-        val channelId = "firechat_calls_v3"
+        val channelId = "convo_calls_v1"
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             manager.createNotificationChannel(NotificationChannel(channelId, "Convo Chat Incoming Calls", NotificationManager.IMPORTANCE_HIGH).apply {
@@ -211,10 +214,10 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         )
 
         val (channelId, channelName, pattern, category) = when (notificationType) {
-            "message" -> NotificationStyle("firechat_messages_v3", "Messages", longArrayOf(0, 120, 70, 150), NotificationCompat.CATEGORY_MESSAGE)
+            "message" -> NotificationStyle("convo_messages_v1", "Messages", longArrayOf(0, 120, 70, 150), NotificationCompat.CATEGORY_MESSAGE)
             "friend_request", "friend_accepted", "message_request", "message_accepted" ->
-                NotificationStyle("firechat_requests_v2", "Requests", longArrayOf(0, 220, 100, 220), NotificationCompat.CATEGORY_SOCIAL)
-            else -> NotificationStyle("firechat_activity_v2", "Activity", longArrayOf(0, 100), NotificationCompat.CATEGORY_SOCIAL)
+                NotificationStyle("convo_requests_v1", "Requests", longArrayOf(0, 220, 100, 220), NotificationCompat.CATEGORY_SOCIAL)
+            else -> NotificationStyle("convo_activity_v1", "Activity", longArrayOf(0, 100), NotificationCompat.CATEGORY_SOCIAL)
         }
 
         val notificationId = System.currentTimeMillis().toInt()
@@ -250,11 +253,11 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(channelId, "Convo Chat • $channelName", NotificationManager.IMPORTANCE_HIGH).apply {
                 description = when (channelId) {
-                    "firechat_messages_v3" -> "Direct and group chat messages"
-                    "firechat_requests_v2" -> "Friend and message requests"
+                    "convo_messages_v1" -> "Direct and group chat messages"
+                    "convo_requests_v1" -> "Friend and message requests"
                     else -> "Reactions, comments, tags and story activity"
                 }
-                if (channelId == "firechat_messages_v3") {
+                if (channelId == "convo_messages_v1") {
                     setSound(messageSound, AudioAttributes.Builder()
                         .setUsage(AudioAttributes.USAGE_NOTIFICATION)
                         .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build())

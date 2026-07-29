@@ -2195,7 +2195,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
                 val jsonObject = JSONObject().apply {
                     put("token", targetToken)
-                    put("title", if (notificationType == "message") "New message from $senderName" else "$senderName • Convo Chat")
+                    put("title", if (notificationType == "message") "Convo Chat • $senderName" else "$senderName • Convo Chat")
                     put("body", messageBody)
                     put("text", messageBody)
                     put("senderId", senderId)

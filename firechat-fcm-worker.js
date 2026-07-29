@@ -102,7 +102,7 @@ export default {
 
     try {
       const payload = await request.json();
-      const { token, title, body, senderId, senderName, senderProfileUrl, notificationType, targetId } = payload;
+      const { token, title, body, senderId, senderName, senderProfileUrl, notificationType, targetId, timestamp } = payload;
 
       // 1. Parse Firebase Service Account Key
       if (!env.FIREBASE_SERVICE_ACCOUNT) {
@@ -277,7 +277,8 @@ export default {
             senderName: senderName || "",
             senderProfileUrl: senderProfileUrl || "",
             notificationType: notificationType || "message",
-            targetId: targetId || ""
+            targetId: targetId || "",
+            sentAt: String(timestamp || Date.now())
           },
           android: {
             priority: "high"
