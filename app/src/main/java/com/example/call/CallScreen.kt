@@ -145,9 +145,9 @@ fun CallScreen(
                 modifier = Modifier.fillMaxSize(),
                 onRelease = CallEngine::detachRenderer
             )
-            AndroidView(
+            if (!state.cameraOff && !state.screenSharing) AndroidView(
                 factory = { ctx -> SurfaceViewRenderer(ctx).also(CallEngine::attachLocalRenderer) },
-                modifier = Modifier.align(Alignment.TopEnd).windowInsetsPadding(WindowInsets.statusBars).padding(18.dp).size(width = 116.dp, height = 170.dp).clip(RoundedCornerShape(22.dp)).border(1.dp, Color.White.copy(.6f), RoundedCornerShape(22.dp)),
+                modifier = Modifier.align(Alignment.TopEnd).windowInsetsPadding(WindowInsets.statusBars).padding(14.dp).size(width = 104.dp, height = 148.dp).clip(RoundedCornerShape(26.dp)).border(1.dp, Color.White.copy(.6f), RoundedCornerShape(26.dp)),
                 onRelease = CallEngine::detachRenderer
             )
         }

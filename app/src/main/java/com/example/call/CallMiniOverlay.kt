@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -17,6 +18,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.unit.IntOffset
+import kotlin.math.roundToInt
 import androidx.compose.ui.viewinterop.AndroidView
 import coil.compose.AsyncImage
 import org.webrtc.SurfaceViewRenderer
@@ -24,6 +28,8 @@ import org.webrtc.SurfaceViewRenderer
 @Composable
 fun CallMiniOverlay(state: CallState, onExpand: () -> Unit, onEnd: () -> Unit) {
     var seconds by remember(state.callId) { mutableLongStateOf(0L) }
+    var dragX by remember(state.callId) { mutableFloatStateOf(0f) }
+    var dragY by remember(state.callId) { mutableFloatStateOf(0f) }
     LaunchedEffect(state.connectedAt, state.status) {
         while (state.status == "connected" && state.connectedAt > 0) {
             seconds = (System.currentTimeMillis() - state.connectedAt) / 1000
@@ -31,10 +37,12 @@ fun CallMiniOverlay(state: CallState, onExpand: () -> Unit, onEnd: () -> Unit) {
         }
     }
     Surface(
-        shape = RoundedCornerShape(24.dp), tonalElevation = 10.dp, shadowElevation = 12.dp,
+        shape = RoundedCornerShape(28.dp), tonalElevation = 10.dp, shadowElevation = 12.dp,
         color = Color(0xEE121421),
-        modifier = Modifier.width(if (state.video) 178.dp else 270.dp).height(if (state.video) 235.dp else 76.dp)
-            .border(1.dp, Color(0xFF8B72FF).copy(.7f), RoundedCornerShape(24.dp)).clickable(onClick = onExpand)
+        modifier = Modifier.offset { IntOffset(dragX.roundToInt(), dragY.roundToInt()) }
+            .width(if (state.video) 158.dp else 270.dp).height(if (state.video) 208.dp else 76.dp)
+            .pointerInput(state.callId) { detectDragGestures { change, amount -> change.consume(); dragX += amount.x; dragY += amount.y } }
+            .border(1.dp, Color(0xFF8B72FF).copy(.7f), RoundedCornerShape(28.dp)).clickable(onClick = onExpand)
     ) {
         if (state.video) {
             Box(Modifier.fillMaxSize().background(Color.Black)) {

@@ -234,8 +234,16 @@ object CallEngine {
         val context = appContext ?: return
         val enabled = !_state.value.speaker
         val manager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        @Suppress("DEPRECATION")
-        run { manager.mode = AudioManager.MODE_IN_COMMUNICATION; manager.isSpeakerphoneOn = enabled }
+        manager.mode = AudioManager.MODE_IN_COMMUNICATION
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            if (enabled) manager.availableCommunicationDevices.firstOrNull { it.type == android.media.AudioDeviceInfo.TYPE_BUILTIN_SPEAKER }?.let(manager::setCommunicationDevice)
+            else manager.clearCommunicationDevice()
+        } else @Suppress("DEPRECATION") run { manager.isSpeakerphoneOn = enabled }
+        if (enabled) {
+            val max = manager.getStreamMaxVolume(AudioManager.STREAM_VOICE_CALL)
+            val minimum = (max * .70f).toInt().coerceAtLeast(1)
+            if (manager.getStreamVolume(AudioManager.STREAM_VOICE_CALL) < minimum) manager.setStreamVolume(AudioManager.STREAM_VOICE_CALL, minimum, 0)
+        }
         _state.value = _state.value.copy(speaker = enabled)
         updateProximityLock()
     }
@@ -460,7 +468,7 @@ object CallEngine {
         if (callCpuWakeLock?.isHeld == true) runCatching { callCpuWakeLock?.release() }
         callCpuWakeLock = null
         @Suppress("DEPRECATION")
-        runCatching { audioManager?.abandonAudioFocus(null); audioManager?.mode = AudioManager.MODE_NORMAL }
+        runCatching { audioManager?.abandonAudioFocus(null); if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) audioManager?.clearCommunicationDevice(); audioManager?.mode = AudioManager.MODE_NORMAL }
         audioManager = null
         candidateListeners.forEach { (ref, listener) -> ref.removeEventListener(listener) }; candidateListeners.clear()
         callListener?.let { listener -> callRef?.removeEventListener(listener) }; callListener = null
