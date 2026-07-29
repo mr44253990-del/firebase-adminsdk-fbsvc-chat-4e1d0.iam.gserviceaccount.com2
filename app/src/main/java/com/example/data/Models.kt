@@ -20,7 +20,9 @@ data class User(
     val isPremium: Boolean = false,
     val premiumPlan: String = "",
     val premiumUntil: Long = 0L,
-    val premiumApprovedAt: Long = 0L
+    val premiumApprovedAt: Long = 0L,
+    val premiumTrialClaimed: Boolean = false,
+    val premiumSource: String = ""
 )
 
 data class Message(

@@ -212,6 +212,8 @@ fun HomeScreen(
     var showCreateGroupDialog by remember { mutableStateOf(false) }
     var showCreateHub by remember { mutableStateOf(false) }
     var selectedStoryIndex by remember { mutableStateOf<Int?>(null) }
+    val premiumWelcomeKey = currentUser?.takeIf { it.isPremium && (it.premiumPlan == "lifetime" || it.premiumUntil > System.currentTimeMillis()) && it.premiumApprovedAt > 0 }?.let { "premium_${it.premiumApprovedAt}" }
+    var showPremiumWelcome by remember(premiumWelcomeKey) { mutableStateOf(premiumWelcomeKey != null && !context.getSharedPreferences("convo_premium_welcome", Context.MODE_PRIVATE).getBoolean(premiumWelcomeKey, false)) }
 
     LaunchedEffect(openActivitySignal) {
         if (openActivitySignal > 0L) {
@@ -790,6 +792,8 @@ fun HomeScreen(
                         var draftBkash by remember(flagshipConfig) { mutableStateOf(flagshipConfig.premiumBkashEnabled) }
                         var draftNagad by remember(flagshipConfig) { mutableStateOf(flagshipConfig.premiumNagadEnabled) }
                         var draftRocket by remember(flagshipConfig) { mutableStateOf(flagshipConfig.premiumRocketEnabled) }
+                        var giftDays by remember { mutableStateOf("5") }
+                        var giftCount by remember { mutableStateOf("10") }
                         var updateUploading by remember { mutableStateOf(false) }
                         var updateUploadProgress by remember { mutableIntStateOf(0) }
                         val updateApkPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
@@ -908,6 +912,18 @@ fun HomeScreen(
                                         ) { ok -> Toast.makeText(context, if (ok) "Flagship configuration published" else "Publish failed", Toast.LENGTH_LONG).show() }
                                     }, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Outlined.Publish, null); Spacer(Modifier.width(8.dp)); Text("Publish Flagship config") }
                                     if (flagshipConfig.updateEnabled) TextButton(onClick = { viewModel.publishFlagshipConfig(flagshipConfig.copy(updateEnabled = false, mandatoryUpdate = false)) }) { Text("Disable current update") }
+                                }
+                            }
+
+                            Card(shape = RoundedCornerShape(26.dp), modifier = Modifier.fillMaxWidth()) {
+                                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                                    Text("Premium Gift & Revoke", fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.primary)
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        OutlinedTextField(giftDays, { giftDays = it.filter(Char::isDigit).take(3) }, label = { Text("Days") }, modifier = Modifier.weight(1f), singleLine = true)
+                                        OutlinedTextField(giftCount, { giftCount = it.filter(Char::isDigit).take(3) }, label = { Text("Random users") }, modifier = Modifier.weight(1f), singleLine = true)
+                                    }
+                                    Button(onClick = { val days = giftDays.toIntOrNull()?.coerceIn(1,365) ?: 5; val targets = allUsers.filterNot { it.isPremium && (it.premiumPlan == "lifetime" || it.premiumUntil > System.currentTimeMillis()) }.shuffled().take(giftCount.toIntOrNull()?.coerceIn(1,100) ?: 10); viewModel.grantPremiumGift(targets.map { it.uid }, days) { Toast.makeText(context, if (it) "Gift sent to ${targets.size} users" else "Gift failed", Toast.LENGTH_LONG).show() } }, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Default.CardGiftcard, null); Spacer(Modifier.width(7.dp)); Text("Send random gifts") }
+                                    allUsers.filter { it.isPremium && (it.premiumPlan == "lifetime" || it.premiumUntil > System.currentTimeMillis()) }.take(15).forEach { person -> Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) { Text(person.name, Modifier.weight(1f), maxLines = 1); TextButton(onClick = { viewModel.revokePremium(person.uid) }) { Text("Cancel", color = MaterialTheme.colorScheme.error) } } }
                                 }
                             }
 
@@ -1811,6 +1827,16 @@ fun HomeScreen(
                     Text("Cancel")
                 }
             }
+        )
+    }
+
+    if (showPremiumWelcome) currentUser?.let { premiumUser ->
+        AlertDialog(
+            onDismissRequest = {},
+            icon = { Icon(Icons.Default.WorkspacePremium, null, tint = Color(0xFFFFB300), modifier = Modifier.size(54.dp)) },
+            title = { Text("🎉 Congratulations!", fontWeight = FontWeight.Black, textAlign = TextAlign.Center) },
+            text = { Column(horizontalAlignment = Alignment.CenterHorizontally) { Text("${premiumUser.name}, Convo Chat Premium is active!", textAlign = TextAlign.Center); Spacer(Modifier.height(10.dp)); val days = if (premiumUser.premiumPlan == "lifetime") "Lifetime" else "${((premiumUser.premiumUntil - System.currentTimeMillis()).coerceAtLeast(0) / 86_400_000L) + 1} days remaining"; Text(days, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.ExtraBold); if (premiumUser.premiumPlan == "trial") { Spacer(Modifier.height(8.dp)); Text("Your one-time 14-day free trial has started.", textAlign = TextAlign.Center) } } },
+            confirmButton = { Button(onClick = { premiumWelcomeKey?.let { context.getSharedPreferences("convo_premium_welcome", Context.MODE_PRIVATE).edit().putBoolean(it, true).apply() }; showPremiumWelcome = false }) { Text("Explore Premium") } }
         )
     }
 

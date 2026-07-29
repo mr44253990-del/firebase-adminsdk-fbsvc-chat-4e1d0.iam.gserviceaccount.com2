@@ -8,11 +8,14 @@ service cloud.firestore {
       allow read: if signedIn();
       allow create: if owner(uid)
         && (request.resource.data.role == null || request.resource.data.role == 'user' || request.auth.token.email == 'mr4425390@gmail.com')
-        && (request.resource.data.isPremium == null || request.resource.data.isPremium == false);
+        && (request.resource.data.isPremium == null || request.resource.data.isPremium == false ||
+          (request.resource.data.isPremium == true && request.resource.data.premiumPlan == 'trial'
+            && request.resource.data.premiumTrialClaimed == true && request.resource.data.premiumSource == 'signup_trial'
+            && request.resource.data.premiumUntil <= request.time.toMillis() + 1211400000));
       allow delete: if owner(uid);
       allow update: if (owner(uid)
         && request.resource.data.role == resource.data.role
-        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['isPremium', 'premiumPlan', 'premiumUntil', 'premiumApprovedAt']))
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['isPremium', 'premiumPlan', 'premiumUntil', 'premiumApprovedAt', 'premiumTrialClaimed', 'premiumSource']))
         || request.auth.token.email == 'mr4425390@gmail.com' || (
         signedIn()
         && exists(/databases/$(database)/documents/friend_requests/$(uid + "_" + request.auth.uid))

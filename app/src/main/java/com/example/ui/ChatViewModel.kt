@@ -596,6 +596,21 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }.addOnFailureListener { onComplete(false) }
     }
 
+    fun grantPremiumGift(userIds: List<String>, days: Int, onComplete: (Boolean) -> Unit = {}) {
+        val admin = FirebaseAuth.getInstance().currentUser ?: return onComplete(false)
+        if (admin.email?.lowercase()?.trim()?.trimEnd('.') != "mr4425390@gmail.com" || days !in 1..365 || userIds.isEmpty()) return onComplete(false)
+        val now = System.currentTimeMillis(); val firestore = FirebaseFirestore.getInstance(); val batch = firestore.batch()
+        userIds.distinct().take(100).forEach { uid -> batch.update(firestore.collection("users").document(uid), mapOf("isPremium" to true, "premiumPlan" to "gift", "premiumUntil" to now + days * 86_400_000L, "premiumApprovedAt" to now, "premiumSource" to "admin_gift")) }
+        batch.commit().addOnSuccessListener { userIds.distinct().take(100).forEach { createActivityNotification(it, "premium_gift", "gift_$now", "ADMIN RAKIB gifted you $days days of Convo Chat Premium 🎉") }; onComplete(true) }.addOnFailureListener { onComplete(false) }
+    }
+
+    fun revokePremium(uid: String, onComplete: (Boolean) -> Unit = {}) {
+        val admin = FirebaseAuth.getInstance().currentUser ?: return onComplete(false)
+        if (admin.email?.lowercase()?.trim()?.trimEnd('.') != "mr4425390@gmail.com") return onComplete(false)
+        FirebaseFirestore.getInstance().collection("users").document(uid).update(mapOf("isPremium" to false, "premiumPlan" to "", "premiumUntil" to 0L, "premiumSource" to "revoked"))
+            .addOnSuccessListener { createActivityNotification(uid, "premium_revoked", uid, "Your Premium access was cancelled by ADMIN RAKIB"); onComplete(true) }.addOnFailureListener { onComplete(false) }
+    }
+
     fun submitFeatureRequest(title: String, description: String, onComplete: (Boolean) -> Unit = {}) {
         val user = getCurrentUserOrFallback() ?: return onComplete(false)
         if (title.isBlank() || description.isBlank()) return onComplete(false)
@@ -753,14 +768,19 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     profileImageUrl = authUser.photoUrl?.toString() ?: "",
                     createdAt = authUser.metadata?.creationTimestamp ?: System.currentTimeMillis()
                 )
+                val now = System.currentTimeMillis()
+                val firstGoogleLogin = kotlin.math.abs((authUser.metadata?.lastSignInTimestamp ?: now) - (authUser.metadata?.creationTimestamp ?: 0L)) < 60_000L
+                val profileValues = mutableMapOf<String, Any>(
+                    "uid" to profile.uid, "name" to profile.name, "username" to profile.username,
+                    "profileImageUrl" to profile.profileImageUrl, "createdAt" to profile.createdAt
+                ).apply {
+                    if (firstGoogleLogin) putAll(mapOf(
+                        "isPremium" to true, "premiumPlan" to "trial", "premiumUntil" to now + 14L * 86_400_000L,
+                        "premiumApprovedAt" to now, "premiumTrialClaimed" to true, "premiumSource" to "signup_trial"
+                    ))
+                }
                 FirebaseFirestore.getInstance().collection("users").document(authUser.uid)
-                    .set(mapOf(
-                        "uid" to profile.uid,
-                        "name" to profile.name,
-                        "username" to profile.username,
-                        "profileImageUrl" to profile.profileImageUrl,
-                        "createdAt" to profile.createdAt
-                    ), SetOptions.merge())
+                    .set(profileValues, SetOptions.merge())
                     .addOnCompleteListener {
                         retrieveFCMTokenAndStore(authUser.uid)
                         loadCurrentUserProfile(authUser.uid)
@@ -805,13 +825,14 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         val randomSuffix = (1000..9999).random()
                         val generatedUsername = "${cleanName}_$randomSuffix"
 
+                        val createdAt = System.currentTimeMillis()
                         val newUser = User(
-                            uid = uid,
-                            name = name,
-                            dob = dob,
-                            username = generatedUsername,
-                            profileImageUrl = profileImageUrl,
-                            createdAt = System.currentTimeMillis()
+                            uid = uid, name = name, dob = dob, username = generatedUsername,
+                            profileImageUrl = profileImageUrl, createdAt = createdAt,
+                            isPremium = true, premiumPlan = "trial",
+                            premiumUntil = createdAt + 14L * 86_400_000L,
+                            premiumApprovedAt = createdAt, premiumTrialClaimed = true,
+                            premiumSource = "signup_trial"
                         )
 
                         FirebaseFirestore.getInstance().collection("users")
