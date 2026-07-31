@@ -37,6 +37,7 @@ data class CallState(
     val speaker: Boolean = false,
     val video: Boolean = false,
     val cameraOff: Boolean = false,
+    val remoteCameraOff: Boolean = false,
     val screenSharing: Boolean = false,
     val connectedAt: Long = 0L,
     val error: String? = null
@@ -191,6 +192,7 @@ object CallEngine {
         val off = !_state.value.cameraOff
         localVideoTrack?.setEnabled(!off)
         _state.value = _state.value.copy(cameraOff = off)
+        callRef?.child(if (_state.value.direction == "outgoing") "callerCameraOff" else "calleeCameraOff")?.setValue(off)
     }
 
     fun startScreenShare(permissionData: Intent): Boolean {
@@ -209,6 +211,7 @@ object CallEngine {
             videoCapturer = screenCapturer
             localVideoTrack?.setEnabled(true)
             _state.value = _state.value.copy(screenSharing = true, cameraOff = false)
+            callRef?.child(if (_state.value.direction == "outgoing") "callerCameraOff" else "calleeCameraOff")?.setValue(false)
             true
         }.onFailure { Log.e("CALL_ENGINE", "Screen share failed", it) }.getOrDefault(false)
     }
@@ -330,6 +333,8 @@ object CallEngine {
             private var answerApplied = false
             override fun onDataChange(snapshot: DataSnapshot) {
                 val status = snapshot.child("status").getValue(String::class.java) ?: return
+                val remoteCameraOff = snapshot.child(if (isCaller) "calleeCameraOff" else "callerCameraOff").getValue(Boolean::class.java) ?: false
+                if (_state.value.remoteCameraOff != remoteCameraOff) _state.value = _state.value.copy(remoteCameraOff = remoteCameraOff)
                 if (isCaller && status == "connected" && !answerApplied) {
                     val answerSdp = snapshot.child("answerSdp").getValue(String::class.java)
                     if (!answerSdp.isNullOrBlank()) {

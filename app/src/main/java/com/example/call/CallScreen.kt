@@ -140,7 +140,14 @@ fun CallScreen(
     ) {
         if (remoteImage.isNotBlank() && !effectiveVideo) AsyncImage(remoteImage, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize().blur(70.dp))
         if (effectiveVideo && accepted) {
-            AndroidView(
+            if (state.remoteCameraOff) {
+                Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF090A13), Color(0xFF26213F)))), contentAlignment = Alignment.Center) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        AsyncImage(remoteImage.ifBlank { null }, remoteName, error = painterResource(R.drawable.img_app_logo), contentScale = ContentScale.Crop, modifier = Modifier.size(150.dp).clip(CircleShape).border(3.dp, Color.White.copy(.75f), CircleShape))
+                        Spacer(Modifier.height(14.dp)); Text("$remoteName turned off the camera", color = Color.White, fontWeight = FontWeight.Bold)
+                    }
+                }
+            } else AndroidView(
                 factory = { ctx -> SurfaceViewRenderer(ctx).also(CallEngine::attachRemoteRenderer) },
                 modifier = Modifier.fillMaxSize(),
                 onRelease = CallEngine::detachRenderer
