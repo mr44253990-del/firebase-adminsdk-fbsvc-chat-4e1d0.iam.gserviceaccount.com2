@@ -90,6 +90,7 @@ fun ChatScreen(
     recipient: User,
     onBack: () -> Unit,
     onProfile: () -> Unit = {},
+    onAssistant: () -> Unit = {},
     onCall: () -> Unit = {},
     onVideoCall: () -> Unit = {}
 ) {
@@ -524,6 +525,9 @@ fun ChatScreen(
                     }
                 },
                 actions = {
+                    IconButton(onClick = onAssistant, modifier = Modifier.background(Brush.linearGradient(listOf(Color(0xFF6658FF), Color(0xFFFF44B7))), CircleShape)) {
+                        Icon(Icons.Default.AutoAwesome, contentDescription = "Convo AI", tint = Color.White)
+                    }
                     IconButton(onClick = {
                         val cameraGranted = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
                         if (audioPermissionGranted && cameraGranted) onVideoCall()

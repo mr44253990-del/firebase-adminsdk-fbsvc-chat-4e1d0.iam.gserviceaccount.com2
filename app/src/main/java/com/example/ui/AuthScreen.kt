@@ -197,21 +197,22 @@ fun AuthScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
-                .padding(24.dp),
+                .padding(horizontal = 18.dp, vertical = 14.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             // Hero Illustration Container
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(180.dp)
-                    .clip(RoundedCornerShape(28.dp))
-                    .background(Color.Black.copy(alpha = 0.1f))
+                    .height(142.dp)
+                    .clip(RoundedCornerShape(32.dp))
+                    .background(Brush.linearGradient(listOf(Color(0xFF12142A), Color(0xFF27164C), Color(0xFF071D2B))))
+                    .border(1.dp, MaterialTheme.colorScheme.primary.copy(.35f), RoundedCornerShape(32.dp))
             ) {
                 Image(
-                    painter = painterResource(id = R.drawable.img_chat_banner),
-                    contentDescription = "Hero chat banner",
-                    contentScale = ContentScale.Crop,
+                    painter = painterResource(id = R.drawable.img_app_logo),
+                    contentDescription = "Convo Chat",
+                    contentScale = ContentScale.Fit,
                     modifier = Modifier.fillMaxSize()
                 )
                 // Ambient gradient overlay over the hero
@@ -241,10 +242,10 @@ fun AuthScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(20.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
             Text(
-                text = if (isLoginMode) "Welcome Back" else "Create Account",
+                text = if (isLoginMode) "Welcome back to Convo" else "Create your Convo account",
                 style = MaterialTheme.typography.headlineMedium.copy(
                     fontWeight = FontWeight.ExtraBold,
                     letterSpacing = (-0.5).sp

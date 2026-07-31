@@ -103,15 +103,10 @@ fun AssistantScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenUser: (U
             else -> {
                 thinking = true
                 val accountContext = "account_context: name=${currentUser?.name}, username=${currentUser?.username}, posts=${myPosts.size}, likes=${myPosts.sumOf { it.reactions.size + it.mediaReactions.values.sumOf { reactions -> reactions.size } }}, followers=${currentUser?.followers?.size}, following=${currentUser?.following?.size}, friends=${currentUser?.friends?.size}, joined=${currentUser?.createdAt}, premium=${currentUser?.isPremium}"
-                var streamed = ""
-                val streamBase = lines + AssistantLine("assistant", "")
-                lines = streamBase
-                viewModel.askAssistantStreaming(
-                    prompt,
-                    listOf(accountContext) + lines.takeLast(19).map { "${it.role}: ${it.text}" },
-                    onDelta = { token -> streamed += token; lines = streamBase.dropLast(1) + AssistantLine("assistant", streamed) },
-                    onDone = { error -> thinking = false; if (error != null && streamed.isBlank()) streamed = error; persist(streamBase.dropLast(1) + AssistantLine("assistant", streamed.ifBlank { "I could not generate a response." })) }
-                )
+                viewModel.askAssistant(prompt, listOf(accountContext) + lines.takeLast(19).map { "${it.role}: ${it.text}" }) { reply ->
+                    thinking = false
+                    answer(reply.replace(Regex("[#*_`>]+"), "").trim())
+                }
             }
         }
     }
@@ -119,7 +114,7 @@ fun AssistantScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenUser: (U
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Column { Text(config.aiDisplayName, fontWeight = FontWeight.ExtraBold); Text(config.aiModel, fontSize = 10.sp, color = MaterialTheme.colorScheme.primary) } },
+                title = { Row(verticalAlignment = Alignment.CenterVertically) { Box(Modifier.size(40.dp).clip(CircleShape).background(Brush.linearGradient(listOf(Color(0xFF6657FF), Color(0xFFFF42B8)))), contentAlignment = Alignment.Center) { Icon(Icons.Default.AutoAwesome, null, tint = Color.White) }; Spacer(Modifier.width(10.dp)); Column { Text(config.aiDisplayName, fontWeight = FontWeight.Black); Text("Private • account-aware • ${config.aiModel}", fontSize = 9.sp, color = MaterialTheme.colorScheme.primary) } } },
                 navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
                 actions = { IconButton(onClick = { prefs.edit().clear().apply(); lines = emptyList() }) { Icon(Icons.Default.DeleteSweep, "Clear assistant memory") } }
             )

@@ -302,10 +302,6 @@ fun HomeScreen(
                         IconButton(onClick = { showGlobalSearch = true }) {
                             Icon(Icons.Outlined.Search, contentDescription = "Search people and media")
                         }
-                        if (flagshipConfig.assistantEnabled) IconButton(
-                            onClick = onAssistant,
-                            modifier = Modifier.background(Brush.radialGradient(listOf(MaterialTheme.colorScheme.primary.copy(.32f), Color.Transparent)), CircleShape)
-                        ) { Icon(Icons.Default.AutoAwesome, "AI Assistant", tint = MaterialTheme.colorScheme.primary) }
                         if (isAdmin) IconButton(onClick = { viewModel.setCurrentTab(3) }) {
                             Icon(Icons.Outlined.AdminPanelSettings, contentDescription = "Admin tools", tint = MaterialTheme.colorScheme.primary)
                         }
@@ -377,15 +373,6 @@ fun HomeScreen(
                 )
             }
         },
-        floatingActionButton = {
-            if (flagshipConfig.assistantEnabled && currentTab != 6) FloatingActionButton(
-                onClick = onAssistant,
-                shape = CircleShape,
-                containerColor = Color.Transparent,
-                modifier = Modifier.size(58.dp).background(Brush.linearGradient(listOf(Color(0xFF6255FF), Color(0xFFFF3DBB))), CircleShape)
-            ) { Icon(Icons.Default.AutoAwesome, "Convo AI", tint = Color.White, modifier = Modifier.size(28.dp)) }
-        },
-        floatingActionButtonPosition = FabPosition.End,
         bottomBar = {
             if (currentTab != 6) NavigationBar(
                 containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.82f),
@@ -2662,13 +2649,13 @@ private fun SuggestedPeopleStrip(
     Card(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp),
         shape = RoundedCornerShape(24.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = .68f)),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = .92f), contentColor = MaterialTheme.colorScheme.onSurface),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(.65f))
     ) {
         Column(Modifier.padding(vertical = 12.dp)) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Default.PersonSearch, null, tint = MaterialTheme.colorScheme.primary)
-                Spacer(Modifier.width(8.dp)); Text("Suggested for you", fontWeight = FontWeight.ExtraBold, modifier = Modifier.weight(1f))
+                Spacer(Modifier.width(8.dp)); Text("Suggested for you", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.ExtraBold, modifier = Modifier.weight(1f))
                 Text("Smart matches", color = MaterialTheme.colorScheme.primary, fontSize = 10.sp)
             }
             Spacer(Modifier.height(9.dp))
@@ -2687,7 +2674,7 @@ private fun SuggestedPeopleStrip(
                             }
                             Spacer(Modifier.height(7.dp))
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(person.name, fontWeight = FontWeight.ExtraBold, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(person.name, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.ExtraBold, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 if (person.role == "moderator" || (person.isPremium && (person.premiumPlan == "lifetime" || person.premiumUntil > System.currentTimeMillis()))) {
                                     Spacer(Modifier.width(3.dp)); Icon(Icons.Default.Verified, null, tint = if (person.role == "moderator") MaterialTheme.colorScheme.primary else Color(0xFFFFB300), modifier = Modifier.size(13.dp))
                                 }
