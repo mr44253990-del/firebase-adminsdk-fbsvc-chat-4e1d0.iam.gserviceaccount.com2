@@ -120,9 +120,6 @@ fun CallScreen(
     var accepted by remember { mutableStateOf(initiallyAccepted || !incoming) }
     BackHandler(enabled = true) { if (accepted) onMinimize() }
     var pendingAccept by remember { mutableStateOf(false) }
-    var emergencyActive by remember { mutableStateOf(false) }
-    val emergencyPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted -> if (granted) emergencyActive = EmergencySignalController.start(context) }
-    DisposableEffect(Unit) { onDispose { EmergencySignalController.stop(context) } }
     val screenShareLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode == Activity.RESULT_OK && result.data != null) {
             if (!CallEngine.startScreenShare(result.data!!)) android.widget.Toast.makeText(context, "Could not start screen sharing", android.widget.Toast.LENGTH_LONG).show()
@@ -217,12 +214,6 @@ fun CallScreen(
                                 val manager = context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
                                 screenShareLauncher.launch(manager.createScreenCaptureIntent())
                             }
-                        }
-                    } else Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
-                        CallCircleButton(if (emergencyActive) Color(0xFFFF8F00) else Color.White.copy(.15f), Icons.Default.Warning, if (emergencyActive) "Stop SOS" else "SOS signal") {
-                            if (emergencyActive) { EmergencySignalController.stop(context); emergencyActive = false }
-                            else if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) emergencyActive = EmergencySignalController.start(context)
-                            else emergencyPermissionLauncher.launch(Manifest.permission.CAMERA)
                         }
                     }
                 }
