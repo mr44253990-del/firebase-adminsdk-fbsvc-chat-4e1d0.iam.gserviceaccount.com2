@@ -103,9 +103,15 @@ fun AssistantScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenUser: (U
             else -> {
                 thinking = true
                 val accountContext = "account_context: name=${currentUser?.name}, username=${currentUser?.username}, posts=${myPosts.size}, likes=${myPosts.sumOf { it.reactions.size + it.mediaReactions.values.sumOf { reactions -> reactions.size } }}, followers=${currentUser?.followers?.size}, following=${currentUser?.following?.size}, friends=${currentUser?.friends?.size}, joined=${currentUser?.createdAt}, premium=${currentUser?.isPremium}"
-                viewModel.askAssistant(prompt, listOf(accountContext) + lines.takeLast(19).map { "${it.role}: ${it.text}" }) { reply ->
-                    thinking = false; answer(reply)
-                }
+                var streamed = ""
+                val streamBase = lines + AssistantLine("assistant", "")
+                lines = streamBase
+                viewModel.askAssistantStreaming(
+                    prompt,
+                    listOf(accountContext) + lines.takeLast(19).map { "${it.role}: ${it.text}" },
+                    onDelta = { token -> streamed += token; lines = streamBase.dropLast(1) + AssistantLine("assistant", streamed) },
+                    onDone = { error -> thinking = false; if (error != null && streamed.isBlank()) streamed = error; persist(streamBase.dropLast(1) + AssistantLine("assistant", streamed.ifBlank { "I could not generate a response." })) }
+                )
             }
         }
     }

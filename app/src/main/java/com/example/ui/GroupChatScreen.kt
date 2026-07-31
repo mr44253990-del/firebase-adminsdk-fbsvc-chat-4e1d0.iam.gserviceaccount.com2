@@ -34,6 +34,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
@@ -233,7 +234,7 @@ fun GroupChatScreen(
         }
     }
 
-    val isDark = isSystemInDarkTheme()
+    val isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
     val bgStart = MaterialTheme.colorScheme.background
     val bgEnd = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
     val chatGradientBg = Brush.verticalGradient(
@@ -525,7 +526,7 @@ fun GroupChatScreen(
 @Composable
 fun GroupMessageBubbleItem(msg: GroupMessage, isSentByMe: Boolean, onDeleteSelect: () -> Unit) {
     var showMenu by remember { mutableStateOf(false) }
-    val isDark = isSystemInDarkTheme()
+    val isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
     
     val bubbleBg = if (isSentByMe) {
         MaterialTheme.colorScheme.primary.copy(alpha = if (isDark) 0.3f else 0.85f)

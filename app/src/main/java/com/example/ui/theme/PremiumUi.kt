@@ -10,11 +10,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 
 /** App-wide aurora canvas. Keeps every route visually connected to one design language. */
 @Composable
 fun PremiumBackground(modifier: Modifier = Modifier, content: @Composable BoxScope.() -> Unit) {
-    val dark = isSystemInDarkTheme()
+    val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
     val base = MaterialTheme.colorScheme.background
     val gradient = Brush.linearGradient(
         listOf(

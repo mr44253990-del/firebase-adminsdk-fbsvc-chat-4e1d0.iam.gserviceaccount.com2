@@ -59,6 +59,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.animation.core.*
 import androidx.compose.ui.layout.ContentScale
@@ -376,6 +377,15 @@ fun HomeScreen(
                 )
             }
         },
+        floatingActionButton = {
+            if (flagshipConfig.assistantEnabled && currentTab != 6) FloatingActionButton(
+                onClick = onAssistant,
+                shape = CircleShape,
+                containerColor = Color.Transparent,
+                modifier = Modifier.size(58.dp).background(Brush.linearGradient(listOf(Color(0xFF6255FF), Color(0xFFFF3DBB))), CircleShape)
+            ) { Icon(Icons.Default.AutoAwesome, "Convo AI", tint = Color.White, modifier = Modifier.size(28.dp)) }
+        },
+        floatingActionButtonPosition = FabPosition.End,
         bottomBar = {
             if (currentTab != 6) NavigationBar(
                 containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.82f),
@@ -597,28 +607,6 @@ fun HomeScreen(
                     ) {
                         Spacer(modifier = Modifier.height(12.dp))
 
-                        if (flagshipConfig.assistantEnabled) {
-                            Card(
-                                onClick = onAssistant,
-                                modifier = Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(24.dp),
-                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
-                            ) {
-                                Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    Box(Modifier.size(48.dp).clip(CircleShape).background(Brush.linearGradient(listOf(Color(0xFF7C5CFC), Color(0xFF19D5C5), Color(0xFFFF65B3)))), contentAlignment = Alignment.Center) {
-                                        Icon(Icons.Default.AutoAwesome, "AI Assistant", tint = Color.White)
-                                    }
-                                    Spacer(Modifier.width(12.dp))
-                                    Column(Modifier.weight(1f)) {
-                                        Text(flagshipConfig.aiDisplayName, fontWeight = FontWeight.ExtraBold)
-                                        Text("Account insights • people search • smart actions • memory", fontSize = 11.sp, color = MaterialTheme.colorScheme.onPrimaryContainer)
-                                    }
-                                    Icon(Icons.Default.ChevronRight, null)
-                                }
-                            }
-                            Spacer(Modifier.height(12.dp))
-                        }
-                        
                         // Search contacts bar
                         OutlinedTextField(
                             value = searchQuery,
@@ -879,10 +867,18 @@ fun HomeScreen(
                                         FilterChip(draftNagad, { draftNagad = !draftNagad }, { Text("Nagad") })
                                         FilterChip(draftRocket, { draftRocket = !draftRocket }, { Text("Rocket") })
                                     }
+                                    OutlinedButton(onClick = { viewModel.updateFlagshipFields(mapOf(
+                                        "assistantEnabled" to draftAssistantEnabled, "aiModel" to draftAiModel, "aiDisplayName" to draftAiName, "aiSystemPrompt" to draftAiPrompt,
+                                        "premiumEnabled" to draftPremiumEnabled, "premiumPaymentNumber" to draftPaymentNumber,
+                                        "premiumMonthlyPrice" to (draftMonthlyPrice.toIntOrNull() ?: 199), "premiumYearlyPrice" to (draftYearlyPrice.toIntOrNull() ?: 1499), "premiumLifetimePrice" to (draftLifetimePrice.toIntOrNull() ?: 3999),
+                                        "premiumMonthlyEnabled" to draftMonthlyEnabled, "premiumYearlyEnabled" to draftYearlyEnabled, "premiumLifetimeEnabled" to draftLifetimeEnabled,
+                                        "premiumBkashEnabled" to draftBkash, "premiumNagadEnabled" to draftNagad, "premiumRocketEnabled" to draftRocket
+                                    )) { Toast.makeText(context, if (it) "AI & Premium saved" else "Save failed", Toast.LENGTH_LONG).show() } }, modifier = Modifier.fillMaxWidth()) { Text("Save AI & Premium only") }
                                     HorizontalDivider()
                                     Row(verticalAlignment = Alignment.CenterVertically) { Text("Show global notice", Modifier.weight(1f)); Switch(draftNoticeEnabled, { draftNoticeEnabled = it }) }
                                     OutlinedTextField(draftNoticeTitle, { draftNoticeTitle = it.take(100) }, label = { Text("Notice title") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                                     OutlinedTextField(draftNoticeBody, { draftNoticeBody = it.take(1000) }, label = { Text("Notice details") }, minLines = 2, modifier = Modifier.fillMaxWidth())
+                                    OutlinedButton(onClick = { viewModel.updateFlagshipFields(mapOf("noticeEnabled" to draftNoticeEnabled, "noticeTitle" to draftNoticeTitle, "noticeBody" to draftNoticeBody, "maintenanceMode" to draftMaintenance)) { Toast.makeText(context, if (it) "Notice & maintenance saved" else "Save failed", Toast.LENGTH_LONG).show() } }, modifier = Modifier.fillMaxWidth()) { Text("Save Notice & Maintenance only") }
                                     Button(onClick = {
                                         val code = draftVersionCode.toIntOrNull() ?: com.example.BuildConfig.VERSION_CODE
                                         viewModel.publishFlagshipConfig(
@@ -910,7 +906,7 @@ fun HomeScreen(
                                                 premiumRocketEnabled = draftRocket
                                             )
                                         ) { ok -> Toast.makeText(context, if (ok) "Flagship configuration published" else "Publish failed", Toast.LENGTH_LONG).show() }
-                                    }, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Outlined.Publish, null); Spacer(Modifier.width(8.dp)); Text("Publish Flagship config") }
+                                    }, enabled = draftUpdateEnabled && draftApkUrl.startsWith("https://"), modifier = Modifier.fillMaxWidth()) { Icon(Icons.Outlined.Publish, null); Spacer(Modifier.width(8.dp)); Text("Publish APK Update only") }
                                     if (flagshipConfig.updateEnabled) TextButton(onClick = { viewModel.publishFlagshipConfig(flagshipConfig.copy(updateEnabled = false, mandatoryUpdate = false)) }) { Text("Disable current update") }
                                 }
                             }
@@ -1193,8 +1189,11 @@ fun HomeScreen(
                             var inputDob by remember { mutableStateOf(user.dob) }
                             var inputBio by remember { mutableStateOf(user.bio) }
                             var inputCoverUrl by remember { mutableStateOf(user.coverImageUrl) }
+                            var coverScale by remember { mutableFloatStateOf(user.coverScale.coerceIn(1f, 2f)) }
+                            var coverOffsetY by remember { mutableFloatStateOf(user.coverOffsetY.coerceIn(-1f, 1f)) }
                             var inputProfileUrl by remember { mutableStateOf(user.profileImageUrl) }
                             var isUploadingAvatar by remember { mutableStateOf(false) }
+                            var isUploadingCover by remember { mutableStateOf(false) }
 
                             val calendar = Calendar.getInstance()
                             val datePickerDialog = DatePickerDialog(
@@ -1236,6 +1235,17 @@ fun HomeScreen(
                                         isUploadingAvatar = false
                                     }
                                 }
+                            }
+
+                            val coverLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
+                                uri ?: return@rememberLauncherForActivityResult
+                                isUploadingCover = true
+                                val bytes = runCatching { context.contentResolver.openInputStream(uri)?.use { it.readBytes() } }.getOrNull()
+                                if (bytes == null) isUploadingCover = false else viewModel.uploadFileToSupabase(
+                                    bucket = "avatars", fileName = "cover_${user.uid}_${System.currentTimeMillis()}.jpg", fileBytes = bytes, contentType = context.contentResolver.getType(uri) ?: "image/jpeg",
+                                    onSuccess = { inputCoverUrl = it; isUploadingCover = false; coverScale = 1f; coverOffsetY = 0f },
+                                    onFailure = { isUploadingCover = false; Toast.makeText(context, it, Toast.LENGTH_LONG).show() }
+                                )
                             }
 
                             Card(
@@ -1333,14 +1343,14 @@ fun HomeScreen(
                                         shape = RoundedCornerShape(18.dp)
                                     )
                                     Spacer(modifier = Modifier.height(10.dp))
-                                    OutlinedTextField(
-                                        value = inputCoverUrl,
-                                        onValueChange = { inputCoverUrl = it },
-                                        label = { Text("Cover image URL") },
-                                        modifier = Modifier.fillMaxWidth(),
-                                        singleLine = true,
-                                        shape = RoundedCornerShape(18.dp)
-                                    )
+                                    Text("Cover photo", fontWeight = FontWeight.Bold, modifier = Modifier.align(Alignment.Start))
+                                    Box(Modifier.fillMaxWidth().height(150.dp).clip(RoundedCornerShape(20.dp)).background(Brush.linearGradient(listOf(MaterialTheme.colorScheme.primaryContainer, MaterialTheme.colorScheme.secondaryContainer))), contentAlignment = Alignment.Center) {
+                                        if (inputCoverUrl.isNotBlank()) AsyncImage(inputCoverUrl, "Cover preview", contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize().graphicsLayer { scaleX = coverScale; scaleY = coverScale; translationY = coverOffsetY * 70f })
+                                        if (isUploadingCover) CircularProgressIndicator()
+                                    }
+                                    OutlinedButton(onClick = { coverLauncher.launch("image/*") }, enabled = !isUploadingCover, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Outlined.UploadFile, null); Spacer(Modifier.width(6.dp)); Text(if (inputCoverUrl.isBlank()) "Upload cover photo" else "Replace cover photo") }
+                                    Text("Zoom", fontSize = 11.sp); Slider(coverScale, { coverScale = it }, valueRange = 1f..2f)
+                                    Text("Vertical position", fontSize = 11.sp); Slider(coverOffsetY, { coverOffsetY = it }, valueRange = -1f..1f)
                                     Spacer(modifier = Modifier.height(14.dp))
 
                                     Button(
@@ -1355,6 +1365,8 @@ fun HomeScreen(
                                                 profileImageUrl = inputProfileUrl,
                                                 bio = inputBio,
                                                 coverImageUrl = inputCoverUrl,
+                                                coverScale = coverScale,
+                                                coverOffsetY = coverOffsetY,
                                                 onSuccess = {
                                                     Toast.makeText(context, "Profile details updated!", Toast.LENGTH_SHORT).show()
                                                 },
@@ -2858,7 +2870,7 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
     val currentUserId = FirebaseAuth.getInstance().currentUser?.uid ?: ""
     val savedPostIds by viewModel.savedPostIds.collectAsState()
     val postSaved = post.id in savedPostIds
-    val isDark = isSystemInDarkTheme()
+    val isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
     val allUsers by viewModel.usersState.collectAsState()
 
     // Register simple visual view count increment on render

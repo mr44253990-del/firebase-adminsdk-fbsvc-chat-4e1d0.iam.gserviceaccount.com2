@@ -82,6 +82,7 @@ fun PostComposerScreen(viewModel: ChatViewModel, onBack: () -> Unit, onPublished
     var uploadEtaSeconds by remember { mutableLongStateOf(0L) }
     var isReel by remember { mutableStateOf(false) }
     var aiGenerating by remember { mutableStateOf(false) }
+    var customizeExpanded by remember { mutableStateOf(false) }
     val imageMedia = remember { mutableStateListOf<R2MediaResult>() }
     var videoMedia by remember { mutableStateOf<R2MediaResult?>(null) }
 
@@ -237,7 +238,6 @@ fun PostComposerScreen(viewModel: ChatViewModel, onBack: () -> Unit, onPublished
                     if (text.isNotBlank() || title.isNotBlank()) Text("Draft saved automatically", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelSmall)
                 }
             }
-            PostCanvasPreview(style, animation, title, text.ifBlank { if (imageMedia.isNotEmpty() || videoMedia != null) "Add a caption…" else "Write something meaningful…" }, feeling)
             OutlinedTextField(
                 value = title, onValueChange = { if (it.length <= 80) title = it },
                 label = { Text("Title (optional)") }, modifier = Modifier.fillMaxWidth(), singleLine = true, shape = RoundedCornerShape(20.dp)
@@ -247,48 +247,61 @@ fun PostComposerScreen(viewModel: ChatViewModel, onBack: () -> Unit, onPublished
                 label = { Text("Your post") }, supportingText = { Text("${text.length}/1200") },
                 modifier = Modifier.fillMaxWidth().heightIn(min = 150.dp), minLines = 5, shape = RoundedCornerShape(24.dp)
             )
-            Text("Background", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                items(postCanvasStyles) { item ->
-                    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.clickable { style = item }) {
-                        Box(
-                            Modifier.size(64.dp).clip(RoundedCornerShape(20.dp)).background(Brush.linearGradient(item.colors))
-                                .border(if (style.id == item.id) 3.dp else 1.dp, if (style.id == item.id) MaterialTheme.colorScheme.primary else Color.White.copy(.25f), RoundedCornerShape(20.dp)),
-                            contentAlignment = Alignment.Center
-                        ) { if (style.id == item.id) Icon(Icons.Default.Check, null, tint = Color.White) }
-                        Text(item.title, fontSize = 10.sp)
+            Card(onClick = { customizeExpanded = !customizeExpanded }, shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(.55f))) {
+                Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Outlined.AutoAwesome, null, tint = MaterialTheme.colorScheme.primary)
+                    Spacer(Modifier.width(10.dp)); Column(Modifier.weight(1f)) { Text("Customize your post", fontWeight = FontWeight.ExtraBold); Text("Background • feeling • animation • hashtags • people", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                    Icon(if (customizeExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore, null)
+                }
+            }
+            AnimatedVisibility(customizeExpanded) {
+                Card(shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(.72f))) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Text("Background", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            items(postCanvasStyles) { item ->
+                                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.clickable { style = item }) {
+                                    Box(
+                                        Modifier.size(64.dp).clip(RoundedCornerShape(20.dp)).background(Brush.linearGradient(item.colors))
+                                            .border(if (style.id == item.id) 3.dp else 1.dp, if (style.id == item.id) MaterialTheme.colorScheme.primary else Color.White.copy(.25f), RoundedCornerShape(20.dp)),
+                                        contentAlignment = Alignment.Center
+                                    ) { if (style.id == item.id) Icon(Icons.Default.Check, null, tint = Color.White) }
+                                    Text(item.title, fontSize = 10.sp)
+                                }
+                            }
+                        }
+                        Text("Text animation", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            items(listOf("none" to "Still", "pulse" to "Pulse", "breathe" to "Breathe", "glow" to "Glow")) { (id, label) ->
+                                FilterChip(selected = animation == id, onClick = { animation = id }, label = { Text(label) }, leadingIcon = { Icon(Icons.Outlined.AutoAwesome, null, Modifier.size(16.dp)) })
+                            }
+                        }
+                        Text("Feeling", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            items(listOf("😊 Happy", "🥰 Loved", "🎉 Excited", "😎 Cool", "😢 Sad", "✈️ Traveling", "🎮 Gaming")) { item ->
+                                FilterChip(selected = feeling == item, onClick = { feeling = if (feeling == item) "" else item }, label = { Text(item) })
+                            }
+                        }
+                        OutlinedTextField(
+                            value = tags, onValueChange = { tags = it }, label = { Text("Hashtags") },
+                            placeholder = { Text("convo, thoughts, friends") }, modifier = Modifier.fillMaxWidth(), singleLine = true
+                        )
+                        OutlinedTextField(
+                            value = tagQuery, onValueChange = { tagQuery = it }, label = { Text("Tag people") },
+                            leadingIcon = { Icon(Icons.Outlined.AlternateEmail, null) }, placeholder = { Text("Type name or username") }, modifier = Modifier.fillMaxWidth(), singleLine = true
+                        )
+                        val matches = if (tagQuery.trim().length < 2) emptyList() else users.filter { it.uid !in taggedIds && (it.name.contains(tagQuery.trim(), true) || it.username.contains(tagQuery.trim().removePrefix("@"), true)) }.take(5)
+                        matches.forEach { user ->
+                            ListItem(
+                                headlineContent = { Text(user.name, fontWeight = FontWeight.Bold) }, supportingContent = { Text("@${user.username}") },
+                                modifier = Modifier.clip(RoundedCornerShape(18.dp)).clickable { taggedIds.add(user.uid); tagQuery = "" }
+                            )
+                        }
+                        if (taggedIds.isNotEmpty()) LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            items(taggedIds.toList()) { uid -> users.find { it.uid == uid }?.let { user -> InputChip(true, { taggedIds.remove(uid) }, { Text(user.name) }) } }
+                        }
                     }
                 }
-            }
-            Text("Text animation", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(listOf("none" to "Still", "pulse" to "Pulse", "breathe" to "Breathe", "glow" to "Glow")) { (id, label) ->
-                    FilterChip(selected = animation == id, onClick = { animation = id }, label = { Text(label) }, leadingIcon = { Icon(Icons.Outlined.AutoAwesome, null, Modifier.size(16.dp)) })
-                }
-            }
-            Text("Feeling", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(listOf("😊 Happy", "🥰 Loved", "🎉 Excited", "😎 Cool", "😢 Sad", "✈️ Traveling", "🎮 Gaming")) { item ->
-                    FilterChip(selected = feeling == item, onClick = { feeling = if (feeling == item) "" else item }, label = { Text(item) })
-                }
-            }
-            OutlinedTextField(
-                value = tags, onValueChange = { tags = it }, label = { Text("Hashtags") },
-                placeholder = { Text("firechat, thoughts, friends") }, modifier = Modifier.fillMaxWidth(), singleLine = true
-            )
-            OutlinedTextField(
-                value = tagQuery, onValueChange = { tagQuery = it }, label = { Text("Tag people") },
-                leadingIcon = { Icon(Icons.Outlined.AlternateEmail, null) }, placeholder = { Text("Type name or username") }, modifier = Modifier.fillMaxWidth(), singleLine = true
-            )
-            val matches = if (tagQuery.trim().length < 2) emptyList() else users.filter { it.uid !in taggedIds && (it.name.contains(tagQuery.trim(), true) || it.username.contains(tagQuery.trim().removePrefix("@"), true)) }.take(5)
-            matches.forEach { user ->
-                ListItem(
-                    headlineContent = { Text(user.name, fontWeight = FontWeight.Bold) }, supportingContent = { Text("@${user.username}") },
-                    modifier = Modifier.clip(RoundedCornerShape(18.dp)).clickable { taggedIds.add(user.uid); tagQuery = "" }
-                )
-            }
-            if (taggedIds.isNotEmpty()) LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                items(taggedIds.toList()) { uid -> users.find { it.uid == uid }?.let { user -> InputChip(true, { taggedIds.remove(uid) }, { Text(user.name) }) } }
             }
             Card(shape = RoundedCornerShape(22.dp)) {
                 Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -297,27 +310,6 @@ fun PostComposerScreen(viewModel: ChatViewModel, onBack: () -> Unit, onPublished
                     Switch(privatePost, { privatePost = it })
                 }
             }
-        }
-    }
-}
-
-@Composable
-private fun PostCanvasPreview(style: PostCanvasStyle, animation: String, title: String, text: String, feeling: String) {
-    val transition = rememberInfiniteTransition(label = "post_preview")
-    val pulse by transition.animateFloat(
-        initialValue = if (animation == "pulse") .96f else 1f,
-        targetValue = if (animation == "pulse") 1.04f else if (animation == "breathe") 1.02f else 1f,
-        animationSpec = infiniteRepeatable(tween(1100, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "preview_scale"
-    )
-    Box(
-        Modifier.fillMaxWidth().heightIn(min = 260.dp).clip(RoundedCornerShape(32.dp)).background(Brush.linearGradient(style.colors))
-            .border(1.dp, Color.White.copy(alpha = if (animation == "glow") .7f else .22f), RoundedCornerShape(32.dp)).padding(28.dp),
-        contentAlignment = Alignment.Center
-    ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.scale(pulse)) {
-            if (feeling.isNotBlank()) Text(feeling, color = Color.White.copy(.8f), fontWeight = FontWeight.Bold)
-            if (title.isNotBlank()) { Spacer(Modifier.height(8.dp)); Text(title, color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.ExtraBold, textAlign = TextAlign.Center) }
-            Spacer(Modifier.height(10.dp)); Text(text, color = Color.White, fontSize = 19.sp, lineHeight = 28.sp, textAlign = TextAlign.Center)
         }
     }
 }

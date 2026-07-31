@@ -16,6 +16,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
@@ -78,7 +79,7 @@ fun UserProfileScreen(
                 Column {
                     Box(Modifier.fillMaxWidth().height(250.dp)) {
                         if (liveUser.coverImageUrl.isNotBlank()) {
-                            AsyncImage(liveUser.coverImageUrl, "Cover photo", contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                            AsyncImage(liveUser.coverImageUrl, "Cover photo", contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize().graphicsLayer { scaleX = liveUser.coverScale.coerceIn(1f, 2f); scaleY = liveUser.coverScale.coerceIn(1f, 2f); translationY = liveUser.coverOffsetY.coerceIn(-1f, 1f) * 90f })
                         } else {
                             Box(
                                 Modifier.fillMaxSize().background(

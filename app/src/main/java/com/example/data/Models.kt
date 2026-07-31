@@ -22,7 +22,9 @@ data class User(
     val premiumUntil: Long = 0L,
     val premiumApprovedAt: Long = 0L,
     val premiumTrialClaimed: Boolean = false,
-    val premiumSource: String = ""
+    val premiumSource: String = "",
+    val coverScale: Float = 1f,
+    val coverOffsetY: Float = 0f
 )
 
 data class Message(

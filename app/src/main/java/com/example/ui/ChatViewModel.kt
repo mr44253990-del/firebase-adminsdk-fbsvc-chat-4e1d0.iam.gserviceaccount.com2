@@ -481,6 +481,32 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }.addOnFailureListener { onResult(it.localizedMessage ?: "Assistant authentication failed") }
     }
 
+    fun askAssistantStreaming(prompt: String, memory: List<String>, onDelta: (String) -> Unit, onDone: (String?) -> Unit) {
+        val user = FirebaseAuth.getInstance().currentUser ?: return onDone("Please sign in again")
+        if (!_flagshipConfig.value.assistantEnabled) return onDone("Assistant is disabled")
+        user.getIdToken(false).addOnSuccessListener { tokenResult ->
+            val token = tokenResult.token ?: return@addOnSuccessListener onDone("Could not authenticate")
+            viewModelScope.launch(Dispatchers.IO) {
+                try {
+                    val payload = JSONObject().apply { put("message", prompt.take(4000)); put("model", _flagshipConfig.value.aiModel); put("systemPrompt", _flagshipConfig.value.aiSystemPrompt.take(2000)); put("memory", JSONArray(memory.takeLast(20))); put("stream", true) }
+                    val request = Request.Builder().url(_webhookUrl.value.trimEnd('/') + "/ai/chat").header("Authorization", "Bearer $token").post(payload.toString().toRequestBody("application/json".toMediaTypeOrNull())).build()
+                    OkHttpClient.Builder().callTimeout(2, TimeUnit.MINUTES).build().newCall(request).execute().use { response ->
+                        if (!response.isSuccessful) return@use withContext(Dispatchers.Main) { onDone("Assistant unavailable (${response.code})") }
+                        response.body?.charStream()?.buffered()?.useLines { lines ->
+                            lines.forEach { line ->
+                                if (line.startsWith("data: ") && !line.endsWith("[DONE]")) {
+                                    val delta = runCatching { JSONObject(line.removePrefix("data: ")).optJSONArray("choices")?.optJSONObject(0)?.optJSONObject("delta")?.optString("content").orEmpty() }.getOrDefault("")
+                                    if (delta.isNotEmpty()) withContext(Dispatchers.Main) { onDelta(delta) }
+                                }
+                            }
+                        }
+                        withContext(Dispatchers.Main) { onDone(null) }
+                    }
+                } catch (error: Throwable) { withContext(Dispatchers.Main) { onDone(error.localizedMessage ?: "Streaming failed") } }
+            }
+        }.addOnFailureListener { onDone(it.localizedMessage ?: "Authentication failed") }
+    }
+
     fun sendAdminTestNotification() {
         val admin = getCurrentUserOrFallback() ?: run {
             _gatewayHealth.value = GatewayHealth(message = "Admin session is not authenticated")
@@ -660,6 +686,15 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 onComplete(true)
             }.addOnFailureListener { onComplete(false) }
+    }
+
+    fun updateFlagshipFields(fields: Map<String, Any>, onComplete: (Boolean) -> Unit = {}) {
+        val user = FirebaseAuth.getInstance().currentUser ?: return onComplete(false)
+        if (user.email?.lowercase()?.trim()?.trimEnd('.') != "mr4425390@gmail.com") return onComplete(false)
+        val updates = fields + mapOf("updatedAt" to System.currentTimeMillis(), "updatedBy" to user.uid)
+        FirebaseFirestore.getInstance().collection("app_config").document("flagship").update(updates)
+            .addOnSuccessListener { getDatabaseInstance().getReference("config").child("flagship").updateChildren(updates); onComplete(true) }
+            .addOnFailureListener { onComplete(false) }
     }
 
     private fun listenToGlobalConfig() {
@@ -1941,6 +1976,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         profileImageUrl: String,
         bio: String? = null,
         coverImageUrl: String? = null,
+        coverScale: Float = 1f,
+        coverOffsetY: Float = 0f,
         onSuccess: () -> Unit,
         onFailure: (String) -> Unit
     ) {
@@ -1954,6 +1991,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         ).apply {
             bio?.let { put("bio", it) }
             coverImageUrl?.let { put("coverImageUrl", it) }
+            put("coverScale", coverScale.coerceIn(1f, 2f)); put("coverOffsetY", coverOffsetY.coerceIn(-1f, 1f))
         }
 
         userRef.update(updates)
@@ -1963,7 +2001,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     dob = dob,
                     profileImageUrl = profileImageUrl,
                     bio = bio ?: _currentUserState.value?.bio.orEmpty(),
-                    coverImageUrl = coverImageUrl ?: _currentUserState.value?.coverImageUrl.orEmpty()
+                    coverImageUrl = coverImageUrl ?: _currentUserState.value?.coverImageUrl.orEmpty(),
+                    coverScale = coverScale.coerceIn(1f, 2f), coverOffsetY = coverOffsetY.coerceIn(-1f, 1f)
                 )
                 onSuccess()
             }

@@ -52,6 +52,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
@@ -356,7 +357,7 @@ fun ChatScreen(
         }
     }
 
-    val isDark = isSystemInDarkTheme()
+    val isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
     val chatGradientBg = when (chatTheme) {
         "Sunset" -> Brush.verticalGradient(listOf(Color(0xFF2B1025), Color(0xFF7B2D45), Color(0xFFFF8A5B).copy(alpha = .55f)))
         "Ocean" -> Brush.verticalGradient(listOf(Color(0xFF001B2E), Color(0xFF004E64), Color(0xFF00A5CF).copy(alpha = .45f)))
@@ -904,7 +905,7 @@ private fun TypingGlassIndicator(name: String) {
     }
     Row(
         Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 5.dp)
-            .glassmorphic(isDark = isSystemInDarkTheme(), shape = RoundedCornerShape(22.dp)).padding(horizontal = 14.dp, vertical = 9.dp),
+            .glassmorphic(isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f, shape = RoundedCornerShape(22.dp)).padding(horizontal = 14.dp, vertical = 9.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text("$name is typing", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
@@ -932,7 +933,7 @@ fun MessageBubbleItem(
     var showImageViewer by remember { mutableStateOf(false) }
     var dragOffset by remember { mutableFloatStateOf(0f) }
     val animatedDrag by animateFloatAsState(dragOffset, spring(stiffness = Spring.StiffnessMedium), label = "swipe_reply")
-    val isDark = isSystemInDarkTheme()
+    val isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
     val context = LocalContext.current
 
     val shape = if (isSentByMe) {
@@ -1233,10 +1234,37 @@ private fun PdfFirstPage(uri: Uri) {
 }
 
 @Composable
+private fun InlineChatVideo(url: String, name: String) {
+    var playing by remember(url) { mutableStateOf(false) }
+    Box(Modifier.fillMaxWidth().height(220.dp).clip(RoundedCornerShape(18.dp)).background(Color.Black), contentAlignment = Alignment.Center) {
+        AndroidView(
+            factory = { context -> android.widget.VideoView(context).apply {
+                val controller = android.widget.MediaController(context)
+                controller.setAnchorView(this); setMediaController(controller); setVideoURI(Uri.parse(url))
+                setOnPreparedListener { if (playing) start() }
+                setOnCompletionListener { playing = false }
+            } },
+            update = { if (playing && !it.isPlaying) it.start() else if (!playing && it.isPlaying) it.pause() },
+            modifier = Modifier.fillMaxSize()
+        )
+        if (!playing) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                FilledIconButton(onClick = { playing = true }, modifier = Modifier.size(58.dp)) { Icon(Icons.Default.PlayArrow, "Play video", modifier = Modifier.size(32.dp)) }
+                Text(name, color = Color.White, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(horizontal = 10.dp))
+            }
+        }
+    }
+}
+
+@Composable
 private fun GenericFileBubble(message: Message, onConsumed: () -> Unit) {
     val context = LocalContext.current
     val mime = message.fileMimeType ?: "application/octet-stream"
     val name = message.fileName ?: "Attachment"
+    if (mime.startsWith("video/")) {
+        InlineChatVideo(message.fileUrl.orEmpty(), name)
+        return
+    }
     if (mime.startsWith("audio/")) {
         VoicePlayerBubble(message.fileUrl.orEmpty(), 0, onPlaybackStarted = onConsumed)
         return
@@ -1308,7 +1336,7 @@ fun VoicePlayerBubble(
     var playbackAcknowledged by remember(voiceUrl) { mutableStateOf(false) }
     var mediaPlayer by remember { mutableStateOf<MediaPlayer?>(null) }
     val context = LocalContext.current
-    val isDark = isSystemInDarkTheme()
+    val isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
 
     // Dispose media player when view leaves screen
     DisposableEffect(voiceUrl) {

@@ -15,6 +15,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -22,17 +23,18 @@ import androidx.compose.ui.unit.dp
 /** Translucent surface used throughout the app. Real device content remains visible below it. */
 @Composable
 fun Modifier.glassmorphic(
-    isDark: Boolean = isSystemInDarkTheme(),
+    isDark: Boolean? = null,
     backgroundColor: Color? = null,
     borderColor: Color? = null,
     shape: Shape = RoundedCornerShape(28.dp)
 ): Modifier {
-    val background = backgroundColor ?: if (isDark) {
+    val dark = isDark ?: (MaterialTheme.colorScheme.background.luminance() < 0.5f)
+    val background = backgroundColor ?: if (dark) {
         Color(0xFF151824).copy(alpha = .78f)
     } else {
         Color.White.copy(alpha = .72f)
     }
-    val border = borderColor ?: if (isDark) Color.White.copy(alpha = .13f) else Color.White.copy(alpha = .88f)
+    val border = borderColor ?: if (dark) Color.White.copy(alpha = .13f) else Color.White.copy(alpha = .88f)
     return shadow(18.dp, shape, ambientColor = Color.Black.copy(alpha = .16f), spotColor = Color.Black.copy(alpha = .10f))
         .background(background, shape)
         .border(1.dp, border, shape)

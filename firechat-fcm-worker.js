@@ -149,6 +149,7 @@ export default {
             model,
             temperature: 0.35,
             max_tokens: 900,
+            stream: payload.stream === true,
             messages: [
               { role: "system", content: system },
               ...memory.map(content => ({ role: content.startsWith("user:") ? "user" : "assistant", content: content.replace(/^(user|assistant):\s*/, "") })),
@@ -156,6 +157,9 @@ export default {
             ]
           })
         });
+        if (payload.stream === true && upstream.ok) {
+          return new Response(upstream.body, { status: 200, headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", "Access-Control-Allow-Origin": "*" } });
+        }
         const result = await upstream.json();
         if (!upstream.ok) return jsonResponse({ error: result?.message || "Mistral request failed", upstreamStatus: upstream.status }, 502);
         return jsonResponse({ success: true, model, reply: result?.choices?.[0]?.message?.content || "" });
