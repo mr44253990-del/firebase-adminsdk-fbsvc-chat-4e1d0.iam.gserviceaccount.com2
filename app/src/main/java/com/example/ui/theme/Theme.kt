@@ -121,6 +121,11 @@ fun MyApplicationTheme(
         "ocean" -> themedDark(Color(0xFF83E6F2), Color(0xFF68D6C9), Color(0xFF001017), Color(0xFF062532))
         "forest" -> themedDark(Color(0xFFA7E3AE), Color(0xFF75D59A), Color(0xFF050D08), Color(0xFF102319))
         "midnight" -> themedDark(Color(0xFFE3B9FF), Color(0xFFB996FF), Color(0xFF07030D), Color(0xFF190D28))
+        "liquid aurora" -> themedDark(Color(0xFFC5B4FF), Color(0xFF66E6FF), Color(0xFF070817), Color(0xFF17152E)).copy(tertiary = Color(0xFFFF79C9), primaryContainer = Color(0xFF352B68), onPrimaryContainer = Color.White)
+        "glass ocean" -> themedDark(Color(0xFF79ECFF), Color(0xFF6B9CFF), Color(0xFF001018), Color(0xFF062A38)).copy(tertiary = Color(0xFF4FFFC1), primaryContainer = Color(0xFF074B60), onPrimaryContainer = Color.White)
+        "glass rose" -> themedDark(Color(0xFFFFA9D6), Color(0xFFD9A5FF), Color(0xFF160711), Color(0xFF301327)).copy(tertiary = Color(0xFFFFD17A), primaryContainer = Color(0xFF672B55), onPrimaryContainer = Color.White)
+        "obsidian neon" -> themedDark(Color(0xFFA88BFF), Color(0xFF00F0D0), Color.Black, Color(0xFF0A0B12)).copy(tertiary = Color(0xFFFF3DAA), primaryContainer = Color(0xFF281D55), onPrimaryContainer = Color.White)
+        "frosted light" -> LightColors.copy(primary = Color(0xFF6554D9), secondary = Color(0xFF007F9B), background = Color(0xFFF5F5FF), surface = Color(0xFFFCFAFF), surfaceVariant = Color(0xFFE9E8F4), onSurface = Color(0xFF171522), onBackground = Color(0xFF171522))
         else -> if (darkTheme) DarkColors else LightColors
     }
 

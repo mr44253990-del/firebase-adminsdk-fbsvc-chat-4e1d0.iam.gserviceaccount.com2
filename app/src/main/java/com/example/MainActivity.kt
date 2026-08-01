@@ -300,7 +300,6 @@ class MainActivity : FragmentActivity() {
                                         viewModel.selectProfile(recipient)
                                         navController.navigate("profile")
                                     },
-                                    onAssistant = { navController.navigate("assistant") },
                                     onCall = {
                                         viewModel.startAudioCall(recipient) { navController.navigate("call") }
                                     },

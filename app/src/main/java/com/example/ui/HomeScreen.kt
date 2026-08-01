@@ -194,6 +194,7 @@ fun HomeScreen(
 
     var searchQuery by remember { mutableStateOf("") }
     var feedFilter by rememberSaveable { mutableStateOf("All Posts") }
+    var showAnalytics by remember { mutableStateOf(false) }
     var showAccountMenu by remember { mutableStateOf(false) }
     var showActivityCenter by remember { mutableStateOf(false) }
     var showGlobalSearch by remember { mutableStateOf(false) }
@@ -512,16 +513,18 @@ fun HomeScreen(
                                             Triple(Icons.Outlined.Videocam, "Video", Color(0xFFFF3F6C)),
                                             Triple(Icons.Outlined.SmartDisplay, "Reel", Color(0xFFD85CFF)),
                                             Triple(Icons.Outlined.EmojiEmotions, "Feeling", Color(0xFFFFC145)),
-                                            Triple(Icons.Outlined.Poll, "Poll", Color(0xFF37D8E7))
+                                            Triple(Icons.Outlined.Analytics, "Analytics", Color(0xFF37D8E7))
                                         ).forEach { (icon, label, tint) ->
                                             Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.clickable {
-                                                when (label) {
-                                                    "Photo" -> viewModel.prepareComposer("photo")
-                                                    "Video" -> viewModel.prepareComposer("video")
-                                                    "Reel" -> viewModel.prepareComposer("reel")
-                                                    else -> viewModel.prepareComposer("post")
+                                                if (label == "Analytics") showAnalytics = true else {
+                                                    when (label) {
+                                                        "Photo" -> viewModel.prepareComposer("photo")
+                                                        "Video" -> viewModel.prepareComposer("video")
+                                                        "Reel" -> viewModel.prepareComposer("reel")
+                                                        else -> viewModel.prepareComposer("post")
+                                                    }
+                                                    onCreatePost()
                                                 }
-                                                onCreatePost()
                                             }.padding(4.dp)) { Icon(icon, label, tint = tint, modifier = Modifier.size(20.dp)); Text(label, fontSize = 9.sp, fontWeight = FontWeight.SemiBold) }
                                         }
                                     }
@@ -593,6 +596,27 @@ fun HomeScreen(
                             .padding(horizontal = 16.dp)
                     ) {
                         Spacer(modifier = Modifier.height(12.dp))
+
+                        if (flagshipConfig.assistantEnabled) {
+                            Box(
+                                Modifier.fillMaxWidth().glassmorphic(
+                                    isDark = MaterialTheme.colorScheme.background.luminance() < .5f,
+                                    backgroundColor = MaterialTheme.colorScheme.surface.copy(.62f),
+                                    borderColor = MaterialTheme.colorScheme.primary.copy(.38f),
+                                    shape = RoundedCornerShape(26.dp)
+                                ).clickable(onClick = onAssistant).padding(14.dp)
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Box(Modifier.size(50.dp).clip(CircleShape).background(Brush.linearGradient(listOf(Color(0xFF5D59FF), Color(0xFFFF42B7), Color(0xFF25D8FF)))), contentAlignment = Alignment.Center) { Icon(Icons.Default.AutoAwesome, "Convo AI", tint = Color.White, modifier = Modifier.size(26.dp)) }
+                                    Spacer(Modifier.width(12.dp)); Column(Modifier.weight(1f)) {
+                                        Text("Convo AI", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Black, style = MaterialTheme.typography.titleMedium)
+                                        Text("Account insights • smart search • post tools • memory", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
+                                    }
+                                    Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = CircleShape) { Icon(Icons.Default.ArrowForward, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(9.dp).size(18.dp)) }
+                                }
+                            }
+                            Spacer(Modifier.height(12.dp))
+                        }
 
                         // Search contacts bar
                         OutlinedTextField(
@@ -1091,13 +1115,12 @@ fun HomeScreen(
                         verticalArrangement = Arrangement.spacedBy(16.dp),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        Text(
-                            text = "Profile & appearance",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.align(Alignment.Start)
-                        )
+                        Box(Modifier.fillMaxWidth().glassmorphic(isDark = MaterialTheme.colorScheme.background.luminance() < .5f, backgroundColor = MaterialTheme.colorScheme.surface.copy(.68f), borderColor = MaterialTheme.colorScheme.primary.copy(.38f), shape = RoundedCornerShape(28.dp)).padding(18.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(Modifier.size(48.dp).clip(CircleShape).background(Brush.linearGradient(listOf(Color(0xFF6C58FF), Color(0xFFFF46B8)))), contentAlignment = Alignment.Center) { Icon(Icons.Default.Tune, null, tint = Color.White) }
+                                Spacer(Modifier.width(12.dp)); Column { Text("Liquid Control Center", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface); Text("Profile • themes • privacy • notifications • premium", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp) }
+                            }
+                        }
 
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                             Card(onClick = { currentUser?.let(onProfileSelected) }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(22.dp)) {
@@ -1145,7 +1168,12 @@ fun HomeScreen(
                                     "Chocolate" to Color(0xFF6D4C41),
                                     "Ocean" to Color(0xFF0288D1),
                                     "Forest" to Color(0xFF2E7D32),
-                                    "Midnight" to Color(0xFF4A148C)
+                                    "Midnight" to Color(0xFF4A148C),
+                                    "Liquid Aurora" to Color(0xFF8B72FF),
+                                    "Glass Ocean" to Color(0xFF00B8D4),
+                                    "Glass Rose" to Color(0xFFFF63B7),
+                                    "Obsidian Neon" to Color(0xFF00E5C3),
+                                    "Frosted Light" to Color(0xFFD9D6FF)
                                 )
 
                                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1153,7 +1181,7 @@ fun HomeScreen(
                                         Surface(
                                             color = if (currentTheme == themeName) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(.45f),
                                             shape = RoundedCornerShape(16.dp),
-                                            modifier = Modifier.width(78.dp).clickable {
+                                            modifier = Modifier.width(94.dp).clickable {
                                                 viewModel.updateTheme(themeName)
                                                 Toast.makeText(context, "$themeName theme applied!", Toast.LENGTH_SHORT).show()
                                             }
@@ -1837,6 +1865,10 @@ fun HomeScreen(
             text = { Column(horizontalAlignment = Alignment.CenterHorizontally) { Text("${premiumUser.name}, Convo Chat Premium is active!", textAlign = TextAlign.Center); Spacer(Modifier.height(10.dp)); val days = if (premiumUser.premiumPlan == "lifetime") "Lifetime" else "${((premiumUser.premiumUntil - System.currentTimeMillis()).coerceAtLeast(0) / 86_400_000L) + 1} days remaining"; Text(days, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.ExtraBold); if (premiumUser.premiumPlan == "trial") { Spacer(Modifier.height(8.dp)); Text("Your one-time 14-day free trial has started.", textAlign = TextAlign.Center) } } },
             confirmButton = { Button(onClick = { premiumWelcomeKey?.let { context.getSharedPreferences("convo_premium_welcome", Context.MODE_PRIVATE).edit().putBoolean(it, true).apply() }; showPremiumWelcome = false }) { Text("Explore Premium") } }
         )
+    }
+
+    if (showAnalytics) {
+        AccountAnalyticsSheet(posts = posts.filter { it.senderId == currentUser?.uid }, onDismiss = { showAnalytics = false })
     }
 
     if (showCreateHub) {
@@ -2636,6 +2668,50 @@ fun FullScreenVideoPlayer(videoUrl: String, onDismiss: () -> Unit) {
                 Icon(Icons.Default.Close, "Close full screen video", tint = Color.White)
             }
         }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AccountAnalyticsSheet(posts: List<Post>, onDismiss: () -> Unit) {
+    var range by remember { mutableStateOf("7 days") }
+    val now = System.currentTimeMillis()
+    val cutoff = when (range) { "7 days" -> now - 7L * 86_400_000L; "30 days" -> now - 30L * 86_400_000L; else -> 0L }
+    val filtered = posts.filter { it.timestamp >= cutoff }
+    val reactions = filtered.sumOf { it.reactions.size + it.mediaReactions.values.sumOf { map -> map.size } }
+    val views = filtered.sumOf { it.viewsCount }
+    val comments = filtered.sumOf { it.comments.size }
+    val best = filtered.maxByOrNull { it.viewsCount + it.reactions.size * 3 + it.comments.size * 2 }
+    ModalBottomSheet(onDismissRequest = onDismiss, containerColor = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp)) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp).padding(bottom = 28.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(48.dp).clip(CircleShape).background(Brush.linearGradient(listOf(Color(0xFF6757FF), Color(0xFF27D8FF))), contentAlignment = Alignment.Center) { Icon(Icons.Outlined.Analytics, null, tint = Color.White) }
+                Spacer(Modifier.width(11.dp)); Column { Text("Creator Analytics", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Black); Text("Understand your Convo growth", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { listOf("7 days", "30 days", "All time").forEach { item -> FilterChip(range == item, { range = item }, { Text(item) }) } }
+            Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                AnalyticsMetric("Posts", filtered.size.toString(), Icons.Outlined.DynamicFeed, Modifier.weight(1f))
+                AnalyticsMetric("Views", views.toString(), Icons.Outlined.Visibility, Modifier.weight(1f))
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                AnalyticsMetric("Reactions", reactions.toString(), Icons.Outlined.FavoriteBorder, Modifier.weight(1f))
+                AnalyticsMetric("Comments", comments.toString(), Icons.Outlined.ChatBubbleOutline, Modifier.weight(1f))
+            }
+            Card(shape = RoundedCornerShape(22.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(.65f))) {
+                Column(Modifier.padding(16.dp)) {
+                    Text("Top content", fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.primary)
+                    Spacer(Modifier.height(5.dp)); Text(best?.title?.takeIf { it.isNotBlank() } ?: best?.text?.take(90) ?: "Publish more content to unlock insights", maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    if (best != null) { Spacer(Modifier.height(8.dp)); Text("${best.viewsCount} views • ${best.reactions.size} reactions • ${best.comments.size} comments", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp) }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AnalyticsMetric(label: String, value: String, icon: androidx.compose.ui.graphics.vector.ImageVector, modifier: Modifier = Modifier) {
+    Surface(modifier, shape = RoundedCornerShape(22.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(.62f), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
+        Column(Modifier.padding(15.dp)) { Icon(icon, null, tint = MaterialTheme.colorScheme.primary); Spacer(Modifier.height(8.dp)); Text(value, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface); Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp) }
     }
 }
 
