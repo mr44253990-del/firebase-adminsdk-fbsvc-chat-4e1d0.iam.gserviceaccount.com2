@@ -2685,7 +2685,7 @@ private fun AccountAnalyticsSheet(posts: List<Post>, onDismiss: () -> Unit) {
     ModalBottomSheet(onDismissRequest = onDismiss, containerColor = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp)) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp).padding(bottom = 28.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(48.dp).clip(CircleShape).background(Brush.linearGradient(listOf(Color(0xFF6757FF), Color(0xFF27D8FF))), contentAlignment = Alignment.Center) { Icon(Icons.Outlined.Analytics, null, tint = Color.White) }
+                Box(Modifier.size(48.dp).clip(CircleShape).background(Brush.linearGradient(listOf(Color(0xFF6757FF), Color(0xFF27D8FF)))), contentAlignment = Alignment.Center) { Icon(Icons.Outlined.Analytics, null, tint = Color.White) }
                 Spacer(Modifier.width(11.dp)); Column { Text("Creator Analytics", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Black); Text("Understand your Convo growth", color = MaterialTheme.colorScheme.onSurfaceVariant) }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { listOf("7 days", "30 days", "All time").forEach { item -> FilterChip(range == item, { range = item }, { Text(item) }) } }
