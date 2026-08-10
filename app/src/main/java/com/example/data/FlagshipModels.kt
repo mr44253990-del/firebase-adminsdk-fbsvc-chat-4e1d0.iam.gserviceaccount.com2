@@ -52,6 +52,7 @@ data class FlagshipConfig(
     val aiDisplayName: String = "Convo Chat Assistant",
     val aiSystemPrompt: String = "Help users manage Convo Chat safely and clearly.",
     val premiumEnabled: Boolean = true,
+    val premiumUpsellEnabled: Boolean = true,
     val premiumPaymentNumber: String = "01755070708",
     val premiumMonthlyPrice: Int = 199,
     val premiumYearlyPrice: Int = 1499,

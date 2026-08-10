@@ -216,6 +216,8 @@ fun HomeScreen(
     var selectedStoryIndex by remember { mutableStateOf<Int?>(null) }
     val premiumWelcomeKey = currentUser?.takeIf { it.isPremium && (it.premiumPlan == "lifetime" || it.premiumUntil > System.currentTimeMillis()) && it.premiumApprovedAt > 0 }?.let { "premium_${it.premiumApprovedAt}" }
     var showPremiumWelcome by remember(premiumWelcomeKey) { mutableStateOf(premiumWelcomeKey != null && !context.getSharedPreferences("convo_premium_welcome", Context.MODE_PRIVATE).getBoolean(premiumWelcomeKey, false)) }
+    val upsellPrefs = remember { context.getSharedPreferences("convo_premium_upsell", Context.MODE_PRIVATE) }
+    var showPremiumUpsell by remember(currentUser?.uid, flagshipConfig.premiumUpsellEnabled) { mutableStateOf(currentUser != null && currentUser?.isPremium != true && flagshipConfig.premiumUpsellEnabled && !upsellPrefs.getBoolean("dismissed_${currentUser?.uid}", false)) }
 
     LaunchedEffect(openActivitySignal) {
         if (openActivitySignal > 0L) {
@@ -781,6 +783,7 @@ fun HomeScreen(
                         var draftAiName by remember(flagshipConfig) { mutableStateOf(flagshipConfig.aiDisplayName) }
                         var draftAiPrompt by remember(flagshipConfig) { mutableStateOf(flagshipConfig.aiSystemPrompt) }
                         var draftPremiumEnabled by remember(flagshipConfig) { mutableStateOf(flagshipConfig.premiumEnabled) }
+                        var draftPremiumUpsell by remember(flagshipConfig) { mutableStateOf(flagshipConfig.premiumUpsellEnabled) }
                         var draftPaymentNumber by remember(flagshipConfig) { mutableStateOf(flagshipConfig.premiumPaymentNumber) }
                         var draftMonthlyPrice by remember(flagshipConfig) { mutableStateOf(flagshipConfig.premiumMonthlyPrice.toString()) }
                         var draftYearlyPrice by remember(flagshipConfig) { mutableStateOf(flagshipConfig.premiumYearlyPrice.toString()) }
@@ -862,6 +865,7 @@ fun HomeScreen(
                                     HorizontalDivider()
                                     Text("Premium payment control", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
                                     Row(verticalAlignment = Alignment.CenterVertically) { Text("Premium purchase enabled", Modifier.weight(1f)); Switch(draftPremiumEnabled, { draftPremiumEnabled = it }) }
+                                    Row(verticalAlignment = Alignment.CenterVertically) { Text("First-login Premium showcase", Modifier.weight(1f)); Switch(draftPremiumUpsell, { draftPremiumUpsell = it }) }
                                     OutlinedTextField(draftPaymentNumber, { draftPaymentNumber = it.filter(Char::isDigit).take(15) }, label = { Text("Payment number") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                         FilterChip(draftMonthlyEnabled, { draftMonthlyEnabled = !draftMonthlyEnabled }, { Text("Monthly") })
@@ -880,7 +884,7 @@ fun HomeScreen(
                                     }
                                     OutlinedButton(onClick = { viewModel.updateFlagshipFields(mapOf(
                                         "assistantEnabled" to draftAssistantEnabled, "aiModel" to draftAiModel, "aiDisplayName" to draftAiName, "aiSystemPrompt" to draftAiPrompt,
-                                        "premiumEnabled" to draftPremiumEnabled, "premiumPaymentNumber" to draftPaymentNumber,
+                                        "premiumEnabled" to draftPremiumEnabled, "premiumUpsellEnabled" to draftPremiumUpsell, "premiumPaymentNumber" to draftPaymentNumber,
                                         "premiumMonthlyPrice" to (draftMonthlyPrice.toIntOrNull() ?: 199), "premiumYearlyPrice" to (draftYearlyPrice.toIntOrNull() ?: 1499), "premiumLifetimePrice" to (draftLifetimePrice.toIntOrNull() ?: 3999),
                                         "premiumMonthlyEnabled" to draftMonthlyEnabled, "premiumYearlyEnabled" to draftYearlyEnabled, "premiumLifetimeEnabled" to draftLifetimeEnabled,
                                         "premiumBkashEnabled" to draftBkash, "premiumNagadEnabled" to draftNagad, "premiumRocketEnabled" to draftRocket
@@ -905,6 +909,7 @@ fun HomeScreen(
                                                 aiDisplayName = draftAiName.ifBlank { "Convo Chat Assistant" },
                                                 aiSystemPrompt = draftAiPrompt,
                                                 premiumEnabled = draftPremiumEnabled,
+                                                premiumUpsellEnabled = draftPremiumUpsell,
                                                 premiumPaymentNumber = draftPaymentNumber.ifBlank { "01755070708" },
                                                 premiumMonthlyPrice = draftMonthlyPrice.toIntOrNull() ?: 199,
                                                 premiumYearlyPrice = draftYearlyPrice.toIntOrNull() ?: 1499,
@@ -1722,6 +1727,7 @@ fun HomeScreen(
             onAccept = { viewModel.respondToFriendRequest(it, true) },
             onReject = { viewModel.respondToFriendRequest(it, false) },
             onAcceptMessage = { viewModel.respondToMessageRequest(it, true) },
+            onReplyMessage = { request, reply -> viewModel.replyToMessageRequest(request, reply) },
             onRejectMessage = { viewModel.respondToMessageRequest(it, false) }
         )
     }
@@ -1856,6 +1862,15 @@ fun HomeScreen(
             }
         )
     }
+
+    if (showPremiumUpsell) AlertDialog(
+        onDismissRequest = {},
+        icon = { Icon(Icons.Default.WorkspacePremium, null, tint = Color(0xFFFFB300), modifier = Modifier.size(50.dp)) },
+        title = { Text("Unlock Convo Premium", fontWeight = FontWeight.Black) },
+        text = { Column(verticalArrangement = Arrangement.spacedBy(7.dp)) { Text("✨ Verified Premium badge"); Text("🤖 Advanced AI and smart tools"); Text("🎨 Exclusive Liquid Glass themes"); Text("📊 Story and creator insights"); Text("🎵 Custom call ringtone"); Text("💬 Priority Admin support") } },
+        confirmButton = { Button(onClick = { showPremiumUpsell = false; onPremium() }) { Text("View Premium") } },
+        dismissButton = { TextButton(onClick = { currentUser?.uid?.let { upsellPrefs.edit().putBoolean("dismissed_$it", true).apply() }; showPremiumUpsell = false }) { Text("Skip forever") } }
+    )
 
     if (showPremiumWelcome) currentUser?.let { premiumUser ->
         AlertDialog(
@@ -2012,6 +2027,7 @@ fun ActivityCenterDialog(
     onAccept: (FriendRequest) -> Unit,
     onReject: (FriendRequest) -> Unit,
     onAcceptMessage: (MessageRequest) -> Unit,
+    onReplyMessage: (MessageRequest, String) -> Unit,
     onRejectMessage: (MessageRequest) -> Unit
 ) {
     Dialog(
@@ -2077,13 +2093,14 @@ fun ActivityCenterDialog(
                         if (messageRequests.isNotEmpty()) {
                             item { Text("Message requests", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary) }
                             items(messageRequests, key = { "message_request_${it.id}" }) { request ->
+                                var quickReply by remember(request.id) { mutableStateOf("") }
                                 Card(shape = RoundedCornerShape(24.dp)) {
-                                    Column(Modifier.padding(14.dp)) {
+                                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
                                         Text(request.senderName, fontWeight = FontWeight.Bold)
-                                        Text(request.preview, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2)
-                                        Spacer(Modifier.height(10.dp))
+                                        Text(request.preview, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 3)
+                                        OutlinedTextField(quickReply, { quickReply = it.take(600) }, placeholder = { Text("Reply to auto-accept…") }, modifier = Modifier.fillMaxWidth(), maxLines = 3, shape = RoundedCornerShape(18.dp))
                                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                            Button(onClick = { onAcceptMessage(request) }, modifier = Modifier.weight(1f)) { Text("Accept") }
+                                            Button(onClick = { if (quickReply.isNotBlank()) onReplyMessage(request, quickReply) else onAcceptMessage(request) }, modifier = Modifier.weight(1f)) { Text(if (quickReply.isBlank()) "Accept" else "Reply & Accept") }
                                             OutlinedButton(onClick = { onRejectMessage(request) }, modifier = Modifier.weight(1f)) { Text("Delete") }
                                         }
                                     }

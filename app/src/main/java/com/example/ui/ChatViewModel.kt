@@ -1761,6 +1761,23 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun replyToMessageRequest(request: MessageRequest, reply: String, onComplete: (Boolean) -> Unit = {}) {
+        val me = getCurrentUserOrFallback() ?: return onComplete(false)
+        if (reply.isBlank()) return onComplete(false)
+        val chatId = listOf(me.uid, request.senderId).sorted().joinToString("_")
+        val messagesRef = getDatabaseInstance().getReference("chats").child(chatId).child("messages")
+        val originalId = messagesRef.push().key ?: UUID.randomUUID().toString()
+        val replyId = messagesRef.push().key ?: UUID.randomUUID().toString()
+        val original = Message(messageId = originalId, senderId = request.senderId, senderName = request.senderName, text = request.preview, timestamp = request.timestamp)
+        val response = Message(messageId = replyId, senderId = me.uid, senderName = me.name, senderUsername = me.username, text = reply.trim(), timestamp = System.currentTimeMillis())
+        messagesRef.updateChildren(mapOf(originalId to original, replyId to response)).addOnSuccessListener {
+            FirebaseFirestore.getInstance().collection("message_requests").document(request.id).delete()
+            createActivityNotification(request.senderId, "message_accepted", me.uid, "replied to and accepted your message request")
+            withUserFcmToken(request.senderId) { token -> triggerFcmGatewayNotification(_webhookUrl.value, token, me.name, reply.trim(), me.uid, me.profileImageUrl, "message", replyId) }
+            onComplete(true)
+        }.addOnFailureListener { onComplete(false) }
+    }
+
     fun spotlightStory(story: Story, onResult: (Boolean, String) -> Unit = { _, _ -> }) {
         val me = getCurrentUserOrFallback() ?: return onResult(false, "Sign in again")
         val active = me.isPremium && (me.premiumPlan == "lifetime" || me.premiumUntil > System.currentTimeMillis())
@@ -2771,20 +2788,17 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun incrementPostViews(postId: String) {
+        val uid = FirebaseAuth.getInstance().currentUser?.uid ?: return
         try {
             val postRef = FirebaseFirestore.getInstance().collection("posts").document(postId)
             FirebaseFirestore.getInstance().runTransaction { transaction ->
                 val snapshot = transaction.get(postRef)
-                val currentViews = snapshot.getLong("viewsCount") ?: 0L
-                transaction.update(postRef, "viewsCount", currentViews + 1)
-            }.addOnSuccessListener {
-                Log.d("POSTS_VIEWS", "Post $postId views incremented.")
-            }.addOnFailureListener { e ->
-                Log.e("POSTS_VIEWS", "Failed to increment view: ${e.message}")
-            }
-        } catch (e: Exception) {
-            Log.e("POSTS_VIEWS", "Error incrementing views: ${e.message}")
-        }
+                val viewers = (snapshot.get("viewerIds") as? List<*>)?.mapNotNull { it as? String }.orEmpty()
+                if (uid in viewers) return@runTransaction false
+                transaction.update(postRef, mapOf("viewsCount" to ((snapshot.getLong("viewsCount") ?: 0L) + 1L), "viewerIds" to (viewers + uid).distinct().takeLast(50_000)))
+                true
+            }.addOnFailureListener { e -> Log.e("POSTS_VIEWS", "Failed unique view: ${e.message}") }
+        } catch (e: Exception) { Log.e("POSTS_VIEWS", "Error incrementing views: ${e.message}") }
     }
 
     // --- Group Chats Logic ---
