@@ -36,6 +36,7 @@ import com.example.ui.HomeScreen
 import com.example.ui.GroupChatScreen
 import com.example.ui.OnboardingScreen
 import com.example.ui.PostComposerScreen
+import com.example.ui.PostDetailScreen
 import com.example.ui.PremiumScreen
 import com.example.ui.SplashScreen
 import com.example.ui.UserProfileScreen
@@ -60,11 +61,14 @@ class MainActivity : FragmentActivity() {
 
     private val viewModel: ChatViewModel by viewModels()
     private val pendingChatSenderId = MutableStateFlow<String?>(null)
+    private val pendingPostId = MutableStateFlow<String?>(null)
+    private fun captureDeepLink(intent: Intent?) { pendingPostId.value = intent?.data?.takeIf { it.host == "post" || it.path?.startsWith("/post/") == true }?.pathSegments?.lastOrNull() }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
         pendingChatSenderId.value = intent.getStringExtra("senderId")?.takeIf { it.isNotBlank() }
+        captureDeepLink(intent)
     }
 
     override fun onStart() {
@@ -89,6 +93,7 @@ class MainActivity : FragmentActivity() {
         installSplashScreen()
         super.onCreate(savedInstanceState)
         pendingChatSenderId.value = intent?.getStringExtra("senderId")?.takeIf { it.isNotBlank() }
+        captureDeepLink(intent)
         AppLockManager.initialize(this)
         enableEdgeToEdge()
 
@@ -122,7 +127,10 @@ class MainActivity : FragmentActivity() {
                 } else {
                 val navController = rememberNavController()
                 val pendingSenderId by pendingChatSenderId.collectAsState()
+                val linkedPostId by pendingPostId.collectAsState()
                 val knownUsers by viewModel.usersState.collectAsState()
+                val knownPosts by viewModel.postsState.collectAsState()
+                var linkedPost by remember { mutableStateOf<com.example.data.Post?>(null) }
                 val activeRecipient by viewModel.activeRecipientUser.collectAsState()
                 val activeGroup by viewModel.activeGroup.collectAsState()
                 val selectedProfile by viewModel.selectedProfile.collectAsState()
@@ -151,6 +159,10 @@ class MainActivity : FragmentActivity() {
                         navController.navigate("chat") { launchSingleTop = true }
                         pendingChatSenderId.value = null
                     }
+                }
+                LaunchedEffect(linkedPostId, knownPosts) {
+                    val id = linkedPostId ?: return@LaunchedEffect
+                    knownPosts.find { it.id == id }?.let { post -> linkedPost = post; navController.navigate("post_detail") { launchSingleTop = true }; pendingPostId.value = null }
                 }
 
                 PremiumBackground {
@@ -249,6 +261,10 @@ class MainActivity : FragmentActivity() {
                                 onBack = { navController.popBackStack() },
                                 onPublished = { navController.popBackStack() }
                             )
+                        }
+
+                        composable("post_detail") {
+                            linkedPost?.let { post -> PostDetailScreen(post, viewModel, onBack = { navController.popBackStack() }, onProfile = { user -> viewModel.selectProfile(user); navController.navigate("profile") }) }
                         }
 
                         composable(

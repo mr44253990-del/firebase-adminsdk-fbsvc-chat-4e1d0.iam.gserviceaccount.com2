@@ -9,7 +9,9 @@ import android.net.Network
 import android.net.NetworkRequest
 import android.net.NetworkCapabilities
 import android.net.Uri
+import android.os.Build
 import android.util.Log
+import com.example.BuildConfig
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.R
@@ -224,6 +226,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     val featureRequests: StateFlow<List<FeatureRequest>> = _featureRequests.asStateFlow()
     private val _premiumRequests = MutableStateFlow<List<PremiumRequest>>(emptyList())
     val premiumRequests: StateFlow<List<PremiumRequest>> = _premiumRequests.asStateFlow()
+    private val _deviceSessions = MutableStateFlow<List<DeviceSession>>(emptyList())
+    val deviceSessions: StateFlow<List<DeviceSession>> = _deviceSessions.asStateFlow()
+    private val _adminReports = MutableStateFlow<List<UserReport>>(emptyList())
+    val adminReports: StateFlow<List<UserReport>> = _adminReports.asStateFlow()
+    private val _accountBanned = MutableStateFlow(false)
+    val accountBanned: StateFlow<Boolean> = _accountBanned.asStateFlow()
 
     private val _authLoading = MutableStateFlow(false)
     val authLoading: StateFlow<Boolean> = _authLoading.asStateFlow()
@@ -507,6 +515,49 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }.addOnFailureListener { onDone(it.localizedMessage ?: "Authentication failed") }
     }
 
+    private fun workerSecurityPost(path: String, payload: JSONObject, onResult: (Boolean, JSONObject) -> Unit) {
+        val user = FirebaseAuth.getInstance().currentUser ?: return onResult(false, JSONObject().put("error", "Not signed in"))
+        user.getIdToken(false).addOnSuccessListener { tokenResult ->
+            val token = tokenResult.token ?: return@addOnSuccessListener onResult(false, JSONObject().put("error", "Missing token"))
+            viewModelScope.launch(Dispatchers.IO) {
+                try {
+                    val request = Request.Builder().url(_webhookUrl.value.trimEnd('/') + path).header("Authorization", "Bearer $token").post(payload.toString().toRequestBody("application/json".toMediaTypeOrNull())).build()
+                    OkHttpClient.Builder().callTimeout(45, TimeUnit.SECONDS).build().newCall(request).execute().use { response ->
+                        val json = runCatching { JSONObject(response.body?.string().orEmpty()) }.getOrDefault(JSONObject())
+                        withContext(Dispatchers.Main) { onResult(response.isSuccessful, json) }
+                    }
+                } catch (e: Throwable) { withContext(Dispatchers.Main) { onResult(false, JSONObject().put("error", e.localizedMessage ?: "Request failed")) } }
+            }
+        }.addOnFailureListener { onResult(false, JSONObject().put("error", it.localizedMessage ?: "Authentication failed")) }
+    }
+
+    fun registerDeviceSession() {
+        if (FirebaseAuth.getInstance().currentUser == null) return
+        val prefs = getApplication<Application>().getSharedPreferences("convo_device_session", Context.MODE_PRIVATE)
+        val id = prefs.getString("id", null) ?: UUID.randomUUID().toString().also { prefs.edit().putString("id", it).putLong("firstSeen", System.currentTimeMillis()).apply() }
+        workerSecurityPost("/sessions/register", JSONObject().put("sessionId", id).put("deviceName", "${Build.MANUFACTURER} ${Build.MODEL}").put("androidVersion", "Android ${Build.VERSION.RELEASE}").put("appVersion", BuildConfig.VERSION_NAME).put("firstSeenAt", prefs.getLong("firstSeen", System.currentTimeMillis()))) { ok, _ -> if (ok) refreshDeviceSessions() }
+    }
+
+    fun refreshDeviceSessions() = workerSecurityPost("/sessions/list", JSONObject()) { ok, json ->
+        if (!ok) return@workerSecurityPost
+        val array = json.optJSONArray("sessions") ?: JSONArray()
+        _deviceSessions.value = (0 until array.length()).map { i -> array.optJSONObject(i) ?: JSONObject() }.map { item -> DeviceSession(item.optString("sessionId"), item.optString("deviceName", "Android device"), item.optString("androidVersion"), item.optString("appVersion"), item.optLong("firstSeenAt"), item.optLong("lastSeenAt"), item.optBoolean("active", true), item.optString("maskedIp"), item.optString("city", "Unknown"), item.optString("region"), item.optString("country"), item.optDouble("latitude"), item.optDouble("longitude")) }
+    }
+
+    fun logoutAllDevices(onComplete: (Boolean, String) -> Unit) = workerSecurityPost("/sessions/revoke-all", JSONObject()) { ok, json ->
+        onComplete(ok, if (ok) "All device sessions revoked" else json.optString("error", "Could not revoke sessions"))
+        if (ok) logout {}
+    }
+
+    fun submitUserReport(targetUid: String, category: String, description: String, onComplete: (Boolean, String) -> Unit) = workerSecurityPost("/reports/create", JSONObject().put("targetUid", targetUid).put("category", category).put("description", description)) { ok, json -> onComplete(ok, if (ok) "Report sent to ADMIN RAKIB" else json.optString("error", "Report failed")) }
+
+    fun loadAdminReports() = workerSecurityPost("/admin/reports/list", JSONObject()) { ok, json ->
+        if (!ok) return@workerSecurityPost
+        val a = json.optJSONArray("reports") ?: JSONArray(); _adminReports.value = (0 until a.length()).mapNotNull { a.optJSONObject(it) }.map { UserReport(it.optString("id"), it.optString("reporterId"), it.optString("reporterEmail"), it.optString("targetUid"), it.optString("category"), it.optString("description"), it.optString("status", "pending"), it.optLong("createdAt")) }
+    }
+
+    fun setUserBanned(uid: String, banned: Boolean, reason: String = "", onComplete: (Boolean, String) -> Unit) = workerSecurityPost(if (banned) "/admin/user/ban" else "/admin/user/unban", JSONObject().put("uid", uid).put("reason", reason)) { ok, json -> onComplete(ok, if (ok) if (banned) "Account banned" else "Account restored" else json.optString("error", "Action failed")) }
+
     fun sendAdminTestNotification() {
         val admin = getCurrentUserOrFallback() ?: run {
             _gatewayHealth.value = GatewayHealth(message = "Admin session is not authenticated")
@@ -738,6 +789,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 loadAllUsers()
                 listenToAllPresences()
                 listenForInAppNotifications()
+                registerDeviceSession()
             }
         } catch (e: Exception) {
             Log.e("FirebaseConfig", "Firebase initialization failed: ${e.message}")
@@ -769,6 +821,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         loadAllUsers()
                         listenToAllPresences()
                         listenForInAppNotifications()
+                        registerDeviceSession()
                         _authLoading.value = false
                         onSuccess()
                     }
@@ -823,6 +876,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         loadAllUsers()
                         listenToAllPresences()
                         listenForInAppNotifications()
+                        registerDeviceSession()
                         _authLoading.value = false
                         onSuccess()
                     }
@@ -880,6 +934,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                                 loadAllUsers()
                                 listenToAllPresences()
                                 listenForInAppNotifications()
+                                registerDeviceSession()
                                 loadStories()
                                 loadPosts()
                                 loadGroups()
@@ -978,6 +1033,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             if (error != null) {
                 Log.e("FIRESTORE_PROFILE", "Live profile failed: ${error.message}")
             } else if (document != null && document.exists()) {
+                _accountBanned.value = document.getBoolean("banned") == true
+                if (_accountBanned.value) return@addSnapshotListener
                 runCatching { document.toObject(User::class.java) }.getOrNull()?.let { parsed ->
                     val liveUser = parsed.copy(
                         isPremium = document.getBoolean("isPremium") ?: parsed.isPremium,

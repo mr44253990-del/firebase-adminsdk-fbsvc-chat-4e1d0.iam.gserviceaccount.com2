@@ -47,8 +47,14 @@
             android:theme="@style/Theme.MyApplication.Starting">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
-
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <intent-filter android:autoVerify="false">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" android:host="solitary-hill-dcdc.mr44253990.workers.dev" android:pathPrefix="/post/" />
+                <data android:scheme="convochat" android:host="post" />
             </intent-filter>
         </activity>
 

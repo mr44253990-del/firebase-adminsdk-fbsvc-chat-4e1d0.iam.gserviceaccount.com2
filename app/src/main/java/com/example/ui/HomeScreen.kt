@@ -177,6 +177,9 @@ fun HomeScreen(
     val flagshipConfig by viewModel.flagshipConfig.collectAsState()
     val featureRequests by viewModel.featureRequests.collectAsState()
     val premiumRequests by viewModel.premiumRequests.collectAsState()
+    val deviceSessions by viewModel.deviceSessions.collectAsState()
+    val adminReports by viewModel.adminReports.collectAsState()
+    val accountBanned by viewModel.accountBanned.collectAsState()
     val inAppNotification by viewModel.inAppNotification.collectAsState()
     val activityNotifications by viewModel.activityNotifications.collectAsState()
     val openActivitySignal by viewModel.openActivityCenterSignal.collectAsState()
@@ -199,6 +202,7 @@ fun HomeScreen(
     var showActivityCenter by remember { mutableStateOf(false) }
     var showGlobalSearch by remember { mutableStateOf(false) }
     var showLockSetup by remember { mutableStateOf(false) }
+    var showReportDialog by remember { mutableStateOf(false) }
     var lockEnabled by remember { mutableStateOf(AppLockManager.isEnabled(context)) }
     val currentTab by viewModel.currentTabState.collectAsState()
     val selectedReelPostId by viewModel.selectedReelPostId.collectAsState()
@@ -767,7 +771,7 @@ fun HomeScreen(
                         }
                     } else {
                         // Admin Dashboard / Flagship Control
-                        LaunchedEffect(webhookUrl) { viewModel.testFcmGateway(webhookUrl) }
+                        LaunchedEffect(webhookUrl) { viewModel.testFcmGateway(webhookUrl); viewModel.loadAdminReports() }
                         var draftUpdateEnabled by remember(flagshipConfig) { mutableStateOf(flagshipConfig.updateEnabled) }
                         var draftVersionCode by remember(flagshipConfig) { mutableStateOf(flagshipConfig.latestVersionCode.toString()) }
                         var draftVersionName by remember(flagshipConfig) { mutableStateOf(flagshipConfig.versionName) }
@@ -924,6 +928,17 @@ fun HomeScreen(
                                         ) { ok -> Toast.makeText(context, if (ok) "Flagship configuration published" else "Publish failed", Toast.LENGTH_LONG).show() }
                                     }, enabled = draftUpdateEnabled && draftApkUrl.startsWith("https://"), modifier = Modifier.fillMaxWidth()) { Icon(Icons.Outlined.Publish, null); Spacer(Modifier.width(8.dp)); Text("Publish APK Update only") }
                                     if (flagshipConfig.updateEnabled) TextButton(onClick = { viewModel.publishFlagshipConfig(flagshipConfig.copy(updateEnabled = false, mandatoryUpdate = false)) }) { Text("Disable current update") }
+                                }
+                            }
+
+                            if (adminReports.isNotEmpty()) Card(shape = RoundedCornerShape(26.dp), modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer.copy(.45f))) {
+                                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    Text("Safety reports (${adminReports.size})", fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.error)
+                                    adminReports.sortedByDescending { it.createdAt }.take(30).forEach { report ->
+                                        Surface(shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.surface.copy(.75f)) {
+                                            Column(Modifier.padding(12.dp)) { Text(report.category, fontWeight = FontWeight.Bold); Text(report.description, maxLines = 4, overflow = TextOverflow.Ellipsis); Text("Reporter: ${report.reporterEmail}", fontSize = 10.sp); if (report.targetUid.isNotBlank()) Row { Button(onClick = { viewModel.setUserBanned(report.targetUid, true, report.description) { _, message -> Toast.makeText(context, message, Toast.LENGTH_LONG).show() } }) { Text("Ban target") }; Spacer(Modifier.width(8.dp)); OutlinedButton(onClick = { viewModel.setUserBanned(report.targetUid, false) { _, message -> Toast.makeText(context, message, Toast.LENGTH_LONG).show() } }) { Text("Unban") } } }
+                                        }
+                                    }
                                 }
                             }
 
@@ -1111,6 +1126,7 @@ fun HomeScreen(
                     }
                 }
                 4 -> {
+                    LaunchedEffect(Unit) { viewModel.refreshDeviceSessions() }
                     // SETTINGS & PROFILE TAB: Theme selector + User details modification
                     Column(
                         modifier = Modifier
@@ -1456,6 +1472,24 @@ fun HomeScreen(
                                         ) { Icon(Icons.Default.Call, null); Spacer(Modifier.width(8.dp)); Text("Allow full-screen incoming calls") }
                                     }
                                 }
+                            }
+                        }
+
+                        Card(shape = RoundedCornerShape(28.dp), modifier = Modifier.fillMaxWidth()) {
+                            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.Devices, null, tint = MaterialTheme.colorScheme.primary); Spacer(Modifier.width(9.dp)); Text("Devices & sessions", fontWeight = FontWeight.ExtraBold, modifier = Modifier.weight(1f)); IconButton(onClick = viewModel::refreshDeviceSessions) { Icon(Icons.Default.Refresh, "Refresh") } }
+                                Text("Approximate city/region comes from the connection edge. Exact home location and full IP are not stored.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                if (deviceSessions.isEmpty()) TextButton(onClick = viewModel::refreshDeviceSessions) { Text("Load signed-in devices") }
+                                deviceSessions.take(12).forEach { session ->
+                                    Surface(shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(.55f)) {
+                                        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                                            Icon(if (session.active) Icons.Default.PhoneAndroid else Icons.Default.PhoneLocked, null, tint = if (session.active) Color(0xFF36C878) else MaterialTheme.colorScheme.outline)
+                                            Spacer(Modifier.width(10.dp)); Column(Modifier.weight(1f)) { Text(session.deviceName, fontWeight = FontWeight.Bold); Text("${session.androidVersion} • Convo ${session.appVersion}", fontSize = 10.sp); Text("📍 ${session.city}, ${session.region} ${session.country} • ${session.maskedIp}", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp); Text("Last active ${SimpleDateFormat("dd MMM, hh:mm a", Locale.getDefault()).format(Date(session.lastSeenAt))}", fontSize = 9.sp) }
+                                        }
+                                    }
+                                }
+                                OutlinedButton(onClick = { viewModel.logoutAllDevices { ok, message -> Toast.makeText(context, message, Toast.LENGTH_LONG).show(); if (ok) onSignOut() } }, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Default.Logout, null); Spacer(Modifier.width(7.dp)); Text("Log out all devices") }
+                                TextButton(onClick = { showReportDialog = true }, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Default.ReportProblem, null); Spacer(Modifier.width(7.dp)); Text("Report a problem to AI/Admin") }
                             }
                         }
 
@@ -1881,6 +1915,20 @@ fun HomeScreen(
             confirmButton = { Button(onClick = { premiumWelcomeKey?.let { context.getSharedPreferences("convo_premium_welcome", Context.MODE_PRIVATE).edit().putBoolean(it, true).apply() }; showPremiumWelcome = false }) { Text("Explore Premium") } }
         )
     }
+
+    if (showReportDialog) {
+        var category by remember { mutableStateOf("app_problem") }
+        var details by remember { mutableStateOf("") }
+        AlertDialog(
+            onDismissRequest = { showReportDialog = false },
+            title = { Text("Report to Convo AI & Admin", fontWeight = FontWeight.ExtraBold) },
+            text = { Column(verticalArrangement = Arrangement.spacedBy(9.dp)) { Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) { listOf("app_problem", "user", "post", "safety").forEach { FilterChip(category == it, { category = it }, { Text(it.replace('_',' ')) }) } }; OutlinedTextField(details, { details = it.take(3000) }, label = { Text("What happened?") }, minLines = 5, modifier = Modifier.fillMaxWidth()); Text("AI can help diagnose the issue; submitting sends it to ADMIN RAKIB.", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp) } },
+            confirmButton = { Button(onClick = { viewModel.submitUserReport("", category, details) { ok, message -> Toast.makeText(context, message, Toast.LENGTH_LONG).show(); if (ok) showReportDialog = false } }, enabled = details.length >= 10) { Text("Submit report") } },
+            dismissButton = { TextButton(onClick = { showReportDialog = false }) { Text("Cancel") } }
+        )
+    }
+
+    if (accountBanned) AlertDialog(onDismissRequest = {}, title = { Text("Account suspended") }, text = { Text("This account was disabled by ADMIN RAKIB after review. Contact support from another account if you believe this is a mistake.") }, confirmButton = { Button(onClick = { viewModel.logout { onSignOut() } }) { Text("Sign out") } })
 
     if (showAnalytics) {
         AccountAnalyticsSheet(posts = posts.filter { it.senderId == currentUser?.uid }, onDismiss = { showAnalytics = false })
@@ -3333,10 +3381,9 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
                     modifier = Modifier
                         .clip(RoundedCornerShape(18.dp))
                         .clickable {
-                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                            val clip = ClipData.newPlainText("Post Link", "https://ais-pre-rmbon56osx2tjzuwdbosiw-734111311118.asia-southeast1.run.app/post/${post.id}")
-                            clipboard.setPrimaryClip(clip)
-                            Toast.makeText(context, "Post link copied to clipboard!", Toast.LENGTH_SHORT).show()
+                            val link = "https://solitary-hill-dcdc.mr44253990.workers.dev/post/${post.id}"
+                            val shareText = "${post.title.ifBlank { "A post from ${post.senderName}" }}\n${post.text.take(180)}\n\nOpen in Convo Chat: $link"
+                            context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply { type = "text/plain"; putExtra(Intent.EXTRA_TEXT, shareText) }, "Share Convo post"))
                         }
                         .padding(horizontal = 12.dp, vertical = 8.dp)
                 ) {
