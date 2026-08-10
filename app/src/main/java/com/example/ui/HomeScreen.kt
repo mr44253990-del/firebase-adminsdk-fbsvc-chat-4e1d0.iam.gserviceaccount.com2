@@ -205,7 +205,7 @@ fun HomeScreen(
     var showReportDialog by remember { mutableStateOf(false) }
     val funPrefs = remember { context.getSharedPreferences("convo_fun_campaign", Context.MODE_PRIVATE) }
     val funKey = "${currentUser?.uid}_${flagshipConfig.funCampaignId}"
-    var showFunCampaign by remember(funKey, flagshipConfig.funCampaignEnabled) { mutableStateOf(flagshipConfig.funCampaignEnabled && flagshipConfig.funCampaignId.isNotBlank() && currentUser?.dob?.isNotBlank() == true && !funPrefs.getBoolean(funKey, false)) }
+    var showFunCampaign by remember(funKey, flagshipConfig.funCampaignEnabled) { mutableStateOf(flagshipConfig.funCampaignEnabled && flagshipConfig.funCampaignId.isNotBlank() && currentUser != null && !funPrefs.getBoolean(funKey, false)) }
     var lockEnabled by remember { mutableStateOf(AppLockManager.isEnabled(context)) }
     val currentTab by viewModel.currentTabState.collectAsState()
     val selectedReelPostId by viewModel.selectedReelPostId.collectAsState()
@@ -1913,7 +1913,7 @@ fun HomeScreen(
         )
     }
 
-    if (showFunCampaign) currentUser?.let { FridayFunDialog(it.dob, flagshipConfig.funCampaignTitle, flagshipConfig.funCampaignBody) { funPrefs.edit().putBoolean(funKey, true).apply(); showFunCampaign=false } }
+    if (showFunCampaign) FridayFunDialog(flagshipConfig.funCampaignTitle, flagshipConfig.funCampaignBody) { funPrefs.edit().putBoolean(funKey, true).apply(); showFunCampaign=false }
 
     if (!showFunCampaign && showPremiumUpsell) AlertDialog(
         onDismissRequest = {},
@@ -3008,10 +3008,13 @@ private fun animatedPostScale(postId: String, animation: String): Float {
 
 @Composable
 fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (User) -> Unit = {}, autoPlayVideo: Boolean = false, allowInlineVideo: Boolean = false) {
+    val context = LocalContext.current
     var isCommentsExpanded by remember { mutableStateOf(false) }
     var commentInputText by remember { mutableStateOf("") }
     var showPostMenu by remember { mutableStateOf(false) }
     var showEditPost by remember { mutableStateOf(false) }
+    var showReportPost by remember { mutableStateOf(false) }
+    var showSendPost by remember { mutableStateOf(false) }
     var playInlineVideo by remember(post.id) { mutableStateOf(false) }
     val currentUserId = FirebaseAuth.getInstance().currentUser?.uid ?: ""
     val savedPostIds by viewModel.savedPostIds.collectAsState()
@@ -3095,10 +3098,12 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
                     }
                 }
 
-                if (post.senderId == currentUserId) {
-                    Box {
-                        IconButton(onClick = { showPostMenu = true }) { Icon(Icons.Default.MoreVert, "Post options") }
-                        DropdownMenu(expanded = showPostMenu, onDismissRequest = { showPostMenu = false }) {
+                Box {
+                    IconButton(onClick = { showPostMenu = true }) { Icon(Icons.Default.MoreVert, "Post options") }
+                    DropdownMenu(expanded = showPostMenu, onDismissRequest = { showPostMenu = false }) {
+                        DropdownMenuItem(text = { Text("Send to a chat") }, leadingIcon = { Icon(Icons.Default.Send, null) }, onClick = { showPostMenu = false; showSendPost = true })
+                        if (post.senderId != currentUserId) DropdownMenuItem(text = { Text("Report post") }, leadingIcon = { Icon(Icons.Default.ReportProblem, null) }, onClick = { showPostMenu = false; showReportPost = true })
+                        if (post.senderId == currentUserId) {
                             DropdownMenuItem(text = { Text("Edit post") }, leadingIcon = { Icon(Icons.Default.Edit, null) }, onClick = { showPostMenu = false; showEditPost = true })
                             DropdownMenuItem(text = { Text("Delete post", color = MaterialTheme.colorScheme.error) }, leadingIcon = { Icon(Icons.Default.DeleteOutline, null, tint = MaterialTheme.colorScheme.error) }, onClick = { showPostMenu = false; viewModel.deletePost(post.id) })
                         }
@@ -3572,6 +3577,13 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
         }
     }
 
+    if (showSendPost) {
+        AlertDialog(onDismissRequest={showSendPost=false},title={Text("Send post to chat",fontWeight=FontWeight.ExtraBold)},text={LazyColumn(Modifier.heightIn(max=420.dp)){items(allUsers,key={it.uid}){person->ListItem(headlineContent={Text(person.name,fontWeight=FontWeight.Bold)},supportingContent={Text("@${person.username}")},leadingContent={AsyncImage(person.profileImageUrl.ifBlank{null},person.name,Modifier.size(42.dp).clip(CircleShape))},modifier=Modifier.clickable{viewModel.sendPostToUser(person,post){ok->Toast.makeText(context,if(ok)"Sent to ${person.name}" else "Send failed",Toast.LENGTH_SHORT).show()};showSendPost=false})}}},confirmButton={TextButton(onClick={showSendPost=false}){Text("Cancel")}})
+    }
+    if (showReportPost) {
+        var reason by remember { mutableStateOf("") }
+        AlertDialog(onDismissRequest={showReportPost=false},title={Text("Report this post")},text={OutlinedTextField(reason,{reason=it.take(1200)},label={Text("What is wrong with this post?")},minLines=4)},confirmButton={Button(onClick={viewModel.submitUserReport(post.senderId,"post",reason){ok,message->Toast.makeText(context,message,Toast.LENGTH_LONG).show();if(ok)showReportPost=false}},enabled=reason.length>=10){Text("Submit")}},dismissButton={TextButton(onClick={showReportPost=false}){Text("Cancel")}})
+    }
     if (showEditPost) {
         var editTitle by remember { mutableStateOf(post.title) }
         var editText by remember { mutableStateOf(post.text) }

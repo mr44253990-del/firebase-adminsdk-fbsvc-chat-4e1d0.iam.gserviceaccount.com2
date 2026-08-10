@@ -27,6 +27,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
@@ -102,6 +103,8 @@ fun CallScreen(
     val state by CallEngine.state.collectAsState()
     val effectiveVideo = video || state.video
     var elapsedSeconds by remember { mutableLongStateOf(0L) }
+    val callMotion = rememberInfiniteTransition(label = "call_liquid_motion")
+    val callPulse by callMotion.animateFloat(.94f, 1.08f, infiniteRepeatable(tween(900, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "call_pulse")
     DisposableEffect(effectiveVideo) {
         val window = (view.context as? Activity)?.window
         window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
@@ -169,7 +172,7 @@ fun CallScreen(
                     AsyncImage(
                         model = remoteImage.ifBlank { null }, contentDescription = remoteName,
                         error = painterResource(R.drawable.img_app_logo), contentScale = ContentScale.Crop,
-                        modifier = Modifier.size(138.dp).clip(CircleShape).border(4.dp, Color.White.copy(.75f), CircleShape)
+                        modifier = Modifier.size(138.dp).scale(if (!accepted && incoming) callPulse else 1f).clip(CircleShape).border(4.dp, Brush.sweepGradient(listOf(Color(0xFF66E5FF),Color(0xFF9A6CFF),Color(0xFFFF5BAD),Color(0xFF66E5FF))), CircleShape)
                     )
                     Spacer(Modifier.height(26.dp))
                     Text(remoteName, color = Color.White, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.ExtraBold, textAlign = TextAlign.Center)

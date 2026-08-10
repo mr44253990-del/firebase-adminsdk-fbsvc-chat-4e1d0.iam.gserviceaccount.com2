@@ -1220,6 +1220,7 @@ fun MessageBubbleItem(
 @Composable
 private fun PdfFirstPage(uri: Uri) {
     val context = LocalContext.current
+    var fullPreview by remember(uri) { mutableStateOf(false) }
     val preview by produceState<Bitmap?>(null, uri) {
         value = withContext(Dispatchers.IO) {
             runCatching {
@@ -1236,28 +1237,36 @@ private fun PdfFirstPage(uri: Uri) {
             }.getOrNull()
         }
     }
-    preview?.let { androidx.compose.foundation.Image(it.asImageBitmap(), "PDF first page preview", Modifier.fillMaxWidth().heightIn(max = 220.dp).clip(RoundedCornerShape(12.dp)), contentScale = ContentScale.Fit) }
+    preview?.let { bitmap -> androidx.compose.foundation.Image(bitmap.asImageBitmap(), "PDF first page preview", Modifier.fillMaxWidth().heightIn(max = 220.dp).clip(RoundedCornerShape(12.dp)).clickable { fullPreview = true }, contentScale = ContentScale.Fit) }
+    if(fullPreview) Dialog(onDismissRequest={fullPreview=false},properties=DialogProperties(usePlatformDefaultWidth=false)) { Box(Modifier.fillMaxSize().background(Color.Black),contentAlignment=Alignment.Center){ preview?.let{androidx.compose.foundation.Image(it.asImageBitmap(),"PDF full preview",Modifier.fillMaxSize().padding(12.dp),contentScale=ContentScale.Fit)};IconButton(onClick={fullPreview=false},modifier=Modifier.align(Alignment.TopEnd).padding(14.dp).background(Color.Black.copy(.5f),CircleShape)){Icon(Icons.Default.Close,"Close",tint=Color.White)} } }
 }
 
 @Composable
 private fun InlineChatVideo(url: String, name: String) {
+    val context = LocalContext.current
     var playing by remember(url) { mutableStateOf(false) }
-    Box(Modifier.fillMaxWidth().height(220.dp).clip(RoundedCornerShape(18.dp)).background(Color.Black), contentAlignment = Alignment.Center) {
-        AndroidView(
-            factory = { context -> android.widget.VideoView(context).apply {
-                val controller = android.widget.MediaController(context)
-                controller.setAnchorView(this); setMediaController(controller); setVideoURI(Uri.parse(url))
-                setOnPreparedListener { if (playing) start() }
-                setOnCompletionListener { playing = false }
-            } },
-            update = { if (playing && !it.isPlaying) it.start() else if (!playing && it.isPlaying) it.pause() },
-            modifier = Modifier.fillMaxSize()
-        )
-        if (!playing) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                FilledIconButton(onClick = { playing = true }, modifier = Modifier.size(58.dp)) { Icon(Icons.Default.PlayArrow, "Play video", modifier = Modifier.size(32.dp)) }
-                Text(name, color = Color.White, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(horizontal = 10.dp))
-            }
+    var fullscreen by remember(url) { mutableStateOf(false) }
+    fun saveVideo() {
+        if (!url.startsWith("http")) return
+        val safe = name.ifBlank { "convo_video_${System.currentTimeMillis()}.mp4" }.replace(Regex("[\\/:*?\"<>|]"), "_")
+        val request = DownloadManager.Request(Uri.parse(url)).setTitle(safe).setMimeType("video/*").setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED).setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, "Convo_$safe")
+        (context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager).enqueue(request)
+        Toast.makeText(context, "Video is saving to Downloads", Toast.LENGTH_LONG).show()
+    }
+    Box(Modifier.fillMaxWidth().height(230.dp).clip(RoundedCornerShape(18.dp)).background(Color.Black), contentAlignment = Alignment.Center) {
+        AndroidView(factory = { ctx -> android.widget.VideoView(ctx).apply { val controls=android.widget.MediaController(ctx);controls.setAnchorView(this);setMediaController(controls);setVideoURI(Uri.parse(url));setOnPreparedListener { if(playing)start() };setOnCompletionListener{playing=false} } }, update = { if(playing&&!it.isPlaying)it.start() else if(!playing&&it.isPlaying)it.pause() }, modifier=Modifier.fillMaxSize())
+        if (!playing) FilledIconButton(onClick={playing=true},modifier=Modifier.size(58.dp)){Icon(Icons.Default.PlayArrow,"Play video",Modifier.size(32.dp))}
+        Row(Modifier.align(Alignment.TopEnd).padding(7.dp),horizontalArrangement=Arrangement.spacedBy(5.dp)) {
+            IconButton(onClick={fullscreen=true},modifier=Modifier.background(Color.Black.copy(.55f),CircleShape)){Icon(Icons.Default.Fullscreen,"Full screen",tint=Color.White)}
+            IconButton(onClick=::saveVideo,modifier=Modifier.background(Color.Black.copy(.55f),CircleShape)){Icon(Icons.Default.Download,"Save video",tint=Color.White)}
+        }
+        Text(name,color=Color.White,fontSize=10.sp,maxLines=1,overflow=TextOverflow.Ellipsis,modifier=Modifier.align(Alignment.BottomStart).background(Color.Black.copy(.55f)).padding(7.dp))
+    }
+    if(fullscreen) Dialog(onDismissRequest={fullscreen=false},properties=DialogProperties(usePlatformDefaultWidth=false,decorFitsSystemWindows=false)) {
+        Box(Modifier.fillMaxSize().background(Color.Black)) {
+            AndroidView(factory={ctx->android.widget.VideoView(ctx).apply{val controls=android.widget.MediaController(ctx);controls.setAnchorView(this);setMediaController(controls);setVideoURI(Uri.parse(url));setOnPreparedListener{start()}}},modifier=Modifier.fillMaxSize())
+            IconButton(onClick={fullscreen=false},modifier=Modifier.align(Alignment.TopEnd).windowInsetsPadding(WindowInsets.statusBars).padding(14.dp).background(Color.Black.copy(.5f),CircleShape)){Icon(Icons.Default.Close,"Close",tint=Color.White)}
+            IconButton(onClick=::saveVideo,modifier=Modifier.align(Alignment.BottomEnd).windowInsetsPadding(WindowInsets.navigationBars).padding(18.dp).background(MaterialTheme.colorScheme.primary,CircleShape)){Icon(Icons.Default.Download,"Save",tint=MaterialTheme.colorScheme.onPrimary)}
         }
     }
 }

@@ -535,6 +535,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         if (FirebaseAuth.getInstance().currentUser == null) return
         val prefs = getApplication<Application>().getSharedPreferences("convo_device_session", Context.MODE_PRIVATE)
         val id = prefs.getString("id", null) ?: UUID.randomUUID().toString().also { prefs.edit().putString("id", it).putLong("firstSeen", System.currentTimeMillis()).apply() }
+        val localSession = DeviceSession(id, "${Build.MANUFACTURER} ${Build.MODEL}", "Android ${Build.VERSION.RELEASE}", BuildConfig.VERSION_NAME, prefs.getLong("firstSeen", System.currentTimeMillis()), System.currentTimeMillis(), true, "Protected", "Waiting for secure sync")
+        if (_deviceSessions.value.none { it.sessionId == id }) _deviceSessions.value = listOf(localSession) + _deviceSessions.value
         workerSecurityPost("/sessions/register", JSONObject().put("sessionId", id).put("deviceName", "${Build.MANUFACTURER} ${Build.MODEL}").put("androidVersion", "Android ${Build.VERSION.RELEASE}").put("appVersion", BuildConfig.VERSION_NAME).put("firstSeenAt", prefs.getLong("firstSeen", System.currentTimeMillis()))) { ok, _ -> if (ok) refreshDeviceSessions() }
     }
 
@@ -2000,6 +2002,16 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 )
             }
         }
+    }
+
+    fun sendPostToUser(target: User, post: Post, onComplete: (Boolean) -> Unit = {}) {
+        val me = getCurrentUserOrFallback() ?: return onComplete(false)
+        val chatId = listOf(me.uid, target.uid).sorted().joinToString("_")
+        val ref = getDatabaseInstance().getReference("chats").child(chatId).child("messages")
+        val id = ref.push().key ?: UUID.randomUUID().toString()
+        val link = "https://solitary-hill-dcdc.mr44253990.workers.dev/post/${post.id}"
+        val message = Message(messageId=id,senderId=me.uid,senderName=me.name,senderUsername=me.username,text="📌 ${post.title.ifBlank { "Shared a post" }}\n${post.text.take(220)}\n$link",timestamp=System.currentTimeMillis(),imageUrl=post.imageUrl.takeIf{it.isNotBlank()},deliveredToRecipient=target.isOnline)
+        ref.child(id).setValue(message).addOnSuccessListener { withUserFcmToken(target.uid,target.fcmToken){token->triggerFcmGatewayNotification(_webhookUrl.value,token,me.name,"Shared a Convo post",me.uid,me.profileImageUrl,"message",id)};onComplete(true) }.addOnFailureListener{onComplete(false)}
     }
 
     fun editMessage(recipientUid: String, messageId: String, newText: String) {
