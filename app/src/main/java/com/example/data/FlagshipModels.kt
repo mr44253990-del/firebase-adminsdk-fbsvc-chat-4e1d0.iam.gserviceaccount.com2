@@ -63,6 +63,10 @@ data class FlagshipConfig(
     val premiumBkashEnabled: Boolean = true,
     val premiumNagadEnabled: Boolean = true,
     val premiumRocketEnabled: Boolean = true,
+    val funCampaignEnabled: Boolean = false,
+    val funCampaignId: String = "",
+    val funCampaignTitle: String = "শুক্রবারের মজার হিসাব 😄",
+    val funCampaignBody: String = "আর কত শুক্রবার বউ ছাড়া থাকবেন? একটা বিয়ে করে নেন! 😄",
     val updatedAt: Long = 0L,
     val updatedBy: String = ""
 )

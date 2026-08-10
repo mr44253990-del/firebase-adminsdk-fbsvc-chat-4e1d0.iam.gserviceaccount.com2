@@ -203,6 +203,11 @@ fun HomeScreen(
     var showGlobalSearch by remember { mutableStateOf(false) }
     var showLockSetup by remember { mutableStateOf(false) }
     var showReportDialog by remember { mutableStateOf(false) }
+    val tutorialPrefs = remember { context.getSharedPreferences("convo_first_run_tour", Context.MODE_PRIVATE) }
+    var showTutorial by remember(currentUser?.uid) { mutableStateOf(currentUser?.uid?.let { !tutorialPrefs.getBoolean("done_$it", false) } == true) }
+    val funPrefs = remember { context.getSharedPreferences("convo_fun_campaign", Context.MODE_PRIVATE) }
+    val funKey = "${currentUser?.uid}_${flagshipConfig.funCampaignId}"
+    var showFunCampaign by remember(funKey, flagshipConfig.funCampaignEnabled) { mutableStateOf(flagshipConfig.funCampaignEnabled && flagshipConfig.funCampaignId.isNotBlank() && currentUser?.dob?.isNotBlank() == true && !funPrefs.getBoolean(funKey, false)) }
     var lockEnabled by remember { mutableStateOf(AppLockManager.isEnabled(context)) }
     val currentTab by viewModel.currentTabState.collectAsState()
     val selectedReelPostId by viewModel.selectedReelPostId.collectAsState()
@@ -798,6 +803,9 @@ fun HomeScreen(
                         var draftBkash by remember(flagshipConfig) { mutableStateOf(flagshipConfig.premiumBkashEnabled) }
                         var draftNagad by remember(flagshipConfig) { mutableStateOf(flagshipConfig.premiumNagadEnabled) }
                         var draftRocket by remember(flagshipConfig) { mutableStateOf(flagshipConfig.premiumRocketEnabled) }
+                        var draftFunEnabled by remember(flagshipConfig) { mutableStateOf(flagshipConfig.funCampaignEnabled) }
+                        var draftFunTitle by remember(flagshipConfig) { mutableStateOf(flagshipConfig.funCampaignTitle) }
+                        var draftFunBody by remember(flagshipConfig) { mutableStateOf(flagshipConfig.funCampaignBody) }
                         var giftDays by remember { mutableStateOf("5") }
                         var giftCount by remember { mutableStateOf("10") }
                         var updateUploading by remember { mutableStateOf(false) }
@@ -894,6 +902,12 @@ fun HomeScreen(
                                         "premiumBkashEnabled" to draftBkash, "premiumNagadEnabled" to draftNagad, "premiumRocketEnabled" to draftRocket
                                     )) { Toast.makeText(context, if (it) "AI & Premium saved" else "Save failed", Toast.LENGTH_LONG).show() } }, modifier = Modifier.fillMaxWidth()) { Text("Save AI & Premium only") }
                                     HorizontalDivider()
+                                    Text("One-time Friday Fun campaign", fontWeight=FontWeight.Bold,color=MaterialTheme.colorScheme.primary)
+                                    Row(verticalAlignment=Alignment.CenterVertically){Text("Campaign enabled",Modifier.weight(1f));Switch(draftFunEnabled,{draftFunEnabled=it})}
+                                    OutlinedTextField(draftFunTitle,{draftFunTitle=it.take(100)},label={Text("Campaign title")},modifier=Modifier.fillMaxWidth())
+                                    OutlinedTextField(draftFunBody,{draftFunBody=it.take(500)},label={Text("Editable message")},minLines=2,modifier=Modifier.fillMaxWidth())
+                                    OutlinedButton(onClick={viewModel.updateFlagshipFields(mapOf("funCampaignEnabled" to draftFunEnabled,"funCampaignId" to "fun_${System.currentTimeMillis()}","funCampaignTitle" to draftFunTitle,"funCampaignBody" to draftFunBody)){Toast.makeText(context,if(it)"New campaign published" else "Publish failed",Toast.LENGTH_LONG).show()}},modifier=Modifier.fillMaxWidth()){Text("Publish as a new one-time campaign")}
+                                    HorizontalDivider()
                                     Row(verticalAlignment = Alignment.CenterVertically) { Text("Show global notice", Modifier.weight(1f)); Switch(draftNoticeEnabled, { draftNoticeEnabled = it }) }
                                     OutlinedTextField(draftNoticeTitle, { draftNoticeTitle = it.take(100) }, label = { Text("Notice title") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                                     OutlinedTextField(draftNoticeBody, { draftNoticeBody = it.take(1000) }, label = { Text("Notice details") }, minLines = 2, modifier = Modifier.fillMaxWidth())
@@ -923,7 +937,11 @@ fun HomeScreen(
                                                 premiumLifetimeEnabled = draftLifetimeEnabled,
                                                 premiumBkashEnabled = draftBkash,
                                                 premiumNagadEnabled = draftNagad,
-                                                premiumRocketEnabled = draftRocket
+                                                premiumRocketEnabled = draftRocket,
+                                                funCampaignEnabled = draftFunEnabled,
+                                                funCampaignId = flagshipConfig.funCampaignId,
+                                                funCampaignTitle = draftFunTitle,
+                                                funCampaignBody = draftFunBody
                                             )
                                         ) { ok -> Toast.makeText(context, if (ok) "Flagship configuration published" else "Publish failed", Toast.LENGTH_LONG).show() }
                                     }, enabled = draftUpdateEnabled && draftApkUrl.startsWith("https://"), modifier = Modifier.fillMaxWidth()) { Icon(Icons.Outlined.Publish, null); Spacer(Modifier.width(8.dp)); Text("Publish APK Update only") }
@@ -1897,7 +1915,11 @@ fun HomeScreen(
         )
     }
 
-    if (showPremiumUpsell) AlertDialog(
+    if (showTutorial) FirstRunTutorial { currentUser?.uid?.let { tutorialPrefs.edit().putBoolean("done_$it", true).apply() }; showTutorial = false }
+
+    if (!showTutorial && showFunCampaign) currentUser?.let { FridayFunDialog(it.dob, flagshipConfig.funCampaignTitle, flagshipConfig.funCampaignBody) { funPrefs.edit().putBoolean(funKey, true).apply(); showFunCampaign=false } }
+
+    if (!showTutorial && !showFunCampaign && showPremiumUpsell) AlertDialog(
         onDismissRequest = {},
         icon = { Icon(Icons.Default.WorkspacePremium, null, tint = Color(0xFFFFB300), modifier = Modifier.size(50.dp)) },
         title = { Text("Unlock Convo Premium", fontWeight = FontWeight.Black) },
