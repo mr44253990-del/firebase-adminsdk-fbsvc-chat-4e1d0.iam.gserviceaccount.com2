@@ -66,6 +66,22 @@ export default {
       }
     }
 
+    if (request.method === "GET" && path.startsWith("/post/")) {
+      const postId = decodeURIComponent(path.slice(6));
+      if (!/^[A-Za-z0-9_-]{4,160}$/.test(postId)) return htmlResponse("Invalid post link", 400);
+      try {
+        const post = await firestoreGet(env, `posts/${postId}`);
+        if (!post) return htmlResponse("Post not found", 404);
+        const title = escapeHtml(post.title || `${post.senderName || "Someone"} on Convo Chat`);
+        const description = escapeHtml(String(post.text || "Open this post in Convo Chat").slice(0,240));
+        const image = escapeHtml(post.imageUrl || (Array.isArray(post.imageUrls) ? post.imageUrls[0] : "") || "");
+        const appLink = `convochat://post/${encodeURIComponent(postId)}`;
+        const download = escapeHtml(env.APP_DOWNLOAD_URL || new URL(request.url).origin);
+        const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title><meta name="description" content="${description}"><meta property="og:site_name" content="Convo Chat"><meta property="og:type" content="article"><meta property="og:title" content="${title}"><meta property="og:description" content="${description}">${image ? `<meta property="og:image" content="${image}">` : ""}<style>body{margin:0;background:#070814;color:white;font-family:system-ui;display:grid;place-items:center;min-height:100vh}.c{max-width:620px;margin:20px;padding:28px;border-radius:28px;background:linear-gradient(145deg,#211c45,#08192b);border:1px solid #806fff77}img{width:100%;max-height:420px;object-fit:cover;border-radius:20px}a{display:block;margin-top:12px;padding:14px;border-radius:999px;text-align:center;color:white;text-decoration:none;font-weight:800;background:linear-gradient(90deg,#6757ff,#ef3fac)}.s{background:#ffffff18}</style></head><body><main class="c">${image ? `<img src="${image}">` : ""}<h1>${title}</h1><p>${description}</p><a href="${appLink}">Open in Convo Chat</a><a class="s" href="${download}">Download the app</a></main></body></html>`;
+        return new Response(html,{headers:{"Content-Type":"text/html; charset=utf-8","Cache-Control":"public,max-age=300"}});
+      } catch(e) { return htmlResponse("Could not load this post",500); }
+    }
+
     if (request.method === "GET") {
       let projectId = null;
       let serviceAccountConfigured = false;
@@ -133,6 +149,18 @@ export default {
           headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
         });
       }
+
+      if (path === "/sessions/register") {
+        const id=String(payload.sessionId||"").replace(/[^A-Za-z0-9_-]/g,"").slice(0,100); if(!id)return jsonResponse({error:"sessionId required"},400);
+        const ip=request.headers.get("CF-Connecting-IP")||""; const masked=ip.includes(":")?`${ip.split(":").slice(0,3).join(":")}::`:ip.split(".").map((x,i)=>i===3?"x":x).join("."); const cf=request.cf||{};
+        const record={sessionId:id,uid:caller.sub,deviceName:String(payload.deviceName||"Android device").slice(0,120),androidVersion:String(payload.androidVersion||""),appVersion:String(payload.appVersion||""),firstSeenAt:Number(payload.firstSeenAt||Date.now()),lastSeenAt:Date.now(),active:true,maskedIp:masked,city:String(cf.city||"Unknown"),region:String(cf.region||""),country:String(cf.country||""),latitude:Number(cf.latitude||0),longitude:Number(cf.longitude||0)};
+        await firestoreSet(env,`user_sessions/${caller.sub}/devices/${id}`,record); return jsonResponse({success:true,session:record});
+      }
+      if(path==="/sessions/list") return jsonResponse({success:true,sessions:(await firestoreList(env,`user_sessions/${caller.sub}/devices`)).sort((a,b)=>(b.lastSeenAt||0)-(a.lastSeenAt||0))});
+      if(path==="/sessions/revoke-all") { const auth=await updateFirebaseAccount(env,caller.sub,{validSince:String(Math.floor(Date.now()/1000))}); const sessions=await firestoreList(env,`user_sessions/${caller.sub}/devices`); await Promise.all(sessions.map(x=>firestoreSet(env,`user_sessions/${caller.sub}/devices/${x.sessionId}`,{...x,active:false,revokedAt:Date.now()}))); return jsonResponse({success:true,authRevoked:auth.ok}); }
+      if(path==="/reports/create") { const id=crypto.randomUUID(); const report={id,reporterId:caller.sub,reporterEmail:caller.email||"",targetUid:String(payload.targetUid||""),category:String(payload.category||"other").slice(0,60),description:String(payload.description||"").slice(0,3000),status:"pending",createdAt:Date.now()}; await firestoreSet(env,`user_reports/${id}`,report); return jsonResponse({success:true,report}); }
+      if(path==="/admin/reports/list") { if(caller.email!=="mr4425390@gmail.com")return jsonResponse({error:"Admin only"},403); return jsonResponse({success:true,reports:await firestoreList(env,"user_reports")}); }
+      if(path==="/admin/user/ban"||path==="/admin/user/unban") { if(caller.email!=="mr4425390@gmail.com")return jsonResponse({error:"Admin only"},403); const uid=String(payload.uid||""); if(!uid)return jsonResponse({error:"uid required"},400); const disabled=path.endsWith("/ban"); const auth=await updateFirebaseAccount(env,uid,{disabled}); await firestoreMerge(env,`users/${uid}`,{banned:disabled,banReason:String(payload.reason||"").slice(0,500),bannedAt:disabled?Date.now():0}); return jsonResponse({success:auth.ok,disabled,upstreamStatus:auth.status},auth.ok?200:502); }
 
       if (path === "/ai/chat") {
         if (!env.MISTRAL_API_KEY) return jsonResponse({ error: "MISTRAL_API_KEY Worker secret is not configured" }, 503);
@@ -395,10 +423,21 @@ function base64UrlToBytes(value) {
   return Uint8Array.from(binary, char => char.charCodeAt(0));
 }
 
+function escapeHtml(v){return String(v||"").replace(/[&<>"']/g,c=>c==="&"?"&amp;":c==="<"?"&lt;":c===">"?"&gt;":c==='"'?"&quot;":"&#39;");}
+function htmlResponse(m,status=200){return new Response(`<!doctype html><meta name="viewport" content="width=device-width"><body style="background:#080914;color:white;font-family:system-ui;display:grid;place-items:center;height:100vh"><h2>${escapeHtml(m)}</h2></body>`,{status,headers:{"Content-Type":"text/html; charset=utf-8"}});}
+function toFV(v){if(v==null)return{nullValue:null};if(typeof v==="string")return{stringValue:v};if(typeof v==="boolean")return{booleanValue:v};if(typeof v==="number")return Number.isInteger(v)?{integerValue:String(v)}:{doubleValue:v};if(Array.isArray(v))return{arrayValue:{values:v.map(toFV)}};if(typeof v==="object")return{mapValue:{fields:Object.fromEntries(Object.entries(v).map(([k,x])=>[k,toFV(x)]))}};return{stringValue:String(v)};}
+function fromFV(v){if(!v)return null;if("stringValue"in v)return v.stringValue;if("integerValue"in v)return Number(v.integerValue);if("doubleValue"in v)return v.doubleValue;if("booleanValue"in v)return v.booleanValue;if("timestampValue"in v)return Date.parse(v.timestampValue);if("nullValue"in v)return null;if(v.arrayValue)return(v.arrayValue.values||[]).map(fromFV);if(v.mapValue)return Object.fromEntries(Object.entries(v.mapValue.fields||{}).map(([k,x])=>[k,fromFV(x)]));return null;}
+async function fsAuth(env){const a=JSON.parse(env.FIREBASE_SERVICE_ACCOUNT||"{}");return{a,t:await getGoogleAccessToken(a.client_email,a.private_key,"https://www.googleapis.com/auth/datastore")};}
+async function firestoreGet(env,path){const{a,t}=await fsAuth(env);const r=await fetch(`https://firestore.googleapis.com/v1/projects/${a.project_id}/databases/(default)/documents/${path}`,{headers:{Authorization:`Bearer ${t}`}});if(r.status===404)return null;if(!r.ok)throw Error(`Firestore ${r.status}`);const d=await r.json();return Object.fromEntries(Object.entries(d.fields||{}).map(([k,v])=>[k,fromFV(v)]));}
+async function firestoreSet(env,path,data){const{a,t}=await fsAuth(env);const fields=Object.fromEntries(Object.entries(data).map(([k,v])=>[k,toFV(v)]));const r=await fetch(`https://firestore.googleapis.com/v1/projects/${a.project_id}/databases/(default)/documents/${path}`,{method:"PATCH",headers:{Authorization:`Bearer ${t}`,"Content-Type":"application/json"},body:JSON.stringify({fields})});if(!r.ok)throw Error(`Firestore write ${r.status}`);return r.json();}
+async function firestoreMerge(env,path,data){return firestoreSet(env,path,{...((await firestoreGet(env,path))||{}),...data});}
+async function firestoreList(env,path){const{a,t}=await fsAuth(env);const r=await fetch(`https://firestore.googleapis.com/v1/projects/${a.project_id}/databases/(default)/documents/${path}?pageSize=100`,{headers:{Authorization:`Bearer ${t}`}});if(!r.ok)throw Error(`Firestore list ${r.status}`);const d=await r.json();return(d.documents||[]).map(x=>Object.fromEntries(Object.entries(x.fields||{}).map(([k,v])=>[k,fromFV(v)])));}
+async function updateFirebaseAccount(env,uid,changes){const a=JSON.parse(env.FIREBASE_SERVICE_ACCOUNT||"{}");const t=await getGoogleAccessToken(a.client_email,a.private_key,"https://www.googleapis.com/auth/identitytoolkit");const r=await fetch(`https://identitytoolkit.googleapis.com/v1/projects/${a.project_id}/accounts:update`,{method:"POST",headers:{Authorization:`Bearer ${t}`,"Content-Type":"application/json"},body:JSON.stringify({localId:uid,...changes})});return{ok:r.ok,status:r.status};}
+
 /**
  * Signs a RS256 JWT claim and exchanges it for a Google OAuth2 access token.
  */
-async function getGoogleAccessToken(clientEmail, privateKeyPem) {
+async function getGoogleAccessToken(clientEmail, privateKeyPem, scope = "https://www.googleapis.com/auth/firebase.messaging") {
   const iat = Math.floor(Date.now() / 1000);
   const exp = iat + 3600; // 1 hour token validity
 
@@ -409,7 +448,7 @@ async function getGoogleAccessToken(clientEmail, privateKeyPem) {
 
   const claim = {
     iss: clientEmail,
-    scope: "https://www.googleapis.com/auth/firebase.messaging",
+    scope: scope,
     aud: "https://oauth2.googleapis.com/token",
     exp: exp,
     iat: iat
