@@ -203,8 +203,6 @@ fun HomeScreen(
     var showGlobalSearch by remember { mutableStateOf(false) }
     var showLockSetup by remember { mutableStateOf(false) }
     var showReportDialog by remember { mutableStateOf(false) }
-    val tutorialPrefs = remember { context.getSharedPreferences("convo_first_run_tour", Context.MODE_PRIVATE) }
-    var showTutorial by remember(currentUser?.uid) { mutableStateOf(currentUser?.uid?.let { !tutorialPrefs.getBoolean("done_$it", false) } == true) }
     val funPrefs = remember { context.getSharedPreferences("convo_fun_campaign", Context.MODE_PRIVATE) }
     val funKey = "${currentUser?.uid}_${flagshipConfig.funCampaignId}"
     var showFunCampaign by remember(funKey, flagshipConfig.funCampaignEnabled) { mutableStateOf(flagshipConfig.funCampaignEnabled && flagshipConfig.funCampaignId.isNotBlank() && currentUser?.dob?.isNotBlank() == true && !funPrefs.getBoolean(funKey, false)) }
@@ -1915,11 +1913,9 @@ fun HomeScreen(
         )
     }
 
-    if (showTutorial) FirstRunTutorial { currentUser?.uid?.let { tutorialPrefs.edit().putBoolean("done_$it", true).apply() }; showTutorial = false }
+    if (showFunCampaign) currentUser?.let { FridayFunDialog(it.dob, flagshipConfig.funCampaignTitle, flagshipConfig.funCampaignBody) { funPrefs.edit().putBoolean(funKey, true).apply(); showFunCampaign=false } }
 
-    if (!showTutorial && showFunCampaign) currentUser?.let { FridayFunDialog(it.dob, flagshipConfig.funCampaignTitle, flagshipConfig.funCampaignBody) { funPrefs.edit().putBoolean(funKey, true).apply(); showFunCampaign=false } }
-
-    if (!showTutorial && !showFunCampaign && showPremiumUpsell) AlertDialog(
+    if (!showFunCampaign && showPremiumUpsell) AlertDialog(
         onDismissRequest = {},
         icon = { Icon(Icons.Default.WorkspacePremium, null, tint = Color(0xFFFFB300), modifier = Modifier.size(50.dp)) },
         title = { Text("Unlock Convo Premium", fontWeight = FontWeight.Black) },
