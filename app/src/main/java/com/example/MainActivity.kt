@@ -68,7 +68,7 @@ class MainActivity : FragmentActivity() {
     private fun captureDeepLink(intent: Intent?) { pendingPostId.value = intent?.data?.takeIf { it.host == "post" || it.path?.startsWith("/post/") == true }?.pathSegments?.lastOrNull() }
     @Suppress("DEPRECATION") private fun captureSharedContent(intent:Intent?){
         if(intent?.action!=Intent.ACTION_SEND&&intent?.action!=Intent.ACTION_SEND_MULTIPLE)return
-        val uris=if(intent.action==Intent.ACTION_SEND_MULTIPLE)intent.getParcelableArrayListExtra<android.net.Uri>(Intent.EXTRA_STREAM).orEmpty() else listOfNotNull(intent.getParcelableExtra(Intent.EXTRA_STREAM))
+        val uris:List<android.net.Uri> = if(intent.action==Intent.ACTION_SEND_MULTIPLE)intent.getParcelableArrayListExtra<android.net.Uri>(Intent.EXTRA_STREAM).orEmpty() else listOfNotNull(intent.getParcelableExtra(Intent.EXTRA_STREAM) as? android.net.Uri)
         val text=intent.getStringExtra(Intent.EXTRA_TEXT).orEmpty();if(text.isNotBlank()||uris.isNotEmpty())incomingShare.value=IncomingSharePayload(text,uris,intent.type?:"application/octet-stream")
     }
 
