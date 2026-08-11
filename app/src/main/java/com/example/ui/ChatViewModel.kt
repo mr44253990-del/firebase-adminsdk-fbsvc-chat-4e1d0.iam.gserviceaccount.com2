@@ -1,6 +1,7 @@
 package com.example.ui
 
 import android.app.Application
+import android.app.Activity
 import android.content.Context
 import android.media.AudioManager
 import android.media.ToneGenerator
@@ -19,6 +20,7 @@ import com.example.data.*
 import com.example.call.CallEngine
 import com.google.firebase.auth.AuthCredential
 import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.auth.OAuthProvider
 import com.google.firebase.database.DataSnapshot
 import com.google.firebase.database.DatabaseError
 import com.google.firebase.database.FirebaseDatabase
@@ -887,6 +889,21 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 _authLoading.value = false
                 _authError.value = it.localizedMessage ?: "Google sign-in failed"
             }
+    }
+
+    fun signInWithFacebook(activity: Activity, onSuccess: () -> Unit) {
+        _authLoading.value=true;_authError.value=null
+        val auth=FirebaseAuth.getInstance();val provider=OAuthProvider.newBuilder("facebook.com").apply{scopes=listOf("email","public_profile")}.build()
+        val task=auth.pendingAuthResult ?: auth.startActivityForSignInWithProvider(activity,provider)
+        task.addOnSuccessListener{result->
+            val u=result.user ?: return@addOnSuccessListener
+            val now=System.currentTimeMillis();val ref=FirebaseFirestore.getInstance().collection("users").document(u.uid)
+            ref.get().addOnSuccessListener{existing->
+                val base=mutableMapOf<String,Any>("uid" to u.uid,"name" to (u.displayName?:"Facebook User"),"username" to ((u.email?.substringBefore("@")?:"facebook_${u.uid.take(6)}").lowercase().replace("[^a-z0-9_]".toRegex(),"")),"profileImageUrl" to u.photoUrl?.toString().orEmpty(),"createdAt" to (u.metadata?.creationTimestamp?:now))
+                if(!existing.exists())base.putAll(mapOf("isPremium" to true,"premiumPlan" to "trial","premiumUntil" to now+14L*86_400_000L,"premiumApprovedAt" to now,"premiumTrialClaimed" to true,"premiumSource" to "signup_trial"))
+                ref.set(base,SetOptions.merge()).addOnCompleteListener{retrieveFCMTokenAndStore(u.uid);loadCurrentUserProfile(u.uid);setupPresence(u.uid);loadAllUsers();listenToAllPresences();listenForInAppNotifications();registerDeviceSession();_authLoading.value=false;onSuccess()}
+            }
+        }.addOnFailureListener{_authLoading.value=false;_authError.value=it.localizedMessage?:"Facebook login failed"}
     }
 
     fun signup(email: String, name: String, dob: String, password: String, profileImageUrl: String, onSuccess: () -> Unit) {
@@ -2638,7 +2655,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                                     senderId = map["senderId"] as? String ?: "",
                                     senderName = map["senderName"] as? String ?: "",
                                     text = map["text"] as? String ?: "",
-                                    timestamp = (map["timestamp"] as? Long) ?: 0L
+                                    timestamp = (map["timestamp"] as? Long) ?: 0L,
+                                    reactions = (map["reactions"] as? Map<*, *>)?.map { it.key.toString() to it.value.toString() }?.toMap() ?: emptyMap(),
+                                    replyToId = map["replyToId"] as? String ?: "",
+                                    replyToName = map["replyToName"] as? String ?: ""
                                 )
                             } ?: emptyList()
 
@@ -2822,14 +2842,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun commentOnPost(postId: String, text: String) {
+    fun commentOnPost(postId: String, text: String, replyToId: String = "", replyToName: String = "") {
         val user = getCurrentUserOrFallback() ?: return
         val comment = PostComment(
-            commentId = UUID.randomUUID().toString(),
-            senderId = user.uid,
-            senderName = user.name,
-            text = text,
-            timestamp = System.currentTimeMillis()
+            commentId = UUID.randomUUID().toString(), senderId = user.uid, senderName = user.name,
+            text = text, timestamp = System.currentTimeMillis(), replyToId = replyToId, replyToName = replyToName
         )
         val postRef = FirebaseFirestore.getInstance().collection("posts").document(postId)
         postRef.get().addOnSuccessListener { doc ->
@@ -2837,11 +2854,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 val commentsList = (doc.get("comments") as? List<*>)?.mapNotNull { item ->
                     val map = item as? Map<*, *> ?: return@mapNotNull null
                     PostComment(
-                        commentId = map["commentId"] as? String ?: "",
-                        senderId = map["senderId"] as? String ?: "",
-                        senderName = map["senderName"] as? String ?: "",
-                        text = map["text"] as? String ?: "",
-                        timestamp = (map["timestamp"] as? Long) ?: 0L
+                        commentId = map["commentId"] as? String ?: "", senderId = map["senderId"] as? String ?: "",
+                        senderName = map["senderName"] as? String ?: "", text = map["text"] as? String ?: "",
+                        timestamp = (map["timestamp"] as? Long) ?: 0L,
+                        reactions = (map["reactions"] as? Map<*, *>)?.map { it.key.toString() to it.value.toString() }?.toMap() ?: emptyMap(),
+                        replyToId = map["replyToId"] as? String ?: "", replyToName = map["replyToName"] as? String ?: ""
                     )
                 }?.toMutableList() ?: mutableListOf()
 
@@ -2853,6 +2870,19 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     )
                 }
             }
+        }
+    }
+
+    fun reactToPostComment(postId: String, commentId: String, reaction: String = "❤️") {
+        val uid = FirebaseAuth.getInstance().currentUser?.uid ?: return
+        val ref = FirebaseFirestore.getInstance().collection("posts").document(postId)
+        FirebaseFirestore.getInstance().runTransaction { tx ->
+            val doc = tx.get(ref)
+            val comments = (doc.get("comments") as? List<*>)?.mapNotNull { (it as? Map<*, *>)?.entries?.associate { entry -> entry.key.toString() to entry.value }?.toMutableMap() }?.toMutableList() ?: mutableListOf()
+            val index = comments.indexOfFirst { it["commentId"] == commentId }; if (index < 0) return@runTransaction false
+            val reactions = (comments[index]["reactions"] as? Map<*, *>)?.entries?.associate { it.key.toString() to it.value.toString() }?.toMutableMap() ?: mutableMapOf()
+            if (reactions[uid] == reaction) reactions.remove(uid) else reactions[uid] = reaction
+            comments[index]["reactions"] = reactions; tx.update(ref, "comments", comments); true
         }
     }
 

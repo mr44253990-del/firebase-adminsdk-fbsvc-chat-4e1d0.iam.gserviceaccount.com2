@@ -243,11 +243,10 @@ data class CachedPost(
                 val item = array.getJSONObject(i)
                 commentList.add(
                     PostComment(
-                        commentId = item.optString("commentId"),
-                        senderId = item.optString("senderId"),
-                        senderName = item.optString("senderName"),
-                        text = item.optString("text"),
-                        timestamp = item.optLong("timestamp")
+                        commentId = item.optString("commentId"), senderId = item.optString("senderId"),
+                        senderName = item.optString("senderName"), text = item.optString("text"), timestamp = item.optLong("timestamp"),
+                        reactions = item.optJSONObject("reactions")?.let { obj -> obj.keys().asSequence().associateWith { key -> obj.optString(key) } } ?: emptyMap(),
+                        replyToId = item.optString("replyToId"), replyToName = item.optString("replyToName")
                     )
                 )
             }
@@ -289,6 +288,9 @@ data class CachedPost(
                     put("senderName", c.senderName)
                     put("text", c.text)
                     put("timestamp", c.timestamp)
+                    put("reactions", JSONObject(c.reactions))
+                    put("replyToId", c.replyToId)
+                    put("replyToName", c.replyToName)
                 }
                 commentsArr.put(o)
             }

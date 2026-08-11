@@ -87,6 +87,7 @@ import com.example.data.FlagshipConfig
 import com.example.data.Group
 import com.example.data.MessageRequest
 import com.example.data.Post
+import com.example.data.PostComment
 import com.example.video.SharedCachedVideo
 import com.example.video.VideoPlayerManager
 import com.example.data.Story
@@ -2549,11 +2550,13 @@ private fun ImmersiveVideoPage(
     val context = LocalContext.current
     var isPaused by remember(post.id) { mutableStateOf(false) }
     var comment by remember(post.id) { mutableStateOf("") }
+    var replyingToComment by remember(post.id) { mutableStateOf<PostComment?>(null) }
     var showComments by remember(post.id) { mutableStateOf(false) }
     var showDescription by remember(post.id) { mutableStateOf(false) }
     var horizontalDrag by remember(post.id) { mutableFloatStateOf(0f) }
     var optimisticReaction by remember(post.id) { mutableStateOf<Boolean?>(null) }
     val currentUser by viewModel.currentUserState.collectAsState()
+    val commentUsers by viewModel.usersState.collectAsState()
     val sentRequests by viewModel.sentFriendRequestIds.collectAsState()
     val isFriend = owner?.let { currentUser?.friends?.contains(it.uid) == true } ?: false
     val requested = owner?.let { sentRequests.contains("${currentUser?.uid}_${it.uid}") } ?: false
@@ -2666,15 +2669,29 @@ private fun ImmersiveVideoPage(
                 LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (post.comments.isEmpty()) item { Box(Modifier.fillParentMaxWidth().padding(36.dp), contentAlignment = Alignment.Center) { Text("No comments yet — start the conversation", color = MaterialTheme.colorScheme.onSurfaceVariant) } }
                     items(post.comments, key = { it.commentId }) { item ->
-                        Surface(color = MaterialTheme.colorScheme.surfaceVariant.copy(.52f), shape = RoundedCornerShape(18.dp)) {
-                            Column(Modifier.padding(11.dp)) { Text(item.senderName, fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.primary); Spacer(Modifier.height(2.dp)); Text(item.text) }
+                        val person = if (item.senderId == currentUser?.uid) currentUser else commentUsers.find { it.uid == item.senderId }
+                        Row(verticalAlignment = Alignment.Top) {
+                            AsyncImage(person?.profileImageUrl?.ifBlank { null }, item.senderName, error = painterResource(R.drawable.img_app_logo), contentScale = ContentScale.Crop, modifier = Modifier.size(38.dp).clip(CircleShape).clickable { person?.let(onProfileSelected) })
+                            Spacer(Modifier.width(8.dp))
+                            Surface(color = MaterialTheme.colorScheme.surfaceVariant.copy(.58f), shape = RoundedCornerShape(18.dp), modifier = Modifier.weight(1f)) {
+                                Column(Modifier.padding(11.dp)) {
+                                    Text(item.senderName, fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.primary, modifier = Modifier.clickable { person?.let(onProfileSelected) })
+                                    if (item.replyToName.isNotBlank()) Text("Replying to ${item.replyToName}", color = MaterialTheme.colorScheme.secondary, fontSize = 9.sp)
+                                    Spacer(Modifier.height(2.dp)); Text(item.text)
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        TextButton(onClick = { viewModel.reactToPostComment(post.id,item.commentId) }, contentPadding = PaddingValues(horizontal=4.dp)) { Text(if (item.reactions.containsKey(currentUser?.uid)) "♥ ${item.reactions.size}" else "♡ ${item.reactions.size}") }
+                                        TextButton(onClick = { replyingToComment = item }, contentPadding = PaddingValues(horizontal=6.dp)) { Text("Reply") }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
+                replyingToComment?.let { target -> AssistChip(onClick = { replyingToComment = null }, label = { Text("Replying to ${target.senderName} • tap to cancel") }, leadingIcon = { Icon(Icons.Default.Reply,null) }) }
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    OutlinedTextField(comment, { comment = it.take(600) }, modifier = Modifier.weight(1f), placeholder = { Text("Add a comment…") }, maxLines = 3, shape = RoundedCornerShape(24.dp))
+                    OutlinedTextField(comment, { comment = it.take(600) }, modifier = Modifier.weight(1f), placeholder = { Text(if(replyingToComment==null)"Add a comment…" else "Write a reply…") }, maxLines = 3, shape = RoundedCornerShape(24.dp))
                     Spacer(Modifier.width(6.dp))
-                    FilledIconButton(onClick = { if (comment.isNotBlank()) { viewModel.commentOnPost(post.id, comment.trim()); comment = "" } }) { Icon(Icons.Default.Send, "Send") }
+                    FilledIconButton(onClick = { if (comment.isNotBlank()) { val target=replyingToComment; viewModel.commentOnPost(post.id, comment.trim(), target?.commentId.orEmpty(), target?.senderName.orEmpty()); comment = ""; replyingToComment=null } }) { Icon(Icons.Default.Send, "Send") }
                 }
             }
         }
@@ -2994,6 +3011,12 @@ fun StoriesHorizontalSection(
 }
 
 @Composable
+private fun ReactionOrb(emoji:String,index:Int,onClick:()->Unit){
+    val colors=listOf(listOf(Color(0xFFFF5C8A),Color(0xFFFFB347)),listOf(Color(0xFFFF3D71),Color(0xFF9B5CFF)),listOf(Color(0xFFFFD54F),Color(0xFFFF7A45)),listOf(Color(0xFF44D7FF),Color(0xFF6D68FF)),listOf(Color(0xFF5CA8FF),Color(0xFF8E6BFF)),listOf(Color(0xFFFF664D),Color(0xFF8D2738)))[index%6]
+    Surface(onClick=onClick,shape=CircleShape,color=Color.Transparent,modifier=Modifier.size(44.dp).background(Brush.linearGradient(colors),CircleShape).border(1.dp,Color.White.copy(.45f),CircleShape)){Box(contentAlignment=Alignment.Center){Text(emoji,fontSize=23.sp)}}
+}
+
+@Composable
 private fun animatedPostScale(postId: String, animation: String): Float {
     if (animation != "pulse" && animation != "breathe") return 1f
     val motion = rememberInfiniteTransition(label = "post_$postId")
@@ -3011,6 +3034,8 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
     val context = LocalContext.current
     var isCommentsExpanded by remember { mutableStateOf(false) }
     var commentInputText by remember { mutableStateOf("") }
+    var replyingFeedComment by remember(post.id) { mutableStateOf<PostComment?>(null) }
+    var commentLimit by remember(post.id) { mutableIntStateOf(12) }
     var showPostMenu by remember { mutableStateOf(false) }
     var showEditPost by remember { mutableStateOf(false) }
     var showReportPost by remember { mutableStateOf(false) }
@@ -3356,17 +3381,8 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     val emojis = listOf("👍", "❤️", "😂", "😮", "😢", "😡")
-                                    emojis.forEach { emoji ->
-                                        Text(
-                                            text = emoji,
-                                            fontSize = 24.sp,
-                                            modifier = Modifier
-                                                .clickable {
-                                                    viewModel.reactToPost(post.id, emoji)
-                                                    showReactionPicker = false
-                                                }
-                                                .padding(2.dp)
-                                        )
+                                    emojis.forEachIndexed { index, emoji ->
+                                        ReactionOrb(emoji,index) { viewModel.reactToPost(post.id,emoji);showReactionPicker=false }
                                     }
                                 }
                             }
@@ -3439,7 +3455,7 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
                     Divider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
 
                     // Facebook dense style comment items
-                    post.comments.forEach { c ->
+                    post.comments.takeLast(commentLimit).forEach { c ->
                         val commenter = allUsers.find { it.uid == c.senderId }
                         val avatarUrl = commenter?.profileImageUrl ?: ""
 
@@ -3455,6 +3471,7 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
                                     .size(32.dp)
                                     .clip(CircleShape)
                                     .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.15f), CircleShape)
+                                    .clickable { commenter?.let(onProfileSelected) }
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Column {
@@ -3474,8 +3491,10 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
                                             text = c.senderName,
                                             fontWeight = FontWeight.Bold,
                                             fontSize = 11.sp,
-                                            color = MaterialTheme.colorScheme.primary
+                                            color = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.clickable { commenter?.let(onProfileSelected) }
                                         )
+                                        if(c.replyToName.isNotBlank()) Text("Replying to ${c.replyToName}",fontSize=9.sp,color=MaterialTheme.colorScheme.secondary)
                                         Spacer(modifier = Modifier.height(2.dp))
                                         Text(
                                             text = c.text,
@@ -3504,11 +3523,11 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
                                     )
                                     Spacer(modifier = Modifier.width(12.dp))
                                     Text(
-                                        text = "Like",
+                                        text = if (c.reactions.containsKey(currentUserId)) "♥ ${c.reactions.size}" else "Like ${c.reactions.size.takeIf { it > 0 } ?: ""}",
                                         fontSize = 10.sp,
                                         fontWeight = FontWeight.Bold,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                                        modifier = Modifier.clickable { }
+                                        color = if (c.reactions.containsKey(currentUserId)) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.clickable { viewModel.reactToPostComment(post.id,c.commentId) }
                                     )
                                     Spacer(modifier = Modifier.width(12.dp))
                                     Text(
@@ -3516,13 +3535,15 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
                                         fontSize = 10.sp,
                                         fontWeight = FontWeight.Bold,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                                        modifier = Modifier.clickable { }
+                                        modifier = Modifier.clickable { replyingFeedComment = c }
                                     )
                                 }
                             }
                         }
                     }
 
+                    if(post.comments.size>commentLimit) TextButton(onClick={commentLimit=(commentLimit+12).coerceAtMost(post.comments.size)},modifier=Modifier.fillMaxWidth()){Text("Load older comments (${post.comments.size-commentLimit})")}
+                    replyingFeedComment?.let { target -> AssistChip(onClick={replyingFeedComment=null},label={Text("Replying to ${target.senderName} • cancel")},leadingIcon={Icon(Icons.Default.Reply,null)}) }
                     // Add comment text row (Facebook-like style)
                     Row(
                         modifier = Modifier
@@ -3560,8 +3581,9 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
                         IconButton(
                             onClick = {
                                 if (commentInputText.isNotBlank()) {
-                                    viewModel.commentOnPost(post.id, commentInputText)
-                                    commentInputText = ""
+                                    val target=replyingFeedComment
+                                    viewModel.commentOnPost(post.id, commentInputText, target?.commentId.orEmpty(), target?.senderName.orEmpty())
+                                    commentInputText = ""; replyingFeedComment=null
                                 }
                             }
                         ) {

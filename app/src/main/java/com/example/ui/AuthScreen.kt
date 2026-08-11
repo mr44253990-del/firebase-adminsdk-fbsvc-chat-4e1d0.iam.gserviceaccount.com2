@@ -636,6 +636,16 @@ fun AuthScreen(
                         Spacer(Modifier.width(12.dp))
                         Text(if (isLoginMode) "Continue with Google" else "Sign up with Google", fontWeight = FontWeight.Bold)
                     }
+                    OutlinedButton(
+                        onClick = { (context as? android.app.Activity)?.let { viewModel.signInWithFacebook(it,onAuthSuccess) } ?: Toast.makeText(context,"Facebook login requires an Activity",Toast.LENGTH_SHORT).show() },
+                        enabled = !authLoading,
+                        modifier = Modifier.fillMaxWidth().height(54.dp),
+                        shape = CircleShape,
+                        colors = ButtonDefaults.outlinedButtonColors(containerColor = Color(0xFF1877F2).copy(.10f))
+                    ) {
+                        Surface(color=Color(0xFF1877F2),shape=CircleShape){Text("f",color=Color.White,fontWeight=FontWeight.Black,fontSize=22.sp,modifier=Modifier.padding(horizontal=10.dp,vertical=2.dp))}
+                        Spacer(Modifier.width(10.dp));Text(if(isLoginMode)"Continue with Facebook" else "Sign up with Facebook",fontWeight=FontWeight.Bold,color=Color(0xFF1877F2))
+                    }
                 }
             }
 
