@@ -33,6 +33,7 @@ import com.example.call.CallEngine
 import com.example.call.CallMiniOverlay
 import com.example.ui.ChatViewModel
 import com.example.ui.HomeScreen
+import com.example.ui.IncomingShareHub
 import com.example.ui.GroupChatScreen
 import com.example.ui.OnboardingScreen
 import com.example.ui.PostComposerScreen
@@ -50,6 +51,7 @@ import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.database.FirebaseDatabase
 import com.google.firebase.firestore.FirebaseFirestore
 import com.example.data.User
+import com.example.data.IncomingSharePayload
 import coil.Coil
 import coil.ImageLoader
 import coil.disk.DiskCache
@@ -62,13 +64,19 @@ class MainActivity : FragmentActivity() {
     private val viewModel: ChatViewModel by viewModels()
     private val pendingChatSenderId = MutableStateFlow<String?>(null)
     private val pendingPostId = MutableStateFlow<String?>(null)
+    private val incomingShare = MutableStateFlow<IncomingSharePayload?>(null)
     private fun captureDeepLink(intent: Intent?) { pendingPostId.value = intent?.data?.takeIf { it.host == "post" || it.path?.startsWith("/post/") == true }?.pathSegments?.lastOrNull() }
+    @Suppress("DEPRECATION") private fun captureSharedContent(intent:Intent?){
+        if(intent?.action!=Intent.ACTION_SEND&&intent?.action!=Intent.ACTION_SEND_MULTIPLE)return
+        val uris=if(intent.action==Intent.ACTION_SEND_MULTIPLE)intent.getParcelableArrayListExtra<android.net.Uri>(Intent.EXTRA_STREAM).orEmpty() else listOfNotNull(intent.getParcelableExtra(Intent.EXTRA_STREAM))
+        val text=intent.getStringExtra(Intent.EXTRA_TEXT).orEmpty();if(text.isNotBlank()||uris.isNotEmpty())incomingShare.value=IncomingSharePayload(text,uris,intent.type?:"application/octet-stream")
+    }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
         pendingChatSenderId.value = intent.getStringExtra("senderId")?.takeIf { it.isNotBlank() }
-        captureDeepLink(intent)
+        captureDeepLink(intent); captureSharedContent(intent)
     }
 
     override fun onStart() {
@@ -93,7 +101,7 @@ class MainActivity : FragmentActivity() {
         installSplashScreen()
         super.onCreate(savedInstanceState)
         pendingChatSenderId.value = intent?.getStringExtra("senderId")?.takeIf { it.isNotBlank() }
-        captureDeepLink(intent)
+        captureDeepLink(intent); captureSharedContent(intent)
         AppLockManager.initialize(this)
         enableEdgeToEdge()
 
@@ -128,6 +136,7 @@ class MainActivity : FragmentActivity() {
                 val navController = rememberNavController()
                 val pendingSenderId by pendingChatSenderId.collectAsState()
                 val linkedPostId by pendingPostId.collectAsState()
+                val sharedContent by incomingShare.collectAsState()
                 val knownUsers by viewModel.usersState.collectAsState()
                 val knownPosts by viewModel.postsState.collectAsState()
                 var linkedPost by remember { mutableStateOf<com.example.data.Post?>(null) }
@@ -337,6 +346,7 @@ class MainActivity : FragmentActivity() {
                             }
                         }
                     }
+                    if(FirebaseAuth.getInstance().currentUser!=null) sharedContent?.let { payload -> IncomingShareHub(payload,viewModel,onCreatePost={navController.navigate("compose_post")},onDismiss={incomingShare.value=null}) }
                     if (currentRoute != "call" && callState.status !in listOf("idle", "ended", "declined", "missed", "failed")) {
                         Box(Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(12.dp)) {
                             CallMiniOverlay(

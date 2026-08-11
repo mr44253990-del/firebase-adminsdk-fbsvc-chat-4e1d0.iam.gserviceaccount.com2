@@ -67,6 +67,7 @@ private val postCanvasStyles = listOf(
 fun PostComposerScreen(viewModel: ChatViewModel, onBack: () -> Unit, onPublished: () -> Unit) {
     val context = LocalContext.current
     val initialMode = remember { viewModel.consumeComposerMode() }
+    val externalShare = remember { viewModel.consumeExternalShare() }
     val users by viewModel.usersState.collectAsState()
     val draftPrefs = remember { context.getSharedPreferences("convo_post_draft", android.content.Context.MODE_PRIVATE) }
     var text by remember { mutableStateOf(draftPrefs.getString("text", "").orEmpty()) }
@@ -85,6 +86,7 @@ fun PostComposerScreen(viewModel: ChatViewModel, onBack: () -> Unit, onPublished
     var uploadEtaSeconds by remember { mutableLongStateOf(0L) }
     var isReel by remember { mutableStateOf(false) }
     var aiGenerating by remember { mutableStateOf(false) }
+    var publishedPostId by remember { mutableStateOf<String?>(null) }
     var customizeExpanded by remember { mutableStateOf(false) }
     val imageMedia = remember { mutableStateListOf<R2MediaResult>() }
     var videoMedia by remember { mutableStateOf<R2MediaResult?>(null) }
@@ -140,11 +142,15 @@ fun PostComposerScreen(viewModel: ChatViewModel, onBack: () -> Unit, onPublished
         uris.take((5 - imageMedia.size).coerceAtLeast(0)).forEach { uri -> upload(uri, false) }
     }
     val videoPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { it?.let { uri -> upload(uri, true) } }
-    LaunchedEffect(initialMode) {
-        when (initialMode) {
+    LaunchedEffect(initialMode, externalShare) {
+        externalShare?.let { shared ->
+            if(shared.text.isNotBlank()) text=shared.text.take(1200)
+            shared.uris.take(5).forEach { uri -> upload(uri,(context.contentResolver.getType(uri)?:shared.mimeType).startsWith("video/")) }
+        } ?: when (initialMode) {
             "photo" -> imagePicker.launch("image/*")
             "video" -> videoPicker.launch("video/*")
             "reel" -> { isReel = true; videoPicker.launch("video/*") }
+            else -> Unit
         }
     }
 
@@ -163,7 +169,7 @@ fun PostComposerScreen(viewModel: ChatViewModel, onBack: () -> Unit, onPublished
                             viewModel.createPost(
                                 text = text.trim(), imageUrl = imageMedia.firstOrNull()?.publicUrl.orEmpty(), audioUrl = "", videoUrl = videoMedia?.publicUrl.orEmpty(),
                                 isPrivate = privatePost,
-                                onComplete = { publishing = false; draftPrefs.edit().clear().apply(); onPublished() },
+                                onComplete = { postId -> publishing = false; draftPrefs.edit().clear().apply(); if (privatePost) onPublished() else publishedPostId = postId },
                                 title = title.trim(),
                                 tags = tags.split(",", " ").map { it.trim().removePrefix("#") }.filter { it.isNotBlank() }.distinct(),
                                 taggedUserIds = taggedIds.toList(), feeling = feeling,
@@ -314,5 +320,20 @@ fun PostComposerScreen(viewModel: ChatViewModel, onBack: () -> Unit, onPublished
                 }
             }
         }
+    }
+    publishedPostId?.let { postId ->
+        AlertDialog(
+            onDismissRequest = {},
+            icon = { Surface(color=Color(0xFF1877F2),shape=CircleShape){Text("f",color=Color.White,fontWeight=FontWeight.Black,fontSize=24.sp,modifier=Modifier.padding(horizontal=12.dp,vertical=4.dp))} },
+            title = { Text("Share on Facebook?",fontWeight=FontWeight.ExtraBold) },
+            text = { Text("Your post is published. Share its Convo preview link on Facebook? People can open the full post in the app or download Convo Chat.") },
+            confirmButton = { Button(onClick = {
+                val link="https://solitary-hill-dcdc.mr44253990.workers.dev/post/$postId";val shareText="${title.ifBlank{"New post on Convo Chat"}}\n${text.take(180)}\n$link"
+                val facebook=android.content.Intent(android.content.Intent.ACTION_SEND).apply{type="text/plain";putExtra(android.content.Intent.EXTRA_TEXT,shareText);setPackage("com.facebook.katana")}
+                runCatching{context.startActivity(facebook)}.onFailure{context.startActivity(android.content.Intent.createChooser(android.content.Intent(android.content.Intent.ACTION_SEND).apply{type="text/plain";putExtra(android.content.Intent.EXTRA_TEXT,shareText)},"Share post"))}
+                publishedPostId=null;onPublished()
+            }) { Text("Share to Facebook") } },
+            dismissButton = { TextButton(onClick={publishedPostId=null;onPublished()}){Text("Not now")} }
+        )
     }
 }

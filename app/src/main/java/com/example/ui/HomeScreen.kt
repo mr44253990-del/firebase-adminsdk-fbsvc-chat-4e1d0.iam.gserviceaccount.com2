@@ -2679,7 +2679,7 @@ private fun ImmersiveVideoPage(
                                     if (item.replyToName.isNotBlank()) Text("Replying to ${item.replyToName}", color = MaterialTheme.colorScheme.secondary, fontSize = 9.sp)
                                     Spacer(Modifier.height(2.dp)); Text(item.text)
                                     Row(verticalAlignment = Alignment.CenterVertically) {
-                                        TextButton(onClick = { viewModel.reactToPostComment(post.id,item.commentId) }, contentPadding = PaddingValues(horizontal=4.dp)) { Text(if (item.reactions.containsKey(currentUser?.uid)) "♥ ${item.reactions.size}" else "♡ ${item.reactions.size}") }
+                                        TextButton(onClick = { viewModel.reactToPostComment(post.id,item.commentId) }, contentPadding = PaddingValues(horizontal=4.dp)) { Text(if (item.reactions.containsKey(currentUser?.uid.orEmpty())) "♥ ${item.reactions.size}" else "♡ ${item.reactions.size}") }
                                         TextButton(onClick = { replyingToComment = item }, contentPadding = PaddingValues(horizontal=6.dp)) { Text("Reply") }
                                     }
                                 }

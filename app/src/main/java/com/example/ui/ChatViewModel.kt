@@ -250,9 +250,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private val _selectedReelPostId = MutableStateFlow<String?>(null)
     val selectedReelPostId: StateFlow<String?> = _selectedReelPostId.asStateFlow()
     private var pendingComposerMode: String = "post"
+    private var pendingExternalShare: IncomingSharePayload? = null
 
     fun prepareComposer(mode: String) { pendingComposerMode = mode }
     fun consumeComposerMode(): String = pendingComposerMode.also { pendingComposerMode = "post" }
+    fun prepareExternalShare(payload: IncomingSharePayload) { pendingExternalShare = payload }
+    fun consumeExternalShare(): IncomingSharePayload? = pendingExternalShare.also { pendingExternalShare = null }
 
     fun setCurrentTab(tab: Int) { _currentTabState.value = tab }
 
@@ -892,18 +895,30 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun signInWithFacebook(activity: Activity, onSuccess: () -> Unit) {
-        _authLoading.value=true;_authError.value=null
-        val auth=FirebaseAuth.getInstance();val provider=OAuthProvider.newBuilder("facebook.com").apply{scopes=listOf("email","public_profile")}.build()
-        val task=auth.pendingAuthResult ?: auth.startActivityForSignInWithProvider(activity,provider)
-        task.addOnSuccessListener{result->
-            val u=result.user ?: return@addOnSuccessListener
-            val now=System.currentTimeMillis();val ref=FirebaseFirestore.getInstance().collection("users").document(u.uid)
-            ref.get().addOnSuccessListener{existing->
-                val base=mutableMapOf<String,Any>("uid" to u.uid,"name" to (u.displayName?:"Facebook User"),"username" to ((u.email?.substringBefore("@")?:"facebook_${u.uid.take(6)}").lowercase().replace("[^a-z0-9_]".toRegex(),"")),"profileImageUrl" to u.photoUrl?.toString().orEmpty(),"createdAt" to (u.metadata?.creationTimestamp?:now))
-                if(!existing.exists())base.putAll(mapOf("isPremium" to true,"premiumPlan" to "trial","premiumUntil" to now+14L*86_400_000L,"premiumApprovedAt" to now,"premiumTrialClaimed" to true,"premiumSource" to "signup_trial"))
-                ref.set(base,SetOptions.merge()).addOnCompleteListener{retrieveFCMTokenAndStore(u.uid);loadCurrentUserProfile(u.uid);setupPresence(u.uid);loadAllUsers();listenToAllPresences();listenForInAppNotifications();registerDeviceSession();_authLoading.value=false;onSuccess()}
+        _authLoading.value = true; _authError.value = null
+        if (activity.isFinishing || activity.isDestroyed) { _authLoading.value=false; _authError.value="Login screen is not active"; return }
+        try {
+            val auth = FirebaseAuth.getInstance()
+            val provider = OAuthProvider.newBuilder("facebook.com").apply { scopes = listOf("email", "public_profile"); addCustomParameter("display", "popup") }.build()
+            val task = auth.pendingAuthResult ?: auth.startActivityForSignInWithProvider(activity, provider)
+            task.addOnSuccessListener { result ->
+                val u = result.user ?: run { _authLoading.value=false; _authError.value="Facebook returned no user"; return@addOnSuccessListener }
+                val now=System.currentTimeMillis(); val ref=FirebaseFirestore.getInstance().collection("users").document(u.uid)
+                ref.get().addOnSuccessListener { existing ->
+                    val username=(u.email?.substringBefore("@") ?: "facebook_${u.uid.take(6)}").lowercase().replace("[^a-z0-9_]".toRegex(),"")
+                    val base=mutableMapOf<String,Any>("uid" to u.uid,"name" to (u.displayName?:"Facebook User"),"username" to username,"profileImageUrl" to u.photoUrl?.toString().orEmpty(),"createdAt" to (u.metadata?.creationTimestamp?:now))
+                    if(!existing.exists()) base.putAll(mapOf("isPremium" to true,"premiumPlan" to "trial","premiumUntil" to now+14L*86_400_000L,"premiumApprovedAt" to now,"premiumTrialClaimed" to true,"premiumSource" to "signup_trial"))
+                    ref.set(base,SetOptions.merge()).addOnSuccessListener { retrieveFCMTokenAndStore(u.uid);loadCurrentUserProfile(u.uid);setupPresence(u.uid);loadAllUsers();listenToAllPresences();listenForInAppNotifications();registerDeviceSession();_authLoading.value=false;onSuccess() }.addOnFailureListener { _authLoading.value=false;_authError.value="Facebook profile save failed: ${it.localizedMessage}" }
+                }.addOnFailureListener { _authLoading.value=false;_authError.value="Could not check Facebook profile: ${it.localizedMessage}" }
+            }.addOnFailureListener { error ->
+                _authLoading.value=false
+                _authError.value = when { error.message?.contains("CONFIGURATION_NOT_FOUND",true)==true -> "Facebook provider is not fully configured in Firebase"; error.message?.contains("cancel",true)==true -> "Facebook login was cancelled"; else -> error.localizedMessage ?: "Facebook login failed" }
             }
-        }.addOnFailureListener{_authLoading.value=false;_authError.value=it.localizedMessage?:"Facebook login failed"}
+        } catch (error: Throwable) {
+            Log.e("FACEBOOK_AUTH", "Facebook OAuth launch failed", error)
+            _authLoading.value=false
+            _authError.value="Facebook login configuration error: ${error.localizedMessage ?: error.javaClass.simpleName}"
+        }
     }
 
     fun signup(email: String, name: String, dob: String, password: String, profileImageUrl: String, onSuccess: () -> Unit) {
@@ -2021,6 +2036,21 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun sendExternalShareToUser(target: User, payload: IncomingSharePayload, onComplete: (Boolean, String) -> Unit = { _, _ -> }) {
+        val me=getCurrentUserOrFallback()?:return onComplete(false,"Sign in again")
+        fun write(text:String,fileUrl:String?=null,fileName:String?=null,mime:String?=null,size:Long?=null,imageUrl:String?=null){
+            val chatId=listOf(me.uid,target.uid).sorted().joinToString("_");val ref=getDatabaseInstance().getReference("chats").child(chatId).child("messages");val id=ref.push().key?:UUID.randomUUID().toString()
+            val msg=Message(messageId=id,senderId=me.uid,senderName=me.name,senderUsername=me.username,text=text,timestamp=System.currentTimeMillis(),imageUrl=imageUrl,fileUrl=fileUrl,remoteFileUrl=fileUrl,fileName=fileName,fileMimeType=mime,fileSize=size,deliveredToRecipient=target.isOnline)
+            ref.child(id).setValue(msg).addOnSuccessListener{withUserFcmToken(target.uid,target.fcmToken){token->triggerFcmGatewayNotification(_webhookUrl.value,token,me.name,if(fileUrl!=null||imageUrl!=null)"Shared an attachment" else text,me.uid,me.profileImageUrl,"message",id)};onComplete(true,"Sent to ${target.name}")}.addOnFailureListener{onComplete(false,"Send failed")}
+        }
+        val uri=payload.uris.firstOrNull()
+        if(uri==null){write(payload.text);return}
+        val resolver=getApplication<Application>().contentResolver;var name="shared_${System.currentTimeMillis()}";var size=-1L
+        resolver.query(uri,arrayOf(android.provider.OpenableColumns.DISPLAY_NAME,android.provider.OpenableColumns.SIZE),null,null,null)?.use{if(it.moveToFirst()){name=it.getString(0)?:name;if(!it.isNull(1))size=it.getLong(1)}}
+        val mime=resolver.getType(uri)?:payload.mimeType
+        uploadUriToSupabase(uri,name,mime,size,{_,_->},{url->if(mime.startsWith("image/"))write(payload.text,imageUrl=url)else write(payload.text,url,name,mime,size)},{onComplete(false,it)})
+    }
+
     fun sendPostToUser(target: User, post: Post, onComplete: (Boolean) -> Unit = {}) {
         val me = getCurrentUserOrFallback() ?: return onComplete(false)
         val chatId = listOf(me.uid, target.uid).sorted().joinToString("_")
@@ -2720,7 +2750,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         audioUrl: String,
         videoUrl: String,
         isPrivate: Boolean,
-        onComplete: () -> Unit,
+        onComplete: (String) -> Unit,
         title: String = "",
         tags: List<String> = emptyList(),
         taggedUserIds: List<String> = emptyList(),
@@ -2767,7 +2797,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 if (isReel) user.friends.forEach { friendUid ->
                     createActivityNotification(friendUid, "new_reel", postId, "published a new reel")
                 }
-                onComplete()
+                onComplete(postId)
                 loadPosts()
             }
     }
