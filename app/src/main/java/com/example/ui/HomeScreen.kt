@@ -1505,6 +1505,7 @@ fun HomeScreen(
                                         }
                                     }
                                 }
+                                Button(onClick = { viewModel.logout { onSignOut() } }, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Default.SwitchAccount, null); Spacer(Modifier.width(7.dp)); Text("Switch account") }
                                 OutlinedButton(onClick = { viewModel.logoutAllDevices { ok, message -> Toast.makeText(context, message, Toast.LENGTH_LONG).show(); if (ok) onSignOut() } }, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Default.Logout, null); Spacer(Modifier.width(7.dp)); Text("Log out all devices") }
                                 TextButton(onClick = { showReportDialog = true }, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Default.ReportProblem, null); Spacer(Modifier.width(7.dp)); Text("Report a problem to AI/Admin") }
                             }

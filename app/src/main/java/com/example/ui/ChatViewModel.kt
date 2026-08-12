@@ -1,7 +1,6 @@
 package com.example.ui
 
 import android.app.Application
-import android.app.Activity
 import android.content.Context
 import android.media.AudioManager
 import android.media.ToneGenerator
@@ -20,7 +19,7 @@ import com.example.data.*
 import com.example.call.CallEngine
 import com.google.firebase.auth.AuthCredential
 import com.google.firebase.auth.FirebaseAuth
-import com.google.firebase.auth.OAuthProvider
+import com.google.firebase.auth.FacebookAuthProvider
 import com.google.firebase.database.DataSnapshot
 import com.google.firebase.database.DatabaseError
 import com.google.firebase.database.FirebaseDatabase
@@ -234,6 +233,19 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     val adminReports: StateFlow<List<UserReport>> = _adminReports.asStateFlow()
     private val _accountBanned = MutableStateFlow(false)
     val accountBanned: StateFlow<Boolean> = _accountBanned.asStateFlow()
+    private val _rememberedAccounts = MutableStateFlow(loadRememberedAccounts())
+    val rememberedAccounts: StateFlow<List<RememberedAccount>> = _rememberedAccounts.asStateFlow()
+
+    private fun loadRememberedAccounts(): List<RememberedAccount> = runCatching {
+        val array=JSONArray(sharedPrefs.getString("remembered_accounts","[]"));(0 until array.length()).map{array.getJSONObject(it)}.map{RememberedAccount(it.optString("uid"),it.optString("name"),it.optString("email"),it.optString("photoUrl"),it.optString("provider","password"),it.optLong("lastUsedAt"),it.optInt("unread"))}
+    }.getOrDefault(emptyList())
+    private fun rememberAccount(user:User){
+        val auth=FirebaseAuth.getInstance().currentUser?:return;val provider=when{auth.providerData.any{it.providerId=="facebook.com"}->"facebook";auth.providerData.any{it.providerId=="google.com"}->"google";else->"password"}
+        val item=RememberedAccount(user.uid,user.name,auth.email.orEmpty(),user.profileImageUrl,provider,System.currentTimeMillis(),0)
+        val updated=(listOf(item)+_rememberedAccounts.value.filterNot{it.uid==item.uid}).take(8);_rememberedAccounts.value=updated
+        val a=JSONArray();updated.forEach{a.put(JSONObject().put("uid",it.uid).put("name",it.name).put("email",it.email).put("photoUrl",it.photoUrl).put("provider",it.provider).put("lastUsedAt",it.lastUsedAt).put("unread",it.unread))};sharedPrefs.edit().putString("remembered_accounts",a.toString()).apply()
+    }
+    fun forgetRememberedAccount(uid:String){_rememberedAccounts.value=_rememberedAccounts.value.filterNot{it.uid==uid};val a=JSONArray();_rememberedAccounts.value.forEach{a.put(JSONObject().put("uid",it.uid).put("name",it.name).put("email",it.email).put("photoUrl",it.photoUrl).put("provider",it.provider).put("lastUsedAt",it.lastUsedAt).put("unread",it.unread))};sharedPrefs.edit().putString("remembered_accounts",a.toString()).apply()}
 
     private val _authLoading = MutableStateFlow(false)
     val authLoading: StateFlow<Boolean> = _authLoading.asStateFlow()
@@ -894,31 +906,19 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             }
     }
 
-    fun signInWithFacebook(activity: Activity, onSuccess: () -> Unit) {
-        _authLoading.value = true; _authError.value = null
-        if (activity.isFinishing || activity.isDestroyed) { _authLoading.value=false; _authError.value="Login screen is not active"; return }
-        try {
-            val auth = FirebaseAuth.getInstance()
-            val provider = OAuthProvider.newBuilder("facebook.com").apply { scopes = listOf("email", "public_profile"); addCustomParameter("display", "popup") }.build()
-            val task = auth.pendingAuthResult ?: auth.startActivityForSignInWithProvider(activity, provider)
-            task.addOnSuccessListener { result ->
-                val u = result.user ?: run { _authLoading.value=false; _authError.value="Facebook returned no user"; return@addOnSuccessListener }
-                val now=System.currentTimeMillis(); val ref=FirebaseFirestore.getInstance().collection("users").document(u.uid)
-                ref.get().addOnSuccessListener { existing ->
-                    val username=(u.email?.substringBefore("@") ?: "facebook_${u.uid.take(6)}").lowercase().replace("[^a-z0-9_]".toRegex(),"")
-                    val base=mutableMapOf<String,Any>("uid" to u.uid,"name" to (u.displayName?:"Facebook User"),"username" to username,"profileImageUrl" to u.photoUrl?.toString().orEmpty(),"createdAt" to (u.metadata?.creationTimestamp?:now))
-                    if(!existing.exists()) base.putAll(mapOf("isPremium" to true,"premiumPlan" to "trial","premiumUntil" to now+14L*86_400_000L,"premiumApprovedAt" to now,"premiumTrialClaimed" to true,"premiumSource" to "signup_trial"))
-                    ref.set(base,SetOptions.merge()).addOnSuccessListener { retrieveFCMTokenAndStore(u.uid);loadCurrentUserProfile(u.uid);setupPresence(u.uid);loadAllUsers();listenToAllPresences();listenForInAppNotifications();registerDeviceSession();_authLoading.value=false;onSuccess() }.addOnFailureListener { _authLoading.value=false;_authError.value="Facebook profile save failed: ${it.localizedMessage}" }
-                }.addOnFailureListener { _authLoading.value=false;_authError.value="Could not check Facebook profile: ${it.localizedMessage}" }
-            }.addOnFailureListener { error ->
-                _authLoading.value=false
-                _authError.value = when { error.message?.contains("CONFIGURATION_NOT_FOUND",true)==true -> "Facebook provider is not fully configured in Firebase"; error.message?.contains("cancel",true)==true -> "Facebook login was cancelled"; else -> error.localizedMessage ?: "Facebook login failed" }
-            }
-        } catch (error: Throwable) {
-            Log.e("FACEBOOK_AUTH", "Facebook OAuth launch failed", error)
-            _authLoading.value=false
-            _authError.value="Facebook login configuration error: ${error.localizedMessage ?: error.javaClass.simpleName}"
-        }
+    fun signInWithFacebookToken(accessToken: String, onSuccess: () -> Unit) {
+        _authLoading.value=true;_authError.value=null
+        if(accessToken.isBlank()){_authLoading.value=false;_authError.value="Facebook returned an empty access token";return}
+        FirebaseAuth.getInstance().signInWithCredential(FacebookAuthProvider.getCredential(accessToken)).addOnSuccessListener { result ->
+            val u=result.user?:run{_authLoading.value=false;_authError.value="Facebook returned no Firebase user";return@addOnSuccessListener}
+            val now=System.currentTimeMillis();val ref=FirebaseFirestore.getInstance().collection("users").document(u.uid)
+            ref.get().addOnSuccessListener { existing ->
+                val username=(u.email?.substringBefore("@")?:"facebook_${u.uid.take(6)}").lowercase().replace("[^a-z0-9_]".toRegex(),"")
+                val values=mutableMapOf<String,Any>("uid" to u.uid,"name" to (u.displayName?:"Facebook User"),"username" to username,"profileImageUrl" to u.photoUrl?.toString().orEmpty(),"createdAt" to (u.metadata?.creationTimestamp?:now))
+                if(!existing.exists())values.putAll(mapOf("isPremium" to true,"premiumPlan" to "trial","premiumUntil" to now+14L*86_400_000L,"premiumApprovedAt" to now,"premiumTrialClaimed" to true,"premiumSource" to "signup_trial"))
+                ref.set(values,SetOptions.merge()).addOnSuccessListener{retrieveFCMTokenAndStore(u.uid);loadCurrentUserProfile(u.uid);setupPresence(u.uid);loadAllUsers();listenToAllPresences();listenForInAppNotifications();registerDeviceSession();_authLoading.value=false;onSuccess()}.addOnFailureListener{_authLoading.value=false;_authError.value="Facebook profile save failed: ${it.localizedMessage}"}
+            }.addOnFailureListener{_authLoading.value=false;_authError.value="Could not check Facebook profile: ${it.localizedMessage}"}
+        }.addOnFailureListener{_authLoading.value=false;_authError.value=it.localizedMessage?:"Firebase rejected the Facebook access token"}
     }
 
     fun signup(email: String, name: String, dob: String, password: String, profileImageUrl: String, onSuccess: () -> Unit) {
@@ -1077,6 +1077,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         premiumApprovedAt = document.getLong("premiumApprovedAt") ?: parsed.premiumApprovedAt
                     )
                     _currentUserState.value = liveUser
+                    rememberAccount(liveUser)
                 }
             }
         }

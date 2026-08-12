@@ -20,6 +20,13 @@ android {
     versionCode = 25
     versionName = "3.8.0"
 
+    val facebookAppId = System.getenv("FACEBOOK_APP_ID").orEmpty()
+    val facebookClientToken = System.getenv("FACEBOOK_CLIENT_TOKEN").orEmpty()
+    resValue("string", "facebook_app_id", facebookAppId.ifBlank { "0" })
+    resValue("string", "facebook_client_token", facebookClientToken.ifBlank { "not_configured" })
+    buildConfigField("String", "FACEBOOK_APP_ID", "\"${facebookAppId.replace("\"", "")}\"")
+    buildConfigField("String", "FACEBOOK_CLIENT_TOKEN", "\"${facebookClientToken.replace("\"", "")}\"")
+
     // Convo Chat is distributed as a single modern 64-bit APK. This excludes
     // armeabi-v7a/x86/x86_64 native libraries pulled in by WebRTC/Media3.
     ndk {
@@ -110,6 +117,7 @@ dependencies {
   implementation(libs.firebase.ai)
   implementation(libs.firebase.firestore)
   implementation(libs.firebase.auth)
+  implementation(libs.facebook.login)
   implementation(libs.firebase.database)
   implementation(libs.firebase.messaging)
   implementation(libs.androidx.credentials)

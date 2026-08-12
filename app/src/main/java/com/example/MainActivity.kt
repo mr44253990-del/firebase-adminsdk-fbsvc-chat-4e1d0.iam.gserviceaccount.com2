@@ -31,6 +31,7 @@ import com.example.ui.ChatScreen
 import com.example.call.CallScreen
 import com.example.call.CallEngine
 import com.example.call.CallMiniOverlay
+import com.example.auth.FacebookLoginController
 import com.example.ui.ChatViewModel
 import com.example.ui.HomeScreen
 import com.example.ui.IncomingShareHub
@@ -70,6 +71,12 @@ class MainActivity : FragmentActivity() {
         if(intent?.action!=Intent.ACTION_SEND&&intent?.action!=Intent.ACTION_SEND_MULTIPLE)return
         val uris:List<android.net.Uri> = if(intent.action==Intent.ACTION_SEND_MULTIPLE)intent.getParcelableArrayListExtra<android.net.Uri>(Intent.EXTRA_STREAM).orEmpty() else listOfNotNull(intent.getParcelableExtra(Intent.EXTRA_STREAM) as? android.net.Uri)
         val text=intent.getStringExtra(Intent.EXTRA_TEXT).orEmpty();if(text.isNotBlank()||uris.isNotEmpty())incomingShare.value=IncomingSharePayload(text,uris,intent.type?:"application/octet-stream")
+    }
+
+    @Deprecated("Facebook SDK callback bridge")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        FacebookLoginController.onActivityResult(requestCode, resultCode, data)
     }
 
     override fun onNewIntent(intent: Intent) {

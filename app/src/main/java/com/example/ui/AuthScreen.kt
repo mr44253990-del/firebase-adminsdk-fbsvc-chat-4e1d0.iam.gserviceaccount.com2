@@ -12,6 +12,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -41,6 +43,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.example.R
+import com.example.auth.FacebookLoginController
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
@@ -79,6 +82,7 @@ fun AuthScreen(
     val authLoading by viewModel.authLoading.collectAsState()
     val authError by viewModel.authError.collectAsState()
     val isFirebaseConfigured by viewModel.isFirebaseConfigured.collectAsState()
+    val rememberedAccounts by viewModel.rememberedAccounts.collectAsState()
 
     var isLoginMode by remember { mutableStateOf(true) }
     var email by remember { mutableStateOf("") }
@@ -637,7 +641,7 @@ fun AuthScreen(
                         Text(if (isLoginMode) "Continue with Google" else "Sign up with Google", fontWeight = FontWeight.Bold)
                     }
                     OutlinedButton(
-                        onClick = { (context as? android.app.Activity)?.let { viewModel.signInWithFacebook(it,onAuthSuccess) } ?: Toast.makeText(context,"Facebook login requires an Activity",Toast.LENGTH_SHORT).show() },
+                        onClick = { (context as? android.app.Activity)?.let { activity -> FacebookLoginController.login(activity,{ token -> viewModel.signInWithFacebookToken(token,onAuthSuccess) },{ error -> Toast.makeText(context,error,Toast.LENGTH_LONG).show() }) } ?: Toast.makeText(context,"Facebook login requires an Activity",Toast.LENGTH_SHORT).show() },
                         enabled = !authLoading,
                         modifier = Modifier.fillMaxWidth().height(54.dp),
                         shape = CircleShape,
@@ -656,12 +660,21 @@ fun AuthScreen(
                 onClick = { isLoginMode = !isLoginMode },
                 modifier = Modifier.testTag("switch_mode_button")
             ) {
-                Text(
-                    text = if (isLoginMode) "Don't have an account? Sign Up" else "Already have an account? Log In",
-                    color = MaterialTheme.colorScheme.primary,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 15.sp
-                )
+                Text(text = if (isLoginMode) "Don't have an account? Sign Up" else "Already have an account? Log In",color = MaterialTheme.colorScheme.primary,fontWeight = FontWeight.Bold,fontSize = 15.sp)
+            }
+            if(rememberedAccounts.isNotEmpty()){
+                Spacer(Modifier.height(8.dp));Text("Previous accounts",fontWeight=FontWeight.ExtraBold,modifier=Modifier.fillMaxWidth());Text("For security, passwords/tokens are never stored in files. Provider accounts reopen their secure login flow.",fontSize=10.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.fillMaxWidth())
+                LazyRow(contentPadding=PaddingValues(vertical=10.dp),horizontalArrangement=Arrangement.spacedBy(10.dp)){
+                    items(rememberedAccounts,key={it.uid}){account->
+                        ElevatedCard(modifier=Modifier.width(150.dp).clickable{
+                            isLoginMode=true;email=account.email
+                            if(account.provider=="facebook")(context as? android.app.Activity)?.let{a->FacebookLoginController.login(a,{token->viewModel.signInWithFacebookToken(token,onAuthSuccess)},{Toast.makeText(context,it,Toast.LENGTH_LONG).show()})}
+                            else if(account.provider=="google")scope.launch{runCatching{requestGoogleCredential()}.onSuccess{credential->if(credential is CustomCredential&&credential.type==GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL){val g=GoogleIdTokenCredential.createFrom(credential.data);viewModel.signInWithGoogleCredential(GoogleAuthProvider.getCredential(g.idToken,null),onAuthSuccess)}}.onFailure{Toast.makeText(context,it.localizedMessage?:"Google login failed",Toast.LENGTH_LONG).show()}}
+                        },shape=RoundedCornerShape(22.dp)){
+                            Column(Modifier.padding(12.dp),horizontalAlignment=Alignment.CenterHorizontally){AsyncImage(account.photoUrl.ifBlank{null},account.name,error=painterResource(R.drawable.img_app_logo),contentScale=ContentScale.Crop,modifier=Modifier.size(58.dp).clip(CircleShape));Spacer(Modifier.height(6.dp));Text(account.name,fontWeight=FontWeight.Bold,maxLines=1);Text(account.provider,fontSize=9.sp,color=MaterialTheme.colorScheme.primary);if(account.unread>0)Badge{Text("+${account.unread}")};TextButton(onClick={viewModel.forgetRememberedAccount(account.uid)}){Text("Remove",fontSize=9.sp)}}
+                        }
+                    }
+                }
             }
         }
     }
