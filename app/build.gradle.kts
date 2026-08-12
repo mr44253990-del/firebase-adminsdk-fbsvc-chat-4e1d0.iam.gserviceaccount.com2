@@ -17,8 +17,8 @@ android {
     applicationId = "com.ebchat"
     minSdk = 24
     targetSdk = 36
-    versionCode = 25
-    versionName = "3.8.0"
+    versionCode = 26
+    versionName = "3.9.0"
 
     val facebookAppId = System.getenv("FACEBOOK_APP_ID").orEmpty()
     val facebookClientToken = System.getenv("FACEBOOK_CLIENT_TOKEN").orEmpty()
