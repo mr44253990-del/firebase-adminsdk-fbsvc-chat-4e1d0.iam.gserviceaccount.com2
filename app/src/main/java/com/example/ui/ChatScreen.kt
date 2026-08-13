@@ -1510,18 +1510,49 @@ private fun LinkifiedChatText(text: String, color: Color) {
     }
 }
 
-private data class LinkMeta(val title:String,val description:String,val image:String)
+private data class LinkMeta(val title: String, val description: String, val image: String)
+
+private fun extractHtmlMeta(html: String, key: String): String {
+    val escaped = Regex.escape(key)
+    val propertyFirst = Regex("""<meta[^>]+(?:property|name)=["']$escaped["'][^>]+content=["']([^"']+)["']""", RegexOption.IGNORE_CASE)
+    val contentFirst = Regex("""<meta[^>]+content=["']([^"']+)["'][^>]+(?:property|name)=["']$escaped["']""", RegexOption.IGNORE_CASE)
+    return (propertyFirst.find(html)?.groupValues?.getOrNull(1) ?: contentFirst.find(html)?.groupValues?.getOrNull(1)).orEmpty()
+        .replace("&amp;", "&").replace("&quot;", "\"")
+}
 
 @Composable
-private fun LinkPreviewCard(url:String,textColor:Color){
-    val uriHandler=LocalUriHandler.current
-    val meta by produceState<LinkMeta?>(null,url){value=withContext(Dispatchers.IO){runCatching{
-        val response=OkHttpClient.Builder().callTimeout(8,java.util.concurrent.TimeUnit.SECONDS).build().newCall(Request.Builder().url(url).header("User-Agent","ConvoChat/1.0").build()).execute()
-        response.use{r->if(!r.isSuccessful)return@runCatching null;val reader=r.body?.charStream()?:return@runCatching null;val chars=CharArray(200_000);val n=reader.read(chars);val html=if(n>0)String(chars,0,n) else ""
-            fun meta(name:String):String{val a=Regex("<meta[^>]+(?:property|name)=[\\\"']${Regex.escape(name)}[\\\"'][^>]+content=[\\\"']([^\\\"']+)",RegexOption.IGNORE_CASE).find(html)?.groupValues?.getOrNull(1);val b=Regex("<meta[^>]+content=[\\\"']([^\\\"']+)[\\\"'][^>]+(?:property|name)=[\\\"']${Regex.escape(name)}[\\\"']",RegexOption.IGNORE_CASE).find(html)?.groupValues?.getOrNull(1);return(a?:b).orEmpty().replace("&amp;","&").replace("&quot;","\"")}
-            val host=Uri.parse(url).host.orEmpty();LinkMeta(meta("og:title").ifBlank{Regex("<title[^>]*>(.*?)</title>",setOf(RegexOption.IGNORE_CASE,RegexOption.DOT_MATCHES_ALL)).find(html)?.groupValues?.getOrNull(1)?.trim().orEmpty()}.ifBlank{host},meta("og:description").ifBlank{meta("description")},meta("og:image"))}}
-    }.getOrNull()}}
-    Surface(onClick={runCatching{uriHandler.openUri(url)}},color=MaterialTheme.colorScheme.surface.copy(.42f),border=BorderStroke(1.dp,MaterialTheme.colorScheme.outlineVariant),shape=RoundedCornerShape(16.dp)){
-        Column{meta?.image?.takeIf{it.startsWith("http")}?.let{AsyncImage(it,meta?.title,contentScale=ContentScale.Crop,modifier=Modifier.fillMaxWidth().height(120.dp))};Row(Modifier.padding(10.dp),verticalAlignment=Alignment.CenterVertically){Icon(Icons.Default.Link,null,tint=Color(0xFF71C7FF));Spacer(Modifier.width(8.dp));Column(Modifier.weight(1f)){Text(meta?.title?:Uri.parse(url).host.orEmpty(),fontWeight=FontWeight.ExtraBold,fontSize=12.sp,maxLines=2,overflow=TextOverflow.Ellipsis);if(!meta?.description.isNullOrBlank())Text(meta!!.description,fontSize=10.sp,color=textColor.copy(.72f),maxLines=2,overflow=TextOverflow.Ellipsis);Text(Uri.parse(url).host.orEmpty(),fontSize=9.sp,color=Color(0xFF71C7FF))}}}
+private fun LinkPreviewCard(url: String, textColor: Color) {
+    val uriHandler = LocalUriHandler.current
+    val meta by produceState<LinkMeta?>(null, url) {
+        value = withContext(Dispatchers.IO) {
+            runCatching {
+                OkHttpClient.Builder().callTimeout(8, java.util.concurrent.TimeUnit.SECONDS).build()
+                    .newCall(Request.Builder().url(url).header("User-Agent", "ConvoChat/1.0").build()).execute().use { response ->
+                        if (!response.isSuccessful) return@use null
+                        val reader = response.body?.charStream() ?: return@use null
+                        val chars = CharArray(200_000)
+                        val count = reader.read(chars)
+                        val html = if (count > 0) String(chars, 0, count) else ""
+                        val host = Uri.parse(url).host.orEmpty()
+                        val title = extractHtmlMeta(html, "og:title").ifBlank {
+                            Regex("""<title[^>]*>(.*?)</title>""", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)).find(html)?.groupValues?.getOrNull(1)?.trim().orEmpty()
+                        }.ifBlank { host }
+                        LinkMeta(title, extractHtmlMeta(html, "og:description").ifBlank { extractHtmlMeta(html, "description") }, extractHtmlMeta(html, "og:image"))
+                    }
+            }.getOrNull()
+        }
+    }
+    Surface(onClick = { runCatching { uriHandler.openUri(url) } }, color = MaterialTheme.colorScheme.surface.copy(.42f), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant), shape = RoundedCornerShape(16.dp)) {
+        Column {
+            meta?.image?.takeIf { it.startsWith("http") }?.let { AsyncImage(it, meta?.title, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxWidth().height(120.dp)) }
+            Row(Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.Link, null, tint = Color(0xFF71C7FF)); Spacer(Modifier.width(8.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(meta?.title ?: Uri.parse(url).host.orEmpty(), fontWeight = FontWeight.ExtraBold, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    meta?.description?.takeIf { it.isNotBlank() }?.let { Text(it, fontSize = 10.sp, color = textColor.copy(.72f), maxLines = 2, overflow = TextOverflow.Ellipsis) }
+                    Text(Uri.parse(url).host.orEmpty(), fontSize = 9.sp, color = Color(0xFF71C7FF))
+                }
+            }
+        }
     }
 }
