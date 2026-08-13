@@ -783,6 +783,7 @@ fun HomeScreen(
                         var draftAiModel by remember(flagshipConfig) { mutableStateOf(flagshipConfig.aiModel) }
                         var draftAiName by remember(flagshipConfig) { mutableStateOf(flagshipConfig.aiDisplayName) }
                         var draftAiPrompt by remember(flagshipConfig) { mutableStateOf(flagshipConfig.aiSystemPrompt) }
+                        var draftProfileBaseUrl by remember(flagshipConfig) { mutableStateOf(flagshipConfig.publicProfileBaseUrl) }
                         var draftPremiumEnabled by remember(flagshipConfig) { mutableStateOf(flagshipConfig.premiumEnabled) }
                         var draftPremiumUpsell by remember(flagshipConfig) { mutableStateOf(flagshipConfig.premiumUpsellEnabled) }
                         var draftPaymentNumber by remember(flagshipConfig) { mutableStateOf(flagshipConfig.premiumPaymentNumber) }
@@ -865,6 +866,7 @@ fun HomeScreen(
                                     OutlinedTextField(draftAiName, { draftAiName = it.take(60) }, label = { Text("Assistant name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                                     OutlinedTextField(draftAiModel, { draftAiModel = it.filter { c -> c.isLetterOrDigit() || c in "-_." }.take(80) }, label = { Text("Mistral model") }, supportingText = { Text("Example: mistral-small-latest") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                                     OutlinedTextField(draftAiPrompt, { draftAiPrompt = it.take(2000) }, label = { Text("Safe system instructions") }, minLines = 3, modifier = Modifier.fillMaxWidth())
+                                    OutlinedTextField(draftProfileBaseUrl,{draftProfileBaseUrl=it.take(200)},label={Text("Convo Link base URL")},supportingText={Text("Example: https://convo.me or Worker /u")},singleLine=true,modifier=Modifier.fillMaxWidth())
                                     Text("API key is never stored in Android/Firestore. Set Worker secret MISTRAL_API_KEY.", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     HorizontalDivider()
                                     Text("Premium payment control", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
@@ -887,7 +889,7 @@ fun HomeScreen(
                                         FilterChip(draftRocket, { draftRocket = !draftRocket }, { Text("Rocket") })
                                     }
                                     OutlinedButton(onClick = { viewModel.updateFlagshipFields(mapOf(
-                                        "assistantEnabled" to draftAssistantEnabled, "aiModel" to draftAiModel, "aiDisplayName" to draftAiName, "aiSystemPrompt" to draftAiPrompt,
+                                        "assistantEnabled" to draftAssistantEnabled, "aiModel" to draftAiModel, "aiDisplayName" to draftAiName, "aiSystemPrompt" to draftAiPrompt, "publicProfileBaseUrl" to draftProfileBaseUrl,
                                         "premiumEnabled" to draftPremiumEnabled, "premiumUpsellEnabled" to draftPremiumUpsell, "premiumPaymentNumber" to draftPaymentNumber,
                                         "premiumMonthlyPrice" to (draftMonthlyPrice.toIntOrNull() ?: 199), "premiumYearlyPrice" to (draftYearlyPrice.toIntOrNull() ?: 1499), "premiumLifetimePrice" to (draftLifetimePrice.toIntOrNull() ?: 3999),
                                         "premiumMonthlyEnabled" to draftMonthlyEnabled, "premiumYearlyEnabled" to draftYearlyEnabled, "premiumLifetimeEnabled" to draftLifetimeEnabled,
@@ -918,6 +920,7 @@ fun HomeScreen(
                                                 aiModel = draftAiModel.ifBlank { "mistral-small-latest" },
                                                 aiDisplayName = draftAiName.ifBlank { "Convo Chat Assistant" },
                                                 aiSystemPrompt = draftAiPrompt,
+                                                publicProfileBaseUrl = draftProfileBaseUrl,
                                                 premiumEnabled = draftPremiumEnabled,
                                                 premiumUpsellEnabled = draftPremiumUpsell,
                                                 premiumPaymentNumber = draftPaymentNumber.ifBlank { "01755070708" },

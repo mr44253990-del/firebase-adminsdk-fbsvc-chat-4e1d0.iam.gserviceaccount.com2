@@ -64,8 +64,9 @@ class MainActivity : FragmentActivity() {
     private val viewModel: ChatViewModel by viewModels()
     private val pendingChatSenderId = MutableStateFlow<String?>(null)
     private val pendingPostId = MutableStateFlow<String?>(null)
+    private val pendingUserId = MutableStateFlow<String?>(null)
     private val incomingShare = MutableStateFlow<IncomingSharePayload?>(null)
-    private fun captureDeepLink(intent: Intent?) { pendingPostId.value = intent?.data?.takeIf { it.host == "post" || it.path?.startsWith("/post/") == true }?.pathSegments?.lastOrNull() }
+    private fun captureDeepLink(intent: Intent?) { val data=intent?.data;pendingPostId.value=data?.takeIf{it.host=="post"||it.path?.startsWith("/post/")==true}?.pathSegments?.lastOrNull();pendingUserId.value=data?.takeIf{it.host=="user"}?.pathSegments?.lastOrNull() }
     @Suppress("DEPRECATION") private fun captureSharedContent(intent:Intent?){
         if(intent?.action!=Intent.ACTION_SEND&&intent?.action!=Intent.ACTION_SEND_MULTIPLE)return
         val uris:List<android.net.Uri> = if(intent.action==Intent.ACTION_SEND_MULTIPLE)intent.getParcelableArrayListExtra<android.net.Uri>(Intent.EXTRA_STREAM).orEmpty() else listOfNotNull(intent.getParcelableExtra(Intent.EXTRA_STREAM) as? android.net.Uri)
@@ -136,6 +137,7 @@ class MainActivity : FragmentActivity() {
                 val navController = rememberNavController()
                 val pendingSenderId by pendingChatSenderId.collectAsState()
                 val linkedPostId by pendingPostId.collectAsState()
+                val linkedUserId by pendingUserId.collectAsState()
                 val sharedContent by incomingShare.collectAsState()
                 val knownUsers by viewModel.usersState.collectAsState()
                 val knownPosts by viewModel.postsState.collectAsState()
@@ -173,6 +175,7 @@ class MainActivity : FragmentActivity() {
                     val id = linkedPostId ?: return@LaunchedEffect
                     knownPosts.find { it.id == id }?.let { post -> linkedPost = post; navController.navigate("post_detail") { launchSingleTop = true }; pendingPostId.value = null }
                 }
+                LaunchedEffect(linkedUserId,knownUsers){val id=linkedUserId?:return@LaunchedEffect;knownUsers.find{it.uid==id}?.let{viewModel.selectProfile(it);navController.navigate("profile"){launchSingleTop=true};pendingUserId.value=null}}
 
                 PremiumBackground {
                     val currentRoute = navController.currentBackStackEntryAsState().value?.destination?.route

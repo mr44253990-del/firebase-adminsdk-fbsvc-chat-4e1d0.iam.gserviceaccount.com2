@@ -46,6 +46,7 @@ fun UserProfileScreen(
     val currentUser by viewModel.currentUserState.collectAsState()
     val posts by viewModel.postsState.collectAsState()
     val sentRequests by viewModel.sentFriendRequestIds.collectAsState()
+    val flagship by viewModel.flagshipConfig.collectAsState()
     val liveUser = allUsers.find { it.uid == user.uid } ?: user
     val userPosts = remember(posts, liveUser.uid) { posts.filter { it.senderId == liveUser.uid } }
     val totalLikes = remember(userPosts) { userPosts.sumOf { post -> post.reactions.size + post.mediaReactions.values.sumOf { it.size } } }
@@ -56,6 +57,7 @@ fun UserProfileScreen(
     val isFollowing = currentUser?.following?.contains(liveUser.uid) == true
     val isRequested = sentRequests.contains("${currentUser?.uid}_${liveUser.uid}")
     var showFeatureSuggestion by remember { mutableStateOf(false) }
+    var showContactCard by remember { mutableStateOf(false) }
 
     if(!canViewProfile){
         Scaffold(topBar={TopAppBar(title={Text("Private profile")},navigationIcon={IconButton(onClick=onBack){Icon(Icons.AutoMirrored.Filled.ArrowBack,"Back")}})}){padding->Column(Modifier.fillMaxSize().padding(padding),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.Center){Icon(Icons.Outlined.VisibilityOff,null,Modifier.size(72.dp),tint=MaterialTheme.colorScheme.primary);Spacer(Modifier.height(14.dp));Text("This profile is hidden",style=MaterialTheme.typography.headlineSmall,fontWeight=FontWeight.ExtraBold);Text("Only friends and existing conversations can view it.",color=MaterialTheme.colorScheme.onSurfaceVariant,textAlign=TextAlign.Center)}}
@@ -161,6 +163,8 @@ fun UserProfileScreen(
                 }
             }
 
+            item(key="contact_card") { OutlinedButton(onClick={showContactCard=true},modifier=Modifier.fillMaxWidth().padding(horizontal=16.dp),shape=RoundedCornerShape(18.dp)){Icon(Icons.Outlined.QrCode,null);Spacer(Modifier.width(7.dp));Text("Convo Link • QR Contact Card")} }
+
             if (!isMe) item(key = "actions") {
                 Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
                     Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
@@ -230,6 +234,8 @@ fun UserProfileScreen(
             }
         }
     }
+
+    if(showContactCard) ConvoContactCardDialog(liveUser,flagship.publicProfileBaseUrl){showContactCard=false}
 
     if (showFeatureSuggestion) {
         var title by remember { mutableStateOf("") }
