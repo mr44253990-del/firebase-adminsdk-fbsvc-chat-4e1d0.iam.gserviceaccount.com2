@@ -66,8 +66,8 @@ export default {
       }
     }
 
-    if (request.method === "GET" && path.startsWith("/u/")) {
-      const username=decodeURIComponent(path.slice(3)).replace(/^@/,"").toLowerCase();
+    if (request.method === "GET" && (path.startsWith("/u/") || (url.hostname === "convo.me" && /^\/[A-Za-z0-9_.-]{2,80}$/.test(path)))) {
+      const username=decodeURIComponent(path.startsWith("/u/") ? path.slice(3) : path.slice(1)).replace(/^@/,"").toLowerCase();
       if(!/^[a-z0-9_.-]{2,80}$/.test(username))return htmlResponse("Invalid Convo username",400);
       try { const user=(await firestoreList(env,"users")).find(x=>String(x.username||"").toLowerCase()===username); if(!user||user.profileHidden===true)return htmlResponse("Profile not available",404);
         const title=escapeHtml(`${user.name||username} (@${username})`), bio=escapeHtml(String(user.bio||"Connect with me on Convo Chat").slice(0,240)), image=escapeHtml(user.profileImageUrl||""), downloadRaw=env.APP_DOWNLOAD_URL||new URL(request.url).origin;
