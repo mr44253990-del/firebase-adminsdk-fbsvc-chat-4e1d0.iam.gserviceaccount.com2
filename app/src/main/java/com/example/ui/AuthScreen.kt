@@ -43,7 +43,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.example.R
-import com.example.auth.FacebookLoginController
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
@@ -640,16 +639,6 @@ fun AuthScreen(
                         Spacer(Modifier.width(12.dp))
                         Text(if (isLoginMode) "Continue with Google" else "Sign up with Google", fontWeight = FontWeight.Bold)
                     }
-                    OutlinedButton(
-                        onClick = { (context as? android.app.Activity)?.let { activity -> FacebookLoginController.login(activity,{ token -> viewModel.signInWithFacebookToken(token,onAuthSuccess) },{ error -> Toast.makeText(context,error,Toast.LENGTH_LONG).show() }) } ?: Toast.makeText(context,"Facebook login requires an Activity",Toast.LENGTH_SHORT).show() },
-                        enabled = !authLoading,
-                        modifier = Modifier.fillMaxWidth().height(54.dp),
-                        shape = CircleShape,
-                        colors = ButtonDefaults.outlinedButtonColors(containerColor = Color(0xFF1877F2).copy(.10f))
-                    ) {
-                        Surface(color=Color(0xFF1877F2),shape=CircleShape){Text("f",color=Color.White,fontWeight=FontWeight.Black,fontSize=22.sp,modifier=Modifier.padding(horizontal=10.dp,vertical=2.dp))}
-                        Spacer(Modifier.width(10.dp));Text(if(isLoginMode)"Continue with Facebook" else "Sign up with Facebook",fontWeight=FontWeight.Bold,color=Color(0xFF1877F2))
-                    }
                 }
             }
 
@@ -663,15 +652,14 @@ fun AuthScreen(
                 Text(text = if (isLoginMode) "Don't have an account? Sign Up" else "Already have an account? Log In",color = MaterialTheme.colorScheme.primary,fontWeight = FontWeight.Bold,fontSize = 15.sp)
             }
             if(rememberedAccounts.isNotEmpty()){
-                Spacer(Modifier.height(8.dp));Text("Previous accounts",fontWeight=FontWeight.ExtraBold,modifier=Modifier.fillMaxWidth());Text("For security, passwords/tokens are never stored in files. Provider accounts reopen their secure login flow.",fontSize=10.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.fillMaxWidth())
+                Spacer(Modifier.height(8.dp));Text("Previous accounts",fontWeight=FontWeight.ExtraBold,modifier=Modifier.fillMaxWidth());Text("For security, passwords/tokens are never stored. Google reopens secure login; email accounts require their password.",fontSize=10.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.fillMaxWidth())
                 LazyRow(contentPadding=PaddingValues(vertical=10.dp),horizontalArrangement=Arrangement.spacedBy(10.dp)){
                     items(rememberedAccounts,key={it.uid}){account->
                         ElevatedCard(modifier=Modifier.width(150.dp).clickable{
                             isLoginMode=true;email=account.email
-                            if(account.provider=="facebook")(context as? android.app.Activity)?.let{a->FacebookLoginController.login(a,{token->viewModel.signInWithFacebookToken(token,onAuthSuccess)},{Toast.makeText(context,it,Toast.LENGTH_LONG).show()})}
-                            else if(account.provider=="google")scope.launch{runCatching{requestGoogleCredential()}.onSuccess{credential->if(credential is CustomCredential&&credential.type==GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL){val g=GoogleIdTokenCredential.createFrom(credential.data);viewModel.signInWithGoogleCredential(GoogleAuthProvider.getCredential(g.idToken,null),onAuthSuccess)}}.onFailure{Toast.makeText(context,it.localizedMessage?:"Google login failed",Toast.LENGTH_LONG).show()}}
+                            if(account.provider=="google")scope.launch{runCatching{requestGoogleCredential()}.onSuccess{credential->if(credential is CustomCredential&&credential.type==GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL){val g=GoogleIdTokenCredential.createFrom(credential.data);viewModel.signInWithGoogleCredential(GoogleAuthProvider.getCredential(g.idToken,null),onAuthSuccess)}}.onFailure{Toast.makeText(context,it.localizedMessage?:"Google login failed",Toast.LENGTH_LONG).show()}}
                         },shape=RoundedCornerShape(22.dp)){
-                            Column(Modifier.padding(12.dp),horizontalAlignment=Alignment.CenterHorizontally){AsyncImage(account.photoUrl.ifBlank{null},account.name,error=painterResource(R.drawable.img_app_logo),contentScale=ContentScale.Crop,modifier=Modifier.size(58.dp).clip(CircleShape));Spacer(Modifier.height(6.dp));Text(account.name,fontWeight=FontWeight.Bold,maxLines=1);Text(account.provider,fontSize=9.sp,color=MaterialTheme.colorScheme.primary);if(account.unread>0)Badge{Text("+${account.unread}")};TextButton(onClick={viewModel.forgetRememberedAccount(account.uid)}){Text("Remove",fontSize=9.sp)}}
+                            Column(Modifier.padding(12.dp),horizontalAlignment=Alignment.CenterHorizontally){AsyncImage(account.photoUrl.ifBlank{null},account.name,error=painterResource(R.drawable.img_app_logo),contentScale=ContentScale.Crop,modifier=Modifier.size(58.dp).clip(CircleShape));Spacer(Modifier.height(6.dp));Text(account.name,fontWeight=FontWeight.Bold,maxLines=1);Text(account.email.ifBlank{account.provider},fontSize=9.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,maxLines=1);Text(account.provider,fontSize=9.sp,color=MaterialTheme.colorScheme.primary);if(account.unread>0)Badge{Text("+${account.unread}")};TextButton(onClick={viewModel.forgetRememberedAccount(account.uid)}){Text("Remove",fontSize=9.sp)}}
                         }
                     }
                 }

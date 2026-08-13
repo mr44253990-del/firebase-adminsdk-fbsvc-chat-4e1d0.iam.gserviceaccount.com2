@@ -29,6 +29,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.text.ClickableText
@@ -48,6 +49,7 @@ import com.example.ui.theme.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.Brush
@@ -82,6 +84,8 @@ import java.util.*
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.OkHttpClient
+import okhttp3.Request
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -98,6 +102,7 @@ fun ChatScreen(
     val messages by viewModel.chatMessagesState.collectAsState()
     val isTyping by viewModel.isRecipientTyping.collectAsState()
     val chatTheme by viewModel.chatTheme.collectAsState()
+    val secureChat by viewModel.secureChatEnabled.collectAsState()
     val currentUser by viewModel.currentUserState.collectAsState()
     val pendingRequestRecipients by viewModel.pendingMessageRequestRecipients.collectAsState()
     val requestPending = recipient.uid in pendingRequestRecipients
@@ -115,6 +120,11 @@ fun ChatScreen(
     var fileUploading by remember { mutableStateOf(false) }
     var fileProgress by remember { mutableIntStateOf(0) }
     var fileEta by remember { mutableLongStateOf(0L) }
+    var secureDrag by remember { mutableFloatStateOf(0f) }
+    val emojiPrefs=remember{context.getSharedPreferences("convo_chat_emoji",Context.MODE_PRIVATE)}
+    var quickEmoji by remember{mutableStateOf(emojiPrefs.getString("emoji","❤️")?:"❤️")}
+    var showEmojiPicker by remember{mutableStateOf(false)}
+    var emojiBurst by remember{mutableStateOf(false)}
     val conversationAccepted = currentUser?.friends?.contains(recipient.uid) == true || messages.isNotEmpty()
     val listState = rememberLazyListState()
 
@@ -220,6 +230,7 @@ fun ChatScreen(
                                 recipientUser = recipient,
                                 text = "",
                                 imageUrl = publicUrl,
+                                secureMode = secureChat,
                                 replyToId = replyingToMessage?.messageId,
                                 replyToText = replyingToMessage?.text,
                                 replyToSenderName = replyingToMessage?.senderName
@@ -256,7 +267,7 @@ fun ChatScreen(
             onProgress = { percent, eta -> fileProgress = percent; fileEta = eta },
             onSuccess = { url ->
                 fileUploading = false
-                viewModel.sendMessage(recipient, "", fileUrl = url, fileName = fileName, fileMimeType = mime, fileSize = fileSize)
+                viewModel.sendMessage(recipient, "", fileUrl = url, fileName = fileName, fileMimeType = mime, fileSize = fileSize, secureMode = secureChat)
             },
             onFailure = { error -> fileUploading = false; Toast.makeText(context, error, Toast.LENGTH_LONG).show() })
     }
@@ -324,6 +335,7 @@ fun ChatScreen(
                                 text = "",
                                 voiceUrl = publicUrl,
                                 voiceDurationSec = durationSec,
+                                secureMode = secureChat,
                                 replyToId = replyingToMessage?.messageId,
                                 replyToText = replyingToMessage?.text,
                                 replyToSenderName = replyingToMessage?.senderName
@@ -759,12 +771,17 @@ fun ChatScreen(
                 }
             }
 
+            AnimatedVisibility(secureChat) {
+                Surface(color=Color(0xFFFF8F00).copy(.18f),modifier=Modifier.fillMaxWidth()){Row(Modifier.padding(horizontal=16.dp,vertical=8.dp),verticalAlignment=Alignment.CenterVertically){Icon(Icons.Default.Timer,null,tint=Color(0xFFFFB300));Spacer(Modifier.width(8.dp));Column(Modifier.weight(1f)){Text("Secure chat • 12 hours",fontWeight=FontWeight.ExtraBold);Text("New messages in this mode automatically expire.",fontSize=10.sp)};TextButton(onClick={viewModel.setSecureChatEnabled(false)}){Text("Turn off")}}}
+            }
+            if(secureDrag>0f){LinearProgressIndicator(progress={secureDrag/140f},modifier=Modifier.fillMaxWidth());Text(if(secureDrag>=140f)"Release to toggle Secure Chat" else "Pull up to enable 12-hour Secure Chat",fontSize=10.sp,color=MaterialTheme.colorScheme.primary,modifier=Modifier.padding(horizontal=16.dp))}
             // Interactive dynamic input bar
             Surface(
                 tonalElevation = 8.dp,
                 color = Color.Transparent,
                 modifier = Modifier
                     .fillMaxWidth()
+                    .pointerInput(secureChat) { detectVerticalDragGestures(onVerticalDrag={change,amount->change.consume();if(amount<0)secureDrag=(secureDrag-amount).coerceAtMost(220f)},onDragEnd={if(secureDrag>140f)viewModel.setSecureChatEnabled(!secureChat);secureDrag=0f},onDragCancel={secureDrag=0f}) }
                     .windowInsetsPadding(WindowInsets.navigationBars)
                     .glassmorphic(
                         isDark = isDark,
@@ -830,46 +847,34 @@ fun ChatScreen(
 
                     Spacer(modifier = Modifier.width(6.dp))
 
-                    IconButton(
-                        onClick = {
-                            if (messageText.isNotBlank()) {
-                                val emsg = editingMessage
-                                if (emsg != null) {
-                                    viewModel.editMessage(recipient.uid, emsg.messageId, messageText)
-                                    editingMessage = null
-                                } else {
-                                    viewModel.sendMessage(
-                                        recipientUser = recipient,
-                                        text = messageText,
-                                        replyToId = replyingToMessage?.messageId,
-                                        replyToText = replyingToMessage?.text,
-                                        replyToSenderName = replyingToMessage?.senderName
-                                    )
-                                    replyingToMessage = null
+                    val emojiScale by animateFloatAsState(if(emojiBurst)1.8f else 1f,tween(320),label="emoji_burst")
+                    Box(
+                        Modifier.size(46.dp).scale(emojiScale).clip(CircleShape).background(MaterialTheme.colorScheme.primary)
+                            .combinedClickable(
+                                onLongClick={showEmojiPicker=true},
+                                onClick={
+                                    if(requestPending||fileUploading)return@combinedClickable
+                                    if(messageText.isBlank()){
+                                        viewModel.sendMessage(recipient,quickEmoji,secureMode=secureChat);emojiBurst=true
+                                    }else{
+                                        val emsg=editingMessage
+                                        if(emsg!=null){viewModel.editMessage(recipient.uid,emsg.messageId,messageText);editingMessage=null}
+                                        else{viewModel.sendMessage(recipientUser=recipient,text=messageText,secureMode=secureChat,replyToId=replyingToMessage?.messageId,replyToText=replyingToMessage?.text,replyToSenderName=replyingToMessage?.senderName);replyingToMessage=null}
+                                        messageText=""
+                                    }
                                 }
-                                messageText = ""
-                            }
-                        },
-                        enabled = !requestPending && !fileUploading,
-                        modifier = Modifier
-                            .size(46.dp)
-                            .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.primary)
-                            .testTag("chat_send_button"),
-                        colors = IconButtonDefaults.iconButtonColors(
-                            contentColor = MaterialTheme.colorScheme.onPrimary
-                        )
-                    ) {
-                        Icon(
-                            imageVector = if (editingMessage != null) Icons.Default.Check else Icons.Default.Send,
-                            contentDescription = "Send",
-                            tint = MaterialTheme.colorScheme.onPrimary
-                        )
+                            ).testTag("chat_send_button"),contentAlignment=Alignment.Center
+                    ){
+                        if(messageText.isBlank())Text(if(emojiBurst)"✨" else quickEmoji,fontSize=23.sp)
+                        else Icon(if(editingMessage!=null)Icons.Default.Check else Icons.Default.Send,"Send",tint=MaterialTheme.colorScheme.onPrimary)
                     }
                 }
             }
         }
     }
+
+    LaunchedEffect(emojiBurst){if(emojiBurst){kotlinx.coroutines.delay(450);emojiBurst=false}}
+    if(showEmojiPicker) AlertDialog(onDismissRequest={showEmojiPicker=false},title={Text("Choose quick emoji")},text={Row(horizontalArrangement=Arrangement.spacedBy(8.dp)){listOf("❤️","👍","😂","🔥","🥰","🎉").forEach{e->Text(e,fontSize=30.sp,modifier=Modifier.clickable{quickEmoji=e;emojiPrefs.edit().putString("emoji",e).apply();showEmojiPicker=false}.padding(3.dp))}}},confirmButton={TextButton(onClick={showEmojiPicker=false}){Text("Close")}})
 
     forwardingMessage?.let { original ->
         AlertDialog(
@@ -1080,6 +1085,7 @@ fun MessageBubbleItem(
                         Spacer(Modifier.height(5.dp))
                     }
 
+                    if(message.secure){val remaining=((message.expiresAt-System.currentTimeMillis()).coerceAtLeast(0)/3_600_000L);Text("🔒 Secure • expires in ${remaining.coerceAtLeast(1)}h",fontSize=9.sp,color=MaterialTheme.colorScheme.tertiary)}
                     // Render text message if present
                     if (message.text.isNotBlank()) {
                         LinkifiedChatText(message.text, textColor)
@@ -1500,23 +1506,22 @@ private fun LinkifiedChatText(text: String, color: Color) {
             style = MaterialTheme.typography.bodyMedium.copy(color = color),
             onClick = { offset -> annotated.getStringAnnotations("URL", offset, offset).firstOrNull()?.let { runCatching { uriHandler.openUri(it.item) } } }
         )
-        firstUrl?.let { url ->
-            Spacer(Modifier.height(7.dp))
-            Surface(
-                onClick = { runCatching { uriHandler.openUri(url) } },
-                color = MaterialTheme.colorScheme.surface.copy(alpha = .32f),
-                border = BorderStroke(1.dp, Color.White.copy(alpha = .15f)),
-                shape = RoundedCornerShape(14.dp)
-            ) {
-                Row(Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.Link, null, tint = Color(0xFF71C7FF), modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Column {
-                        Text(runCatching { Uri.parse(url).host }.getOrNull() ?: "Open link", fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                        Text("Tap to preview in browser", fontSize = 10.sp, color = color.copy(alpha = .7f))
-                    }
-                }
-            }
-        }
+        firstUrl?.let { url -> Spacer(Modifier.height(7.dp)); LinkPreviewCard(url,color) }
+    }
+}
+
+private data class LinkMeta(val title:String,val description:String,val image:String)
+
+@Composable
+private fun LinkPreviewCard(url:String,textColor:Color){
+    val uriHandler=LocalUriHandler.current
+    val meta by produceState<LinkMeta?>(null,url){value=withContext(Dispatchers.IO){runCatching{
+        val response=OkHttpClient.Builder().callTimeout(8,java.util.concurrent.TimeUnit.SECONDS).build().newCall(Request.Builder().url(url).header("User-Agent","ConvoChat/1.0").build()).execute()
+        response.use{r->if(!r.isSuccessful)return@runCatching null;val reader=r.body?.charStream()?:return@runCatching null;val chars=CharArray(200_000);val n=reader.read(chars);val html=if(n>0)String(chars,0,n) else ""
+            fun meta(name:String):String{val a=Regex("<meta[^>]+(?:property|name)=[\\\"']${Regex.escape(name)}[\\\"'][^>]+content=[\\\"']([^\\\"']+)",RegexOption.IGNORE_CASE).find(html)?.groupValues?.getOrNull(1);val b=Regex("<meta[^>]+content=[\\\"']([^\\\"']+)[\\\"'][^>]+(?:property|name)=[\\\"']${Regex.escape(name)}[\\\"']",RegexOption.IGNORE_CASE).find(html)?.groupValues?.getOrNull(1);return(a?:b).orEmpty().replace("&amp;","&").replace("&quot;","\"")}
+            val host=Uri.parse(url).host.orEmpty();LinkMeta(meta("og:title").ifBlank{Regex("<title[^>]*>(.*?)</title>",setOf(RegexOption.IGNORE_CASE,RegexOption.DOT_MATCHES_ALL)).find(html)?.groupValues?.getOrNull(1)?.trim().orEmpty()}.ifBlank{host},meta("og:description").ifBlank{meta("description")},meta("og:image"))}}
+    }.getOrNull()}}
+    Surface(onClick={runCatching{uriHandler.openUri(url)}},color=MaterialTheme.colorScheme.surface.copy(.42f),border=BorderStroke(1.dp,MaterialTheme.colorScheme.outlineVariant),shape=RoundedCornerShape(16.dp)){
+        Column{meta?.image?.takeIf{it.startsWith("http")}?.let{AsyncImage(it,meta?.title,contentScale=ContentScale.Crop,modifier=Modifier.fillMaxWidth().height(120.dp))};Row(Modifier.padding(10.dp),verticalAlignment=Alignment.CenterVertically){Icon(Icons.Default.Link,null,tint=Color(0xFF71C7FF));Spacer(Modifier.width(8.dp));Column(Modifier.weight(1f)){Text(meta?.title?:Uri.parse(url).host.orEmpty(),fontWeight=FontWeight.ExtraBold,fontSize=12.sp,maxLines=2,overflow=TextOverflow.Ellipsis);if(!meta?.description.isNullOrBlank())Text(meta!!.description,fontSize=10.sp,color=textColor.copy(.72f),maxLines=2,overflow=TextOverflow.Ellipsis);Text(Uri.parse(url).host.orEmpty(),fontSize=9.sp,color=Color(0xFF71C7FF))}}}
     }
 }

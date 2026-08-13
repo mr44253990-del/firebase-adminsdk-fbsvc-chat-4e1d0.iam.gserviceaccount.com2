@@ -19,7 +19,6 @@ import com.example.data.*
 import com.example.call.CallEngine
 import com.google.firebase.auth.AuthCredential
 import com.google.firebase.auth.FirebaseAuth
-import com.google.firebase.auth.FacebookAuthProvider
 import com.google.firebase.database.DataSnapshot
 import com.google.firebase.database.DatabaseError
 import com.google.firebase.database.FirebaseDatabase
@@ -155,6 +154,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     // Social Feed Posts state
     private val _postsState = MutableStateFlow<List<Post>>(emptyList())
     val postsState: StateFlow<List<Post>> = _postsState.asStateFlow()
+    private var rawPosts: List<Post> = emptyList()
 
     // Groups state
     private val _groupsState = MutableStateFlow<List<Group>>(emptyList())
@@ -181,6 +181,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _usersState = MutableStateFlow<List<User>>(emptyList())
     val usersState: StateFlow<List<User>> = _usersState.asStateFlow()
+    private val _hiddenUserIds = MutableStateFlow<Set<String>>(emptySet())
+    private var rawUsers: List<User> = emptyList()
 
     private val _filteredUsersState = MutableStateFlow<List<User>>(emptyList())
     val filteredUsersState: StateFlow<List<User>> = _filteredUsersState.asStateFlow()
@@ -199,6 +201,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _chatTheme = MutableStateFlow("Aurora")
     val chatTheme: StateFlow<String> = _chatTheme.asStateFlow()
+    private val _secureChatEnabled = MutableStateFlow(false)
+    val secureChatEnabled: StateFlow<Boolean> = _secureChatEnabled.asStateFlow()
 
     private val _inAppNotification = MutableStateFlow<InAppNotificationData?>(null)
     val inAppNotification: StateFlow<InAppNotificationData?> = _inAppNotification.asStateFlow()
@@ -237,10 +241,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     val rememberedAccounts: StateFlow<List<RememberedAccount>> = _rememberedAccounts.asStateFlow()
 
     private fun loadRememberedAccounts(): List<RememberedAccount> = runCatching {
-        val array=JSONArray(sharedPrefs.getString("remembered_accounts","[]"));(0 until array.length()).map{array.getJSONObject(it)}.map{RememberedAccount(it.optString("uid"),it.optString("name"),it.optString("email"),it.optString("photoUrl"),it.optString("provider","password"),it.optLong("lastUsedAt"),it.optInt("unread"))}
+        val array=JSONArray(sharedPrefs.getString("remembered_accounts","[]"));(0 until array.length()).map{array.getJSONObject(it)}.map{RememberedAccount(it.optString("uid"),it.optString("name"),it.optString("email"),it.optString("photoUrl"),it.optString("provider","password"),it.optLong("lastUsedAt"),it.optInt("unread"))}.filter{it.provider!="facebook"}
     }.getOrDefault(emptyList())
     private fun rememberAccount(user:User){
-        val auth=FirebaseAuth.getInstance().currentUser?:return;val provider=when{auth.providerData.any{it.providerId=="facebook.com"}->"facebook";auth.providerData.any{it.providerId=="google.com"}->"google";else->"password"}
+        val auth=FirebaseAuth.getInstance().currentUser?:return;val provider=when{auth.providerData.any{it.providerId=="google.com"}->"google";else->"password"}
         val item=RememberedAccount(user.uid,user.name,auth.email.orEmpty(),user.profileImageUrl,provider,System.currentTimeMillis(),0)
         val updated=(listOf(item)+_rememberedAccounts.value.filterNot{it.uid==item.uid}).take(8);_rememberedAccounts.value=updated
         val a=JSONArray();updated.forEach{a.put(JSONObject().put("uid",it.uid).put("name",it.name).put("email",it.email).put("photoUrl",it.photoUrl).put("provider",it.provider).put("lastUsedAt",it.lastUsedAt).put("unread",it.unread))};sharedPrefs.edit().putString("remembered_accounts",a.toString()).apply()
@@ -292,6 +296,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private var activeChatId: String? = null
     private var activeTypingListener: ValueEventListener? = null
     private var activeChatThemeListener: ValueEventListener? = null
+    private var activeSecureModeListener: ValueEventListener? = null
     private var activeReceiptListener: ValueEventListener? = null
     private var globalNotificationListener: ValueEventListener? = null
     private var presenceListener: ValueEventListener? = null
@@ -359,6 +364,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             startListeningToChat(user.uid)
             startListeningToTyping(user.uid)
             startListeningToChatTheme()
+            startListeningToSecureMode()
         } else {
             stopListeningToChat()
             stopListeningToTyping()
@@ -906,21 +912,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             }
     }
 
-    fun signInWithFacebookToken(accessToken: String, onSuccess: () -> Unit) {
-        _authLoading.value=true;_authError.value=null
-        if(accessToken.isBlank()){_authLoading.value=false;_authError.value="Facebook returned an empty access token";return}
-        FirebaseAuth.getInstance().signInWithCredential(FacebookAuthProvider.getCredential(accessToken)).addOnSuccessListener { result ->
-            val u=result.user?:run{_authLoading.value=false;_authError.value="Facebook returned no Firebase user";return@addOnSuccessListener}
-            val now=System.currentTimeMillis();val ref=FirebaseFirestore.getInstance().collection("users").document(u.uid)
-            ref.get().addOnSuccessListener { existing ->
-                val username=(u.email?.substringBefore("@")?:"facebook_${u.uid.take(6)}").lowercase().replace("[^a-z0-9_]".toRegex(),"")
-                val values=mutableMapOf<String,Any>("uid" to u.uid,"name" to (u.displayName?:"Facebook User"),"username" to username,"profileImageUrl" to u.photoUrl?.toString().orEmpty(),"createdAt" to (u.metadata?.creationTimestamp?:now))
-                if(!existing.exists())values.putAll(mapOf("isPremium" to true,"premiumPlan" to "trial","premiumUntil" to now+14L*86_400_000L,"premiumApprovedAt" to now,"premiumTrialClaimed" to true,"premiumSource" to "signup_trial"))
-                ref.set(values,SetOptions.merge()).addOnSuccessListener{retrieveFCMTokenAndStore(u.uid);loadCurrentUserProfile(u.uid);setupPresence(u.uid);loadAllUsers();listenToAllPresences();listenForInAppNotifications();registerDeviceSession();_authLoading.value=false;onSuccess()}.addOnFailureListener{_authLoading.value=false;_authError.value="Facebook profile save failed: ${it.localizedMessage}"}
-            }.addOnFailureListener{_authLoading.value=false;_authError.value="Could not check Facebook profile: ${it.localizedMessage}"}
-        }.addOnFailureListener{_authLoading.value=false;_authError.value=it.localizedMessage?:"Firebase rejected the Facebook access token"}
-    }
-
     fun signup(email: String, name: String, dob: String, password: String, profileImageUrl: String, onSuccess: () -> Unit) {
         if (!_isFirebaseConfigured.value) {
             _authError.value = "Firebase is not configured properly."
@@ -1009,27 +1000,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun logout(onSuccess: () -> Unit) {
-        try {
-            val uid = FirebaseAuth.getInstance().currentUser?.uid
-            if (uid != null) {
-                // Instantly set offline status in RTDB status node before signing out
-                getDatabaseInstance().getReference("status").child(uid)
-                    .setValue(mapOf("isOnline" to false, "lastActive" to System.currentTimeMillis()))
-            }
-            FirebaseAuth.getInstance().signOut()
-            currentUserProfileListener?.remove()
-            currentUserProfileListener = null
-            _currentUserState.value = null
-            _usersState.value = emptyList()
-            _filteredUsersState.value = emptyList()
-            _chatMessagesState.value = emptyList()
-            activeChatId = null
-            stopListeningToChat()
-            stopListeningToTyping()
-            onSuccess()
-        } catch (e: Exception) {
-            Log.e("Auth", "Logout failed: ${e.message}")
-        }
+        fun finish(){try{val uid=FirebaseAuth.getInstance().currentUser?.uid;if(uid!=null)getDatabaseInstance().getReference("status").child(uid).setValue(mapOf("isOnline" to false,"lastActive" to System.currentTimeMillis()));FirebaseAuth.getInstance().signOut();currentUserProfileListener?.remove();currentUserProfileListener=null;_currentUserState.value=null;rawUsers=emptyList();_usersState.value=emptyList();_filteredUsersState.value=emptyList();_chatMessagesState.value=emptyList();activeChatId=null;stopListeningToChat();stopListeningToTyping();onSuccess()}catch(e:Exception){Log.e("Auth","Logout failed: ${e.message}")}}
+        val id=getApplication<Application>().getSharedPreferences("convo_device_session",Context.MODE_PRIVATE).getString("id","").orEmpty()
+        if(FirebaseAuth.getInstance().currentUser!=null&&id.isNotBlank())workerSecurityPost("/sessions/revoke-current",JSONObject().put("sessionId",id)){_,_->finish()}else finish()
     }
 
     private fun retrieveFCMTokenAndStore(uid: String) {
@@ -1059,6 +1032,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         conversationIdsJob = viewModelScope.launch {
             cacheDao.getConversationChatIds().collect { chatIds ->
                 _conversationUserIds.value = chatIds.flatMap { it.split("_") }.filter { it != uid }.toSet()
+                applyUserPrivacyFilter()
             }
         }
         val profileRef = FirebaseFirestore.getInstance().collection("users").document(uid)
@@ -1077,6 +1051,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         premiumApprovedAt = document.getLong("premiumApprovedAt") ?: parsed.premiumApprovedAt
                     )
                     _currentUserState.value = liveUser
+                    _mutedUserIds.value = liveUser.mutedUsers.toSet()
+                    sharedPrefs.edit().putStringSet("muted_users", _mutedUserIds.value).apply()
                     rememberAccount(liveUser)
                 }
             }
@@ -1165,6 +1141,15 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
+    private fun applyUserPrivacyFilter() {
+        val me=_currentUserState.value;val currentUid=FirebaseAuth.getInstance().currentUser?.uid.orEmpty()
+        _hiddenUserIds.value=rawUsers.filter{it.profileHidden}.map{it.uid}.toSet()
+        val visible=rawUsers.filter{!it.profileHidden||it.uid in me?.friends.orEmpty()||it.uid in _conversationUserIds.value}
+        _usersState.value=visible
+        _filteredUsersState.value=visible.filter{it.uid !in me?.blockedUsers.orEmpty()&&!it.blockedUsers.contains(currentUid)}
+        _postsState.value=rawPosts.filter{post->post.senderId !in _hiddenUserIds.value||post.senderId==currentUid||post.senderId in me?.friends.orEmpty()||post.senderId in _conversationUserIds.value}.sortedByDescending{it.timestamp}
+    }
+
     private fun loadAllUsers() {
         val currentUid = FirebaseAuth.getInstance().currentUser?.uid ?: return
         FirebaseFirestore.getInstance().collection("users")
@@ -1199,19 +1184,16 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                             isPremium = doc.getBoolean("isPremium") ?: user.isPremium,
                             premiumPlan = doc.getString("premiumPlan") ?: user.premiumPlan,
                             premiumUntil = doc.getLong("premiumUntil") ?: user.premiumUntil,
-                            premiumApprovedAt = doc.getLong("premiumApprovedAt") ?: user.premiumApprovedAt
+                            premiumApprovedAt = doc.getLong("premiumApprovedAt") ?: user.premiumApprovedAt,
+                            profileHidden = doc.getBoolean("profileHidden") ?: user.profileHidden,
+                            mutedUsers = (doc.get("mutedUsers") as? List<*>)?.mapNotNull { it as? String } ?: user.mutedUsers
                         )
                         if (hydratedUser != null && hydratedUser.uid != currentUid) {
                             allUsersList.add(hydratedUser)
                         }
                     }
-                    _usersState.value = allUsersList
-
-                    val myBlocked = _currentUserState.value?.blockedUsers ?: emptyList()
-                    val filteredList = allUsersList.filter { user ->
-                        !myBlocked.contains(user.uid) && !user.blockedUsers.contains(currentUid)
-                    }
-                    _filteredUsersState.value = filteredList
+                    rawUsers = allUsersList
+                    applyUserPrivacyFilter()
                 }
             }
     }
@@ -1410,6 +1392,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                                     fileName = childSnapshot.child("fileName").value as? String,
                                     fileMimeType = childSnapshot.child("fileMimeType").value as? String,
                                     fileSize = childSnapshot.child("fileSize").value as? Long,
+                                    secure = childSnapshot.child("secure").value as? Boolean ?: false,
+                                    expiresAt = childSnapshot.child("expiresAt").value as? Long ?: 0L,
                                     seenByRecipient = childSnapshot.child("seenByRecipient").value as? Boolean ?: false,
                                     deliveredToRecipient = childSnapshot.child("deliveredToRecipient").value as? Boolean ?: false
                                 )
@@ -1418,16 +1402,18 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                             }
                         }
                         if (message != null) {
-                            messages.add(message)
+                            if(message.secure&&message.expiresAt in 1..System.currentTimeMillis()) childSnapshot.ref.removeValue() else messages.add(message)
                         }
                     }
+                    val now=System.currentTimeMillis()
                     val merged = (_chatMessagesState.value + messages)
-                        .associateBy { it.messageId }.values.sortedBy { it.timestamp }
+                        .associateBy { it.messageId }.values.filterNot{it.secure&&it.expiresAt in 1..now}.sortedBy { it.timestamp }
                     _chatMessagesState.value = merged
 
                     // Persist before acknowledgement. Incoming RTDB payload is removed only after
                     // Room confirms the durable local copy; a tiny receipt remains for the sender.
                     viewModelScope.launch(Dispatchers.IO) {
+                        cacheDao.deleteExpiredSecureMessages(System.currentTimeMillis())
                         val localized = messages.map { remote ->
                             if (remote.senderId != currentUid) localizeIncomingMedia(remote, chatId)
                             else _chatMessagesState.value.find { it.messageId == remote.messageId } ?: remote
@@ -1547,6 +1533,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val chatId = activeChatId ?: return
         getDatabaseInstance().getReference("chat_settings").child(chatId).child("theme").setValue(theme)
     }
+    private fun startListeningToSecureMode(){
+        val chatId=activeChatId?:return;val ref=getDatabaseInstance().getReference("chat_settings").child(chatId).child("secure12h")
+        activeSecureModeListener?.let{ref.removeEventListener(it)}
+        activeSecureModeListener=ref.addValueEventListener(object:ValueEventListener{override fun onDataChange(s:DataSnapshot){_secureChatEnabled.value=s.getValue(Boolean::class.java)?:false};override fun onCancelled(e:DatabaseError){}})
+    }
+    fun setSecureChatEnabled(enabled:Boolean){val chatId=activeChatId?:return;getDatabaseInstance().getReference("chat_settings").child(chatId).child("secure12h").setValue(enabled)}
 
     // Sound effect players
     fun updateSoundPreferences(notificationSounds: Boolean, typingSounds: Boolean) {
@@ -1570,6 +1562,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val updated = _mutedUserIds.value.toMutableSet().apply { if (!add(uid)) remove(uid) }.toSet()
         _mutedUserIds.value = updated
         sharedPrefs.edit().putStringSet("muted_users", updated).apply()
+        FirebaseAuth.getInstance().currentUser?.uid?.let { myUid -> FirebaseFirestore.getInstance().collection("users").document(myUid).update("mutedUsers", updated.toList()) }
+        _currentUserState.value = _currentUserState.value?.copy(mutedUsers = updated.toList())
     }
 
     fun playTypingSound() {
@@ -1792,6 +1786,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             }.addOnFailureListener { onResult(false, it.localizedMessage ?: "Request failed") }
     }
 
+    fun setProfileHidden(hidden:Boolean,onComplete:(Boolean)->Unit={}){
+        val uid=FirebaseAuth.getInstance().currentUser?.uid?:return onComplete(false)
+        FirebaseFirestore.getInstance().collection("users").document(uid).update("profileHidden",hidden).addOnSuccessListener{_currentUserState.value=_currentUserState.value?.copy(profileHidden=hidden);loadPosts();onComplete(true)}.addOnFailureListener{onComplete(false)}
+    }
+
     fun toggleFollow(target: User) {
         val me = getCurrentUserOrFallback() ?: return
         if (target.uid == me.uid) return
@@ -1908,6 +1907,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         fileName: String? = null,
         fileMimeType: String? = null,
         fileSize: Long? = null,
+        secureMode: Boolean = false,
         replyToId: String? = null,
         replyToText: String? = null,
         replyToSenderName: String? = null
@@ -1955,6 +1955,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             voiceDurationSec = voiceDurationSec,
             fileUrl = fileUrl, remoteFileUrl = fileUrl, fileName = fileName,
             fileMimeType = fileMimeType, fileSize = fileSize,
+            secure = secureMode, expiresAt = if(secureMode) System.currentTimeMillis()+12L*60*60*1000 else 0L,
             deliveredToRecipient = recipientUser.isOnline
         )
 
@@ -2463,7 +2464,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             }
             viewModelScope.launch {
                 cacheDao.getAllPosts().collect { cached ->
-                    _postsState.value = cached.map { it.toPost() }
+                    rawPosts = cached.map { it.toPost() }; applyUserPrivacyFilter()
                 }
             }
             viewModelScope.launch {
@@ -2657,9 +2658,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             try {
                 cacheDao.getAllPosts().firstOrNull()?.let { cached ->
-                    if (_postsState.value.isEmpty()) {
-                        _postsState.value = cached.map { it.toPost() }
-                    }
+                    if (_postsState.value.isEmpty()) { rawPosts = cached.map { it.toPost() }; applyUserPrivacyFilter() }
                 }
             } catch (e: Exception) {
                 Log.e("FIRESTORE_POSTS", "Cache load failed: ${e.message}")
@@ -2733,9 +2732,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                             Log.e("POST_PARSE", "Error parsing post: ${e.message}")
                         }
                     }
-                    // Sort locally
+                    // Sort locally and apply profile privacy without deleting any post.
                     list.sortByDescending { it.timestamp }
-                    _postsState.value = list
+                    rawPosts = list
+                    applyUserPrivacyFilter()
 
                     // Cache to Room Database
                     viewModelScope.launch(Dispatchers.IO) {

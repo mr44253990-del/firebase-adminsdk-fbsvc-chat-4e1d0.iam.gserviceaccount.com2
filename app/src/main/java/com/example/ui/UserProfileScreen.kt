@@ -51,9 +51,16 @@ fun UserProfileScreen(
     val totalLikes = remember(userPosts) { userPosts.sumOf { post -> post.reactions.size + post.mediaReactions.values.sumOf { it.size } } }
     val isMe = liveUser.uid == currentUser?.uid
     val isFriend = currentUser?.friends?.contains(liveUser.uid) == true
+    val conversationIds by viewModel.conversationUserIds.collectAsState()
+    val canViewProfile = isMe || !liveUser.profileHidden || isFriend || liveUser.uid in conversationIds
     val isFollowing = currentUser?.following?.contains(liveUser.uid) == true
     val isRequested = sentRequests.contains("${currentUser?.uid}_${liveUser.uid}")
     var showFeatureSuggestion by remember { mutableStateOf(false) }
+
+    if(!canViewProfile){
+        Scaffold(topBar={TopAppBar(title={Text("Private profile")},navigationIcon={IconButton(onClick=onBack){Icon(Icons.AutoMirrored.Filled.ArrowBack,"Back")}})}){padding->Column(Modifier.fillMaxSize().padding(padding),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.Center){Icon(Icons.Outlined.VisibilityOff,null,Modifier.size(72.dp),tint=MaterialTheme.colorScheme.primary);Spacer(Modifier.height(14.dp));Text("This profile is hidden",style=MaterialTheme.typography.headlineSmall,fontWeight=FontWeight.ExtraBold);Text("Only friends and existing conversations can view it.",color=MaterialTheme.colorScheme.onSurfaceVariant,textAlign=TextAlign.Center)}}
+        return
+    }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,

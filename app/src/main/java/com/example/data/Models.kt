@@ -24,7 +24,9 @@ data class User(
     val premiumTrialClaimed: Boolean = false,
     val premiumSource: String = "",
     val coverScale: Float = 1f,
-    val coverOffsetY: Float = 0f
+    val coverOffsetY: Float = 0f,
+    val profileHidden: Boolean = false,
+    val mutedUsers: List<String> = emptyList()
 )
 
 data class Message(
@@ -49,7 +51,9 @@ data class Message(
     val fileSize: Long? = null,
     val seenByRecipient: Boolean = false,
     val deliveredToRecipient: Boolean = false,
-    val reactions: Map<String, String> = emptyMap()
+    val reactions: Map<String, String> = emptyMap(),
+    val secure: Boolean = false,
+    val expiresAt: Long = 0L
 )
 
 data class Story(

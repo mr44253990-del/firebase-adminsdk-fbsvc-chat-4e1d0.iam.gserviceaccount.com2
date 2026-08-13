@@ -87,6 +87,8 @@ data class CachedMessage(
     val fileSize: Long?,
     val seenByRecipient: Boolean,
     val deliveredToRecipient: Boolean,
+    val secure: Boolean,
+    val expiresAt: Long,
     val chatId: String // to query messages per conversation
 ) {
     fun toMessage(): Message {
@@ -99,7 +101,8 @@ data class CachedMessage(
             remoteVoiceUrl = remoteVoiceUrl,
             fileUrl = fileUrl, remoteFileUrl = remoteFileUrl, fileName = fileName,
             fileMimeType = fileMimeType, fileSize = fileSize,
-            seenByRecipient = seenByRecipient, deliveredToRecipient = deliveredToRecipient
+            seenByRecipient = seenByRecipient, deliveredToRecipient = deliveredToRecipient,
+            secure = secure, expiresAt = expiresAt
         )
     }
 
@@ -110,7 +113,7 @@ data class CachedMessage(
                 msg.text, msg.timestamp, msg.edited, msg.replyToId, msg.replyToText,
                 msg.replyToSenderName, msg.imageUrl, msg.voiceUrl, msg.voiceDurationSec,
                 msg.remoteVoiceUrl, msg.fileUrl, msg.remoteFileUrl, msg.fileName,
-                msg.fileMimeType, msg.fileSize, msg.seenByRecipient, msg.deliveredToRecipient, chatId
+                msg.fileMimeType, msg.fileSize, msg.seenByRecipient, msg.deliveredToRecipient, msg.secure, msg.expiresAt, chatId
             )
         }
     }
@@ -435,6 +438,9 @@ interface CacheDao {
     @Query("UPDATE cached_messages SET remoteFileUrl = NULL WHERE messageId = :messageId")
     suspend fun clearRemoteFileUrl(messageId: String)
 
+    @Query("DELETE FROM cached_messages WHERE secure = 1 AND expiresAt > 0 AND expiresAt <= :now")
+    suspend fun deleteExpiredSecureMessages(now: Long)
+
 
     @Query("SELECT * FROM cached_stories ORDER BY timestamp DESC")
     fun getAllStories(): Flow<List<CachedStory>>
@@ -506,7 +512,7 @@ interface CacheDao {
         CachedGroupMessage::class,
         CachedActivityNotification::class
     ],
-    version = 12,
+    version = 13,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -579,6 +585,12 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE cached_stories ADD COLUMN spotlightUntil INTEGER NOT NULL DEFAULT 0")
             }
         }
+        private val MIGRATION_12_13 = object : Migration(12, 13) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE cached_messages ADD COLUMN secure INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE cached_messages ADD COLUMN expiresAt INTEGER NOT NULL DEFAULT 0")
+            }
+        }
 
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
@@ -586,7 +598,7 @@ abstract class AppDatabase : RoomDatabase() {
                     context.applicationContext,
                     AppDatabase::class.java,
                     "firechat_offline_cache_db"
-                ).addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12)
+                ).addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13)
                     .fallbackToDestructiveMigration()
                     .build()
                 INSTANCE = instance

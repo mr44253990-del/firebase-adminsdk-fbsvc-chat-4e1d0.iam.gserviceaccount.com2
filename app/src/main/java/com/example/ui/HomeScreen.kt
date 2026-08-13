@@ -198,6 +198,7 @@ fun HomeScreen(
 
     var searchQuery by remember { mutableStateOf("") }
     var feedFilter by rememberSaveable { mutableStateOf("All Posts") }
+    var chatListFilter by rememberSaveable { mutableStateOf("All") }
     var showAnalytics by remember { mutableStateOf(false) }
     var showAccountMenu by remember { mutableStateOf(false) }
     var showActivityCenter by remember { mutableStateOf(false) }
@@ -593,12 +594,10 @@ fun HomeScreen(
                 1 -> {
                     val myUid = currentUser?.uid.orEmpty()
                     val sentRequestTargets = sentFriendRequests.mapNotNull { id -> id.removePrefix("${myUid}_").takeIf { it != id } }.toSet()
-                    val chatUsers = if (searchQuery.isNotBlank()) users else users.filter { user ->
-                        currentUser?.friends?.contains(user.uid) == true ||
-                            conversationUserIds.contains(user.uid) ||
-                            unreadCounts.containsKey(user.uid) ||
-                            sentRequestTargets.contains(user.uid)
+                    val baseChatUsers = if (searchQuery.isNotBlank()) users else users.filter { user ->
+                        currentUser?.friends?.contains(user.uid) == true || conversationUserIds.contains(user.uid) || unreadCounts.containsKey(user.uid) || sentRequestTargets.contains(user.uid)
                     }
+                    val chatUsers = if(chatListFilter=="Unread") baseChatUsers.filter{(unreadCounts[it.uid]?:0)>0} else baseChatUsers
                     // Only friends, requests and real conversations appear until the user searches.
                     Column(
                         modifier = Modifier
@@ -644,13 +643,7 @@ fun HomeScreen(
 
                         Spacer(modifier = Modifier.height(14.dp))
 
-                        Text(
-                            text = "Messages",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.padding(bottom = 8.dp)
-                        )
+                        Row(Modifier.fillMaxWidth().padding(bottom=8.dp),verticalAlignment=Alignment.CenterVertically){Text("Messages",style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.Bold,color=MaterialTheme.colorScheme.primary,modifier=Modifier.weight(1f));FilterChip(chatListFilter=="All",{chatListFilter="All"},{Text("All")});Spacer(Modifier.width(6.dp));FilterChip(chatListFilter=="Unread",{chatListFilter="Unread"},{Text("Unread ${unreadCounts.values.count{it>0}}")})}
 
                         if (chatUsers.isEmpty()) {
                             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -1433,6 +1426,14 @@ fun HomeScreen(
                                         Text("Save Changes", fontWeight = FontWeight.Bold)
                                     }
                                 }
+                            }
+                        }
+
+                        Card(shape = RoundedCornerShape(28.dp), modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(.48f))) {
+                            Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Icon(if(currentUser?.profileHidden==true) Icons.Default.VisibilityOff else Icons.Default.Public, null, tint = MaterialTheme.colorScheme.primary)
+                                Column(Modifier.weight(1f).padding(horizontal=12.dp)) { Text("Hide My ID",fontWeight=FontWeight.ExtraBold); Text(if(currentUser?.profileHidden==true)"Hidden from public search and feed; friends/chats can still see you" else "Visible in public search, profiles and feed",fontSize=11.sp,color=MaterialTheme.colorScheme.onSurfaceVariant) }
+                                Switch(currentUser?.profileHidden==true,{hidden->viewModel.setProfileHidden(hidden){Toast.makeText(context,if(it)if(hidden)"Profile hidden" else "Profile visible again" else "Privacy update failed",Toast.LENGTH_LONG).show()}})
                             }
                         }
 
