@@ -93,8 +93,6 @@ import com.example.video.VideoPlayerManager
 import com.example.data.Story
 import com.example.data.User
 import com.google.firebase.auth.FirebaseAuth
-import com.journeyapps.barcodescanner.ScanContract
-import com.journeyapps.barcodescanner.ScanOptions
 import java.io.File
 import java.io.InputStream
 import java.security.MessageDigest
@@ -210,6 +208,8 @@ fun HomeScreen(
     var showGlobalSearch by remember { mutableStateOf(false) }
     var showLockSetup by remember { mutableStateOf(false) }
     var showReportDialog by remember { mutableStateOf(false) }
+    val fullScreenPrefs=remember{context.getSharedPreferences("convo_fullscreen_calls",Context.MODE_PRIVATE)}
+    var showFullScreenCallPrompt by remember{mutableStateOf(Build.VERSION.SDK_INT>=34 && !(context.getSystemService(android.app.NotificationManager::class.java)?.canUseFullScreenIntent()?:true) && !fullScreenPrefs.getBoolean("asked",false))}
     val funPrefs = remember { context.getSharedPreferences("convo_fun_campaign", Context.MODE_PRIVATE) }
     val funKey = "${currentUser?.uid}_${flagshipConfig.funCampaignId}"
     var showFunCampaign by remember(funKey, flagshipConfig.funCampaignEnabled) { mutableStateOf(flagshipConfig.funCampaignEnabled && flagshipConfig.funCampaignId.isNotBlank() && currentUser != null && !funPrefs.getBoolean(funKey, false)) }
@@ -241,11 +241,6 @@ fun HomeScreen(
     }
 
     // Run Android 13+ Notification Permission Checks
-    val profileScanLauncher = rememberLauncherForActivityResult(ScanContract()) { result ->
-        val value=result.contents.orEmpty();if(value.isBlank())return@rememberLauncherForActivityResult
-        val username=runCatching{Uri.parse(value).pathSegments.lastOrNull()}.getOrNull()?.removePrefix("@")?:value.removePrefix("@").trim()
-        allUsers.find{it.username.equals(username,true)||it.uid==username}?.let(onProfileSelected)?:Toast.makeText(context,"No visible Convo profile found",Toast.LENGTH_LONG).show()
-    }
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
     ) { isGranted ->
@@ -1173,7 +1168,7 @@ fun HomeScreen(
                                 Column(Modifier.padding(14.dp), horizontalAlignment = Alignment.CenterHorizontally) { Icon(Icons.Outlined.Groups, null, tint = MaterialTheme.colorScheme.primary); Spacer(Modifier.height(5.dp)); Text("Groups", fontWeight = FontWeight.Bold, fontSize = 12.sp) }
                             }
                         }
-                        OutlinedCard(onClick={profileScanLauncher.launch(ScanOptions().setPrompt("Scan a Convo profile QR").setBeepEnabled(false).setOrientationLocked(false))},modifier=Modifier.fillMaxWidth(),shape=RoundedCornerShape(22.dp)){Row(Modifier.padding(14.dp),verticalAlignment=Alignment.CenterVertically){Icon(Icons.Outlined.QrCodeScanner,null,tint=MaterialTheme.colorScheme.primary);Spacer(Modifier.width(10.dp));Column(Modifier.weight(1f)){Text("Scan Convo Contact",fontWeight=FontWeight.ExtraBold);Text("Scan a QR code to open the profile",fontSize=11.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)};Icon(Icons.Default.ChevronRight,null)}}
+                        QrScannerSettingsCard(allUsers,onProfileSelected)
 
                         Card(onClick = onPremium, shape = RoundedCornerShape(24.dp), modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
                             Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -1949,6 +1944,8 @@ fun HomeScreen(
             confirmButton = { Button(onClick = { premiumWelcomeKey?.let { context.getSharedPreferences("convo_premium_welcome", Context.MODE_PRIVATE).edit().putBoolean(it, true).apply() }; showPremiumWelcome = false }) { Text("Explore Premium") } }
         )
     }
+
+    if(showFullScreenCallPrompt) AlertDialog(onDismissRequest={},icon={Icon(Icons.Default.Call,null,tint=MaterialTheme.colorScheme.primary)},title={Text("Allow full-screen incoming calls",fontWeight=FontWeight.ExtraBold)},text={Text("Android currently blocks Convo from opening the incoming-call screen over the lock screen or other apps. Allow this permission so calls can appear immediately.")},confirmButton={Button(onClick={fullScreenPrefs.edit().putBoolean("asked",true).apply();showFullScreenCallPrompt=false;if(Build.VERSION.SDK_INT>=34)context.startActivity(Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT,Uri.parse("package:${context.packageName}")))}){Text("Open permission settings")}},dismissButton={TextButton(onClick={fullScreenPrefs.edit().putBoolean("asked",true).apply();showFullScreenCallPrompt=false}){Text("Later")}})
 
     if (showReportDialog) {
         var category by remember { mutableStateOf("app_problem") }

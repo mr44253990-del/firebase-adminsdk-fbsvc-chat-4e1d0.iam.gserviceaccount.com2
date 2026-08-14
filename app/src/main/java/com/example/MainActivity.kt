@@ -47,6 +47,8 @@ import com.example.ui.theme.PremiumBackground
 import com.example.video.VideoPlayerManager
 import com.example.security.AppLockManager
 import com.example.security.AppLockScreen
+import com.example.security.CrashGuard
+import com.example.security.CrashRecoveryScreen
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.database.FirebaseDatabase
 import com.google.firebase.firestore.FirebaseFirestore
@@ -101,6 +103,7 @@ class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
         super.onCreate(savedInstanceState)
+        CrashGuard.install(this)
         pendingChatSenderId.value = intent?.getStringExtra("senderId")?.takeIf { it.isNotBlank() }
         captureDeepLink(intent); captureSharedContent(intent)
         AppLockManager.initialize(this)
@@ -127,6 +130,8 @@ class MainActivity : FragmentActivity() {
         Coil.setImageLoader(imageLoader)
 
         setContent {
+            var crashReport by remember { mutableStateOf(CrashGuard.lastCrash(this@MainActivity)) }
+            if(crashReport!=null){MaterialTheme{CrashRecoveryScreen(crashReport!!){CrashGuard.clear(this@MainActivity);crashReport=null;recreate()}};return@setContent}
             val currentTheme by viewModel.themeState.collectAsState()
             
             MyApplicationTheme(themeType = currentTheme) {
