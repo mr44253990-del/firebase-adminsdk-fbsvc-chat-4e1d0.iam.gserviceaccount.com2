@@ -3055,6 +3055,7 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
     var showEditPost by remember { mutableStateOf(false) }
     var showReportPost by remember { mutableStateOf(false) }
     var showSendPost by remember { mutableStateOf(false) }
+    var showReactionPeople by remember { mutableStateOf(false) }
     var playInlineVideo by remember(post.id) { mutableStateOf(false) }
     val currentUserId = FirebaseAuth.getInstance().currentUser?.uid ?: ""
     val savedPostIds by viewModel.savedPostIds.collectAsState()
@@ -3275,7 +3276,8 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
                 if (reactionCount > 0) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy((-4).dp)
+                        horizontalArrangement = Arrangement.spacedBy((-4).dp),
+                        modifier=Modifier.clickable{showReactionPeople=true}
                     ) {
                         uniqueReactions.forEach { emoji ->
                             Text(text = emoji, fontSize = 14.sp)
@@ -3615,6 +3617,7 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
         }
     }
 
+    if(showReactionPeople){val ids=(post.reactions.keys+post.mediaReactions.values.flatMap{it.keys}).distinct();val people=ids.mapNotNull{id->allUsers.find{it.uid==id}?:currentUserProfile?.takeIf{it.uid==id}};AlertDialog(onDismissRequest={showReactionPeople=false},title={Text("Reactions (${ids.size})",fontWeight=FontWeight.ExtraBold)},text={if(people.isEmpty())Text("No visible profiles")else LazyColumn(Modifier.heightIn(max=430.dp)){items(people,key={it.uid}){p->val emoji=post.reactions[p.uid]?:post.mediaReactions.values.firstNotNullOfOrNull{it[p.uid]}?:"❤️";ListItem(headlineContent={Text(p.name,fontWeight=FontWeight.Bold)},supportingContent={Text("@${p.username}")},leadingContent={AsyncImage(p.profileImageUrl.ifBlank{null},p.name,Modifier.size(42.dp).clip(CircleShape))},trailingContent={Text(emoji,fontSize=22.sp)},modifier=Modifier.clickable{showReactionPeople=false;onProfileSelected(p)})}}},confirmButton={TextButton(onClick={showReactionPeople=false}){Text("Close")}})}
     if (showSendPost) {
         AlertDialog(onDismissRequest={showSendPost=false},title={Text("Send post to chat",fontWeight=FontWeight.ExtraBold)},text={LazyColumn(Modifier.heightIn(max=420.dp)){items(allUsers,key={it.uid}){person->ListItem(headlineContent={Text(person.name,fontWeight=FontWeight.Bold)},supportingContent={Text("@${person.username}")},leadingContent={AsyncImage(person.profileImageUrl.ifBlank{null},person.name,Modifier.size(42.dp).clip(CircleShape))},modifier=Modifier.clickable{viewModel.sendPostToUser(person,post){ok->Toast.makeText(context,if(ok)"Sent to ${person.name}" else "Send failed",Toast.LENGTH_SHORT).show()};showSendPost=false})}}},confirmButton={TextButton(onClick={showSendPost=false}){Text("Cancel")}})
     }

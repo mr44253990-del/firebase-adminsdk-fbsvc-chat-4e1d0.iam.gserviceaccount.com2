@@ -58,6 +58,7 @@ fun UserProfileScreen(
     val isRequested = sentRequests.contains("${currentUser?.uid}_${liveUser.uid}")
     var showFeatureSuggestion by remember { mutableStateOf(false) }
     var showContactCard by remember { mutableStateOf(false) }
+    var peopleListMode by remember { mutableStateOf<String?>(null) }
 
     if(!canViewProfile){
         Scaffold(topBar={TopAppBar(title={Text("Private profile")},navigationIcon={IconButton(onClick=onBack){Icon(Icons.AutoMirrored.Filled.ArrowBack,"Back")}})}){padding->Column(Modifier.fillMaxSize().padding(padding),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.Center){Icon(Icons.Outlined.VisibilityOff,null,Modifier.size(72.dp),tint=MaterialTheme.colorScheme.primary);Spacer(Modifier.height(14.dp));Text("This profile is hidden",style=MaterialTheme.typography.headlineSmall,fontWeight=FontWeight.ExtraBold);Text("Only friends and existing conversations can view it.",color=MaterialTheme.colorScheme.onSurfaceVariant,textAlign=TextAlign.Center)}}
@@ -152,9 +153,9 @@ fun UserProfileScreen(
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .52f))
                 ) {
                     Row(Modifier.fillMaxWidth().padding(vertical = 15.dp), verticalAlignment = Alignment.CenterVertically) {
-                        PremiumMetric(liveUser.friends.size.toString(), "Friends", Modifier.weight(1f))
+                        PremiumMetric(liveUser.friends.size.toString(), "Friends", Modifier.weight(1f)){peopleListMode="Friends"}
                         VerticalDivider(Modifier.height(34.dp))
-                        PremiumMetric(liveUser.followers.size.toString(), "Followers", Modifier.weight(1f))
+                        PremiumMetric(liveUser.followers.size.toString(), "Followers", Modifier.weight(1f)){peopleListMode="Followers"}
                         VerticalDivider(Modifier.height(34.dp))
                         PremiumMetric(userPosts.size.toString(), "Posts", Modifier.weight(1f))
                         VerticalDivider(Modifier.height(34.dp))
@@ -236,6 +237,7 @@ fun UserProfileScreen(
     }
 
     if(showContactCard) ConvoContactCardDialog(liveUser,flagship.publicProfileBaseUrl){showContactCard=false}
+    peopleListMode?.let{mode->val ids=if(mode=="Friends")liveUser.friends else liveUser.followers;val people=ids.mapNotNull{id->allUsers.find{it.uid==id}?:currentUser?.takeIf{it.uid==id}};AlertDialog(onDismissRequest={peopleListMode=null},title={Text("$mode (${ids.size})",fontWeight=FontWeight.ExtraBold)},text={if(people.isEmpty())Text("No visible accounts")else LazyColumn(Modifier.heightIn(max=430.dp)){items(people,key={it.uid}){p->ListItem(headlineContent={Text(p.name,fontWeight=FontWeight.Bold)},supportingContent={Text("@${p.username}")},leadingContent={AsyncImage(p.profileImageUrl.ifBlank{null},p.name,Modifier.size(42.dp).clip(CircleShape))})}}},confirmButton={TextButton(onClick={peopleListMode=null}){Text("Close")}})}
 
     if (showFeatureSuggestion) {
         var title by remember { mutableStateOf("") }
@@ -261,8 +263,8 @@ fun UserProfileScreen(
 }
 
 @Composable
-private fun PremiumMetric(value: String, label: String, modifier: Modifier = Modifier) {
-    Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
+private fun PremiumMetric(value: String, label: String, modifier: Modifier = Modifier,onClick:(()->Unit)?=null) {
+    Column(modifier.then(if(onClick!=null)Modifier.clickable(onClick=onClick)else Modifier), horizontalAlignment = Alignment.CenterHorizontally) {
         Text(value, fontWeight = FontWeight.ExtraBold, style = MaterialTheme.typography.titleMedium)
         Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp, maxLines = 1)
     }
