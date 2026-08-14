@@ -194,12 +194,15 @@ fun HomeScreen(
     val typingSounds by viewModel.typingSoundsEnabled.collectAsState()
     val mutedUsers by viewModel.mutedUserIds.collectAsState()
     val savedPostIds by viewModel.savedPostIds.collectAsState()
+    val hiddenFeedCreators by viewModel.hiddenFeedCreators.collectAsState()
+    val notInterestedPosts by viewModel.notInterestedPosts.collectAsState()
+    val mutedFeedTopics by viewModel.mutedFeedTopics.collectAsState()
     val allUsers by viewModel.usersState.collectAsState()
     val conversationUserIds by viewModel.conversationUserIds.collectAsState()
     val unreadCounts by viewModel.unreadCountsState.collectAsState()
 
     var searchQuery by remember { mutableStateOf("") }
-    var feedFilter by rememberSaveable { mutableStateOf("All Posts") }
+    var feedFilter by rememberSaveable { mutableStateOf("Personalized") }
     var chatListFilter by rememberSaveable { mutableStateOf("All") }
     var showAnalytics by remember { mutableStateOf(false) }
     var showAccountMenu by remember { mutableStateOf(false) }
@@ -447,12 +450,11 @@ fun HomeScreen(
             when (currentTab) {
                 0 -> {
                     val feedState = rememberLazyListState()
-                    val visibleFeedPosts = remember(posts, feedFilter, currentUser?.friends, currentUser?.following, savedPostIds) {
-                        when (feedFilter) {
-                            "Friends" -> posts.filter { it.senderId in currentUser?.friends.orEmpty() }
-                            "Following" -> posts.filter { it.senderId in currentUser?.following.orEmpty() }
-                            "Saved" -> posts.filter { it.id in savedPostIds }
-                            else -> posts
+                    val visibleFeedPosts = remember(posts,feedFilter,currentUser?.friends,currentUser?.following,savedPostIds,hiddenFeedCreators,notInterestedPosts,mutedFeedTopics){
+                        val base=posts.filter{it.senderId !in hiddenFeedCreators&&it.id !in notInterestedPosts&&it.tags.none{tag->tag.lowercase() in mutedFeedTopics}}
+                        when(feedFilter){
+                            "Personalized"->base.sortedByDescending{p->(if(p.senderId in currentUser?.friends.orEmpty())500 else 0)+(if(p.senderId in currentUser?.following.orEmpty())300 else 0)+p.reactions.size*5+p.comments.size*4+p.viewsCount}
+                            "Friends"->base.filter{it.senderId in currentUser?.friends.orEmpty()};"Following"->base.filter{it.senderId in currentUser?.following.orEmpty()};"Trending"->base.sortedByDescending{it.reactions.size*5+it.comments.size*4+it.viewsCount};"Latest"->base.sortedByDescending{it.timestamp};"Video"->base.filter{it.videoUrl.isNotBlank()};"Images"->base.filter{it.imageUrl.isNotBlank()||it.imageUrls.isNotEmpty()};"Text"->base.filter{it.videoUrl.isBlank()&&it.imageUrl.isBlank()&&it.imageUrls.isEmpty()};"Saved"->base.filter{it.id in savedPostIds};else->base
                         }
                     }
                     val suggestions = remember(allUsers, currentUser) {
@@ -555,18 +557,18 @@ fun HomeScreen(
                                 contentPadding = PaddingValues(horizontal = 16.dp),
                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                items(listOf("All Posts", "Friends", "Groups", "Following", "Saved")) { label ->
+                                items(listOf("Personalized","Latest","Trending","Friends","Following","Video","Images","Text","Groups","Saved")) { label ->
                                     FilterChip(
                                         selected = feedFilter == label,
                                         onClick = { if (label == "Groups") viewModel.setCurrentTab(2) else feedFilter = label },
                                         label = { Text(label) },
-                                        leadingIcon = if (label == "All Posts") { { Icon(Icons.Outlined.DynamicFeed, null, Modifier.size(17.dp)) } } else null,
+                                        leadingIcon = if (label == "Personalized") { { Icon(Icons.Outlined.DynamicFeed, null, Modifier.size(17.dp)) } } else null,
                                         shape = CircleShape
                                     )
                                 }
                             }
                         }
-                        if (suggestions.isNotEmpty() && feedFilter == "All Posts") {
+                        if (suggestions.isNotEmpty() && feedFilter == "Personalized") {
                             item(key = "suggestions") {
                                 SuggestedPeopleStrip(
                                     suggestions = suggestions,
@@ -3140,6 +3142,7 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
                     IconButton(onClick = { showPostMenu = true }) { Icon(Icons.Default.MoreVert, "Post options") }
                     DropdownMenu(expanded = showPostMenu, onDismissRequest = { showPostMenu = false }) {
                         DropdownMenuItem(text = { Text("Send to a chat") }, leadingIcon = { Icon(Icons.Default.Send, null) }, onClick = { showPostMenu = false; showSendPost = true })
+                        if(post.senderId!=currentUserId){DropdownMenuItem(text={Text("Not interested")},leadingIcon={Icon(Icons.Default.ThumbDown,null)},onClick={viewModel.markPostNotInterested(post.id);showPostMenu=false});DropdownMenuItem(text={Text("Hide this creator")},leadingIcon={Icon(Icons.Default.PersonOff,null)},onClick={viewModel.hideFeedCreator(post.senderId);showPostMenu=false});post.tags.firstOrNull()?.let{topic->DropdownMenuItem(text={Text("Mute topic #$topic")},leadingIcon={Icon(Icons.Default.VolumeOff,null)},onClick={viewModel.muteFeedTopic(topic);showPostMenu=false})}}
                         if (post.senderId != currentUserId) DropdownMenuItem(text = { Text("Report post") }, leadingIcon = { Icon(Icons.Default.ReportProblem, null) }, onClick = { showPostMenu = false; showReportPost = true })
                         if (post.senderId == currentUserId) {
                             DropdownMenuItem(text = { Text("Edit post") }, leadingIcon = { Icon(Icons.Default.Edit, null) }, onClick = { showPostMenu = false; showEditPost = true })

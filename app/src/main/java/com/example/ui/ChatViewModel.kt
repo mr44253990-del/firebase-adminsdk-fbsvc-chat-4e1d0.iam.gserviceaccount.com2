@@ -136,6 +136,13 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     val mutedUserIds: StateFlow<Set<String>> = _mutedUserIds.asStateFlow()
     private val _savedPostIds = MutableStateFlow(sharedPrefs.getStringSet("saved_posts", emptySet())?.toSet() ?: emptySet())
     val savedPostIds: StateFlow<Set<String>> = _savedPostIds.asStateFlow()
+    private val _hiddenFeedCreators=MutableStateFlow(sharedPrefs.getStringSet("hidden_feed_creators",emptySet())?.toSet()?:emptySet());val hiddenFeedCreators:StateFlow<Set<String>>=_hiddenFeedCreators.asStateFlow()
+    private val _notInterestedPosts=MutableStateFlow(sharedPrefs.getStringSet("not_interested_posts",emptySet())?.toSet()?:emptySet());val notInterestedPosts:StateFlow<Set<String>>=_notInterestedPosts.asStateFlow()
+    private val _mutedFeedTopics=MutableStateFlow(sharedPrefs.getStringSet("muted_feed_topics",emptySet())?.toSet()?:emptySet());val mutedFeedTopics:StateFlow<Set<String>>=_mutedFeedTopics.asStateFlow()
+    fun hideFeedCreator(uid:String){_hiddenFeedCreators.value+=uid;sharedPrefs.edit().putStringSet("hidden_feed_creators",_hiddenFeedCreators.value).apply()}
+    fun markPostNotInterested(id:String){_notInterestedPosts.value+=id;sharedPrefs.edit().putStringSet("not_interested_posts",_notInterestedPosts.value).apply()}
+    fun muteFeedTopic(topic:String){if(topic.isNotBlank()){_mutedFeedTopics.value+=topic.lowercase();sharedPrefs.edit().putStringSet("muted_feed_topics",_mutedFeedTopics.value).apply()}}
+    fun resetFeedPreferences(){_hiddenFeedCreators.value=emptySet();_notInterestedPosts.value=emptySet();_mutedFeedTopics.value=emptySet();sharedPrefs.edit().remove("hidden_feed_creators").remove("not_interested_posts").remove("muted_feed_topics").apply()}
 
     fun toggleSavedPost(postId: String) {
         val updated = _savedPostIds.value.toMutableSet().apply { if (!add(postId)) remove(postId) }.toSet()
