@@ -33,6 +33,7 @@ import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.text.ClickableText
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -108,9 +109,12 @@ fun ChatScreen(
     val requestPending = recipient.uid in pendingRequestRecipients
     val typingSounds by viewModel.typingSoundsEnabled.collectAsState()
     val notificationSounds by viewModel.notificationSoundsEnabled.collectAsState()
+    val translationPrefs=remember{context.getSharedPreferences("convo_translation",Context.MODE_PRIVATE)}
+    var translationLanguage by remember{mutableStateOf(translationPrefs.getString("target","Bangla")?:"Bangla")}
     val callState by CallEngine.state.collectAsState()
     var showThemePicker by remember { mutableStateOf(false) }
     var showChatSettings by remember { mutableStateOf(false) }
+    var showLanguagePicker by remember { mutableStateOf(false) }
     
     val users by viewModel.usersState.collectAsState()
     val updatedRecipient = users.find { it.uid == recipient.uid } ?: recipient
@@ -426,6 +430,8 @@ fun ChatScreen(
         )
     }
 
+    if(showLanguagePicker){var custom by remember{mutableStateOf("")};val languages=listOf("Bangla","English","Arabic","Hindi","Chinese","Spanish","French","German","Japanese","Korean","Urdu","Tamil","Turkish","Portuguese","Russian","Italian","Indonesian","Malay","Thai","Vietnamese");AlertDialog(onDismissRequest={showLanguagePicker=false},title={Text("Translation language")},text={Column{OutlinedTextField(custom,{custom=it.take(40)},label={Text("Any language (50+ supported)")},singleLine=true);LazyColumn(Modifier.heightIn(max=320.dp)){items(languages){lang->ListItem(headlineContent={Text(lang)},modifier=Modifier.clickable{translationLanguage=lang;translationPrefs.edit().putString("target",lang).apply();showLanguagePicker=false})}}}},confirmButton={Button(onClick={if(custom.isNotBlank()){translationLanguage=custom.trim();translationPrefs.edit().putString("target",translationLanguage).apply();showLanguagePicker=false}},enabled=custom.isNotBlank()){Text("Use custom")}},dismissButton={TextButton(onClick={showLanguagePicker=false}){Text("Cancel")}})}
+
     if (showChatSettings) {
         val isBlocked = currentUser?.blockedUsers?.contains(recipient.uid) == true
         AlertDialog(
@@ -444,6 +450,7 @@ fun ChatScreen(
                         leadingContent = { Icon(Icons.Default.Palette, null) },
                         modifier = Modifier.clip(RoundedCornerShape(18.dp)).clickable { showChatSettings = false; showThemePicker = true }
                     )
+                    ListItem(headlineContent={Text("AI translation")},supportingContent={Text("Auto-detect → $translationLanguage")},leadingContent={Icon(Icons.Default.Translate,null)},modifier=Modifier.clip(RoundedCornerShape(18.dp)).clickable{showChatSettings=false;showLanguagePicker=true})
                     ListItem(
                         headlineContent = { Text("Typing sounds") },
                         leadingContent = { Icon(Icons.Default.Keyboard, null) },
@@ -619,6 +626,8 @@ fun ChatScreen(
                     items(messages.reversed(), key = { it.messageId }) { msg ->
                         val isSentByMe = msg.senderId == currentUserId
                         MessageBubbleItem(
+                            viewModel = viewModel,
+                            translationLanguage = translationLanguage,
                             message = msg,
                             isSentByMe = isSentByMe,
                             onReplySelect = { replyingToMessage = msg },
@@ -930,6 +939,8 @@ private fun TypingGlassIndicator(name: String) {
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun MessageBubbleItem(
+    viewModel: ChatViewModel,
+    translationLanguage: String,
     message: Message,
     isSentByMe: Boolean,
     onReplySelect: () -> Unit,
@@ -942,6 +953,8 @@ fun MessageBubbleItem(
 ) {
     var showMenu by remember { mutableStateOf(false) }
     var showImageViewer by remember { mutableStateOf(false) }
+    var translatedText by remember(message.messageId,translationLanguage){mutableStateOf("")}
+    var translating by remember(message.messageId){mutableStateOf(false)}
     var dragOffset by remember { mutableFloatStateOf(0f) }
     val animatedDrag by animateFloatAsState(dragOffset, spring(stiffness = Spring.StiffnessMedium), label = "swipe_reply")
     val isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
@@ -1089,6 +1102,8 @@ fun MessageBubbleItem(
                     // Render text message if present
                     if (message.text.isNotBlank()) {
                         LinkifiedChatText(message.text, textColor)
+                        if(translating) LinearProgressIndicator(Modifier.fillMaxWidth().padding(top=6.dp))
+                        if(translatedText.isNotBlank()) Surface(color=MaterialTheme.colorScheme.secondaryContainer.copy(.62f),shape=RoundedCornerShape(14.dp),modifier=Modifier.fillMaxWidth().padding(top=6.dp)){Column(Modifier.padding(9.dp)){Text("AI • $translationLanguage",fontSize=9.sp,fontWeight=FontWeight.ExtraBold,color=MaterialTheme.colorScheme.secondary);SelectionContainer{Text(translatedText,fontSize=13.sp)}}}
                     }
 
                     Row(
@@ -1192,6 +1207,10 @@ fun MessageBubbleItem(
                         clipboard.setPrimaryClip(ClipData.newPlainText("Convo Chat message", message.text))
                         showMenu = false
                     }
+                )
+                DropdownMenuItem(
+                    text={Text("Translate to $translationLanguage")},leadingIcon={Icon(Icons.Default.Translate,null)},
+                    onClick={showMenu=false;translating=true;viewModel.askAssistant("Automatically detect the language and translate the following message into $translationLanguage. Return only the natural translation without hashtags, markdown or explanations: ${message.text}",emptyList()){result->translating=false;translatedText=result.replace(Regex("[#*_`>]+"),"").trim()}}
                 )
             }
             DropdownMenuItem(
