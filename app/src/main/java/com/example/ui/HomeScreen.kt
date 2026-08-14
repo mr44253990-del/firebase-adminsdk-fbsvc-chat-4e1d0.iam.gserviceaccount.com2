@@ -93,6 +93,8 @@ import com.example.video.VideoPlayerManager
 import com.example.data.Story
 import com.example.data.User
 import com.google.firebase.auth.FirebaseAuth
+import com.journeyapps.barcodescanner.ScanContract
+import com.journeyapps.barcodescanner.ScanOptions
 import java.io.File
 import java.io.InputStream
 import java.security.MessageDigest
@@ -236,6 +238,11 @@ fun HomeScreen(
     }
 
     // Run Android 13+ Notification Permission Checks
+    val profileScanLauncher = rememberLauncherForActivityResult(ScanContract()) { result ->
+        val value=result.contents.orEmpty();if(value.isBlank())return@rememberLauncherForActivityResult
+        val username=runCatching{Uri.parse(value).pathSegments.lastOrNull()}.getOrNull()?.removePrefix("@")?:value.removePrefix("@").trim()
+        allUsers.find{it.username.equals(username,true)||it.uid==username}?.let(onProfileSelected)?:Toast.makeText(context,"No visible Convo profile found",Toast.LENGTH_LONG).show()
+    }
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
     ) { isGranted ->
@@ -1164,6 +1171,7 @@ fun HomeScreen(
                                 Column(Modifier.padding(14.dp), horizontalAlignment = Alignment.CenterHorizontally) { Icon(Icons.Outlined.Groups, null, tint = MaterialTheme.colorScheme.primary); Spacer(Modifier.height(5.dp)); Text("Groups", fontWeight = FontWeight.Bold, fontSize = 12.sp) }
                             }
                         }
+                        OutlinedCard(onClick={profileScanLauncher.launch(ScanOptions().setPrompt("Scan a Convo profile QR").setBeepEnabled(false).setOrientationLocked(false))},modifier=Modifier.fillMaxWidth(),shape=RoundedCornerShape(22.dp)){Row(Modifier.padding(14.dp),verticalAlignment=Alignment.CenterVertically){Icon(Icons.Outlined.QrCodeScanner,null,tint=MaterialTheme.colorScheme.primary);Spacer(Modifier.width(10.dp));Column(Modifier.weight(1f)){Text("Scan Convo Contact",fontWeight=FontWeight.ExtraBold);Text("Scan a QR code to open the profile",fontSize=11.sp,color=MaterialTheme.colorScheme.onSurfaceVariant)};Icon(Icons.Default.ChevronRight,null)}}
 
                         Card(onClick = onPremium, shape = RoundedCornerShape(24.dp), modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
                             Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {

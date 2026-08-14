@@ -66,6 +66,10 @@ export default {
       }
     }
 
+    if (request.method === "GET" && path === "/.well-known/assetlinks.json") {
+      return new Response(JSON.stringify([{relation:["delegate_permission/common.handle_all_urls"],target:{namespace:"android_app",package_name:"com.ebchat",sha256_cert_fingerprints:["EC:F8:C9:87:FE:9A:D3:B1:B2:DC:8D:02:05:3C:D7:67:93:E5:3F:4A:E1:97:DF:72:91:E7:C9:23:DE:42:A9:4D"]}}]),{headers:{"Content-Type":"application/json","Cache-Control":"public,max-age=3600"}});
+    }
+
     if (request.method === "GET" && (path.startsWith("/u/") || (url.hostname === "convo.me" && /^\/[A-Za-z0-9_.-]{2,80}$/.test(path)))) {
       const username=decodeURIComponent(path.startsWith("/u/") ? path.slice(3) : path.slice(1)).replace(/^@/,"").toLowerCase();
       if(!/^[a-z0-9_.-]{2,80}$/.test(username))return htmlResponse("Invalid Convo username",400);

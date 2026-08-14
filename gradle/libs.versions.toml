@@ -45,6 +45,7 @@ credentials = "1.5.0"
 googleid = "1.1.1"
 webrtc = "125.6422.06.1"
 zxing = "3.5.4"
+zxingEmbedded = "4.3.0"
 media3 = "1.5.1"
 
 
@@ -108,6 +109,7 @@ androidx-credentials-play-services = { group = "androidx.credentials", name = "c
 googleid = { group = "com.google.android.libraries.identity.googleid", name = "googleid", version.ref = "googleid" }
 google-webrtc = { group = "io.github.webrtc-sdk", name = "android", version.ref = "webrtc" }
 zxing-core = { group = "com.google.zxing", name = "core", version.ref = "zxing" }
+zxing-embedded = { group = "com.journeyapps", name = "zxing-android-embedded", version.ref = "zxingEmbedded" }
 androidx-media3-exoplayer = { group = "androidx.media3", name = "media3-exoplayer", version.ref = "media3" }
 androidx-media3-ui = { group = "androidx.media3", name = "media3-ui", version.ref = "media3" }
 androidx-media3-datasource-okhttp = { group = "androidx.media3", name = "media3-datasource-okhttp", version.ref = "media3" }
