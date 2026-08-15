@@ -22,6 +22,6 @@ dependencyResolutionManagement {
   }
 }
 
-rootProject.name = "FireChat"
+rootProject.name = "Convo Chat"
 
 include(":app")

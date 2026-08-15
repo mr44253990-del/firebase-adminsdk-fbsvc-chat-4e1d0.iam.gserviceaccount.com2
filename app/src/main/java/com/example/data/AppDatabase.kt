@@ -2,6 +2,8 @@ package com.example.data
 
 import android.content.Context
 import androidx.room.*
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import kotlinx.coroutines.flow.Flow
 import org.json.JSONArray
 import org.json.JSONObject
@@ -19,7 +21,17 @@ data class CachedUser(
     val isOnline: Boolean,
     val lastActive: Long,
     val blockedUsersJson: String, // JSON Array of UIDs
-    val createdAt: Long
+    val createdAt: Long,
+    val friendsJson: String,
+    val bio: String,
+    val coverImageUrl: String,
+    val followersJson: String,
+    val followingJson: String,
+    val role: String,
+    val isPremium: Boolean,
+    val premiumPlan: String,
+    val premiumUntil: Long,
+    val premiumApprovedAt: Long
 ) {
     fun toUser(): User {
         val blockedList = mutableListOf<String>()
@@ -29,7 +41,13 @@ data class CachedUser(
                 blockedList.add(array.getString(i))
             }
         } catch (e: Exception) {}
-        return User(uid, name, dob, username, fcmToken, profileImageUrl, isOnline, lastActive, blockedList, createdAt)
+        val friendList = mutableListOf<String>()
+        try {
+            val array = JSONArray(friendsJson)
+            for (i in 0 until array.length()) friendList.add(array.getString(i))
+        } catch (_: Exception) {}
+        fun parseIds(json: String) = try { JSONArray(json).let { array -> (0 until array.length()).map { array.getString(it) } } } catch (_: Exception) { emptyList() }
+        return User(uid, name, dob, username, fcmToken, profileImageUrl, isOnline, lastActive, blockedList, createdAt, friendList, bio, coverImageUrl, parseIds(followersJson), parseIds(followingJson), role, isPremium, premiumPlan, premiumUntil, premiumApprovedAt)
     }
 
     companion object {
@@ -38,7 +56,9 @@ data class CachedUser(
             return CachedUser(
                 user.uid, user.name, user.dob, user.username, user.fcmToken,
                 user.profileImageUrl, user.isOnline, user.lastActive,
-                jsonArray.toString(), user.createdAt
+                jsonArray.toString(), user.createdAt, JSONArray(user.friends).toString(), user.bio, user.coverImageUrl,
+                JSONArray(user.followers).toString(), JSONArray(user.following).toString(), user.role,
+                user.isPremium, user.premiumPlan, user.premiumUntil, user.premiumApprovedAt
             )
         }
     }
@@ -59,13 +79,30 @@ data class CachedMessage(
     val imageUrl: String?,
     val voiceUrl: String?,
     val voiceDurationSec: Int?,
+    val remoteVoiceUrl: String?,
+    val fileUrl: String?,
+    val remoteFileUrl: String?,
+    val fileName: String?,
+    val fileMimeType: String?,
+    val fileSize: Long?,
     val seenByRecipient: Boolean,
+    val deliveredToRecipient: Boolean,
+    val secure: Boolean,
+    val expiresAt: Long,
     val chatId: String // to query messages per conversation
 ) {
     fun toMessage(): Message {
         return Message(
-            messageId, senderId, senderName, senderUsername, text, timestamp,
-            edited, replyToId, replyToText, replyToSenderName, imageUrl, voiceUrl, voiceDurationSec, seenByRecipient
+            messageId = messageId, senderId = senderId, senderName = senderName,
+            senderUsername = senderUsername, text = text, timestamp = timestamp,
+            edited = edited, replyToId = replyToId, replyToText = replyToText,
+            replyToSenderName = replyToSenderName, imageUrl = imageUrl,
+            voiceUrl = voiceUrl, voiceDurationSec = voiceDurationSec,
+            remoteVoiceUrl = remoteVoiceUrl,
+            fileUrl = fileUrl, remoteFileUrl = remoteFileUrl, fileName = fileName,
+            fileMimeType = fileMimeType, fileSize = fileSize,
+            seenByRecipient = seenByRecipient, deliveredToRecipient = deliveredToRecipient,
+            secure = secure, expiresAt = expiresAt
         )
     }
 
@@ -74,7 +111,9 @@ data class CachedMessage(
             return CachedMessage(
                 msg.messageId, msg.senderId, msg.senderName, msg.senderUsername,
                 msg.text, msg.timestamp, msg.edited, msg.replyToId, msg.replyToText,
-                msg.replyToSenderName, msg.imageUrl, msg.voiceUrl, msg.voiceDurationSec, msg.seenByRecipient, chatId
+                msg.replyToSenderName, msg.imageUrl, msg.voiceUrl, msg.voiceDurationSec,
+                msg.remoteVoiceUrl, msg.fileUrl, msg.remoteFileUrl, msg.fileName,
+                msg.fileMimeType, msg.fileSize, msg.seenByRecipient, msg.deliveredToRecipient, msg.secure, msg.expiresAt, chatId
             )
         }
     }
@@ -91,7 +130,10 @@ data class CachedStory(
     val text: String,
     val timestamp: Long,
     val reactionsJson: String, // Map<String, String> as JSON
-    val commentsJson: String   // List<StoryComment> as JSON
+    val commentsJson: String,  // List<StoryComment> as JSON
+    val viewersJson: String,
+    val viewCountsJson: String,
+    val spotlightUntil: Long
 ) {
     fun toStory(): Story {
         val reactionsMap = mutableMapOf<String, String>()
@@ -121,7 +163,15 @@ data class CachedStory(
             }
         } catch (e: Exception) {}
 
-        return Story(id, senderId, senderName, senderProfilePic, imageUrl, videoUrl, text, timestamp, reactionsMap, commentList)
+        val viewerList = mutableListOf<String>()
+        try {
+            val array = JSONArray(viewersJson)
+            for (i in 0 until array.length()) viewerList.add(array.getString(i))
+        } catch (_: Exception) {}
+
+        val counts = mutableMapOf<String, Int>()
+        runCatching { JSONObject(viewCountsJson).let { obj -> obj.keys().forEach { key -> counts[key] = obj.optInt(key, 0) } } }
+        return Story(id = id, senderId = senderId, senderName = senderName, senderProfilePic = senderProfilePic, imageUrl = imageUrl, videoUrl = videoUrl, text = text, timestamp = timestamp, reactions = reactionsMap, comments = commentList, viewers = viewerList, viewCounts = counts, spotlightUntil = spotlightUntil)
     }
 
     companion object {
@@ -144,7 +194,8 @@ data class CachedStory(
             return CachedStory(
                 story.id, story.senderId, story.senderName, story.senderProfilePic,
                 story.imageUrl, story.videoUrl, story.text, story.timestamp,
-                reactionsObj.toString(), commentsArr.toString()
+                reactionsObj.toString(), commentsArr.toString(), JSONArray(story.viewers).toString(),
+                JSONObject(story.viewCounts).toString(), story.spotlightUntil
             )
         }
     }
@@ -164,7 +215,18 @@ data class CachedPost(
     val reactionsJson: String, // Map<String, String> as JSON
     val commentsJson: String,  // List<PostComment> as JSON
     val viewsCount: Int,
-    val isPrivate: Boolean
+    val isPrivate: Boolean,
+    val title: String,
+    val tagsJson: String,
+    val taggedUserIdsJson: String,
+    val feeling: String,
+    val backgroundStyle: String,
+    val textAnimation: String,
+    val r2ObjectKeysJson: String,
+    val isReel: Boolean,
+    val expiresAt: Long,
+    val imageUrlsJson: String,
+    val mediaReactionsJson: String
 ) {
     fun toPost(): Post {
         val reactionsMap = mutableMapOf<String, String>()
@@ -184,19 +246,35 @@ data class CachedPost(
                 val item = array.getJSONObject(i)
                 commentList.add(
                     PostComment(
-                        commentId = item.optString("commentId"),
-                        senderId = item.optString("senderId"),
-                        senderName = item.optString("senderName"),
-                        text = item.optString("text"),
-                        timestamp = item.optLong("timestamp")
+                        commentId = item.optString("commentId"), senderId = item.optString("senderId"),
+                        senderName = item.optString("senderName"), text = item.optString("text"), timestamp = item.optLong("timestamp"),
+                        reactions = item.optJSONObject("reactions")?.let { obj -> obj.keys().asSequence().associateWith { key -> obj.optString(key) } } ?: emptyMap(),
+                        replyToId = item.optString("replyToId"), replyToName = item.optString("replyToName")
                     )
                 )
             }
         } catch (e: Exception) {}
 
+        val mediaReactionMap = mutableMapOf<String, Map<String, String>>()
+        try {
+            val root = JSONObject(mediaReactionsJson)
+            root.keys().forEach { mediaKey ->
+                val child = root.getJSONObject(mediaKey)
+                mediaReactionMap[mediaKey] = child.keys().asSequence().associateWith { uid -> child.getString(uid) }
+            }
+        } catch (_: Exception) {}
+
         return Post(
             id, senderId, senderName, senderProfilePic, text, imageUrl, audioUrl, videoUrl,
-            timestamp, reactionsMap, commentList, viewsCount, isPrivate
+            timestamp, reactionsMap, commentList, viewsCount, isPrivate,
+            title,
+            try { JSONArray(tagsJson).let { array -> (0 until array.length()).map { array.getString(it) } } } catch (_: Exception) { emptyList() },
+            try { JSONArray(taggedUserIdsJson).let { array -> (0 until array.length()).map { array.getString(it) } } } catch (_: Exception) { emptyList() },
+            feeling, backgroundStyle, textAnimation,
+            try { JSONArray(r2ObjectKeysJson).let { array -> (0 until array.length()).map { array.getString(it) } } } catch (_: Exception) { emptyList() },
+            isReel, expiresAt,
+            try { JSONArray(imageUrlsJson).let { array -> (0 until array.length()).map { array.getString(it) } } } catch (_: Exception) { emptyList() },
+            mediaReactionMap
         )
     }
 
@@ -213,14 +291,24 @@ data class CachedPost(
                     put("senderName", c.senderName)
                     put("text", c.text)
                     put("timestamp", c.timestamp)
+                    put("reactions", JSONObject(c.reactions))
+                    put("replyToId", c.replyToId)
+                    put("replyToName", c.replyToName)
                 }
                 commentsArr.put(o)
             }
 
+            val mediaReactionsObj = JSONObject()
+            post.mediaReactions.forEach { (mediaKey, reactions) ->
+                val child = JSONObject(); reactions.forEach { (uid, emoji) -> child.put(uid, emoji) }; mediaReactionsObj.put(mediaKey, child)
+            }
             return CachedPost(
                 post.id, post.senderId, post.senderName, post.senderProfilePic,
                 post.text, post.imageUrl, post.audioUrl, post.videoUrl, post.timestamp,
-                reactionsObj.toString(), commentsArr.toString(), post.viewsCount, post.isPrivate
+                reactionsObj.toString(), commentsArr.toString(), post.viewsCount, post.isPrivate,
+                post.title, JSONArray(post.tags).toString(), JSONArray(post.taggedUserIds).toString(), post.feeling,
+                post.backgroundStyle, post.textAnimation, JSONArray(post.r2ObjectKeys).toString(), post.isReel, post.expiresAt,
+                JSONArray(post.imageUrls).toString(), mediaReactionsObj.toString()
             )
         }
     }
@@ -282,6 +370,33 @@ data class CachedGroupMessage(
 }
 
 
+@Entity(tableName = "activity_notifications")
+data class CachedActivityNotification(
+    @PrimaryKey val id: String,
+    val ownerId: String,
+    val actorId: String,
+    val actorName: String,
+    val actorImageUrl: String,
+    val type: String,
+    val targetId: String,
+    val text: String,
+    val timestamp: Long,
+    val isRead: Boolean
+) {
+    fun toModel() = ActivityNotification(
+        id, ownerId, actorId, actorName, actorImageUrl, type,
+        targetId, text, timestamp, isRead
+    )
+
+    companion object {
+        fun fromModel(item: ActivityNotification) = CachedActivityNotification(
+            item.id, item.ownerId, item.actorId, item.actorName,
+            item.actorImageUrl, item.type, item.targetId, item.text,
+            item.timestamp, item.isRead
+        )
+    }
+}
+
 // Room DAO
 
 @Dao
@@ -302,11 +417,29 @@ interface CacheDao {
     @Query("SELECT * FROM cached_messages WHERE chatId = :chatId ORDER BY timestamp ASC")
     fun getMessagesForChat(chatId: String): Flow<List<CachedMessage>>
 
+    @Query("SELECT DISTINCT chatId FROM cached_messages")
+    fun getConversationChatIds(): Flow<List<String>>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertMessage(msg: CachedMessage)
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertMessages(msgs: List<CachedMessage>)
+
+    @Query("UPDATE cached_messages SET deliveredToRecipient = 1 WHERE messageId = :messageId")
+    suspend fun markMessageDelivered(messageId: String)
+
+    @Query("UPDATE cached_messages SET seenByRecipient = 1, deliveredToRecipient = 1 WHERE messageId = :messageId")
+    suspend fun markMessageSeen(messageId: String)
+
+    @Query("UPDATE cached_messages SET remoteVoiceUrl = NULL WHERE messageId = :messageId")
+    suspend fun clearRemoteVoiceUrl(messageId: String)
+
+    @Query("UPDATE cached_messages SET remoteFileUrl = NULL WHERE messageId = :messageId")
+    suspend fun clearRemoteFileUrl(messageId: String)
+
+    @Query("DELETE FROM cached_messages WHERE secure = 1 AND expiresAt > 0 AND expiresAt <= :now")
+    suspend fun deleteExpiredSecureMessages(now: Long)
 
 
     @Query("SELECT * FROM cached_stories ORDER BY timestamp DESC")
@@ -353,6 +486,18 @@ interface CacheDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertGroupMessages(msgs: List<CachedGroupMessage>)
+
+    @Query("SELECT * FROM activity_notifications WHERE ownerId = :ownerId ORDER BY timestamp DESC")
+    fun getNotifications(ownerId: String): Flow<List<CachedActivityNotification>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertNotification(notification: CachedActivityNotification)
+
+    @Query("UPDATE activity_notifications SET isRead = 1 WHERE id = :notificationId")
+    suspend fun markNotificationRead(notificationId: String)
+
+    @Query("UPDATE activity_notifications SET isRead = 1 WHERE ownerId = :ownerId")
+    suspend fun markAllNotificationsRead(ownerId: String)
 }
 
 // Room Database Definition
@@ -364,9 +509,10 @@ interface CacheDao {
         CachedStory::class,
         CachedPost::class,
         CachedGroup::class,
-        CachedGroupMessage::class
+        CachedGroupMessage::class,
+        CachedActivityNotification::class
     ],
-    version = 1,
+    version = 13,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -376,13 +522,85 @@ abstract class AppDatabase : RoomDatabase() {
         @Volatile
         private var INSTANCE: AppDatabase? = null
 
+        private val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE cached_messages ADD COLUMN deliveredToRecipient INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE cached_posts ADD COLUMN backgroundStyle TEXT NOT NULL DEFAULT 'glass'")
+                db.execSQL("ALTER TABLE cached_posts ADD COLUMN textAnimation TEXT NOT NULL DEFAULT 'none'")
+            }
+        }
+        private val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE cached_messages ADD COLUMN remoteVoiceUrl TEXT")
+            }
+        }
+        private val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE cached_posts ADD COLUMN r2ObjectKeysJson TEXT NOT NULL DEFAULT '[]'")
+                db.execSQL("ALTER TABLE cached_posts ADD COLUMN isReel INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE cached_posts ADD COLUMN expiresAt INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+        private val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE cached_posts ADD COLUMN imageUrlsJson TEXT NOT NULL DEFAULT '[]'")
+                db.execSQL("ALTER TABLE cached_posts ADD COLUMN mediaReactionsJson TEXT NOT NULL DEFAULT '{}'")
+            }
+        }
+        private val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE cached_users ADD COLUMN followersJson TEXT NOT NULL DEFAULT '[]'")
+                db.execSQL("ALTER TABLE cached_users ADD COLUMN followingJson TEXT NOT NULL DEFAULT '[]'")
+            }
+        }
+        private val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE cached_users ADD COLUMN role TEXT NOT NULL DEFAULT 'user'")
+            }
+        }
+        private val MIGRATION_9_10 = object : Migration(9, 10) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE cached_messages ADD COLUMN fileUrl TEXT")
+                db.execSQL("ALTER TABLE cached_messages ADD COLUMN remoteFileUrl TEXT")
+                db.execSQL("ALTER TABLE cached_messages ADD COLUMN fileName TEXT")
+                db.execSQL("ALTER TABLE cached_messages ADD COLUMN fileMimeType TEXT")
+                db.execSQL("ALTER TABLE cached_messages ADD COLUMN fileSize INTEGER")
+            }
+        }
+        private val MIGRATION_10_11 = object : Migration(10, 11) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE cached_users ADD COLUMN isPremium INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE cached_users ADD COLUMN premiumPlan TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE cached_users ADD COLUMN premiumUntil INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE cached_users ADD COLUMN premiumApprovedAt INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+        private val MIGRATION_11_12 = object : Migration(11, 12) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE cached_stories ADD COLUMN viewCountsJson TEXT NOT NULL DEFAULT '{}'")
+                db.execSQL("ALTER TABLE cached_stories ADD COLUMN spotlightUntil INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+        private val MIGRATION_12_13 = object : Migration(12, 13) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE cached_messages ADD COLUMN secure INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE cached_messages ADD COLUMN expiresAt INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
                     context.applicationContext,
                     AppDatabase::class.java,
                     "firechat_offline_cache_db"
-                ).fallbackToDestructiveMigration().build()
+                ).addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13)
+                    .fallbackToDestructiveMigration()
+                    .build()
                 INSTANCE = instance
                 instance
             }

@@ -1,0 +1,28 @@
+{
+  "Rules": [
+    {
+      "ID": "Expire post media after 10 days",
+      "Status": "Enabled",
+      "Filter": { "Prefix": "posts/" },
+      "Expiration": { "Days": 10 }
+    },
+    {
+      "ID": "Expire reels after 10 days",
+      "Status": "Enabled",
+      "Filter": { "Prefix": "reels/" },
+      "Expiration": { "Days": 10 }
+    },
+    {
+      "ID": "Expire thumbnails after 10 days",
+      "Status": "Enabled",
+      "Filter": { "Prefix": "thumbnails/" },
+      "Expiration": { "Days": 10 }
+    },
+    {
+      "ID": "Abort incomplete uploads",
+      "Status": "Enabled",
+      "Filter": { "Prefix": "" },
+      "AbortIncompleteMultipartUpload": { "DaysAfterInitiation": 1 }
+    }
+  ]
+}
