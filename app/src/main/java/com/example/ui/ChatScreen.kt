@@ -33,7 +33,6 @@ import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.text.ClickableText
-import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -88,7 +87,7 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ChatScreen(
     viewModel: ChatViewModel,
@@ -109,12 +108,9 @@ fun ChatScreen(
     val requestPending = recipient.uid in pendingRequestRecipients
     val typingSounds by viewModel.typingSoundsEnabled.collectAsState()
     val notificationSounds by viewModel.notificationSoundsEnabled.collectAsState()
-    val translationPrefs=remember{context.getSharedPreferences("convo_translation",Context.MODE_PRIVATE)}
-    var translationLanguage by remember{mutableStateOf(translationPrefs.getString("target","Bangla")?:"Bangla")}
     val callState by CallEngine.state.collectAsState()
     var showThemePicker by remember { mutableStateOf(false) }
     var showChatSettings by remember { mutableStateOf(false) }
-    var showLanguagePicker by remember { mutableStateOf(false) }
     
     val users by viewModel.usersState.collectAsState()
     val updatedRecipient = users.find { it.uid == recipient.uid } ?: recipient
@@ -430,8 +426,6 @@ fun ChatScreen(
         )
     }
 
-    if(showLanguagePicker){var custom by remember{mutableStateOf("")};val languages=listOf("Bangla","English","Arabic","Hindi","Chinese","Spanish","French","German","Japanese","Korean","Urdu","Tamil","Turkish","Portuguese","Russian","Italian","Indonesian","Malay","Thai","Vietnamese");AlertDialog(onDismissRequest={showLanguagePicker=false},title={Text("Translation language")},text={Column{OutlinedTextField(custom,{custom=it.take(40)},label={Text("Any language (50+ supported)")},singleLine=true);LazyColumn(Modifier.heightIn(max=320.dp)){items(languages){lang->ListItem(headlineContent={Text(lang)},modifier=Modifier.clickable{translationLanguage=lang;translationPrefs.edit().putString("target",lang).apply();showLanguagePicker=false})}}}},confirmButton={Button(onClick={if(custom.isNotBlank()){translationLanguage=custom.trim();translationPrefs.edit().putString("target",translationLanguage).apply();showLanguagePicker=false}},enabled=custom.isNotBlank()){Text("Use custom")}},dismissButton={TextButton(onClick={showLanguagePicker=false}){Text("Cancel")}})}
-
     if (showChatSettings) {
         val isBlocked = currentUser?.blockedUsers?.contains(recipient.uid) == true
         AlertDialog(
@@ -450,7 +444,6 @@ fun ChatScreen(
                         leadingContent = { Icon(Icons.Default.Palette, null) },
                         modifier = Modifier.clip(RoundedCornerShape(18.dp)).clickable { showChatSettings = false; showThemePicker = true }
                     )
-                    ListItem(headlineContent={Text("AI translation")},supportingContent={Text("Auto-detect → $translationLanguage")},leadingContent={Icon(Icons.Default.Translate,null)},modifier=Modifier.clip(RoundedCornerShape(18.dp)).clickable{showChatSettings=false;showLanguagePicker=true})
                     ListItem(
                         headlineContent = { Text("Typing sounds") },
                         leadingContent = { Icon(Icons.Default.Keyboard, null) },
@@ -626,8 +619,6 @@ fun ChatScreen(
                     items(messages.reversed(), key = { it.messageId }) { msg ->
                         val isSentByMe = msg.senderId == currentUserId
                         MessageBubbleItem(
-                            viewModel = viewModel,
-                            translationLanguage = translationLanguage,
                             message = msg,
                             isSentByMe = isSentByMe,
                             onReplySelect = { replyingToMessage = msg },
@@ -939,8 +930,6 @@ private fun TypingGlassIndicator(name: String) {
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun MessageBubbleItem(
-    viewModel: ChatViewModel,
-    translationLanguage: String,
     message: Message,
     isSentByMe: Boolean,
     onReplySelect: () -> Unit,
@@ -953,8 +942,6 @@ fun MessageBubbleItem(
 ) {
     var showMenu by remember { mutableStateOf(false) }
     var showImageViewer by remember { mutableStateOf(false) }
-    var translatedText by remember(message.messageId,translationLanguage){mutableStateOf("")}
-    var translating by remember(message.messageId){mutableStateOf(false)}
     var dragOffset by remember { mutableFloatStateOf(0f) }
     val animatedDrag by animateFloatAsState(dragOffset, spring(stiffness = Spring.StiffnessMedium), label = "swipe_reply")
     val isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
@@ -1102,8 +1089,6 @@ fun MessageBubbleItem(
                     // Render text message if present
                     if (message.text.isNotBlank()) {
                         LinkifiedChatText(message.text, textColor)
-                        if(translating) LinearProgressIndicator(Modifier.fillMaxWidth().padding(top=6.dp))
-                        if(translatedText.isNotBlank()) Surface(color=MaterialTheme.colorScheme.secondaryContainer.copy(.62f),shape=RoundedCornerShape(14.dp),modifier=Modifier.fillMaxWidth().padding(top=6.dp)){Column(Modifier.padding(9.dp)){Text("AI • $translationLanguage",fontSize=9.sp,fontWeight=FontWeight.ExtraBold,color=MaterialTheme.colorScheme.secondary);SelectionContainer{Text(translatedText,fontSize=13.sp)}}}
                     }
 
                     Row(
@@ -1207,10 +1192,6 @@ fun MessageBubbleItem(
                         clipboard.setPrimaryClip(ClipData.newPlainText("Convo Chat message", message.text))
                         showMenu = false
                     }
-                )
-                DropdownMenuItem(
-                    text={Text("Translate to $translationLanguage")},leadingIcon={Icon(Icons.Default.Translate,null)},
-                    onClick={showMenu=false;translating=true;viewModel.askAssistant("Automatically detect the language and translate the following message into $translationLanguage. Return only the natural translation without hashtags, markdown or explanations: ${message.text}",emptyList()){result->translating=false;translatedText=result.replace(Regex("[#*_`>]+"),"").trim()}}
                 )
             }
             DropdownMenuItem(
@@ -1529,49 +1510,18 @@ private fun LinkifiedChatText(text: String, color: Color) {
     }
 }
 
-private data class LinkMeta(val title: String, val description: String, val image: String)
-
-private fun extractHtmlMeta(html: String, key: String): String {
-    val escaped = Regex.escape(key)
-    val propertyFirst = Regex("""<meta[^>]+(?:property|name)=["']$escaped["'][^>]+content=["']([^"']+)["']""", RegexOption.IGNORE_CASE)
-    val contentFirst = Regex("""<meta[^>]+content=["']([^"']+)["'][^>]+(?:property|name)=["']$escaped["']""", RegexOption.IGNORE_CASE)
-    return (propertyFirst.find(html)?.groupValues?.getOrNull(1) ?: contentFirst.find(html)?.groupValues?.getOrNull(1)).orEmpty()
-        .replace("&amp;", "&").replace("&quot;", "\"")
-}
+private data class LinkMeta(val title:String,val description:String,val image:String)
 
 @Composable
-private fun LinkPreviewCard(url: String, textColor: Color) {
-    val uriHandler = LocalUriHandler.current
-    val meta by produceState<LinkMeta?>(null, url) {
-        value = withContext(Dispatchers.IO) {
-            runCatching {
-                OkHttpClient.Builder().callTimeout(8, java.util.concurrent.TimeUnit.SECONDS).build()
-                    .newCall(Request.Builder().url(url).header("User-Agent", "ConvoChat/1.0").build()).execute().use { response ->
-                        if (!response.isSuccessful) return@use null
-                        val reader = response.body?.charStream() ?: return@use null
-                        val chars = CharArray(200_000)
-                        val count = reader.read(chars)
-                        val html = if (count > 0) String(chars, 0, count) else ""
-                        val host = Uri.parse(url).host.orEmpty()
-                        val title = extractHtmlMeta(html, "og:title").ifBlank {
-                            Regex("""<title[^>]*>(.*?)</title>""", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)).find(html)?.groupValues?.getOrNull(1)?.trim().orEmpty()
-                        }.ifBlank { host }
-                        LinkMeta(title, extractHtmlMeta(html, "og:description").ifBlank { extractHtmlMeta(html, "description") }, extractHtmlMeta(html, "og:image"))
-                    }
-            }.getOrNull()
-        }
-    }
-    Surface(onClick = { runCatching { uriHandler.openUri(url) } }, color = MaterialTheme.colorScheme.surface.copy(.42f), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant), shape = RoundedCornerShape(16.dp)) {
-        Column {
-            meta?.image?.takeIf { it.startsWith("http") }?.let { AsyncImage(it, meta?.title, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxWidth().height(120.dp)) }
-            Row(Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.Link, null, tint = Color(0xFF71C7FF)); Spacer(Modifier.width(8.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(meta?.title ?: Uri.parse(url).host.orEmpty(), fontWeight = FontWeight.ExtraBold, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    meta?.description?.takeIf { it.isNotBlank() }?.let { Text(it, fontSize = 10.sp, color = textColor.copy(.72f), maxLines = 2, overflow = TextOverflow.Ellipsis) }
-                    Text(Uri.parse(url).host.orEmpty(), fontSize = 9.sp, color = Color(0xFF71C7FF))
-                }
-            }
-        }
+private fun LinkPreviewCard(url:String,textColor:Color){
+    val uriHandler=LocalUriHandler.current
+    val meta by produceState<LinkMeta?>(null,url){value=withContext(Dispatchers.IO){runCatching{
+        val response=OkHttpClient.Builder().callTimeout(8,java.util.concurrent.TimeUnit.SECONDS).build().newCall(Request.Builder().url(url).header("User-Agent","ConvoChat/1.0").build()).execute()
+        response.use{r->if(!r.isSuccessful)return@runCatching null;val reader=r.body?.charStream()?:return@runCatching null;val chars=CharArray(200_000);val n=reader.read(chars);val html=if(n>0)String(chars,0,n) else ""
+            fun meta(name:String):String{val a=Regex("<meta[^>]+(?:property|name)=[\\\"']${Regex.escape(name)}[\\\"'][^>]+content=[\\\"']([^\\\"']+)",RegexOption.IGNORE_CASE).find(html)?.groupValues?.getOrNull(1);val b=Regex("<meta[^>]+content=[\\\"']([^\\\"']+)[\\\"'][^>]+(?:property|name)=[\\\"']${Regex.escape(name)}[\\\"']",RegexOption.IGNORE_CASE).find(html)?.groupValues?.getOrNull(1);return(a?:b).orEmpty().replace("&amp;","&").replace("&quot;","\"")}
+            val host=Uri.parse(url).host.orEmpty();LinkMeta(meta("og:title").ifBlank{Regex("<title[^>]*>(.*?)</title>",setOf(RegexOption.IGNORE_CASE,RegexOption.DOT_MATCHES_ALL)).find(html)?.groupValues?.getOrNull(1)?.trim().orEmpty()}.ifBlank{host},meta("og:description").ifBlank{meta("description")},meta("og:image"))}}
+    }.getOrNull()}}
+    Surface(onClick={runCatching{uriHandler.openUri(url)}},color=MaterialTheme.colorScheme.surface.copy(.42f),border=BorderStroke(1.dp,MaterialTheme.colorScheme.outlineVariant),shape=RoundedCornerShape(16.dp)){
+        Column{meta?.image?.takeIf{it.startsWith("http")}?.let{AsyncImage(it,meta?.title,contentScale=ContentScale.Crop,modifier=Modifier.fillMaxWidth().height(120.dp))};Row(Modifier.padding(10.dp),verticalAlignment=Alignment.CenterVertically){Icon(Icons.Default.Link,null,tint=Color(0xFF71C7FF));Spacer(Modifier.width(8.dp));Column(Modifier.weight(1f)){Text(meta?.title?:Uri.parse(url).host.orEmpty(),fontWeight=FontWeight.ExtraBold,fontSize=12.sp,maxLines=2,overflow=TextOverflow.Ellipsis);if(!meta?.description.isNullOrBlank())Text(meta!!.description,fontSize=10.sp,color=textColor.copy(.72f),maxLines=2,overflow=TextOverflow.Ellipsis);Text(Uri.parse(url).host.orEmpty(),fontSize=9.sp,color=Color(0xFF71C7FF))}}}
     }
 }

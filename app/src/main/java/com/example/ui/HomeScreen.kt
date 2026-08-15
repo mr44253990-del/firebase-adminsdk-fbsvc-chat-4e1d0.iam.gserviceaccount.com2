@@ -192,15 +192,12 @@ fun HomeScreen(
     val typingSounds by viewModel.typingSoundsEnabled.collectAsState()
     val mutedUsers by viewModel.mutedUserIds.collectAsState()
     val savedPostIds by viewModel.savedPostIds.collectAsState()
-    val hiddenFeedCreators by viewModel.hiddenFeedCreators.collectAsState()
-    val notInterestedPosts by viewModel.notInterestedPosts.collectAsState()
-    val mutedFeedTopics by viewModel.mutedFeedTopics.collectAsState()
     val allUsers by viewModel.usersState.collectAsState()
     val conversationUserIds by viewModel.conversationUserIds.collectAsState()
     val unreadCounts by viewModel.unreadCountsState.collectAsState()
 
     var searchQuery by remember { mutableStateOf("") }
-    var feedFilter by rememberSaveable { mutableStateOf("Personalized") }
+    var feedFilter by rememberSaveable { mutableStateOf("All Posts") }
     var chatListFilter by rememberSaveable { mutableStateOf("All") }
     var showAnalytics by remember { mutableStateOf(false) }
     var showAccountMenu by remember { mutableStateOf(false) }
@@ -208,8 +205,6 @@ fun HomeScreen(
     var showGlobalSearch by remember { mutableStateOf(false) }
     var showLockSetup by remember { mutableStateOf(false) }
     var showReportDialog by remember { mutableStateOf(false) }
-    val fullScreenPrefs=remember{context.getSharedPreferences("convo_fullscreen_calls",Context.MODE_PRIVATE)}
-    var showFullScreenCallPrompt by remember{mutableStateOf(Build.VERSION.SDK_INT>=34 && !(context.getSystemService(android.app.NotificationManager::class.java)?.canUseFullScreenIntent()?:true) && !fullScreenPrefs.getBoolean("asked",false))}
     val funPrefs = remember { context.getSharedPreferences("convo_fun_campaign", Context.MODE_PRIVATE) }
     val funKey = "${currentUser?.uid}_${flagshipConfig.funCampaignId}"
     var showFunCampaign by remember(funKey, flagshipConfig.funCampaignEnabled) { mutableStateOf(flagshipConfig.funCampaignEnabled && flagshipConfig.funCampaignId.isNotBlank() && currentUser != null && !funPrefs.getBoolean(funKey, false)) }
@@ -445,11 +440,12 @@ fun HomeScreen(
             when (currentTab) {
                 0 -> {
                     val feedState = rememberLazyListState()
-                    val visibleFeedPosts = remember(posts,feedFilter,currentUser?.friends,currentUser?.following,savedPostIds,hiddenFeedCreators,notInterestedPosts,mutedFeedTopics){
-                        val base=posts.filter{it.senderId !in hiddenFeedCreators&&it.id !in notInterestedPosts&&it.tags.none{tag->tag.lowercase() in mutedFeedTopics}}
-                        when(feedFilter){
-                            "Personalized"->base.sortedByDescending{p->(if(p.senderId in currentUser?.friends.orEmpty())500 else 0)+(if(p.senderId in currentUser?.following.orEmpty())300 else 0)+p.reactions.size*5+p.comments.size*4+p.viewsCount}
-                            "Friends"->base.filter{it.senderId in currentUser?.friends.orEmpty()};"Following"->base.filter{it.senderId in currentUser?.following.orEmpty()};"Trending"->base.sortedByDescending{it.reactions.size*5+it.comments.size*4+it.viewsCount};"Latest"->base.sortedByDescending{it.timestamp};"Video"->base.filter{it.videoUrl.isNotBlank()};"Images"->base.filter{it.imageUrl.isNotBlank()||it.imageUrls.isNotEmpty()};"Text"->base.filter{it.videoUrl.isBlank()&&it.imageUrl.isBlank()&&it.imageUrls.isEmpty()};"Saved"->base.filter{it.id in savedPostIds};else->base
+                    val visibleFeedPosts = remember(posts, feedFilter, currentUser?.friends, currentUser?.following, savedPostIds) {
+                        when (feedFilter) {
+                            "Friends" -> posts.filter { it.senderId in currentUser?.friends.orEmpty() }
+                            "Following" -> posts.filter { it.senderId in currentUser?.following.orEmpty() }
+                            "Saved" -> posts.filter { it.id in savedPostIds }
+                            else -> posts
                         }
                     }
                     val suggestions = remember(allUsers, currentUser) {
@@ -552,18 +548,18 @@ fun HomeScreen(
                                 contentPadding = PaddingValues(horizontal = 16.dp),
                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                items(listOf("Personalized","Latest","Trending","Friends","Following","Video","Images","Text","Groups","Saved")) { label ->
+                                items(listOf("All Posts", "Friends", "Groups", "Following", "Saved")) { label ->
                                     FilterChip(
                                         selected = feedFilter == label,
                                         onClick = { if (label == "Groups") viewModel.setCurrentTab(2) else feedFilter = label },
                                         label = { Text(label) },
-                                        leadingIcon = if (label == "Personalized") { { Icon(Icons.Outlined.DynamicFeed, null, Modifier.size(17.dp)) } } else null,
+                                        leadingIcon = if (label == "All Posts") { { Icon(Icons.Outlined.DynamicFeed, null, Modifier.size(17.dp)) } } else null,
                                         shape = CircleShape
                                     )
                                 }
                             }
                         }
-                        if (suggestions.isNotEmpty() && feedFilter == "Personalized") {
+                        if (suggestions.isNotEmpty() && feedFilter == "All Posts") {
                             item(key = "suggestions") {
                                 SuggestedPeopleStrip(
                                     suggestions = suggestions,
@@ -787,7 +783,6 @@ fun HomeScreen(
                         var draftAiModel by remember(flagshipConfig) { mutableStateOf(flagshipConfig.aiModel) }
                         var draftAiName by remember(flagshipConfig) { mutableStateOf(flagshipConfig.aiDisplayName) }
                         var draftAiPrompt by remember(flagshipConfig) { mutableStateOf(flagshipConfig.aiSystemPrompt) }
-                        var draftProfileBaseUrl by remember(flagshipConfig) { mutableStateOf(flagshipConfig.publicProfileBaseUrl) }
                         var draftPremiumEnabled by remember(flagshipConfig) { mutableStateOf(flagshipConfig.premiumEnabled) }
                         var draftPremiumUpsell by remember(flagshipConfig) { mutableStateOf(flagshipConfig.premiumUpsellEnabled) }
                         var draftPaymentNumber by remember(flagshipConfig) { mutableStateOf(flagshipConfig.premiumPaymentNumber) }
@@ -870,7 +865,6 @@ fun HomeScreen(
                                     OutlinedTextField(draftAiName, { draftAiName = it.take(60) }, label = { Text("Assistant name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                                     OutlinedTextField(draftAiModel, { draftAiModel = it.filter { c -> c.isLetterOrDigit() || c in "-_." }.take(80) }, label = { Text("Mistral model") }, supportingText = { Text("Example: mistral-small-latest") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                                     OutlinedTextField(draftAiPrompt, { draftAiPrompt = it.take(2000) }, label = { Text("Safe system instructions") }, minLines = 3, modifier = Modifier.fillMaxWidth())
-                                    OutlinedTextField(draftProfileBaseUrl,{draftProfileBaseUrl=it.take(200)},label={Text("Convo Link base URL")},supportingText={Text("Example: https://convo.me or Worker /u")},singleLine=true,modifier=Modifier.fillMaxWidth())
                                     Text("API key is never stored in Android/Firestore. Set Worker secret MISTRAL_API_KEY.", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     HorizontalDivider()
                                     Text("Premium payment control", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
@@ -893,7 +887,7 @@ fun HomeScreen(
                                         FilterChip(draftRocket, { draftRocket = !draftRocket }, { Text("Rocket") })
                                     }
                                     OutlinedButton(onClick = { viewModel.updateFlagshipFields(mapOf(
-                                        "assistantEnabled" to draftAssistantEnabled, "aiModel" to draftAiModel, "aiDisplayName" to draftAiName, "aiSystemPrompt" to draftAiPrompt, "publicProfileBaseUrl" to draftProfileBaseUrl,
+                                        "assistantEnabled" to draftAssistantEnabled, "aiModel" to draftAiModel, "aiDisplayName" to draftAiName, "aiSystemPrompt" to draftAiPrompt,
                                         "premiumEnabled" to draftPremiumEnabled, "premiumUpsellEnabled" to draftPremiumUpsell, "premiumPaymentNumber" to draftPaymentNumber,
                                         "premiumMonthlyPrice" to (draftMonthlyPrice.toIntOrNull() ?: 199), "premiumYearlyPrice" to (draftYearlyPrice.toIntOrNull() ?: 1499), "premiumLifetimePrice" to (draftLifetimePrice.toIntOrNull() ?: 3999),
                                         "premiumMonthlyEnabled" to draftMonthlyEnabled, "premiumYearlyEnabled" to draftYearlyEnabled, "premiumLifetimeEnabled" to draftLifetimeEnabled,
@@ -924,7 +918,6 @@ fun HomeScreen(
                                                 aiModel = draftAiModel.ifBlank { "mistral-small-latest" },
                                                 aiDisplayName = draftAiName.ifBlank { "Convo Chat Assistant" },
                                                 aiSystemPrompt = draftAiPrompt,
-                                                publicProfileBaseUrl = draftProfileBaseUrl,
                                                 premiumEnabled = draftPremiumEnabled,
                                                 premiumUpsellEnabled = draftPremiumUpsell,
                                                 premiumPaymentNumber = draftPaymentNumber.ifBlank { "01755070708" },
@@ -1168,7 +1161,6 @@ fun HomeScreen(
                                 Column(Modifier.padding(14.dp), horizontalAlignment = Alignment.CenterHorizontally) { Icon(Icons.Outlined.Groups, null, tint = MaterialTheme.colorScheme.primary); Spacer(Modifier.height(5.dp)); Text("Groups", fontWeight = FontWeight.Bold, fontSize = 12.sp) }
                             }
                         }
-                        QrScannerSettingsCard(allUsers,onProfileSelected)
 
                         Card(onClick = onPremium, shape = RoundedCornerShape(24.dp), modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
                             Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -1944,8 +1936,6 @@ fun HomeScreen(
             confirmButton = { Button(onClick = { premiumWelcomeKey?.let { context.getSharedPreferences("convo_premium_welcome", Context.MODE_PRIVATE).edit().putBoolean(it, true).apply() }; showPremiumWelcome = false }) { Text("Explore Premium") } }
         )
     }
-
-    if(showFullScreenCallPrompt) AlertDialog(onDismissRequest={},icon={Icon(Icons.Default.Call,null,tint=MaterialTheme.colorScheme.primary)},title={Text("Allow full-screen incoming calls",fontWeight=FontWeight.ExtraBold)},text={Text("Android currently blocks Convo from opening the incoming-call screen over the lock screen or other apps. Allow this permission so calls can appear immediately.")},confirmButton={Button(onClick={fullScreenPrefs.edit().putBoolean("asked",true).apply();showFullScreenCallPrompt=false;if(Build.VERSION.SDK_INT>=34)context.startActivity(Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT,Uri.parse("package:${context.packageName}")))}){Text("Open permission settings")}},dismissButton={TextButton(onClick={fullScreenPrefs.edit().putBoolean("asked",true).apply();showFullScreenCallPrompt=false}){Text("Later")}})
 
     if (showReportDialog) {
         var category by remember { mutableStateOf("app_problem") }
@@ -3052,7 +3042,6 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
     var showEditPost by remember { mutableStateOf(false) }
     var showReportPost by remember { mutableStateOf(false) }
     var showSendPost by remember { mutableStateOf(false) }
-    var showReactionPeople by remember { mutableStateOf(false) }
     var playInlineVideo by remember(post.id) { mutableStateOf(false) }
     val currentUserId = FirebaseAuth.getInstance().currentUser?.uid ?: ""
     val savedPostIds by viewModel.savedPostIds.collectAsState()
@@ -3140,7 +3129,6 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
                     IconButton(onClick = { showPostMenu = true }) { Icon(Icons.Default.MoreVert, "Post options") }
                     DropdownMenu(expanded = showPostMenu, onDismissRequest = { showPostMenu = false }) {
                         DropdownMenuItem(text = { Text("Send to a chat") }, leadingIcon = { Icon(Icons.Default.Send, null) }, onClick = { showPostMenu = false; showSendPost = true })
-                        if(post.senderId!=currentUserId){DropdownMenuItem(text={Text("Not interested")},leadingIcon={Icon(Icons.Default.ThumbDown,null)},onClick={viewModel.markPostNotInterested(post.id);showPostMenu=false});DropdownMenuItem(text={Text("Hide this creator")},leadingIcon={Icon(Icons.Default.PersonOff,null)},onClick={viewModel.hideFeedCreator(post.senderId);showPostMenu=false});post.tags.firstOrNull()?.let{topic->DropdownMenuItem(text={Text("Mute topic #$topic")},leadingIcon={Icon(Icons.Default.VolumeOff,null)},onClick={viewModel.muteFeedTopic(topic);showPostMenu=false})}}
                         if (post.senderId != currentUserId) DropdownMenuItem(text = { Text("Report post") }, leadingIcon = { Icon(Icons.Default.ReportProblem, null) }, onClick = { showPostMenu = false; showReportPost = true })
                         if (post.senderId == currentUserId) {
                             DropdownMenuItem(text = { Text("Edit post") }, leadingIcon = { Icon(Icons.Default.Edit, null) }, onClick = { showPostMenu = false; showEditPost = true })
@@ -3273,8 +3261,7 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
                 if (reactionCount > 0) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy((-4).dp),
-                        modifier=Modifier.clickable{showReactionPeople=true}
+                        horizontalArrangement = Arrangement.spacedBy((-4).dp)
                     ) {
                         uniqueReactions.forEach { emoji ->
                             Text(text = emoji, fontSize = 14.sp)
@@ -3614,7 +3601,6 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
         }
     }
 
-    if(showReactionPeople){val ids=(post.reactions.keys+post.mediaReactions.values.flatMap{it.keys}).distinct();val people=ids.mapNotNull{id->allUsers.find{it.uid==id}?:currentUserProfile?.takeIf{it.uid==id}};AlertDialog(onDismissRequest={showReactionPeople=false},title={Text("Reactions (${ids.size})",fontWeight=FontWeight.ExtraBold)},text={if(people.isEmpty())Text("No visible profiles")else LazyColumn(Modifier.heightIn(max=430.dp)){items(people,key={it.uid}){p->val emoji=post.reactions[p.uid]?:post.mediaReactions.values.firstNotNullOfOrNull{it[p.uid]}?:"❤️";ListItem(headlineContent={Text(p.name,fontWeight=FontWeight.Bold)},supportingContent={Text("@${p.username}")},leadingContent={AsyncImage(p.profileImageUrl.ifBlank{null},p.name,Modifier.size(42.dp).clip(CircleShape))},trailingContent={Text(emoji,fontSize=22.sp)},modifier=Modifier.clickable{showReactionPeople=false;onProfileSelected(p)})}}},confirmButton={TextButton(onClick={showReactionPeople=false}){Text("Close")}})}
     if (showSendPost) {
         AlertDialog(onDismissRequest={showSendPost=false},title={Text("Send post to chat",fontWeight=FontWeight.ExtraBold)},text={LazyColumn(Modifier.heightIn(max=420.dp)){items(allUsers,key={it.uid}){person->ListItem(headlineContent={Text(person.name,fontWeight=FontWeight.Bold)},supportingContent={Text("@${person.username}")},leadingContent={AsyncImage(person.profileImageUrl.ifBlank{null},person.name,Modifier.size(42.dp).clip(CircleShape))},modifier=Modifier.clickable{viewModel.sendPostToUser(person,post){ok->Toast.makeText(context,if(ok)"Sent to ${person.name}" else "Send failed",Toast.LENGTH_SHORT).show()};showSendPost=false})}}},confirmButton={TextButton(onClick={showSendPost=false}){Text("Cancel")}})
     }

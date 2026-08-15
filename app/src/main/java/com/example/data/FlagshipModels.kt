@@ -67,7 +67,6 @@ data class FlagshipConfig(
     val funCampaignId: String = "",
     val funCampaignTitle: String = "শুক্রবারের মজার হিসাব 😄",
     val funCampaignBody: String = "আর কত শুক্রবার বউ ছাড়া থাকবেন? একটা বিয়ে করে নেন! 😄",
-    val publicProfileBaseUrl: String = "https://solitary-hill-dcdc.mr44253990.workers.dev/u/",
     val updatedAt: Long = 0L,
     val updatedBy: String = ""
 )

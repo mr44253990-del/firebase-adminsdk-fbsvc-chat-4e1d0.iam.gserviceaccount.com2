@@ -66,21 +66,6 @@ export default {
       }
     }
 
-    if (request.method === "GET" && path === "/.well-known/assetlinks.json") {
-      return new Response(JSON.stringify([{relation:["delegate_permission/common.handle_all_urls"],target:{namespace:"android_app",package_name:"com.ebchat",sha256_cert_fingerprints:["EC:F8:C9:87:FE:9A:D3:B1:B2:DC:8D:02:05:3C:D7:67:93:E5:3F:4A:E1:97:DF:72:91:E7:C9:23:DE:42:A9:4D"]}}]),{headers:{"Content-Type":"application/json","Cache-Control":"public,max-age=3600"}});
-    }
-
-    if (request.method === "GET" && (path.startsWith("/u/") || (url.hostname === "convo.me" && /^\/[A-Za-z0-9_.-]{2,80}$/.test(path)))) {
-      const username=decodeURIComponent(path.startsWith("/u/") ? path.slice(3) : path.slice(1)).replace(/^@/,"").toLowerCase();
-      if(!/^[a-z0-9_.-]{2,80}$/.test(username))return htmlResponse("Invalid Convo username",400);
-      try { const user=(await firestoreList(env,"users")).find(x=>String(x.username||"").toLowerCase()===username); if(!user||user.profileHidden===true)return htmlResponse("Profile not available",404);
-        const title=escapeHtml(`${user.name||username} (@${username})`), bio=escapeHtml(String(user.bio||"Connect with me on Convo Chat").slice(0,240)), image=escapeHtml(user.profileImageUrl||""), downloadRaw=env.APP_DOWNLOAD_URL||new URL(request.url).origin;
-        const intentLink=`intent://user/${encodeURIComponent(user.uid||"")}#Intent;scheme=convochat;package=com.ebchat;S.browser_fallback_url=${encodeURIComponent(downloadRaw)};end`;
-        const html=`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title><meta property="og:site_name" content="Convo Chat"><meta property="og:title" content="${title}"><meta property="og:description" content="${bio}">${image?`<meta property="og:image" content="${image}">`:""}<style>body{background:#070814;color:#fff;font-family:system-ui;display:grid;place-items:center;min-height:100vh}.c{max-width:480px;text-align:center;padding:30px;border:1px solid #7d69ff66;border-radius:30px;background:linear-gradient(145deg,#211b44,#091a2b)}img{width:120px;height:120px;object-fit:cover;border-radius:50%}a{display:block;margin-top:12px;padding:14px;border-radius:999px;background:linear-gradient(90deg,#6657ff,#ef3fac);color:white;text-decoration:none;font-weight:800}.s{background:#ffffff18}</style></head><body><main class="c">${image?`<img src="${image}">`:""}<h1>${title}</h1><p>${bio}</p><a href="${intentLink}">Open profile in Convo Chat</a><a class="s" href="${escapeHtml(downloadRaw)}">Download application</a></main><script>setTimeout(()=>location.href=${JSON.stringify(intentLink)},180)</script></body></html>`;
-        return new Response(html,{headers:{"Content-Type":"text/html; charset=utf-8","Cache-Control":"public,max-age=300"}});
-      } catch(e) { return htmlResponse("Could not load profile",500); }
-    }
-
     if (request.method === "GET" && path.startsWith("/post/")) {
       const postId = decodeURIComponent(path.slice(6));
       if (!/^[A-Za-z0-9_-]{4,160}$/.test(postId)) return htmlResponse("Invalid post link", 400);
