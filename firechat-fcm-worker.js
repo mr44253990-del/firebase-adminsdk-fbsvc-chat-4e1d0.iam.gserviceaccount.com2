@@ -445,7 +445,7 @@ export default {
 
       // 3. Send Notification via FCM v1 API
       const fcmUrl = `https://fcm.googleapis.com/v1/projects/${projectId}/messages:send`;
-
+      
       const fcmMessage = {
         message: {
           token: token,
@@ -647,7 +647,7 @@ async function signRS256(data, pemKey) {
   // Extract binary PEM payload
   const pemHeader = "-----BEGIN PRIVATE KEY-----";
   const pemFooter = "-----END PRIVATE KEY-----";
-
+  
   let rawPem = pemKey.replace(/\r/g, "").replace(/\n/g, "");
   if (rawPem.includes(pemHeader)) {
     rawPem = rawPem.substring(rawPem.indexOf(pemHeader) + pemHeader.length, rawPem.indexOf(pemFooter));
@@ -687,7 +687,7 @@ async function signRS256(data, pemKey) {
   for (let i = 0; i < signatureBytes.byteLength; i++) {
     signatureString += String.fromCharCode(signatureBytes[i]);
   }
-
+  
   return btoa(signatureString)
     .replace(/=/g, "")
     .replace(/\+/g, "-")

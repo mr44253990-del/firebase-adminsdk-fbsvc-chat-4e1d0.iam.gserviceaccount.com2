@@ -17,14 +17,3 @@ local.properties
 .env
 debug.keystore
 !debug.keystore
-
-# Local credentials and deployment secrets
-*.env
-.env.*
-!.env.example
-*service-account*.json
-*service_account*.json
-*-fcm-key.json
-*.pem
-*.p12
-*.jks
