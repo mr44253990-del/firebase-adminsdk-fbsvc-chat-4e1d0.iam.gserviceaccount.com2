@@ -9,8 +9,31 @@ data class User(
     val profileImageUrl: String = "",
     val isOnline: Boolean = false,
     val lastActive: Long = 0L,
+    val onlineUntil: Long = 0L,
+    val offlineSince: Long = 0L,
     val blockedUsers: List<String> = emptyList(),
-    val createdAt: Long = 0L
+    val createdAt: Long = 0L,
+    val friends: List<String> = emptyList(),
+    val bio: String = "",
+    val coverImageUrl: String = "",
+    val followers: List<String> = emptyList(),
+    val following: List<String> = emptyList(),
+    val role: String = "user",
+    val isPremium: Boolean = false,
+    val premiumPlan: String = "",
+    val premiumUntil: Long = 0L,
+    val premiumApprovedAt: Long = 0L,
+    val premiumTrialClaimed: Boolean = false,
+    val premiumSource: String = "",
+    val coverScale: Float = 1f,
+    val coverOffsetY: Float = 0f,
+    val profileHidden: Boolean = false,
+    val awayReplyEnabled: Boolean = false,
+    val awayReplyText: String = "",
+    val awayReplyUntil: Long = 0L,
+    val activeProfileType: String = "Personal",
+    val profileVisibility: String = "everyone",
+    val socialLinks: Map<String, String> = emptyMap()
 )
 
 data class Message(
@@ -27,7 +50,14 @@ data class Message(
     val imageUrl: String? = null,
     val voiceUrl: String? = null,
     val voiceDurationSec: Int? = null,
+    val remoteVoiceUrl: String? = null,
+    val fileUrl: String? = null,
+    val remoteFileUrl: String? = null,
+    val fileName: String? = null,
+    val fileMimeType: String? = null,
+    val fileSize: Long? = null,
     val seenByRecipient: Boolean = false,
+    val deliveredToRecipient: Boolean = false,
     val reactions: Map<String, String> = emptyMap()
 )
 
@@ -41,7 +71,10 @@ data class Story(
     val text: String = "",
     val timestamp: Long = 0L,
     val reactions: Map<String, String> = emptyMap(), // userId to reaction symbol (like, love, etc)
-    val comments: List<StoryComment> = emptyList()
+    val comments: List<StoryComment> = emptyList(),
+    val viewers: List<String> = emptyList(),
+    val viewCounts: Map<String, Int> = emptyMap(),
+    val spotlightUntil: Long = 0L
 )
 
 data class StoryComment(
@@ -65,7 +98,18 @@ data class Post(
     val reactions: Map<String, String> = emptyMap(), // userId -> reaction type
     val comments: List<PostComment> = emptyList(),
     val viewsCount: Int = 0,
-    val isPrivate: Boolean = false
+    val isPrivate: Boolean = false,
+    val title: String = "",
+    val tags: List<String> = emptyList(),
+    val taggedUserIds: List<String> = emptyList(),
+    val feeling: String = "",
+    val backgroundStyle: String = "glass",
+    val textAnimation: String = "none",
+    val r2ObjectKeys: List<String> = emptyList(),
+    val isReel: Boolean = false,
+    val expiresAt: Long = 0L,
+    val imageUrls: List<String> = emptyList(),
+    val mediaReactions: Map<String, Map<String, String>> = emptyMap()
 )
 
 data class PostComment(
@@ -73,7 +117,10 @@ data class PostComment(
     val senderId: String = "",
     val senderName: String = "",
     val text: String = "",
-    val timestamp: Long = 0L
+    val timestamp: Long = 0L,
+    val reactions: Map<String, String> = emptyMap(),
+    val replyToId: String = "",
+    val replyToName: String = ""
 )
 
 data class Group(

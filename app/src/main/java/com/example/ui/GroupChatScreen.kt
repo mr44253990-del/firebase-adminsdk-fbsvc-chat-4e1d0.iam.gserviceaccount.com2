@@ -17,6 +17,8 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.*
 import com.example.ui.theme.glassmorphic
 import androidx.compose.foundation.lazy.LazyColumn
@@ -34,8 +36,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -57,14 +61,49 @@ import java.util.*
 fun GroupChatScreen(
     viewModel: ChatViewModel,
     group: Group,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    onGroupCall: (video: Boolean) -> Unit = {}
 ) {
     val context = LocalContext.current
     val currentUserId = FirebaseAuth.getInstance().currentUser?.uid ?: ""
     val messages by viewModel.groupMessagesState.collectAsState()
+    val allUsers by viewModel.usersState.collectAsState()
+    val groupVoiceRecorders by viewModel.groupVoiceRecorders.collectAsState()
+    val otherVoiceRecorders = remember(groupVoiceRecorders, currentUserId) { groupVoiceRecorders.filter { it != currentUserId } }
+    var showAddMembers by remember { mutableStateOf(false) }
+    var showMessageSearch by remember { mutableStateOf(false) }
+    var messageSearchQuery by remember { mutableStateOf("") }
+    val visibleGroupMessages = remember(messages, messageSearchQuery) {
+        val query = messageSearchQuery.trim().lowercase()
+        if (query.isBlank()) messages else messages.filter {
+            it.text.lowercase().contains(query) || it.senderName.lowercase().contains(query)
+        }
+    }
 
     var messageText by remember { mutableStateOf("") }
+    var translationMessage by remember { mutableStateOf<GroupMessage?>(null) }
+    var translationText by remember { mutableStateOf("") }
+    var translationLoading by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
+
+    if (translationMessage != null) {
+        AlertDialog(
+            onDismissRequest = { if (!translationLoading) translationMessage = null },
+            title = { Text("AI translation", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(translationMessage?.text.orEmpty(), color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 5, overflow = TextOverflow.Ellipsis)
+                    if (translationLoading) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
+                            Text("Translating to Bengali…")
+                        }
+                    } else Text(translationText.ifBlank { "No translation returned." })
+                }
+            },
+            confirmButton = { TextButton(enabled = !translationLoading, onClick = { translationMessage = null }) { Text("Close") } }
+        )
+    }
 
     // Select the active group when entering this screen and clean up when leaving
     LaunchedEffect(group.id) {
@@ -167,6 +206,7 @@ fun GroupChatScreen(
 
                 mediaRecorder = recorder
                 isRecording = true
+                viewModel.setGroupVoiceRecordingState(group.id, true)
                 recordStartTime = System.currentTimeMillis()
                 Toast.makeText(context, "🎙️ Recording group voice...", Toast.LENGTH_SHORT).show()
             } catch (e: Exception) {
@@ -184,6 +224,7 @@ fun GroupChatScreen(
                 }
                 mediaRecorder = null
                 isRecording = false
+                viewModel.setGroupVoiceRecordingState(group.id, false)
 
                 val durationSec = ((System.currentTimeMillis() - recordStartTime) / 1000).toInt().coerceAtLeast(1)
                 val bytes = voiceFile?.readBytes()
@@ -212,6 +253,7 @@ fun GroupChatScreen(
                 }
             } catch (e: Exception) {
                 isRecording = false
+                viewModel.setGroupVoiceRecordingState(group.id, false)
                 mediaRecorder = null
             }
         }
@@ -227,11 +269,12 @@ fun GroupChatScreen(
             } catch (e: Exception) {}
             mediaRecorder = null
             isRecording = false
+            viewModel.setGroupVoiceRecordingState(group.id, false)
             Toast.makeText(context, "Recording cancelled", Toast.LENGTH_SHORT).show()
         }
     }
 
-    val isDark = isSystemInDarkTheme()
+    val isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
     val bgStart = MaterialTheme.colorScheme.background
     val bgEnd = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
     val chatGradientBg = Brush.verticalGradient(
@@ -239,6 +282,7 @@ fun GroupChatScreen(
     )
 
     Scaffold(
+        containerColor = Color.Transparent,
         contentWindowInsets = androidx.compose.foundation.layout.WindowInsets(0, 0, 0, 0),
         topBar = {
             TopAppBar(
@@ -287,6 +331,24 @@ fun GroupChatScreen(
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = MaterialTheme.colorScheme.primary)
                     }
                 },
+                actions = {
+                    IconButton(onClick = {
+                        onGroupCall(false)
+                    }) {
+                        Icon(Icons.Default.Call, contentDescription = "Start group audio call", tint = MaterialTheme.colorScheme.primary)
+                    }
+                    IconButton(onClick = {
+                        onGroupCall(true)
+                    }) {
+                        Icon(Icons.Default.Videocam, contentDescription = "Start group video call", tint = MaterialTheme.colorScheme.primary)
+                    }
+                    IconButton(onClick = { showMessageSearch = !showMessageSearch }) {
+                        Icon(Icons.Default.Search, contentDescription = "Search group messages", tint = MaterialTheme.colorScheme.primary)
+                    }
+                    IconButton(onClick = { showAddMembers = true }) {
+                        Icon(Icons.Default.PersonAdd, contentDescription = "Add members", tint = MaterialTheme.colorScheme.primary)
+                    }
+                },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f)
                 ),
@@ -301,6 +363,71 @@ fun GroupChatScreen(
                 .background(chatGradientBg)
                 .padding(innerPadding)
         ) {
+            AnimatedVisibility(
+                visible = otherVoiceRecorders.isNotEmpty(),
+                enter = fadeIn() + expandVertically(),
+                exit = fadeOut() + shrinkVertically()
+            ) {
+                val names = otherVoiceRecorders.mapNotNull { uid -> allUsers.firstOrNull { it.uid == uid }?.name?.takeIf { it.isNotBlank() } }
+                Surface(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 5.dp),
+                    shape = RoundedCornerShape(18.dp),
+                    color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = .92f)
+                ) {
+                    Row(Modifier.padding(horizontal = 14.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Mic, contentDescription = null, tint = MaterialTheme.colorScheme.tertiary, modifier = Modifier.size(19.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            if (names.isNotEmpty()) "${names.take(2).joinToString(" and ")} ${if (names.size > 2) "and others " else ""}is recording a voice note…" else "Someone is recording a voice note…",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 12.sp,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+            }
+
+            AnimatedVisibility(
+                visible = showMessageSearch,
+                enter = expandVertically() + fadeIn(),
+                exit = shrinkVertically() + fadeOut()
+            ) {
+                Surface(
+                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
+                    tonalElevation = 4.dp,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        OutlinedTextField(
+                            value = messageSearchQuery,
+                            onValueChange = { messageSearchQuery = it },
+                            singleLine = true,
+                            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                            trailingIcon = {
+                                if (messageSearchQuery.isNotBlank()) {
+                                    IconButton(onClick = { messageSearchQuery = "" }) {
+                                        Icon(Icons.Default.Clear, contentDescription = "Clear search")
+                                    }
+                                }
+                            },
+                            placeholder = { Text("Search group messages") },
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(22.dp)
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            if (messageSearchQuery.isBlank()) "All" else visibleGroupMessages.size.toString(),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+
             // Messages list area
             if (messages.isEmpty()) {
                 Box(
@@ -331,6 +458,18 @@ fun GroupChatScreen(
                         )
                     }
                 }
+            } else if (visibleGroupMessages.isEmpty()) {
+                Box(
+                    modifier = Modifier.fillMaxWidth().weight(1f),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(Icons.Default.SearchOff, contentDescription = null, tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f), modifier = Modifier.size(48.dp))
+                        Spacer(Modifier.height(8.dp))
+                        Text("No matching group messages", style = MaterialTheme.typography.titleMedium)
+                        Text("Try another keyword", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
             } else {
                 LazyColumn(
                     state = listState,
@@ -342,7 +481,7 @@ fun GroupChatScreen(
                     verticalArrangement = Arrangement.spacedBy(10.dp, Alignment.Bottom),
                     reverseLayout = true
                 ) {
-                    items(messages.reversed(), key = { it.messageId }) { msg ->
+                    items(visibleGroupMessages.reversed(), key = { it.messageId }) { msg ->
                         if (msg.senderId == "system") {
                             // System Log message
                             Box(
@@ -353,7 +492,7 @@ fun GroupChatScreen(
                             ) {
                                 Surface(
                                     color = MaterialTheme.colorScheme.primary.copy(alpha = 0.08f),
-                                    shape = RoundedCornerShape(12.dp)
+                                    shape = RoundedCornerShape(18.dp)
                                 ) {
                                     Text(
                                         text = msg.text,
@@ -372,6 +511,18 @@ fun GroupChatScreen(
                                 isSentByMe = isSentByMe,
                                 onDeleteSelect = {
                                     viewModel.deleteGroupMessage(group.id, msg.messageId)
+                                },
+                                onTranslate = { target ->
+                                    translationMessage = target
+                                    translationText = ""
+                                    translationLoading = true
+                                    viewModel.askAssistant(
+                                        "Translate the following group chat message into natural Bengali. Return only the Bengali translation, preserving names, numbers, links, and formatting:\n\n${target.text}",
+                                        emptyList()
+                                    ) { result ->
+                                        translationText = result
+                                        translationLoading = false
+                                    }
                                 }
                             )
                         }
@@ -385,6 +536,8 @@ fun GroupChatScreen(
                 tonalElevation = 8.dp,
                 modifier = Modifier
                     .fillMaxWidth()
+                    .navigationBarsPadding()
+                    .imePadding()
                     .glassmorphic(
                         isDark = isDark,
                         shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
@@ -418,7 +571,7 @@ fun GroupChatScreen(
                         modifier = Modifier
                             .weight(1f)
                             .testTag("group_message_input"),
-                        shape = RoundedCornerShape(20.dp),
+                        shape = RoundedCornerShape(28.dp),
                         maxLines = 4,
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedTextColor = MaterialTheme.colorScheme.onSurface,
@@ -466,12 +619,63 @@ fun GroupChatScreen(
             }
         }
     }
+
+    if (showAddMembers) {
+        val selectable = allUsers.filterNot { group.members.contains(it.uid) }
+        val selected = remember { mutableStateListOf<String>() }
+        AlertDialog(
+            onDismissRequest = { showAddMembers = false },
+            title = { Text("Add group members", fontWeight = FontWeight.Bold) },
+            text = {
+                if (selectable.isEmpty()) {
+                    Text("Everyone is already in this group.")
+                } else {
+                    LazyColumn(Modifier.heightIn(max = 380.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        items(selectable, key = { it.uid }) { user ->
+                            val checked = selected.contains(user.uid)
+                            Row(
+                                Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp))
+                                    .clickable { if (checked) selected.remove(user.uid) else selected.add(user.uid) }
+                                    .background(if (checked) MaterialTheme.colorScheme.primaryContainer else Color.Transparent)
+                                    .padding(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Checkbox(checked, null)
+                                Spacer(Modifier.width(8.dp))
+                                Text(user.name)
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        viewModel.addGroupMembers(group, selected.toList()) { ok ->
+                            Toast.makeText(context, if (ok) "Members added" else "Could not add members", Toast.LENGTH_SHORT).show()
+                        }
+                        showAddMembers = false
+                    },
+                    enabled = selected.isNotEmpty()
+                ) { Text("Add") }
+            },
+            dismissButton = { TextButton(onClick = { showAddMembers = false }) { Text("Cancel") } }
+        )
+    }
+
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun GroupMessageBubbleItem(msg: GroupMessage, isSentByMe: Boolean, onDeleteSelect: () -> Unit) {
+fun GroupMessageBubbleItem(
+    msg: GroupMessage,
+    isSentByMe: Boolean,
+    onDeleteSelect: () -> Unit,
+    onTranslate: (GroupMessage) -> Unit = {}
+) {
     var showMenu by remember { mutableStateOf(false) }
-    val isDark = isSystemInDarkTheme()
+    val context = LocalContext.current
+    val isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
     
     val bubbleBg = if (isSentByMe) {
         MaterialTheme.colorScheme.primary.copy(alpha = if (isDark) 0.3f else 0.85f)
@@ -536,7 +740,17 @@ fun GroupMessageBubbleItem(msg: GroupMessage, isSentByMe: Boolean, onDeleteSelec
                             bottomEnd = if (isSentByMe) 2.dp else 16.dp
                         )
                     )
-                    .clickable { if (isSentByMe) showMenu = true }
+                    .combinedClickable(
+                        onClick = { showMenu = true },
+                        onLongClick = { showMenu = true },
+                        onDoubleClick = {
+                            if (msg.text.isNotBlank()) {
+                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                                clipboard.setPrimaryClip(android.content.ClipData.newPlainText("Convo Chat message", msg.text))
+                                Toast.makeText(context, "Message copied", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    )
             ) {
                 Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
                     if (!msg.imageUrl.isNullOrBlank()) {
@@ -546,7 +760,7 @@ fun GroupMessageBubbleItem(msg: GroupMessage, isSentByMe: Boolean, onDeleteSelec
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(160.dp)
-                                .clip(RoundedCornerShape(8.dp)),
+                                .clip(RoundedCornerShape(14.dp)),
                             contentScale = ContentScale.Crop
                         )
                         Spacer(modifier = Modifier.height(4.dp))
@@ -563,6 +777,11 @@ fun GroupMessageBubbleItem(msg: GroupMessage, isSentByMe: Boolean, onDeleteSelec
                             color = textColor,
                             fontSize = 14.sp
                         )
+                        val urlRegex = remember { Regex("https?://[^\\s]+", RegexOption.IGNORE_CASE) }
+                        val detectedUrl = remember(msg.text) { urlRegex.find(msg.text)?.value?.trimEnd('.', ',', '!', '?', ')', ']') }
+                        if (!detectedUrl.isNullOrBlank()) {
+                            GroupLinkPreviewCard(url = detectedUrl, isSentByMe = isSentByMe)
+                        }
                     }
 
                     Row(
@@ -585,6 +804,16 @@ fun GroupMessageBubbleItem(msg: GroupMessage, isSentByMe: Boolean, onDeleteSelec
                 onDismissRequest = { showMenu = false },
                 modifier = Modifier.background(MaterialTheme.colorScheme.surface)
             ) {
+                if (msg.text.isNotBlank()) {
+                    DropdownMenuItem(
+                        text = { Text("Translate to Bengali (AI)") },
+                        leadingIcon = { Icon(Icons.Default.Translate, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
+                        onClick = {
+                            showMenu = false
+                            onTranslate(msg)
+                        }
+                    )
+                }
                 DropdownMenuItem(
                     text = { Text("Delete Message", color = MaterialTheme.colorScheme.error) },
                     leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
@@ -613,7 +842,7 @@ fun GroupAudioPlayerItem(voiceUrl: String, durationSec: Int) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
-            .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f), RoundedCornerShape(10.dp))
+            .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f), RoundedCornerShape(16.dp))
             .padding(horizontal = 10.dp, vertical = 6.dp)
     ) {
         IconButton(
@@ -667,4 +896,13 @@ fun GroupAudioPlayerItem(voiceUrl: String, durationSec: Int) {
             )
         }
     }
+}
+
+
+@Composable
+private fun GroupLinkPreviewCard(url: String, isSentByMe: Boolean) {
+    LinkPreviewCard(
+        url = url,
+        color = if (isSentByMe) Color.White else MaterialTheme.colorScheme.onSurface
+    )
 }

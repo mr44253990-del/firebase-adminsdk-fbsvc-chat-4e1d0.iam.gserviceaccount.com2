@@ -2,7 +2,9 @@ package com.example.ui
 
 import android.content.Context
 import androidx.compose.animation.*
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -16,9 +18,12 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -43,29 +48,40 @@ fun OnboardingScreen(
 
     val pages = listOf(
         OnboardingPage(
-            title = "Real-Time Chatting",
-            description = "Experience lightning-fast instant messaging. Chat with anyone around the globe securely, instantly, and with elegant visual ripples.",
+            title = "Make every conversation feel alive",
+            description = "Enjoy fast messaging, voice notes, HD audio and video calls, smart typing indicators, and personal chat themes that keep you connected.",
             icon = Icons.Outlined.ChatBubbleOutline,
             accentColor = MaterialTheme.colorScheme.primary,
-            featureBadge = "⚡ Real-time"
+            featureBadge = "Smart real-time chat"
         ),
         OnboardingPage(
-            title = "Sync Notifications via Webhooks",
-            description = "Get notified instantly. FireChat syncs and publishes your push notification triggers dynamically through n8n webhooks and Firestore without manual setups.",
+            title = "Your story, your creativity",
+            description = "Share stories, animated posts, multi-photo carousels, and full-screen reels. Fast media caching keeps playback smooth while activity updates stay organized.",
             icon = Icons.Outlined.Send,
             accentColor = MaterialTheme.colorScheme.tertiary,
-            featureBadge = "🔗 Webhook Native"
+            featureBadge = "Complete social experience"
         ),
         OnboardingPage(
-            title = "Privacy & Encryption first",
-            description = "All conversations and accounts are protected securely. Experience direct profile creation with dynamic password auth, and password recovery tools.",
+            title = "Security stays in your control",
+            description = "PIN and biometric lock, hidden notification content, screenshot-protected calls, local history, and privacy controls help keep Convo Chat personal.",
             icon = Icons.Outlined.Lock,
             accentColor = MaterialTheme.colorScheme.secondary,
-            featureBadge = "🔒 Secure Profile"
+            featureBadge = "Privacy first"
+        ),
+        OnboardingPage(
+            title = "Convo Chat, built for better connections",
+            description = "A modern platform designed to connect people beautifully, quickly, and safely. Community feedback and thoughtful updates will keep Convo Chat moving forward.",
+            icon = Icons.Outlined.ChatBubbleOutline,
+            accentColor = MaterialTheme.colorScheme.primary,
+            featureBadge = "Built for the community"
         )
     )
 
     val activePage = pages[currentPageIndex]
+    var horizontalDrag by remember { mutableFloatStateOf(0f) }
+    val motion = rememberInfiniteTransition(label = "onboarding_motion")
+    val pulse by motion.animateFloat(.96f, 1.05f, infiniteRepeatable(tween(1100, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "pulse")
+    val orbit by motion.animateFloat(-4f, 4f, infiniteRepeatable(tween(1800, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "orbit")
 
     // Deep dynamic gradient background based on page's accent color
     val backgroundBrush = Brush.verticalGradient(
@@ -81,6 +97,19 @@ fun OnboardingScreen(
             .fillMaxSize()
             .background(backgroundBrush)
             .windowInsetsPadding(WindowInsets.safeDrawing)
+            .pointerInput(currentPageIndex) {
+                detectHorizontalDragGestures(
+                    onDragEnd = {
+                        when {
+                            horizontalDrag < -80f && currentPageIndex < pages.lastIndex -> currentPageIndex++
+                            horizontalDrag > 80f && currentPageIndex > 0 -> currentPageIndex--
+                        }
+                        horizontalDrag = 0f
+                    },
+                    onDragCancel = { horizontalDrag = 0f },
+                    onHorizontalDrag = { _, amount -> horizontalDrag += amount }
+                )
+            }
     ) {
         // Skip Button (Top Right)
         TextButton(
@@ -110,7 +139,7 @@ fun OnboardingScreen(
             // Visual Badge
             Surface(
                 color = activePage.accentColor.copy(alpha = 0.15f),
-                shape = RoundedCornerShape(12.dp),
+                shape = RoundedCornerShape(18.dp),
                 modifier = Modifier.padding(bottom = 24.dp)
             ) {
                 Text(
@@ -125,6 +154,8 @@ fun OnboardingScreen(
             Box(
                 modifier = Modifier
                     .size(160.dp)
+                    .scale(pulse)
+                    .rotate(orbit)
                     .clip(CircleShape)
                     .background(
                         Brush.linearGradient(
@@ -150,7 +181,8 @@ fun OnboardingScreen(
             AnimatedContent(
                 targetState = activePage,
                 transitionSpec = {
-                    fadeIn() togetherWith fadeOut()
+                    (slideInHorizontally(animationSpec = spring(stiffness = Spring.StiffnessMediumLow)) { it / 3 } + fadeIn()) togetherWith
+                        (slideOutHorizontally { -it / 3 } + fadeOut())
                 },
                 label = "pageContent"
             ) { page ->
@@ -202,7 +234,9 @@ fun OnboardingScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(48.dp))
+            Spacer(modifier = Modifier.height(12.dp))
+            Text("←  Swipe to explore  →", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = .65f))
+            Spacer(modifier = Modifier.height(32.dp))
 
             // Navigation CTA Button
             Button(
@@ -218,7 +252,7 @@ fun OnboardingScreen(
                     .fillMaxWidth()
                     .height(54.dp)
                     .testTag("onboarding_next"),
-                shape = RoundedCornerShape(16.dp),
+                shape = RoundedCornerShape(24.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = activePage.accentColor
                 )
@@ -228,7 +262,7 @@ fun OnboardingScreen(
                     horizontalArrangement = Arrangement.Center
                 ) {
                     Text(
-                        text = if (currentPageIndex == pages.size - 1) "Get Started" else "Continue",
+                        text = if (currentPageIndex == pages.size - 1) "Get started" else "Next",
                         fontWeight = FontWeight.Bold,
                         fontSize = 16.sp,
                         color = Color.White

@@ -1,0 +1,112 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "config": {
+      ".read": "auth != null",
+      "app_settings": { ".write": "auth != null" },
+      "flagship": { ".write": "auth != null && auth.token.email === 'mr4425390@gmail.com'" }
+    },
+    "status": {
+      ".read": "auth != null",
+      "$uid": { ".write": "auth != null && auth.uid === $uid" }
+    },
+    "typing": {
+      "$chatId": {
+        ".read": "auth != null && $chatId.contains(auth.uid)",
+        "$uid": { ".write": "auth != null && auth.uid === $uid && $chatId.contains(auth.uid)" }
+      }
+    },
+    "voiceRecording": {
+      "$chatId": {
+        ".read": "auth != null && $chatId.contains(auth.uid)",
+        "$uid": { ".write": "auth != null && auth.uid === $uid && $chatId.contains(auth.uid)" }
+      }
+    },
+    "uploads": {
+      "$chatId": {
+        ".read": "auth != null && $chatId.contains(auth.uid)",
+        "$uid": { ".write": "auth != null && auth.uid === $uid && $chatId.contains(auth.uid)" }
+      }
+    },
+    "unread_counts": {
+      "$recipientUid": {
+        ".read": "auth != null && auth.uid === $recipientUid",
+        "$senderUid": {
+          ".write": "auth != null && (auth.uid === $recipientUid || auth.uid === $senderUid)",
+          ".validate": "newData.isNumber() && newData.val() >= 0"
+        }
+      }
+    },
+    "notifications": {
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid",
+        ".write": "auth != null && (auth.uid === $uid || newData.child('senderId').val() === auth.uid)",
+        ".validate": "newData.hasChildren(['senderId', 'timestamp']) && newData.child('senderId').isString() && newData.child('timestamp').isNumber()"
+      }
+    },
+    "delivery_receipts": {
+      "$recipientUid": {
+        ".read": "auth != null && auth.uid === $recipientUid",
+        "$chatId": {
+          ".write": "auth != null && $chatId.contains(auth.uid)",
+          "$messageId": {
+            ".validate": "newData.hasChild('seen') || newData.hasChild('delivered')"
+          }
+        }
+      }
+    },
+    "chat_settings": {
+      "$chatId": {
+        ".read": "auth != null && $chatId.contains(auth.uid)",
+        ".write": "auth != null && $chatId.contains(auth.uid)",
+        "theme": {
+          ".validate": "newData.isString() && newData.val().length <= 32"
+        }
+      }
+    },
+    "chats": {
+      "$chatId": {
+        ".read": "auth != null && ($chatId.contains(auth.uid) || data.child('members').child(auth.uid).val() === true)",
+        ".write": "auth != null && ($chatId.contains(auth.uid) || data.child('members').child(auth.uid).val() === true || newData.child('members').child(auth.uid).val() === true)",
+        "members": {
+          "$uid": {
+            ".validate": "$uid === auth.uid || $chatId.contains($uid)"
+          }
+        },
+        "messages": {
+          ".read": "auth != null && ($chatId.contains(auth.uid) || data.parent().child('members').child(auth.uid).val() === true)",
+          ".write": "auth != null && ($chatId.contains(auth.uid) || data.parent().child('members').child(auth.uid).val() === true)",
+          ".indexOn": ["timestamp"],
+          "$messageId": {
+            ".validate": "newData.hasChildren(['messageId', 'senderId', 'timestamp']) && newData.child('messageId').val() === $messageId && newData.child('senderId').isString() && newData.child('timestamp').isNumber()"
+          }
+        }
+      }
+    },
+    "calls": {
+      "$callId": {
+        ".read": "auth != null && (data.child('callerId').val() === auth.uid || data.child('calleeId').val() === auth.uid)",
+        ".write": "auth != null && ((!data.exists() && newData.child('callerId').val() === auth.uid) || data.child('callerId').val() === auth.uid || data.child('calleeId').val() === auth.uid)",
+        ".indexOn": ["status", "createdAt", "expiresAt"]
+      }
+    },
+    "groupCalls": {
+      "$roomId": {
+        ".read": "auth != null && (data.child('memberIds').child(auth.uid).val() === true || data.child('hostId').val() === auth.uid)",
+        ".write": "auth != null && ((!data.exists() && newData.child('memberIds').child(auth.uid).val() === true && newData.child('hostId').val() === auth.uid) || data.child('memberIds').child(auth.uid).val() === true || data.child('hostId').val() === auth.uid)",
+        ".indexOn": ["status", "createdAt", "expiresAt"],
+        "participants": {
+          "$uid": {
+            ".validate": "$uid === auth.uid || data.parent().parent().child('hostId').val() === auth.uid"
+          }
+        },
+        "signals": {
+          "$targetUid": {
+            ".validate": "$targetUid === auth.uid || data.parent().parent().parent().child('memberIds').child(auth.uid).val() === true"
+          }
+        }
+      }
+    }
+  }
+}
