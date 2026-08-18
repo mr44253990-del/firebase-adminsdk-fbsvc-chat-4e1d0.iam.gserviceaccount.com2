@@ -1,7 +1,7 @@
 [versions]
 agp = "9.1.1"
-kotlin = "2.3.10"
-googleDevtoolsKsp = "2.3.10"
+kotlin = "2.2.10"
+googleDevtoolsKsp = "2.3.5"
 
 coreKtx = "1.18.0"
 coreSplashscreen = "1.0.1"
