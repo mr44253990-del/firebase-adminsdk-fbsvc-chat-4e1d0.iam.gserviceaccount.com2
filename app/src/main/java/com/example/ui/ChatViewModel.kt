@@ -18,6 +18,7 @@ import com.example.R
 import com.example.data.*
 import com.example.call.CallEngine
 import com.example.security.PrivacyPreferences
+import com.example.security.TextBackupManager
 import com.example.service.scheduleMessage
 import com.google.firebase.auth.AuthCredential
 import com.google.firebase.auth.FirebaseAuth
@@ -137,6 +138,26 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun isVisibleMessage(expiresAt: Long, now: Long = System.currentTimeMillis()): Boolean =
         expiresAt <= 0L || expiresAt > now
+
+    private fun restoreTextBackup(uid: String) {
+        if (uid.isBlank()) return
+        viewModelScope.launch(Dispatchers.IO) {
+            val result = TextBackupManager.restoreLatest(getApplication(), uid)
+            if (result.restored) {
+                Log.i("TEXT_BACKUP", "Restored ${result.itemCount} cached text records")
+            } else if (result.reason != "no backup found") {
+                Log.w("TEXT_BACKUP", "Restore skipped: ${result.reason}")
+            }
+        }
+    }
+
+    fun exportTextBackup(onComplete: (TextBackupManager.Result) -> Unit = {}) {
+        val uid = FirebaseAuth.getInstance().currentUser?.uid ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            val result = TextBackupManager.export(getApplication(), uid)
+            withContext(Dispatchers.Main) { onComplete(result) }
+        }
+    }
 
     // Offline Cache DB & Dao
     private val appDb = AppDatabase.getDatabase(application)
@@ -880,6 +901,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 listenToAllPresences()
                 listenForInAppNotifications()
                 registerDeviceSession()
+                restoreTextBackup(uid)
             }
         } catch (e: Exception) {
             Log.e("FirebaseConfig", "Firebase initialization failed: ${e.message}")
@@ -912,6 +934,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         listenToAllPresences()
                         listenForInAppNotifications()
                         registerDeviceSession()
+                        restoreTextBackup(uid)
                         _authLoading.value = false
                         onSuccess()
                     }
@@ -967,6 +990,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         listenToAllPresences()
                         listenForInAppNotifications()
                         registerDeviceSession()
+                        restoreTextBackup(authUser.uid)
                         _authLoading.value = false
                         onSuccess()
                     }
@@ -1025,6 +1049,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                                 listenToAllPresences()
                                 listenForInAppNotifications()
                                 registerDeviceSession()
+                                restoreTextBackup(uid)
                                 loadStories()
                                 loadPosts()
                                 loadGroups()

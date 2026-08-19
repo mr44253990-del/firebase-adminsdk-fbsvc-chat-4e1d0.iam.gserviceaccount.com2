@@ -159,6 +159,9 @@ class MainActivity : FragmentActivity() {
 
     override fun onStop() {
         stopPresenceHeartbeat()
+        // Keep the uninstall-surviving encrypted text mirror current whenever the
+        // activity leaves the foreground. Media payloads are excluded by the manager.
+        viewModel.exportTextBackup()
         VideoPlayerManager.pause()
         AppLockManager.lock(this)
         super.onStop()

@@ -9,6 +9,8 @@ import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.*
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -21,6 +23,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -78,6 +81,25 @@ fun PremiumScreen(viewModel: ChatViewModel, onBack: () -> Unit, onChatAdmin: (Us
         if (config.premiumNagadEnabled) add("nagad" to "নগদ")
         if (config.premiumRocketEnabled) add("rocket" to "রকেট")
     }
+    val premiumBenefits = listOf(
+        "✅ প্রোফাইল ও চ্যাটে Premium verified badge",
+        "🤖 AI Assistant-এ অগ্রাধিকার ও উন্নত সহায়তা",
+        "💬 সরাসরি Admin support chat",
+        "🔝 People search ও friends তালিকায় অগ্রাধিকার",
+        "📊 Story rewatch ও উন্নত viewer insights-এর entitlement",
+        "❤️ Animated Super Heart ও Premium reactions-এর entitlement",
+        "🎨 অতিরিক্ত theme, font, sticker ও customization entitlement",
+        "📌 বেশি chat/post pin এবং profile-only publishing entitlement",
+        "🎵 Custom ringtone/ringback entitlement",
+        "📹 সম্মতিসহ call recording ও screenshot entitlement"
+    )
+    val premiumMotion = rememberInfiniteTransition(label = "premium_hero_motion")
+    val heroGlow by premiumMotion.animateFloat(
+        initialValue = .20f,
+        targetValue = .58f,
+        animationSpec = infiniteRepeatable(tween(2200, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        label = "premium_hero_glow"
+    )
     LaunchedEffect(methods) { if (methods.none { it.first == method }) method = methods.firstOrNull()?.first.orEmpty() }
     LaunchedEffect(plans) { if (plans.none { it.first == plan }) plan = plans.firstOrNull()?.first.orEmpty() }
 
@@ -85,12 +107,25 @@ fun PremiumScreen(viewModel: ChatViewModel, onBack: () -> Unit, onChatAdmin: (Us
         LazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             item {
                 Card(shape = RoundedCornerShape(30.dp), colors = CardDefaults.cardColors(containerColor = Color.Transparent)) {
-                    Column(Modifier.fillMaxWidth().background(Brush.linearGradient(listOf(Color(0xFF6B4EFF), Color(0xFFE64DAB), Color(0xFFFFA726)))).padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(Icons.Default.WorkspacePremium, null, tint = Color.White, modifier = Modifier.size(58.dp))
-                        Text(if (activePremium) "Premium Active ✨" else "আপনার Convo Chat আরও শক্তিশালী করুন", color = Color.White, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold, textAlign = TextAlign.Center)
-                        if (activePremium) {
-                            val expiry = if (me?.premiumPlan == "lifetime") "Lifetime" else SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(me?.premiumUntil ?: 0L))
-                            Text("${me?.premiumPlan?.uppercase()} • $expiry পর্যন্ত", color = Color.White.copy(.9f))
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(30.dp))
+                            .background(Brush.linearGradient(listOf(Color(0xFF6B4EFF), Color(0xFFE64DAB), Color(0xFFFFA726))))
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .matchParentSize()
+                                .alpha(heroGlow)
+                                .background(Brush.radialGradient(listOf(Color.White.copy(alpha = .64f), Color.Transparent)))
+                        )
+                        Column(Modifier.fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                            Icon(Icons.Default.WorkspacePremium, null, tint = Color.White, modifier = Modifier.size(58.dp))
+                            Text(if (activePremium) "Premium Active ✨" else "আপনার Convo Chat আরও শক্তিশালী করুন", color = Color.White, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold, textAlign = TextAlign.Center)
+                            if (activePremium) {
+                                val expiry = if (me?.premiumPlan == "lifetime") "Lifetime" else SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(me?.premiumUntil ?: 0L))
+                                Text("${me?.premiumPlan?.uppercase()} • $expiry পর্যন্ত", color = Color.White.copy(.9f))
+                            }
                         }
                     }
                 }
@@ -99,18 +134,15 @@ fun PremiumScreen(viewModel: ChatViewModel, onBack: () -> Unit, onChatAdmin: (Us
                 Card(shape = RoundedCornerShape(26.dp)) {
                     Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Text("🌟 Premium সুবিধাসমূহ", fontWeight = FontWeight.ExtraBold, style = MaterialTheme.typography.titleLarge)
-                        listOf(
-                            "✅ প্রোফাইল ও চ্যাটে Premium verified badge",
-                            "🤖 AI Assistant-এ অগ্রাধিকার ও উন্নত সহায়তা",
-                            "💬 সরাসরি Admin support chat",
-                            "🔝 People search ও friends তালিকায় অগ্রাধিকার",
-                            "📊 Story rewatch ও উন্নত viewer insights-এর entitlement",
-                            "❤️ Animated Super Heart ও Premium reactions-এর entitlement",
-                            "🎨 অতিরিক্ত theme, font, sticker ও customization entitlement",
-                            "📌 বেশি chat/post pin এবং profile-only publishing entitlement",
-                            "🎵 Custom ringtone/ringback entitlement",
-                            "📹 সম্মতিসহ call recording ও screenshot entitlement"
-                        ).forEach { Text(it, fontSize = 13.sp) }
+                        premiumBenefits.forEachIndexed { index, benefit ->
+                            AnimatedVisibility(
+                                visible = true,
+                                enter = fadeIn(tween(420, delayMillis = index * 55)) +
+                                    slideInHorizontally(tween(420, delayMillis = index * 55), initialOffsetX = { it / 3 })
+                            ) {
+                                Text(benefit, fontSize = 13.sp)
+                            }
+                        }
                     }
                 }
             }

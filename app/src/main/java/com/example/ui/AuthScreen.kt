@@ -29,6 +29,7 @@ import androidx.credentials.CustomCredential
 import androidx.credentials.GetCredentialRequest
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -183,11 +184,24 @@ fun AuthScreen(
 
     val backgroundBrush = Brush.verticalGradient(
         colors = listOf(
-            color1.copy(alpha = 0.25f),
-            color2.copy(alpha = 0.15f),
-            color3.copy(alpha = 0.20f),
-            MaterialTheme.colorScheme.background
+            Color(0xFF050A1D),
+            Color(0xFF071A35),
+            Color(0xFF160B2C),
+            Color(0xFF050817)
         )
+    )
+    val orbTransition = rememberInfiniteTransition(label = "auth_orbs")
+    val orbDrift by orbTransition.animateFloat(
+        initialValue = -18f,
+        targetValue = 18f,
+        animationSpec = infiniteRepeatable(tween(5200, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        label = "orb_drift"
+    )
+    val orbPulse by orbTransition.animateFloat(
+        initialValue = 0.62f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(2600, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        label = "orb_pulse"
     )
 
     Box(
@@ -196,6 +210,33 @@ fun AuthScreen(
             .background(backgroundBrush)
             .windowInsetsPadding(WindowInsets.safeDrawing)
     ) {
+        // Lightweight ambient motion matching the supplied neon reference.
+        Box(
+            modifier = Modifier
+                .size(132.dp)
+                .offset(x = (-34).dp, y = (42 + orbDrift).dp)
+                .alpha(orbPulse)
+                .clip(CircleShape)
+                .background(Brush.radialGradient(listOf(Color(0xFF00C8FF), Color(0xFF193D9B), Color.Transparent)))
+        )
+        Box(
+            modifier = Modifier
+                .size(176.dp)
+                .align(Alignment.TopEnd)
+                .offset(x = 54.dp, y = (210 - orbDrift).dp)
+                .alpha(orbPulse * 0.72f)
+                .clip(CircleShape)
+                .background(Brush.radialGradient(listOf(Color(0xFFFF4CCB), Color(0xFF52208B), Color.Transparent)))
+        )
+        Box(
+            modifier = Modifier
+                .size(78.dp)
+                .align(Alignment.CenterEnd)
+                .offset(x = 26.dp, y = 110.dp)
+                .alpha(orbPulse)
+                .clip(CircleShape)
+                .background(Brush.radialGradient(listOf(Color(0xFFFF70E8), Color.Transparent)))
+        )
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -253,13 +294,13 @@ fun AuthScreen(
                     fontWeight = FontWeight.ExtraBold,
                     letterSpacing = (-0.5).sp
                 ),
-                color = MaterialTheme.colorScheme.onBackground
+                color = Color.White
             )
 
             Text(
                 text = if (isLoginMode) "Sign in to continue your secure conversations" else "Join us to start chatting with verified profiles securely",
                 style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = Color(0xFFD7D6E9),
                 textAlign = TextAlign.Center,
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
             )
@@ -301,47 +342,54 @@ fun AuthScreen(
                 }
             }
 
-            // Custom Styled Tabs
-            TabRow(
-                selectedTabIndex = if (isLoginMode) 0 else 1,
+            // Animated glass segmented control matching the supplied neon reference.
+            BoxWithConstraints(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(24.dp))
-                    .padding(bottom = 16.dp),
-                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                indicator = { tabPositions ->
-                    TabRowDefaults.SecondaryIndicator(
-                        modifier = Modifier.tabIndicatorOffset(tabPositions[if (isLoginMode) 0 else 1]),
-                        color = MaterialTheme.colorScheme.primary,
-                        height = 3.dp
-                    )
-                }
+                    .height(54.dp)
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(Color.White.copy(alpha = 0.07f))
+                    .border(1.dp, Color.White.copy(alpha = 0.14f), RoundedCornerShape(20.dp))
+                    .padding(4.dp)
             ) {
-                Tab(
-                    selected = isLoginMode,
-                    onClick = { isLoginMode = true },
-                    text = { 
-                        Text(
-                            text = "Log In", 
-                            fontWeight = if (isLoginMode) FontWeight.ExtraBold else FontWeight.Normal,
-                            fontSize = 15.sp
-                        ) 
-                    },
-                    modifier = Modifier.testTag("login_tab")
+                val tabWidth = maxWidth / 2
+                val pillOffset by animateDpAsState(
+                    targetValue = if (isLoginMode) 0.dp else tabWidth,
+                    animationSpec = tween(360, easing = FastOutSlowInEasing),
+                    label = "auth_tab_pill"
                 )
-                Tab(
-                    selected = !isLoginMode,
-                    onClick = { isLoginMode = false },
-                    text = { 
-                        Text(
-                            text = "Sign Up", 
-                            fontWeight = if (!isLoginMode) FontWeight.ExtraBold else FontWeight.Normal,
-                            fontSize = 15.sp
-                        ) 
-                    },
-                    modifier = Modifier.testTag("signup_tab")
+                Box(
+                    modifier = Modifier
+                        .width(tabWidth)
+                        .fillMaxHeight()
+                        .offset(x = pillOffset)
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(Brush.horizontalGradient(listOf(Color(0xFF1F8CFF), Color(0xFF8C3DFF))))
                 )
+                Row(modifier = Modifier.fillMaxSize()) {
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight()
+                            .clickable { isLoginMode = true }
+                            .testTag("login_tab"),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text("Log In", color = Color.White, fontWeight = if (isLoginMode) FontWeight.ExtraBold else FontWeight.Medium, fontSize = 15.sp)
+                    }
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight()
+                            .clickable { isLoginMode = false }
+                            .testTag("signup_tab"),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text("Sign Up", color = Color.White.copy(alpha = if (isLoginMode) .64f else 1f), fontWeight = if (!isLoginMode) FontWeight.ExtraBold else FontWeight.Medium, fontSize = 15.sp)
+                    }
+                }
             }
+            Spacer(modifier = Modifier.height(16.dp))
 
             // Input Fields Card with neon animated border
             ElevatedCard(
@@ -356,7 +404,7 @@ fun AuthScreen(
                     ),
                 shape = RoundedCornerShape(24.dp),
                 colors = CardDefaults.elevatedCardColors(
-                    containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f)
+                    containerColor = Color(0xFF11162E).copy(alpha = 0.92f)
                 ),
                 elevation = CardDefaults.elevatedCardElevation(defaultElevation = 8.dp)
             ) {
@@ -487,7 +535,18 @@ fun AuthScreen(
                         shape = RoundedCornerShape(22.dp),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .testTag("email_input")
+                            .testTag("email_input"),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = color1,
+                            unfocusedBorderColor = Color.White.copy(alpha = .18f),
+                            focusedLabelColor = color1,
+                            unfocusedLabelColor = Color(0xFFB9BAD0),
+                            cursorColor = color1,
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
+                            focusedContainerColor = Color.White.copy(alpha = .035f),
+                            unfocusedContainerColor = Color.White.copy(alpha = .025f)
+                        )
                     )
 
                     // Password field (for both login and signup as requested)
@@ -510,7 +569,18 @@ fun AuthScreen(
                         shape = RoundedCornerShape(22.dp),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .testTag("password_input")
+                            .testTag("password_input"),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = color2,
+                            unfocusedBorderColor = Color.White.copy(alpha = .18f),
+                            focusedLabelColor = color2,
+                            unfocusedLabelColor = Color(0xFFB9BAD0),
+                            cursorColor = color2,
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
+                            focusedContainerColor = Color.White.copy(alpha = .035f),
+                            unfocusedContainerColor = Color.White.copy(alpha = .025f)
+                        )
                     )
 
                     // Forgot password trigger (only in login mode)
@@ -559,42 +629,42 @@ fun AuthScreen(
                         }
                     }
 
-                    // Submission Button
-                    Button(
-                        onClick = {
-                            if (isLoginMode) {
-                                viewModel.login(email, password, onAuthSuccess)
-                            } else {
-                                viewModel.signup(email, name, dob, password, signupProfilePicUrl, onAuthSuccess)
-                            }
-                        },
+                    // Gradient CTA with a soft animated neon edge.
+                    val ctaGlow by infiniteTransition.animateFloat(
+                        initialValue = .28f,
+                        targetValue = .62f,
+                        animationSpec = infiniteRepeatable(tween(1800, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+                        label = "auth_cta_glow"
+                    )
+                    Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(54.dp)
+                            .height(58.dp)
+                            .clip(RoundedCornerShape(22.dp))
+                            .background(Brush.horizontalGradient(listOf(Color(0xFF168CFF), Color(0xFF7B3DFF), Color(0xFFFF3D9A))))
+                            .border(1.dp, Color.White.copy(alpha = ctaGlow), RoundedCornerShape(22.dp))
+                            .clickable(enabled = !authLoading && !isUploadingPic) {
+                                if (isLoginMode) {
+                                    viewModel.login(email, password, onAuthSuccess)
+                                } else {
+                                    viewModel.signup(email, name, dob, password, signupProfilePicUrl, onAuthSuccess)
+                                }
+                            }
                             .testTag("submit_button"),
-                        shape = RoundedCornerShape(24.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.primary
-                        ),
-                        enabled = !authLoading && !isUploadingPic
+                        contentAlignment = Alignment.Center
                     ) {
                         if (authLoading) {
-                            CircularProgressIndicator(
-                                color = MaterialTheme.colorScheme.onPrimary,
-                                modifier = Modifier.size(24.dp)
-                            )
+                            CircularProgressIndicator(color = Color.White, modifier = Modifier.size(24.dp))
                         } else {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.Center
-                              ) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
                                 Text(
                                     text = if (isLoginMode) "Sign In" else "Sign Up & Register",
+                                    color = Color.White,
                                     fontWeight = FontWeight.Bold,
                                     fontSize = 16.sp
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
-                                Icon(Icons.Default.ArrowForward, contentDescription = null)
+                                Icon(Icons.Default.ArrowForward, contentDescription = null, tint = Color.White)
                             }
                         }
                     }
@@ -649,8 +719,29 @@ fun AuthScreen(
                 onClick = { isLoginMode = !isLoginMode },
                 modifier = Modifier.testTag("switch_mode_button")
             ) {
-                Text(text = if (isLoginMode) "Don't have an account? Sign Up" else "Already have an account? Log In",color = MaterialTheme.colorScheme.primary,fontWeight = FontWeight.Bold,fontSize = 15.sp)
+                Text(text = if (isLoginMode) "Don't have an account? Sign Up" else "Already have an account? Log In", color = Color(0xFF9D8CFF), fontWeight = FontWeight.Bold, fontSize = 15.sp)
             }
+
+            Surface(
+                color = Color.White.copy(alpha = .065f),
+                shape = RoundedCornerShape(18.dp),
+                modifier = Modifier.padding(top = 2.dp, bottom = 4.dp)
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Shield,
+                        contentDescription = "Encrypted",
+                        tint = Color(0xFF63E6FF).copy(alpha = orbPulse),
+                        modifier = Modifier.size(17.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("End-to-end encrypted", color = Color(0xFFD7D6E9), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                }
+            }
+
             if(rememberedAccounts.isNotEmpty()){
                 Spacer(Modifier.height(8.dp));Text("Previous accounts",fontWeight=FontWeight.ExtraBold,modifier=Modifier.fillMaxWidth());Text("For security, passwords/tokens are never stored in files. Provider accounts reopen their secure login flow.",fontSize=10.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.fillMaxWidth())
                 LazyRow(contentPadding=PaddingValues(vertical=10.dp),horizontalArrangement=Arrangement.spacedBy(10.dp)){

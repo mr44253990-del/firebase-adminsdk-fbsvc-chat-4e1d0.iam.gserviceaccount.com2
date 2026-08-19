@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -19,6 +20,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
@@ -66,6 +68,19 @@ fun UserProfileScreen(
     var showProfileMenu by remember { mutableStateOf(false) }
     val profileLink = remember(liveUser.uid) { "https://solitary-hill-dcdc.mr44253990.workers.dev/profile?uid=${Uri.encode(liveUser.uid)}" }
     val profileQr = remember(profileLink) { runCatching { createQrBitmap(profileLink, 640) }.getOrNull() }
+    val profileMotion = rememberInfiniteTransition(label = "profile_preview_motion")
+    val previewFloat by profileMotion.animateFloat(
+        initialValue = -3f,
+        targetValue = 3f,
+        animationSpec = infiniteRepeatable(tween(2400, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        label = "profile_preview_float"
+    )
+    val previewGlow by profileMotion.animateFloat(
+        initialValue = .18f,
+        targetValue = .48f,
+        animationSpec = infiniteRepeatable(tween(1900, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        label = "profile_preview_glow"
+    )
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -244,6 +259,61 @@ fun UserProfileScreen(
                             } ?: Text("QR preview unavailable", color = MaterialTheme.colorScheme.error)
                         } else {
                             Text("QR codes are available only for your own profile.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
+                        }
+                    }
+                }
+            }
+
+            item(key = "profile_preview") {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp)
+                        .graphicsLayer { translationY = previewFloat },
+                    shape = RoundedCornerShape(26.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color.Transparent)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(26.dp))
+                            .background(Brush.linearGradient(listOf(Color(0xFF0A1635), Color(0xFF1B0F39), Color(0xFF321249))))
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .matchParentSize()
+                                .alpha(previewGlow)
+                                .background(Brush.radialGradient(listOf(Color(0xFF57D9FF), Color.Transparent)))
+                        )
+                        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("PROFILE PREVIEW", color = Color(0xFF9CA8C7), fontSize = 10.sp, fontWeight = FontWeight.ExtraBold, modifier = Modifier.weight(1f))
+                                Icon(Icons.Outlined.OpenInNew, "Open profile link", tint = Color(0xFF8EEBFF), modifier = Modifier.size(17.dp))
+                            }
+                            Surface(
+                                color = Color.Black.copy(alpha = .22f),
+                                shape = RoundedCornerShape(18.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        AsyncImage(
+                                            model = liveUser.profileImageUrl.ifBlank { null },
+                                            contentDescription = liveUser.name,
+                                            error = painterResource(R.drawable.img_app_logo),
+                                            contentScale = ContentScale.Crop,
+                                            modifier = Modifier.size(48.dp).clip(CircleShape)
+                                        )
+                                        Spacer(Modifier.width(10.dp))
+                                        Column(Modifier.weight(1f)) {
+                                            Text(liveUser.name, color = Color.White, fontWeight = FontWeight.ExtraBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                            Text("@${liveUser.username}", color = Color(0xFFB8C2E3), fontSize = 11.sp)
+                                        }
+                                        Box(Modifier.size(9.dp).clip(CircleShape).background(if (liveUser.isOnline) Color(0xFF45D483) else Color(0xFF68728E)))
+                                    }
+                                    Text(profileLink, color = Color(0xFF83DFFF), fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                }
+                            }
                         }
                     }
                 }
