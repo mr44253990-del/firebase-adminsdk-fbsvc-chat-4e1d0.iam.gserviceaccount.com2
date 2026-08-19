@@ -289,7 +289,11 @@ class MainActivity : FragmentActivity() {
                             members = activeGroupMembers
                         ))
                         requestedGroupCallVideo = activeGroupVideo
-                        navController.navigate("group_call") { launchSingleTop = true }
+                        // Incoming calls stay visible as a Join Call banner in the group chat.
+                        // They must never auto-start the WebRTC engine or force navigation.
+                        if (navController.currentBackStackEntry?.destination?.route != "group_chat") {
+                            navController.navigate("group_chat") { launchSingleTop = true }
+                        }
                     }
                 }
 
@@ -484,10 +488,27 @@ class MainActivity : FragmentActivity() {
                                 GroupChatScreen(
                                     viewModel = viewModel,
                                     group = group,
+                                    pendingCallRoomId = activeGroupRoomId,
+                                    pendingCallVideo = activeGroupVideo,
                                     onBack = { navController.popBackStack() },
                                     onGroupCall = { video ->
                                         requestedGroupCallVideo = video
-                                        navController.navigate("group_call")
+                                        pendingGroupRoomId.value = null
+                                        pendingGroupVideo.value = video
+                                        navController.navigate("group_call") { launchSingleTop = true }
+                                    },
+                                    onJoinPendingCall = { roomId, video ->
+                                        requestedGroupCallVideo = video
+                                        pendingGroupRoomId.value = roomId
+                                        pendingGroupVideo.value = video
+                                        navController.navigate("group_call") { launchSingleTop = true }
+                                    },
+                                    onDismissPendingCall = {
+                                        pendingGroupRoomId.value = null
+                                        pendingGroupId.value = null
+                                        pendingGroupName.value = null
+                                        pendingGroupMembers.value = emptyList()
+                                        pendingGroupVideo.value = false
                                     }
                                 )
                             }
@@ -499,6 +520,7 @@ class MainActivity : FragmentActivity() {
                                     video = requestedGroupCallVideo,
                                     onClose = { navController.popBackStack() },
                                     joinRoomId = activeGroupRoomId,
+                                    autoStart = false,
                                     onRoomReady = { roomId ->
                                         viewModel.inviteGroupMembersToCall(group, requestedGroupCallVideo, roomId)
                                         if (activeGroupRoomId == roomId) pendingGroupRoomId.value = null

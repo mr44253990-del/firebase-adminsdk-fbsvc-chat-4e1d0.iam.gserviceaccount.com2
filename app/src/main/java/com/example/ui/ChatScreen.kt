@@ -33,6 +33,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.text.ClickableText
@@ -270,14 +271,19 @@ fun ChatScreen(
         viewModel.startListeningToChat(recipient.uid)
     }
 
-    // Debounced typing signal with an inactivity lease; this keeps the recipient indicator reliable.
+    // Debounced typing signal with cancellation-safe cleanup. The old coroutine must always
+    // clear its lease when the text changes or the screen leaves, otherwise stale RTDB events
+    // can race a newly selected chat and destabilize the recipient UI.
     LaunchedEffect(recipient.uid, messageText) {
         if (messageText.isBlank()) {
             viewModel.setTypingState(false)
         } else {
             viewModel.setTypingState(true)
-            delay(1800L)
-            viewModel.setTypingState(false)
+            try {
+                delay(1800L)
+            } finally {
+                viewModel.setTypingState(false)
+            }
         }
     }
 
@@ -383,104 +389,116 @@ fun ChatScreen(
 
     // Voice recording helpers
     val startRecording = {
-        if (!audioPermissionGranted) {
-            permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-        } else {
-            try {
-                val tempFile = File.createTempFile("voice_temp", ".m4a", context.cacheDir)
-                voiceFile = tempFile
-
-                val recorder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    MediaRecorder(context)
-                } else {
-                    @Suppress("DEPRECATION")
-                    MediaRecorder()
+        if (!isRecording && !isDictating) {
+            if (!audioPermissionGranted) {
+                permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+            } else {
+                try {
+                    val tempFile = File.createTempFile("voice_temp", ".m4a", context.cacheDir)
+                    voiceFile = tempFile
+                    val recorder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                        MediaRecorder(context)
+                    } else {
+                        @Suppress("DEPRECATION")
+                        MediaRecorder()
+                    }
+                    recorder.apply {
+                        setAudioSource(MediaRecorder.AudioSource.MIC)
+                        setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+                        setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+                        setOutputFile(tempFile.absolutePath)
+                        prepare()
+                        start()
+                    }
+                    mediaRecorder = recorder
+                    isRecording = true
+                    viewModel.setVoiceRecordingState(true)
+                    recordStartTime = System.currentTimeMillis()
+                } catch (e: Exception) {
+                    runCatching { mediaRecorder?.release() }
+                    mediaRecorder = null
+                    isRecording = false
+                    viewModel.setVoiceRecordingState(false)
+                    voiceFile?.delete()
+                    voiceFile = null
+                    Log.e("VOICE_REC", "Failed to start media recorder", e)
+                    Toast.makeText(context, "Could not start voice recording", Toast.LENGTH_SHORT).show()
                 }
-
-                recorder.apply {
-                    setAudioSource(MediaRecorder.AudioSource.MIC)
-                    setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-                    setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-                    setOutputFile(tempFile.absolutePath)
-                    prepare()
-                    start()
-                }
-
-                mediaRecorder = recorder
-                isRecording = true
-                viewModel.setVoiceRecordingState(true)
-                recordStartTime = System.currentTimeMillis()
-                Toast.makeText(context, "🎙️ Recording started...", Toast.LENGTH_SHORT).show()
-            } catch (e: Exception) {
-                Log.e("VOICE_REC", "Failed to start media recorder: ${e.message}")
-                Toast.makeText(context, "Failed to start recording: ${e.message}", Toast.LENGTH_SHORT).show()
             }
         }
     }
 
     val stopAndSendVoice = {
-        if (isRecording && mediaRecorder != null && voiceFile != null) {
-            try {
-                mediaRecorder?.apply {
-                    stop()
-                    release()
-                }
-                mediaRecorder = null
-                isRecording = false
-                viewModel.setVoiceRecordingState(false)
-
-                val durationSec = ((System.currentTimeMillis() - recordStartTime) / 1000).toInt().coerceAtLeast(1)
-                val bytes = voiceFile?.readBytes()
-
-                if (bytes != null) {
-                    Toast.makeText(context, "Sending voice note...", Toast.LENGTH_SHORT).show()
-                    val fileName = "voice_${System.currentTimeMillis()}.m4a"
-                    viewModel.uploadFileToSupabase(
-                        bucket = "voice_notes",
-                        fileName = fileName,
-                        fileBytes = bytes,
-                        contentType = "audio/m4a",
-                        onSuccess = { publicUrl ->
-                            viewModel.sendMessage(
-                                recipientUser = recipient,
-                                text = "",
-                                voiceUrl = publicUrl,
-                                voiceDurationSec = durationSec,
-                                replyToId = replyingToMessage?.messageId,
-                                replyToText = replyingToMessage?.text,
-                                replyToSenderName = replyingToMessage?.senderName
-                            )
-                            replyingToMessage = null
-                            Toast.makeText(context, "Voice message sent!", Toast.LENGTH_SHORT).show()
-                        },
-                        onFailure = { err ->
-                            Toast.makeText(context, "Voice upload failed: $err", Toast.LENGTH_LONG).show()
-                        }
-                    )
-                }
-            } catch (e: Exception) {
-                Log.e("VOICE_REC", "Failed to stop recording safely: ${e.message}")
-                isRecording = false
-                viewModel.setVoiceRecordingState(false)
-                mediaRecorder = null
+        if (isRecording) {
+        val recorder = mediaRecorder
+        val file = voiceFile
+        mediaRecorder = null
+        isRecording = false
+        viewModel.setVoiceRecordingState(false)
+        try {
+            recorder?.stop()
+            recorder?.release()
+            val durationSec = ((System.currentTimeMillis() - recordStartTime) / 1000).toInt().coerceAtLeast(1)
+            val bytes = file?.takeIf { it.exists() && it.length() > 0L }?.readBytes()
+            voiceFile = null
+            file?.delete()
+            if (bytes != null) {
+                val fileName = "voice_${System.currentTimeMillis()}.m4a"
+                viewModel.uploadFileToSupabase(
+                    bucket = "voice_notes",
+                    fileName = fileName,
+                    fileBytes = bytes,
+                    contentType = "audio/m4a",
+                    onSuccess = { publicUrl ->
+                        viewModel.sendMessage(
+                            recipientUser = recipient,
+                            text = "",
+                            voiceUrl = publicUrl,
+                            voiceDurationSec = durationSec,
+                            replyToId = replyingToMessage?.messageId,
+                            replyToText = replyingToMessage?.text,
+                            replyToSenderName = replyingToMessage?.senderName
+                        )
+                        replyingToMessage = null
+                    },
+                    onFailure = { err ->
+                        Toast.makeText(context, "Voice upload failed: $err", Toast.LENGTH_LONG).show()
+                    }
+                )
             }
+        } catch (e: Exception) {
+            runCatching { recorder?.release() }
+            file?.delete()
+            voiceFile = null
+            Log.e("VOICE_REC", "Failed to stop recording safely", e)
+            Toast.makeText(context, "Voice recording was cancelled", Toast.LENGTH_SHORT).show()
+        }
         }
     }
 
     val cancelRecording = {
-        if (isRecording && mediaRecorder != null) {
-            try {
-                mediaRecorder?.apply {
-                    stop()
-                    release()
-                }
-            } catch (e: Exception) {}
-            mediaRecorder = null
-            isRecording = false
-            viewModel.setVoiceRecordingState(false)
-            Toast.makeText(context, "Recording cancelled", Toast.LENGTH_SHORT).show()
-        }
+        val recorder = mediaRecorder
+        val file = voiceFile
+        mediaRecorder = null
+        voiceFile = null
+        isRecording = false
+        viewModel.setVoiceRecordingState(false)
+        runCatching { recorder?.stop() }
+        runCatching { recorder?.release() }
+        file?.delete()
     }
+
+    // Keep gesture callbacks fresh without restarting pointer input when recording state changes.
+    // Restarting the detector during onLongPress can cancel the active gesture and leave the
+    // recorder in an inconsistent state.
+    val latestConversationAccepted = rememberUpdatedState(conversationAccepted)
+    val latestRequestPending = rememberUpdatedState(requestPending)
+    val latestFileUploading = rememberUpdatedState(fileUploading)
+    val latestIsDictating = rememberUpdatedState(isDictating)
+    val latestIsRecording = rememberUpdatedState(isRecording)
+    val latestStartRecording = rememberUpdatedState(startRecording)
+    val latestStopAndSendVoice = rememberUpdatedState(stopAndSendVoice)
+    val latestCancelRecording = rememberUpdatedState(cancelRecording)
 
     val isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
     val chatGradientBg = when (chatTheme) {
@@ -997,7 +1015,7 @@ fun ChatScreen(
                         Text("🎙️ Recording voice note...", color = Color.White, fontWeight = FontWeight.Bold)
                     }
                     Row {
-                        TextButton(onClick = cancelRecording) {
+                        TextButton(onClick = { cancelRecording() }) {
                             Text("Cancel", color = Color.White, fontWeight = FontWeight.ExtraBold)
                         }
                         Spacer(modifier = Modifier.width(8.dp))
@@ -1074,26 +1092,42 @@ fun ChatScreen(
                         }
                     }
 
-                    // Voice Note Recording Trigger Button
-                    IconButton(onClick = {
-                        if (!conversationAccepted) Toast.makeText(context, "Wait until the message request is confirmed", Toast.LENGTH_LONG).show()
-                        else if (isRecording) stopAndSendVoice() else startRecording()
-                    }, enabled = !requestPending && !fileUploading && !isDictating) {
-                        Icon(
-                            imageVector = if (isRecording) Icons.Default.Stop else Icons.Default.Mic,
-                            contentDescription = "Record Voice",
-                            tint = if (isRecording) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
-                        )
-                    }
-
-                    IconButton(
-                        onClick = { if (isDictating) stopDictation() else startDictation() },
-                        enabled = !requestPending && !fileUploading && !isRecording
+                    // Single voice-note control: hold to record, release to send.
+                    // Dictation's second microphone was intentionally removed to avoid two
+                    // competing audio entry points in the composer.
+                    Box(
+                        modifier = Modifier
+                            .size(46.dp)
+                            .clip(CircleShape)
+                            .background(
+                                if (isRecording) MaterialTheme.colorScheme.error.copy(alpha = 0.18f)
+                                else MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+                            )
+                            .pointerInput(Unit) {
+                                detectTapGestures(
+                                    onPress = {
+                                        if (!latestConversationAccepted.value || latestRequestPending.value || latestFileUploading.value || latestIsDictating.value) {
+                                            runCatching { tryAwaitRelease() }
+                                            return@detectTapGestures
+                                        }
+                                        val releasedNormally = runCatching { tryAwaitRelease() }.getOrDefault(false)
+                                        if (latestIsRecording.value) {
+                                            if (releasedNormally) latestStopAndSendVoice.value() else latestCancelRecording.value()
+                                        }
+                                    },
+                                    onLongPress = {
+                                        if (latestConversationAccepted.value && !latestRequestPending.value && !latestFileUploading.value && !latestIsDictating.value && !latestIsRecording.value) {
+                                            latestStartRecording.value()
+                                        }
+                                    }
+                                )
+                            },
+                        contentAlignment = Alignment.Center
                     ) {
                         Icon(
-                            imageVector = Icons.Default.MicNone,
-                            contentDescription = if (isDictating) "Stop dictation" else "Dictate message",
-                            tint = if (isDictating) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+                            imageVector = if (isRecording) Icons.Default.FiberManualRecord else Icons.Default.Mic,
+                            contentDescription = if (isRecording) "Release to send voice message" else "Hold to record voice message",
+                            tint = if (isRecording) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
                         )
                     }
 

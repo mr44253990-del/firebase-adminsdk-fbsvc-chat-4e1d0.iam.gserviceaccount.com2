@@ -19,7 +19,9 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
+import androidx.compose.ui.input.pointer.pointerInput
 import com.example.ui.theme.glassmorphic
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -62,7 +64,11 @@ fun GroupChatScreen(
     viewModel: ChatViewModel,
     group: Group,
     onBack: () -> Unit,
-    onGroupCall: (video: Boolean) -> Unit = {}
+    onGroupCall: (video: Boolean) -> Unit = {},
+    pendingCallRoomId: String? = null,
+    pendingCallVideo: Boolean = false,
+    onJoinPendingCall: (String, Boolean) -> Unit = { _, _ -> },
+    onDismissPendingCall: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val currentUserId = FirebaseAuth.getInstance().currentUser?.uid ?: ""
@@ -181,56 +187,60 @@ fun GroupChatScreen(
 
     // Voice recording helpers
     val startRecording = {
-        if (!audioPermissionGranted) {
-            permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-        } else {
-            try {
-                val tempFile = File.createTempFile("group_voice_temp", ".m4a", context.cacheDir)
-                voiceFile = tempFile
-
-                val recorder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    MediaRecorder(context)
-                } else {
-                    @Suppress("DEPRECATION")
-                    MediaRecorder()
+        if (!isRecording) {
+            if (!audioPermissionGranted) {
+                permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+            } else {
+                try {
+                    val tempFile = File.createTempFile("group_voice_temp", ".m4a", context.cacheDir)
+                    voiceFile = tempFile
+                    val recorder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                        MediaRecorder(context)
+                    } else {
+                        @Suppress("DEPRECATION")
+                        MediaRecorder()
+                    }
+                    recorder.apply {
+                        setAudioSource(MediaRecorder.AudioSource.MIC)
+                        setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+                        setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+                        setOutputFile(tempFile.absolutePath)
+                        prepare()
+                        start()
+                    }
+                    mediaRecorder = recorder
+                    isRecording = true
+                    viewModel.setGroupVoiceRecordingState(group.id, true)
+                    recordStartTime = System.currentTimeMillis()
+                } catch (e: Exception) {
+                    runCatching { mediaRecorder?.release() }
+                    mediaRecorder = null
+                    isRecording = false
+                    viewModel.setGroupVoiceRecordingState(group.id, false)
+                    voiceFile?.delete()
+                    voiceFile = null
+                    Log.e("GROUP_VOICE_REC", "Failed to start recording", e)
+                    Toast.makeText(context, "Could not start voice recording", Toast.LENGTH_SHORT).show()
                 }
-
-                recorder.apply {
-                    setAudioSource(MediaRecorder.AudioSource.MIC)
-                    setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-                    setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-                    setOutputFile(tempFile.absolutePath)
-                    prepare()
-                    start()
-                }
-
-                mediaRecorder = recorder
-                isRecording = true
-                viewModel.setGroupVoiceRecordingState(group.id, true)
-                recordStartTime = System.currentTimeMillis()
-                Toast.makeText(context, "🎙️ Recording group voice...", Toast.LENGTH_SHORT).show()
-            } catch (e: Exception) {
-                Toast.makeText(context, "Failed to start recording: ${e.message}", Toast.LENGTH_SHORT).show()
             }
         }
     }
 
     val stopAndSendVoice = {
-        if (isRecording && mediaRecorder != null && voiceFile != null) {
+        if (isRecording) {
+            val recorder = mediaRecorder
+            val file = voiceFile
+            mediaRecorder = null
+            voiceFile = null
+            isRecording = false
+            viewModel.setGroupVoiceRecordingState(group.id, false)
             try {
-                mediaRecorder?.apply {
-                    stop()
-                    release()
-                }
-                mediaRecorder = null
-                isRecording = false
-                viewModel.setGroupVoiceRecordingState(group.id, false)
-
+                recorder?.stop()
+                recorder?.release()
                 val durationSec = ((System.currentTimeMillis() - recordStartTime) / 1000).toInt().coerceAtLeast(1)
-                val bytes = voiceFile?.readBytes()
-
+                val bytes = file?.takeIf { it.exists() && it.length() > 0L }?.readBytes()
+                file?.delete()
                 if (bytes != null) {
-                    Toast.makeText(context, "Sending voice note...", Toast.LENGTH_SHORT).show()
                     val fileName = "group_voice_${System.currentTimeMillis()}.m4a"
                     viewModel.uploadFileToSupabase(
                         bucket = "voice_notes",
@@ -238,13 +248,7 @@ fun GroupChatScreen(
                         fileBytes = bytes,
                         contentType = "audio/m4a",
                         onSuccess = { publicUrl ->
-                            viewModel.sendGroupMessage(
-                                groupId = group.id,
-                                text = "",
-                                voiceUrl = publicUrl,
-                                voiceDurationSec = durationSec
-                            )
-                            Toast.makeText(context, "Voice note sent to group!", Toast.LENGTH_SHORT).show()
+                            viewModel.sendGroupMessage(group.id, "", voiceUrl = publicUrl, voiceDurationSec = durationSec)
                         },
                         onFailure = { err ->
                             Toast.makeText(context, "Voice upload failed: $err", Toast.LENGTH_LONG).show()
@@ -252,27 +256,33 @@ fun GroupChatScreen(
                     )
                 }
             } catch (e: Exception) {
-                isRecording = false
-                viewModel.setGroupVoiceRecordingState(group.id, false)
-                mediaRecorder = null
+                runCatching { recorder?.release() }
+                file?.delete()
+                Log.e("GROUP_VOICE_REC", "Failed to stop recording", e)
             }
         }
     }
 
     val cancelRecording = {
-        if (isRecording && mediaRecorder != null) {
-            try {
-                mediaRecorder?.apply {
-                    stop()
-                    release()
-                }
-            } catch (e: Exception) {}
-            mediaRecorder = null
-            isRecording = false
-            viewModel.setGroupVoiceRecordingState(group.id, false)
-            Toast.makeText(context, "Recording cancelled", Toast.LENGTH_SHORT).show()
-        }
+        val recorder = mediaRecorder
+        val file = voiceFile
+        mediaRecorder = null
+        voiceFile = null
+        isRecording = false
+        viewModel.setGroupVoiceRecordingState(group.id, false)
+        runCatching { recorder?.stop() }
+        runCatching { recorder?.release() }
+        file?.delete()
     }
+
+    // Keep gesture callbacks fresh without restarting pointer input when recording state changes.
+    // Restarting the detector during onLongPress can cancel the active gesture and leave the
+    // group recorder in an inconsistent state.
+    val latestIsRecording = rememberUpdatedState(isRecording)
+    val latestAudioPermissionGranted = rememberUpdatedState(audioPermissionGranted)
+    val latestStartRecording = rememberUpdatedState(startRecording)
+    val latestStopAndSendVoice = rememberUpdatedState(stopAndSendVoice)
+    val latestCancelRecording = rememberUpdatedState(cancelRecording)
 
     val isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
     val bgStart = MaterialTheme.colorScheme.background
@@ -362,7 +372,39 @@ fun GroupChatScreen(
                 .fillMaxSize()
                 .background(chatGradientBg)
                 .padding(innerPadding)
+                .imePadding()
         ) {
+            AnimatedVisibility(
+                visible = !pendingCallRoomId.isNullOrBlank(),
+                enter = fadeIn() + expandVertically(),
+                exit = fadeOut() + shrinkVertically()
+            ) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                    shape = RoundedCornerShape(20.dp),
+                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.94f),
+                    tonalElevation = 4.dp
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Default.Call, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                        Spacer(Modifier.width(10.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("Group call available", fontWeight = FontWeight.Bold)
+                            Text("Join ${group.name} when you are ready", style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                        TextButton(onClick = { pendingCallRoomId?.let { onJoinPendingCall(it, pendingCallVideo) } }) {
+                            Text("Join Call", fontWeight = FontWeight.Bold)
+                        }
+                        IconButton(onClick = onDismissPendingCall) {
+                            Icon(Icons.Default.Close, contentDescription = "Dismiss call")
+                        }
+                    }
+                }
+            }
+
             AnimatedVisibility(
                 visible = otherVoiceRecorders.isNotEmpty(),
                 enter = fadeIn() + expandVertically(),
@@ -536,8 +578,8 @@ fun GroupChatScreen(
                 tonalElevation = 8.dp,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .navigationBarsPadding()
-                    .imePadding()
+                    // IME inset is applied once to the parent chat column. Applying it here as
+                    // well causes the list and composer to jump upward by a second keyboard height.
                     .glassmorphic(
                         isDark = isDark,
                         shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
@@ -586,17 +628,36 @@ fun GroupChatScreen(
                     Spacer(modifier = Modifier.width(8.dp))
 
                     if (messageText.isBlank()) {
-                        // Mic Button for Recording Voice
-                        IconButton(
-                            onClick = { if (isRecording) stopAndSendVoice() else startRecording() },
+                        // Hold to record, release to send. A canceled gesture discards the clip.
+                        Box(
                             modifier = Modifier
                                 .size(44.dp)
-                                .background(if (isRecording) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary, CircleShape)
+                                .clip(CircleShape)
+                                .background(
+                                    if (isRecording) MaterialTheme.colorScheme.error.copy(alpha = 0.18f)
+                                    else MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+                                )
+                                .pointerInput(Unit) {
+                                    detectTapGestures(
+                                        onPress = {
+                                            val releasedNormally = runCatching { tryAwaitRelease() }.getOrDefault(false)
+                                            if (latestIsRecording.value) {
+                                                if (releasedNormally) latestStopAndSendVoice.value() else latestCancelRecording.value()
+                                            }
+                                        },
+                                        onLongPress = {
+                                            if (latestAudioPermissionGranted.value && !latestIsRecording.value) {
+                                                latestStartRecording.value()
+                                            }
+                                        }
+                                    )
+                                },
+                            contentAlignment = Alignment.Center
                         ) {
                             Icon(
-                                imageVector = if (isRecording) Icons.Default.Stop else Icons.Default.Mic,
-                                contentDescription = "Record Audio",
-                                tint = if (isRecording) Color.White else MaterialTheme.colorScheme.onPrimary
+                                imageVector = if (isRecording) Icons.Default.FiberManualRecord else Icons.Default.Mic,
+                                contentDescription = if (isRecording) "Release to send voice message" else "Hold to record voice message",
+                                tint = if (isRecording) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
                             )
                         }
                     } else {

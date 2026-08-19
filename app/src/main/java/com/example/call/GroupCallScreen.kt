@@ -23,6 +23,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -37,12 +38,14 @@ fun GroupCallScreen(
     video: Boolean,
     onClose: () -> Unit,
     onRoomReady: (String) -> Unit = {},
-    joinRoomId: String? = null
+    joinRoomId: String? = null,
+    autoStart: Boolean = true
 ) {
     val context = LocalContext.current
     val state by GroupCallEngine.state.collectAsState()
     var permissionResult by remember { mutableStateOf<Map<String, Boolean>?>(null) }
     var started by remember { mutableStateOf(false) }
+    var joinRequested by remember { mutableStateOf(autoStart) }
     var showDiagnostics by remember { mutableStateOf(false) }
     val localUid = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid.orEmpty()
     val isHost = state.hostId.isNotBlank() && state.hostId == localUid
@@ -51,7 +54,8 @@ fun GroupCallScreen(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { result -> permissionResult = result }
 
-    LaunchedEffect(group.id) {
+    LaunchedEffect(group.id, joinRequested) {
+        if (!joinRequested) return@LaunchedEffect
         val needed = buildList {
             add(Manifest.permission.RECORD_AUDIO)
             if (video) add(Manifest.permission.CAMERA)
@@ -61,10 +65,11 @@ fun GroupCallScreen(
         else permissionsLauncher.launch(missing.toTypedArray())
     }
 
-    LaunchedEffect(permissionResult) {
+    LaunchedEffect(permissionResult, joinRequested) {
         val result = permissionResult ?: return@LaunchedEffect
         val audioGranted = result[Manifest.permission.RECORD_AUDIO] == true || ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
         val cameraGranted = result[Manifest.permission.CAMERA] == true || ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+        if (!joinRequested || (!started && !audioGranted)) return@LaunchedEffect
         if (!started && audioGranted) {
             started = true
             val startCall: ((Boolean) -> Unit) -> Unit = { ready ->
@@ -91,7 +96,9 @@ fun GroupCallScreen(
             }
             startCall { ok ->
                 if (!ok) started = false
-                else GroupCallEngine.state.value.roomId.takeIf { it.isNotBlank() }?.let(onRoomReady)
+                else if (joinRoomId.isNullOrBlank()) {
+                    GroupCallEngine.state.value.roomId.takeIf { it.isNotBlank() }?.let(onRoomReady)
+                }
             }
         }
     }
@@ -168,7 +175,7 @@ fun GroupCallScreen(
             )
         },
         bottomBar = {
-            Row(
+            if (joinRequested && started) Row(
                 modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).background(MaterialTheme.colorScheme.surface).padding(12.dp),
                 horizontalArrangement = Arrangement.SpaceEvenly,
                 verticalAlignment = Alignment.CenterVertically
@@ -212,7 +219,29 @@ fun GroupCallScreen(
         }
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).padding(8.dp)) {
-            if (state.status == "connecting" || state.status == "idle") {
+            if (!joinRequested) {
+                Card(
+                    modifier = Modifier.fillMaxWidth().padding(12.dp),
+                    shape = RoundedCornerShape(24.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.82f))
+                ) {
+                    Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text("Group call ready", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                        Text("Join ${group.name} when you are ready. No one will be notified again when you re-open this room.")
+                        Button(
+                            onClick = {
+                                permissionResult = null
+                                joinRequested = true
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Default.Call, contentDescription = null)
+                            Spacer(Modifier.width(8.dp))
+                            Text("Join Call")
+                        }
+                    }
+                }
+            } else if (state.status == "connecting" || state.status == "idle") {
                 LinearProgressIndicator(Modifier.fillMaxWidth())
                 Text("Connecting to ${group.name}…", modifier = Modifier.padding(16.dp))
             }

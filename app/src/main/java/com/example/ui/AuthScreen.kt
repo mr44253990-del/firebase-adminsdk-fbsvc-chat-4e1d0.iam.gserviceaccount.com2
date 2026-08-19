@@ -40,6 +40,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
@@ -62,22 +63,29 @@ fun AuthScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val credentialManager = remember { CredentialManager.create(context) }
-    suspend fun requestGoogleCredential(): Credential {
+    suspend fun requestGoogleCredential(preferredEmail: String? = null): Credential {
         val serverClientId = context.getString(R.string.default_web_client_id)
         require(serverClientId.isNotBlank()) { "Missing default_web_client_id; download a fresh google-services.json" }
-        val explicit = GetCredentialRequest.Builder()
-            .addCredentialOption(GetSignInWithGoogleOption.Builder(serverClientId).build()).build()
-        return try {
-            credentialManager.getCredential(context, explicit).credential
-        } catch (explicitError: Exception) {
-            // Some OEM Credential Manager providers do not support the explicit button option.
-            // Fall back to the broad account chooser without filtering authorized accounts.
-            val fallback = GetCredentialRequest.Builder().addCredentialOption(
-                GetGoogleIdOption.Builder().setServerClientId(serverClientId)
-                    .setFilterByAuthorizedAccounts(false).setAutoSelectEnabled(false).build()
-            ).build()
-            credentialManager.getCredential(context, fallback).credential
+        if (preferredEmail.isNullOrBlank()) {
+            val explicit = GetCredentialRequest.Builder()
+                .addCredentialOption(GetSignInWithGoogleOption.Builder(serverClientId).build()).build()
+            return try {
+                credentialManager.getCredential(context, explicit).credential
+            } catch (explicitError: Exception) {
+                val fallback = GetCredentialRequest.Builder().addCredentialOption(
+                    GetGoogleIdOption.Builder().setServerClientId(serverClientId)
+                        .setFilterByAuthorizedAccounts(false).setAutoSelectEnabled(false).build()
+                ).build()
+                credentialManager.getCredential(context, fallback).credential
+            }
         }
+        val hinted = GetCredentialRequest.Builder().addCredentialOption(
+            GetGoogleIdOption.Builder().setServerClientId(serverClientId)
+                .setFilterByAuthorizedAccounts(true)
+                .setAutoSelectEnabled(true)
+                .build()
+        ).build()
+        return credentialManager.getCredential(context, hinted).credential
     }
     val authLoading by viewModel.authLoading.collectAsState()
     val authError by viewModel.authError.collectAsState()
@@ -742,16 +750,72 @@ fun AuthScreen(
                 }
             }
 
-            if(rememberedAccounts.isNotEmpty()){
-                Spacer(Modifier.height(8.dp));Text("Previous accounts",fontWeight=FontWeight.ExtraBold,modifier=Modifier.fillMaxWidth());Text("For security, passwords/tokens are never stored in files. Provider accounts reopen their secure login flow.",fontSize=10.sp,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.fillMaxWidth())
-                LazyRow(contentPadding=PaddingValues(vertical=10.dp),horizontalArrangement=Arrangement.spacedBy(10.dp)){
-                    items(rememberedAccounts,key={it.uid}){account->
-                        ElevatedCard(modifier=Modifier.width(150.dp).clickable{
-                            isLoginMode=true;email=account.email
-                            if(account.provider=="google")scope.launch{runCatching{requestGoogleCredential()}.onSuccess{credential->if(credential is CustomCredential&&credential.type==GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL){val g=GoogleIdTokenCredential.createFrom(credential.data);viewModel.signInWithGoogleCredential(GoogleAuthProvider.getCredential(g.idToken,null),onAuthSuccess)}}.onFailure{Toast.makeText(context,it.localizedMessage?:"Google login failed",Toast.LENGTH_LONG).show()}}
-                            else if(account.provider=="password") Toast.makeText(context,"Enter your password to sign in",Toast.LENGTH_SHORT).show()
-                        },shape=RoundedCornerShape(22.dp)){
-                            Column(Modifier.padding(12.dp),horizontalAlignment=Alignment.CenterHorizontally){AsyncImage(account.photoUrl.ifBlank{null},account.name,error=painterResource(R.drawable.img_app_logo),contentScale=ContentScale.Crop,modifier=Modifier.size(58.dp).clip(CircleShape));Spacer(Modifier.height(6.dp));Text(account.name,fontWeight=FontWeight.Bold,maxLines=1);Text(account.provider,fontSize=9.sp,color=MaterialTheme.colorScheme.primary);if(account.unread>0)Badge{Text("+${account.unread}")};TextButton(onClick={viewModel.forgetRememberedAccount(account.uid)}){Text("Remove",fontSize=9.sp)}}
+            if (rememberedAccounts.isNotEmpty()) {
+                Spacer(Modifier.height(8.dp))
+                Text("Previous accounts", fontWeight = FontWeight.ExtraBold, modifier = Modifier.fillMaxWidth())
+                Text(
+                    "Tap a saved account to continue. Secure credentials stay with Android and are never written to app files.",
+                    fontSize = 10.sp,
+                    color = Color(0xFFB8B7CB),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 10.dp),
+                    horizontalAlignment = Alignment.Start,
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    rememberedAccounts.forEach { account ->
+                        Surface(
+                            modifier = Modifier.fillMaxWidth().clickable {
+                                isLoginMode = true
+                                email = account.email
+                                if (account.provider == "google") {
+                                    scope.launch {
+                                        runCatching { requestGoogleCredential(account.email) }
+                                            .onSuccess { credential ->
+                                                if (credential is CustomCredential && credential.type == GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
+                                                    val google = GoogleIdTokenCredential.createFrom(credential.data)
+                                                    viewModel.signInWithGoogleCredential(
+                                                        GoogleAuthProvider.getCredential(google.idToken, null),
+                                                        onAuthSuccess
+                                                    )
+                                                }
+                                            }
+                                            .onFailure {
+                                                Toast.makeText(context, it.localizedMessage ?: "Google login failed", Toast.LENGTH_LONG).show()
+                                            }
+                                    }
+                                } else {
+                                    Toast.makeText(context, "Signing in securely…", Toast.LENGTH_SHORT).show()
+                                    viewModel.loginRememberedAccount(account, onAuthSuccess)
+                                }
+                            },
+                            shape = RoundedCornerShape(18.dp),
+                            color = Color.White.copy(alpha = 0.065f)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 9.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                AsyncImage(
+                                    model = account.photoUrl.ifBlank { null },
+                                    contentDescription = account.name,
+                                    error = painterResource(R.drawable.img_app_logo),
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.size(42.dp).clip(CircleShape)
+                                )
+                                Spacer(Modifier.width(10.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text(account.name.ifBlank { account.email }, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text(account.email, fontSize = 11.sp, color = Color(0xFFB8B7CB), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                }
+                                Text(account.provider.replaceFirstChar { it.uppercase() }, fontSize = 10.sp, color = Color(0xFF63E6FF))
+                                IconButton(onClick = { viewModel.forgetRememberedAccount(account.uid) }) {
+                                    Icon(Icons.Default.Close, contentDescription = "Remove account", tint = Color(0xFFB8B7CB), modifier = Modifier.size(18.dp))
+                                }
+                            }
                         }
                     }
                 }

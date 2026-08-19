@@ -19,6 +19,7 @@ import com.example.data.*
 import com.example.call.CallEngine
 import com.example.security.PrivacyPreferences
 import com.example.security.TextBackupManager
+import com.example.security.AccountCredentialVault
 import com.example.service.scheduleMessage
 import com.google.firebase.auth.AuthCredential
 import com.google.firebase.auth.FirebaseAuth
@@ -285,7 +286,17 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     val rememberedAccounts: StateFlow<List<RememberedAccount>> = _rememberedAccounts.asStateFlow()
 
     private fun loadRememberedAccounts(): List<RememberedAccount> = runCatching {
-        val array=JSONArray(sharedPrefs.getString("remembered_accounts","[]"));(0 until array.length()).map{array.getJSONObject(it)}.map{RememberedAccount(it.optString("uid"),it.optString("name"),it.optString("email"),it.optString("photoUrl"),it.optString("provider","password"),it.optLong("lastUsedAt"),it.optInt("unread"))}
+        val array = JSONArray(sharedPrefs.getString("remembered_accounts", "[]"))
+        (0 until array.length())
+            .map { array.getJSONObject(it) }
+            .map {
+                RememberedAccount(
+                    it.optString("uid"), it.optString("name"), it.optString("email"),
+                    it.optString("photoUrl"), it.optString("provider", "password"),
+                    it.optLong("lastUsedAt"), it.optInt("unread")
+                )
+            }
+            .sortedByDescending { it.lastUsedAt }
     }.getOrDefault(emptyList())
     private fun rememberAccount(user:User){
         val auth=FirebaseAuth.getInstance().currentUser?:return;val provider=if(auth.providerData.any{it.providerId=="google.com"})"google" else "password"
@@ -293,7 +304,31 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val updated=(listOf(item)+_rememberedAccounts.value.filterNot{it.uid==item.uid}).take(8);_rememberedAccounts.value=updated
         val a=JSONArray();updated.forEach{a.put(JSONObject().put("uid",it.uid).put("name",it.name).put("email",it.email).put("photoUrl",it.photoUrl).put("provider",it.provider).put("lastUsedAt",it.lastUsedAt).put("unread",it.unread))};sharedPrefs.edit().putString("remembered_accounts",a.toString()).apply()
     }
-    fun forgetRememberedAccount(uid:String){_rememberedAccounts.value=_rememberedAccounts.value.filterNot{it.uid==uid};val a=JSONArray();_rememberedAccounts.value.forEach{a.put(JSONObject().put("uid",it.uid).put("name",it.name).put("email",it.email).put("photoUrl",it.photoUrl).put("provider",it.provider).put("lastUsedAt",it.lastUsedAt).put("unread",it.unread))};sharedPrefs.edit().putString("remembered_accounts",a.toString()).apply()}
+    fun forgetRememberedAccount(uid: String) {
+        val removed = _rememberedAccounts.value.firstOrNull { it.uid == uid }
+        removed?.email?.takeIf { it.isNotBlank() }?.let { AccountCredentialVault.remove(getApplication(), it) }
+        _rememberedAccounts.value = _rememberedAccounts.value.filterNot { it.uid == uid }
+        val a = JSONArray()
+        _rememberedAccounts.value.forEach {
+            a.put(JSONObject().put("uid", it.uid).put("name", it.name).put("email", it.email)
+                .put("photoUrl", it.photoUrl).put("provider", it.provider)
+                .put("lastUsedAt", it.lastUsedAt).put("unread", it.unread))
+        }
+        sharedPrefs.edit().putString("remembered_accounts", a.toString()).apply()
+    }
+
+    fun loginRememberedAccount(account: RememberedAccount, onSuccess: () -> Unit) {
+        if (account.provider.equals("google", ignoreCase = true)) {
+            _authError.value = "Select this Google account to continue"
+            return
+        }
+        val password = AccountCredentialVault.load(getApplication(), account.email)
+        if (password.isNullOrBlank()) {
+            _authError.value = "For security, enter this account password once"
+            return
+        }
+        login(account.email, password, onSuccess)
+    }
 
     private val _authLoading = MutableStateFlow(false)
     val authLoading: StateFlow<Boolean> = _authLoading.asStateFlow()
@@ -352,6 +387,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private var activeChatThemeListener: ValueEventListener? = null
     private var activeReceiptListener: ValueEventListener? = null
     private var globalNotificationListener: ValueEventListener? = null
+    // A single host/re-entry must not fan out duplicate notifications for the same room.
+    private val dispatchedGroupCallRooms = java.util.Collections.synchronizedSet(mutableSetOf<String>())
     private var presenceListener: ValueEventListener? = null
     private var activityNotificationListener: ListenerRegistration? = null
     private var currentUserProfileListener: ListenerRegistration? = null
@@ -419,7 +456,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     .child(currentUid).child(user.uid).setValue(0)
             }
             startListeningToChat(user.uid)
-            startListeningToTyping(user.uid)
             startListeningToChatTheme()
         } else {
             stopListeningToChat()
@@ -927,6 +963,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 FirebaseAuth.getInstance().signInWithEmailAndPassword(email, password)
                     .addOnSuccessListener { authResult ->
                         val uid = authResult.user?.uid ?: ""
+                        AccountCredentialVault.save(getApplication(), email, password)
                         retrieveFCMTokenAndStore(uid)
                         loadCurrentUserProfile(uid)
                         setupPresence(uid)
@@ -1042,6 +1079,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                             .document(uid)
                             .set(newUser)
                             .addOnSuccessListener {
+                                AccountCredentialVault.save(getApplication(), email, password)
                                 retrieveFCMTokenAndStore(uid)
                                 _currentUserState.value = newUser
                                 setupPresence(uid)
@@ -1459,8 +1497,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val chatId = "${sortedUids[0]}_${sortedUids[1]}"
         activeChatId = chatId
 
-        // Attach transient interaction listeners here as well as in selectRecipient().
-        // Chat can be opened through deep links, notifications, or restored navigation.
+        // Attach each transient interaction listener exactly once. Chat can be opened through
+        // deep links, notifications, or restored navigation, so registration must be idempotent.
         startListeningToTyping(recipientUid)
         startListeningToVoiceRecording(recipientUid)
         startListeningToUpload(recipientUid)
@@ -1648,18 +1686,30 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
         activeTypingListener = typingRef.addValueEventListener(object : ValueEventListener {
             override fun onDataChange(snapshot: DataSnapshot) {
-                val isTyping = snapshot.getValue(Boolean::class.java)
-                    ?: (snapshot.child("active").getValue(Boolean::class.java) == true &&
-                        (snapshot.child("updatedAt").getValue(Long::class.java)?.let { System.currentTimeMillis() - it < 15_000L } != false))
+                // Ignore late callbacks from a previous chat. Firebase can deliver one final
+                // callback after removeEventListener; writing that value into the next chat's
+                // Compose state was the main source of the typing-screen crash.
+                if (activeTypingChatId != chatId || activeTypingRecipientUid != recipientUid || activeChatId != chatId) return
+                val isTyping = runCatching {
+                    (snapshot.value as? Boolean) ?: run {
+                        val active = snapshot.child("active").value as? Boolean ?: false
+                        val updatedAt = (snapshot.child("updatedAt").value as? Number)?.toLong()
+                        active && updatedAt != null &&
+                            (System.currentTimeMillis() - updatedAt).coerceAtLeast(0L) < 15_000L
+                    }
+                }.getOrDefault(false)
+                val wasTyping = _isRecipientTyping.value
                 _isRecipientTyping.value = isTyping
-                if (isTyping) {
-                    playTypingSound()
+                // Play only on the false -> true edge; repeated RTDB callbacks must not
+                // re-enter audio/UI work while Compose is recomposing.
+                if (isTyping && !wasTyping) runCatching { playTypingSound() }
+            }
+            override fun onCancelled(error: DatabaseError) {
+                if (activeTypingChatId == chatId && activeTypingRecipientUid == recipientUid) {
+                    _isRecipientTyping.value = false
                 }
             }
-            override fun onCancelled(error: DatabaseError) {}
         })
-        startListeningToVoiceRecording(recipientUid)
-        startListeningToUpload(recipientUid)
     }
 
     private fun startListeningToUpload(recipientUid: String) {
@@ -1711,9 +1761,15 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             .child(recipientUid)
         activeVoiceRecordingListener = voiceRef.addValueEventListener(object : ValueEventListener {
             override fun onDataChange(snapshot: DataSnapshot) {
-                val active = snapshot.getValue(Boolean::class.java)
-                    ?: (snapshot.child("active").getValue(Boolean::class.java) == true &&
-                        (snapshot.child("updatedAt").getValue(Long::class.java)?.let { System.currentTimeMillis() - it < 20_000L } != false))
+                val active = runCatching {
+                    snapshot.getValue(Boolean::class.java)
+                        ?: run {
+                            val isActive = snapshot.child("active").getValue(Boolean::class.java) == true
+                            val updatedAt = snapshot.child("updatedAt").getValue(Long::class.java)
+                            isActive && updatedAt != null &&
+                                (System.currentTimeMillis() - updatedAt).coerceAtLeast(0L) < 20_000L
+                        }
+                }.getOrDefault(false)
                 _isRecipientVoiceRecording.value = active
             }
             override fun onCancelled(error: DatabaseError) {
@@ -3427,6 +3483,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     fun inviteGroupMembersToCall(group: Group, video: Boolean, roomId: String = "") {
         val caller = getCurrentUserOrFallback() ?: return
         if (caller.uid !in group.members || roomId.isBlank()) return
+        val inviteKey = "${caller.uid}:${group.id}:$roomId"
+        if (!dispatchedGroupCallRooms.add(inviteKey)) {
+            Log.d("GROUP_CALL", "Skipping duplicate invite dispatch for $inviteKey")
+            return
+        }
         val callType = if (video) "video" else "audio"
         val roster = group.members.distinct().take(4).joinToString(",")
         group.members.filterNot { it == caller.uid }.distinct().take(3).forEach { memberUid ->

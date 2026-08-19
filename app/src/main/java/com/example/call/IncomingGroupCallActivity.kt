@@ -104,6 +104,7 @@ class IncomingGroupCallActivity : ComponentActivity() {
                         group = Group(id = groupId, name = groupName, members = memberIds),
                         video = videoCall,
                         joinRoomId = roomId,
+                        autoStart = false,
                         onClose = { finish() }
                     )
                 } else {
