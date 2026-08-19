@@ -94,15 +94,41 @@
     "groupCalls": {
       "$roomId": {
         ".read": "auth != null && (data.child('memberIds').child(auth.uid).val() === true || data.child('hostId').val() === auth.uid)",
-        ".write": "auth != null && ((!data.exists() && newData.child('memberIds').child(auth.uid).val() === true && newData.child('hostId').val() === auth.uid) || data.child('memberIds').child(auth.uid).val() === true || data.child('hostId').val() === auth.uid)",
+        ".write": "auth != null && ((!data.exists() && newData.child('memberIds').child(auth.uid).val() === true && newData.child('hostId').val() === auth.uid) || data.child('hostId').val() === auth.uid)",
         ".indexOn": ["status", "createdAt", "expiresAt"],
+        "status": {
+          ".write": "auth != null && (data.parent().child('memberIds').child(auth.uid).val() === true || data.parent().child('hostId').val() === auth.uid)",
+          ".validate": "newData.isString()"
+        },
+        "lastActiveAt": {
+          ".write": "auth != null && (data.parent().child('memberIds').child(auth.uid).val() === true || data.parent().child('hostId').val() === auth.uid)",
+          ".validate": "newData.isNumber() || newData.val() === null"
+        },
         "participants": {
           "$uid": {
-            ".validate": "$uid === auth.uid || data.parent().parent().child('hostId').val() === auth.uid"
+            ".write": "$uid === auth.uid || data.parent().parent().child('hostId').val() === auth.uid",
+            ".validate": "newData.hasChildren(['uid', 'name', 'video', 'muted']) && ($uid === auth.uid || data.parent().parent().child('hostId').val() === auth.uid)",
+            "hostMuted": {
+              ".validate": "newData.isBoolean()"
+            },
+            "removed": {
+              ".validate": "newData.isBoolean()"
+            }
+          }
+        },
+        "meetingState": {
+          "captionsEnabled": {
+            ".write": "auth != null && data.parent().parent().child('hostId').val() === auth.uid",
+            ".validate": "newData.isBoolean()"
+          },
+          "recording": {
+            ".write": "auth != null && data.parent().parent().child('hostId').val() === auth.uid",
+            ".validate": "newData.isBoolean()"
           }
         },
         "signals": {
           "$targetUid": {
+            ".write": "auth != null && (data.parent().parent().parent().child('memberIds').child(auth.uid).val() === true || data.parent().parent().parent().child('hostId').val() === auth.uid)",
             ".validate": "$targetUid === auth.uid || data.parent().parent().parent().child('memberIds').child(auth.uid).val() === true"
           }
         }

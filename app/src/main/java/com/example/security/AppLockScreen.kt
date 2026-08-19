@@ -26,12 +26,16 @@ fun AppLockScreen(activity: FragmentActivity) {
     val context = LocalContext.current
     var pin by remember { mutableStateOf("") }
     var error by remember { mutableStateOf(false) }
+    var lockoutUntil by remember { mutableLongStateOf(AppLockManager.remainingLockoutMs(context) + System.currentTimeMillis()) }
     val requiredLength = remember { AppLockManager.pinLength(context) }
 
     fun biometric() {
         if (!AppLockManager.isBiometricEnabled(context) || !AppLockManager.canUseBiometric(context)) return
         val prompt = BiometricPrompt(activity, ContextCompat.getMainExecutor(context), object : BiometricPrompt.AuthenticationCallback() {
-            override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) { AppLockManager.unlock() }
+            override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                AppLockManager.clearFailedAttempts(context)
+                AppLockManager.unlock()
+            }
         })
         prompt.authenticate(
             BiometricPrompt.PromptInfo.Builder().setTitle("Unlock Convo Chat")
@@ -51,7 +55,15 @@ fun AppLockScreen(activity: FragmentActivity) {
                 Icon(Icons.Outlined.Lock, null, Modifier.size(42.dp), tint = MaterialTheme.colorScheme.primary)
             }
             Spacer(Modifier.height(22.dp)); Text("Convo Chat locked", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-            Text(if (error) "Incorrect PIN" else "Enter your PIN", color = if (error) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
+            val remainingLockout = (lockoutUntil - System.currentTimeMillis()).coerceAtLeast(0L)
+            Text(
+                when {
+                    remainingLockout > 0L -> "Too many attempts. Try again in ${((remainingLockout + 999L) / 1000L)}s"
+                    error -> "Incorrect PIN"
+                    else -> "Enter your PIN"
+                },
+                color = if (error || remainingLockout > 0L) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
+            )
             Spacer(Modifier.height(24.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 repeat(requiredLength) { index -> Box(Modifier.size(if (index < pin.length) 12.dp else 9.dp).clip(CircleShape).background(if (index < pin.length) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant)) }
@@ -67,9 +79,21 @@ fun AppLockScreen(activity: FragmentActivity) {
                                         "del" -> if (pin.isNotEmpty()) pin = pin.dropLast(1)
                                         "bio" -> biometric()
                                         else -> if (pin.length < requiredLength) {
-                                            pin += key; error = false
-                                            if (AppLockManager.verify(context, pin)) AppLockManager.unlock()
-                                            else if (pin.length == requiredLength) error = true
+                                            if (!AppLockManager.canAttemptPin(context)) {
+                                                error = true
+                                                lockoutUntil = System.currentTimeMillis() + AppLockManager.remainingLockoutMs(context)
+                                            } else {
+                                                pin += key
+                                                error = false
+                                                if (AppLockManager.verify(context, pin)) {
+                                                    AppLockManager.unlock()
+                                                } else if (pin.length == requiredLength) {
+                                                    val duration = AppLockManager.recordFailedAttempt(context)
+                                                    lockoutUntil = System.currentTimeMillis() + duration
+                                                    error = true
+                                                    pin = ""
+                                                }
+                                            }
                                         }
                                     }
                                 }, modifier = Modifier.size(70.dp), shape = CircleShape, contentPadding = PaddingValues(0.dp)

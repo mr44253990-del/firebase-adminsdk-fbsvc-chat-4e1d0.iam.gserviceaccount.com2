@@ -155,6 +155,15 @@ fun UserProfileScreen(
                     Column(Modifier.padding(horizontal = 20.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(liveUser.name, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold, modifier = Modifier.weight(1f))
+                            if (liveUser.activeProfileType.equals("Creator", ignoreCase = true)) {
+                                Spacer(Modifier.width(6.dp))
+                                Surface(color = Color(0xFF6C4BFF), shape = CircleShape) {
+                                    Row(Modifier.padding(horizontal = 8.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(Icons.Outlined.AutoAwesome, null, Modifier.size(14.dp), tint = Color.White)
+                                        Spacer(Modifier.width(4.dp)); Text("Creator", color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 10.sp)
+                                    }
+                                }
+                            }
                             if (liveUser.role == "moderator") {
                                 Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = CircleShape) {
                                     Row(Modifier.padding(horizontal = 10.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -176,6 +185,15 @@ fun UserProfileScreen(
                         Surface(color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = .7f), shape = CircleShape) {
                             Text(liveUser.activeProfileType.ifBlank { "Personal" }, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold, fontSize = 11.sp, modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp))
                         }
+                        if (liveUser.professionalTitle.isNotBlank() || liveUser.pronouns.isNotBlank()) {
+                            Spacer(Modifier.height(6.dp))
+                            Text(
+                                listOf(liveUser.professionalTitle, liveUser.pronouns).filter { it.isNotBlank() }.joinToString(" • "),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
                         if (liveUser.bio.isNotBlank()) {
                             Spacer(Modifier.height(10.dp))
                             Text(liveUser.bio, style = MaterialTheme.typography.bodyLarge, lineHeight = 23.sp, color = MaterialTheme.colorScheme.onSurface)
@@ -184,11 +202,18 @@ fun UserProfileScreen(
                 }
             }
 
-            if (liveUser.socialLinks.any { it.value.isNotBlank() }) {
+            if (liveUser.publicContactEmail.isNotBlank() || liveUser.socialLinks.any { it.value.isNotBlank() }) {
                 item(key = "contact_card") {
                     Card(Modifier.fillMaxWidth().padding(horizontal = 16.dp), shape = RoundedCornerShape(26.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .52f))) {
                         Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Text("Digital contact card", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.ExtraBold)
+                            if (liveUser.publicContactEmail.isNotBlank()) {
+                                TextButton(onClick = {
+                                    runCatching { context.startActivity(Intent(Intent.ACTION_SENDTO, Uri.parse("mailto:${liveUser.publicContactEmail}"))) }
+                                }, contentPadding = PaddingValues(0.dp)) {
+                                    Icon(Icons.Outlined.Email, null, Modifier.size(18.dp)); Spacer(Modifier.width(7.dp)); Text(liveUser.publicContactEmail, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                }
+                            }
                             liveUser.socialLinks.filterValues { it.isNotBlank() }.forEach { (network, url) ->
                                 TextButton(onClick = {
                                     val safeUrl = if (url.startsWith("http://") || url.startsWith("https://")) url else "https://$url"

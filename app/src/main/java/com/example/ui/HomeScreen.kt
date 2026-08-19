@@ -35,6 +35,7 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -72,6 +73,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
@@ -82,6 +85,7 @@ import android.widget.VideoView
 import com.example.R
 import com.example.data.ActivityNotification
 import com.example.security.AppLockManager
+import com.example.security.PrivacyPreferences
 import com.example.data.FriendRequest
 import com.example.data.FlagshipConfig
 import com.example.data.Group
@@ -92,6 +96,7 @@ import com.example.video.SharedCachedVideo
 import com.example.video.VideoPlayerManager
 import com.example.data.Story
 import com.example.data.User
+import com.example.data.DeviceSession
 import com.google.firebase.auth.FirebaseAuth
 import java.io.File
 import java.io.InputStream
@@ -143,6 +148,40 @@ private fun verifyUpdateApk(context: Context, uri: Uri): Result<VerifiedUpdateAp
         VerifiedUpdateApk(temp.readBytes(), code, archive.versionName.orEmpty())
     } finally {
         temp.delete()
+    }
+}
+
+private fun formatOfflineAge(lastSeenAt: Long, now: Long = System.currentTimeMillis()): String {
+    if (lastSeenAt <= 0L) return "Offline"
+    val elapsed = (now - lastSeenAt).coerceAtLeast(0L)
+    val minutes = elapsed / 60_000L
+    return when {
+        minutes < 60L -> "Offline ${minutes}m ago"
+        minutes < 24L * 60L -> "Offline ${minutes / 60L}h ago"
+        else -> "Offline ${minutes / (24L * 60L)}d ago"
+    }
+}
+
+@Composable
+private fun DeviceSessionRow(session: DeviceSession, onDelete: (DeviceSession) -> Unit) {
+    Surface(shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .55f)) {
+        Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                if (session.active) Icons.Default.PhoneAndroid else Icons.Default.PhoneLocked,
+                null,
+                tint = if (session.active) Color(0xFF36C878) else MaterialTheme.colorScheme.outline
+            )
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text(session.deviceName, fontWeight = FontWeight.Bold)
+                Text("${session.androidVersion} • Convo ${session.appVersion}", fontSize = 10.sp)
+                Text("${session.city}, ${session.region} ${session.country} • ${session.maskedIp}", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp)
+                Text(if (session.active) "Active now" else formatOfflineAge(session.lastSeenAt), fontSize = 9.sp, color = if (session.active) Color(0xFF23864D) else MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            IconButton(onClick = { onDelete(session) }) {
+                Icon(Icons.Default.DeleteOutline, "Delete device history", tint = MaterialTheme.colorScheme.error)
+            }
+        }
     }
 }
 
@@ -205,10 +244,14 @@ fun HomeScreen(
     var showGlobalSearch by remember { mutableStateOf(false) }
     var showLockSetup by remember { mutableStateOf(false) }
     var showReportDialog by remember { mutableStateOf(false) }
+    var showAllDeviceSessions by rememberSaveable { mutableStateOf(false) }
+    var deviceSessionPendingDelete by remember { mutableStateOf<DeviceSession?>(null) }
+    var showClearDeviceHistoryDialog by rememberSaveable { mutableStateOf(false) }
     val funPrefs = remember { context.getSharedPreferences("convo_fun_campaign", Context.MODE_PRIVATE) }
     val funKey = "${currentUser?.uid}_${flagshipConfig.funCampaignId}"
     var showFunCampaign by remember(funKey, flagshipConfig.funCampaignEnabled) { mutableStateOf(flagshipConfig.funCampaignEnabled && flagshipConfig.funCampaignId.isNotBlank() && currentUser != null && !funPrefs.getBoolean(funKey, false)) }
     var lockEnabled by remember { mutableStateOf(AppLockManager.isEnabled(context)) }
+    val privacySettings by PrivacyPreferences.settings.collectAsState()
     val currentTab by viewModel.currentTabState.collectAsState()
     val selectedReelPostId by viewModel.selectedReelPostId.collectAsState()
     BackHandler(enabled = currentTab == 6) { viewModel.setCurrentTab(0) }
@@ -804,6 +847,13 @@ fun HomeScreen(
                         var draftBkash by remember(flagshipConfig) { mutableStateOf(flagshipConfig.premiumBkashEnabled) }
                         var draftNagad by remember(flagshipConfig) { mutableStateOf(flagshipConfig.premiumNagadEnabled) }
                         var draftRocket by remember(flagshipConfig) { mutableStateOf(flagshipConfig.premiumRocketEnabled) }
+                        var draftSmartReply by remember(flagshipConfig) { mutableStateOf(flagshipConfig.smartReplyEnabled) }
+                        var draftMemorySearch by remember(flagshipConfig) { mutableStateOf(flagshipConfig.memorySearchEnabled) }
+                        var draftTaskExtraction by remember(flagshipConfig) { mutableStateOf(flagshipConfig.taskExtractionEnabled) }
+                        var draftCallQuality by remember(flagshipConfig) { mutableStateOf(flagshipConfig.advancedCallQualityEnabled) }
+                        var draftAdvancedThemes by remember(flagshipConfig) { mutableStateOf(flagshipConfig.advancedThemesEnabled) }
+                        var draftCreatorProfile by remember(flagshipConfig) { mutableStateOf(flagshipConfig.creatorProfileEnabled) }
+                        var draftAnalytics by remember(flagshipConfig) { mutableStateOf(flagshipConfig.analyticsEnabled) }
                         var draftFunEnabled by remember(flagshipConfig) { mutableStateOf(flagshipConfig.funCampaignEnabled) }
                         var draftFunTitle by remember(flagshipConfig) { mutableStateOf(flagshipConfig.funCampaignTitle) }
                         var draftFunBody by remember(flagshipConfig) { mutableStateOf(flagshipConfig.funCampaignBody) }
@@ -876,6 +926,16 @@ fun HomeScreen(
                                     OutlinedTextField(draftAiPrompt, { draftAiPrompt = it.take(2000) }, label = { Text("Safe system instructions") }, minLines = 3, modifier = Modifier.fillMaxWidth())
                                     Text("API key is never stored in Android/Firestore. Set Worker secret MISTRAL_API_KEY.", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     HorizontalDivider()
+                                    Text("Remote premium feature flags", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                                    Text("These switches can stage-roll out capabilities without changing the APK.", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Row(verticalAlignment = Alignment.CenterVertically) { Text("Smart replies", Modifier.weight(1f)); Switch(draftSmartReply, { draftSmartReply = it }) }
+                                    Row(verticalAlignment = Alignment.CenterVertically) { Text("AI memory search", Modifier.weight(1f)); Switch(draftMemorySearch, { draftMemorySearch = it }) }
+                                    Row(verticalAlignment = Alignment.CenterVertically) { Text("Task extraction", Modifier.weight(1f)); Switch(draftTaskExtraction, { draftTaskExtraction = it }) }
+                                    Row(verticalAlignment = Alignment.CenterVertically) { Text("Advanced call quality", Modifier.weight(1f)); Switch(draftCallQuality, { draftCallQuality = it }) }
+                                    Row(verticalAlignment = Alignment.CenterVertically) { Text("Advanced themes", Modifier.weight(1f)); Switch(draftAdvancedThemes, { draftAdvancedThemes = it }) }
+                                    Row(verticalAlignment = Alignment.CenterVertically) { Text("Creator profile", Modifier.weight(1f)); Switch(draftCreatorProfile, { draftCreatorProfile = it }) }
+                                    Row(verticalAlignment = Alignment.CenterVertically) { Text("Usage analytics", Modifier.weight(1f)); Switch(draftAnalytics, { draftAnalytics = it }) }
+                                    HorizontalDivider()
                                     Text("Premium payment control", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
                                     Row(verticalAlignment = Alignment.CenterVertically) { Text("Premium purchase enabled", Modifier.weight(1f)); Switch(draftPremiumEnabled, { draftPremiumEnabled = it }) }
                                     Row(verticalAlignment = Alignment.CenterVertically) { Text("First-login Premium showcase", Modifier.weight(1f)); Switch(draftPremiumUpsell, { draftPremiumUpsell = it }) }
@@ -900,7 +960,10 @@ fun HomeScreen(
                                         "premiumEnabled" to draftPremiumEnabled, "premiumUpsellEnabled" to draftPremiumUpsell, "premiumPaymentNumber" to draftPaymentNumber,
                                         "premiumMonthlyPrice" to (draftMonthlyPrice.toIntOrNull() ?: 199), "premiumYearlyPrice" to (draftYearlyPrice.toIntOrNull() ?: 1499), "premiumLifetimePrice" to (draftLifetimePrice.toIntOrNull() ?: 3999),
                                         "premiumMonthlyEnabled" to draftMonthlyEnabled, "premiumYearlyEnabled" to draftYearlyEnabled, "premiumLifetimeEnabled" to draftLifetimeEnabled,
-                                        "premiumBkashEnabled" to draftBkash, "premiumNagadEnabled" to draftNagad, "premiumRocketEnabled" to draftRocket
+                                        "premiumBkashEnabled" to draftBkash, "premiumNagadEnabled" to draftNagad, "premiumRocketEnabled" to draftRocket,
+                                        "smartReplyEnabled" to draftSmartReply, "memorySearchEnabled" to draftMemorySearch, "taskExtractionEnabled" to draftTaskExtraction,
+                                        "advancedCallQualityEnabled" to draftCallQuality, "advancedThemesEnabled" to draftAdvancedThemes,
+                                        "creatorProfileEnabled" to draftCreatorProfile, "analyticsEnabled" to draftAnalytics
                                     )) { Toast.makeText(context, if (it) "AI & Premium saved" else "Save failed", Toast.LENGTH_LONG).show() } }, modifier = Modifier.fillMaxWidth()) { Text("Save AI & Premium only") }
                                     HorizontalDivider()
                                     Text("One-time Friday Fun campaign", fontWeight=FontWeight.Bold,color=MaterialTheme.colorScheme.primary)
@@ -939,6 +1002,13 @@ fun HomeScreen(
                                                 premiumBkashEnabled = draftBkash,
                                                 premiumNagadEnabled = draftNagad,
                                                 premiumRocketEnabled = draftRocket,
+                                                smartReplyEnabled = draftSmartReply,
+                                                memorySearchEnabled = draftMemorySearch,
+                                                taskExtractionEnabled = draftTaskExtraction,
+                                                advancedCallQualityEnabled = draftCallQuality,
+                                                advancedThemesEnabled = draftAdvancedThemes,
+                                                creatorProfileEnabled = draftCreatorProfile,
+                                                analyticsEnabled = draftAnalytics,
                                                 funCampaignEnabled = draftFunEnabled,
                                                 funCampaignId = flagshipConfig.funCampaignId,
                                                 funCampaignTitle = draftFunTitle,
@@ -1219,7 +1289,10 @@ fun HomeScreen(
                                     "Glass Rose" to Color(0xFFFF63B7),
                                     "Obsidian Neon" to Color(0xFF00E5C3),
                                     "Neon Pulse" to Color(0xFFFF4DA6),
-                                    "Frosted Light" to Color(0xFFD9D6FF)
+                                    "Frosted Light" to Color(0xFFD9D6FF),
+                                    "Royal Gold" to Color(0xFFFFC857),
+                                    "Cyber Lime" to Color(0xFFB7FF3C),
+                                    "Rose Quartz" to Color(0xFFF4A6C8)
                                 )
 
                                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1228,8 +1301,11 @@ fun HomeScreen(
                                             color = if (currentTheme == themeName) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(.45f),
                                             shape = RoundedCornerShape(16.dp),
                                             modifier = Modifier.width(94.dp).clickable {
-                                                viewModel.updateTheme(themeName)
-                                                Toast.makeText(context, "$themeName theme applied!", Toast.LENGTH_SHORT).show()
+                                                if (viewModel.updateTheme(themeName)) {
+                                                    Toast.makeText(context, "$themeName theme applied!", Toast.LENGTH_SHORT).show()
+                                                } else {
+                                                    Toast.makeText(context, "Premium entitlement and Advanced themes flag are required", Toast.LENGTH_LONG).show()
+                                                }
                                             }
                                         ) {
                                             Column(Modifier.padding(vertical = 10.dp, horizontal = 5.dp), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -1249,6 +1325,9 @@ fun HomeScreen(
                             var inputName by remember { mutableStateOf(user.name) }
                             var inputDob by remember { mutableStateOf(user.dob) }
                             var inputBio by remember { mutableStateOf(user.bio) }
+                            var inputProfessionalTitle by remember { mutableStateOf(user.professionalTitle) }
+                            var inputPronouns by remember { mutableStateOf(user.pronouns) }
+                            var inputPublicContactEmail by remember { mutableStateOf(user.publicContactEmail) }
                             var inputCoverUrl by remember { mutableStateOf(user.coverImageUrl) }
                             var coverScale by remember { mutableFloatStateOf(user.coverScale.coerceIn(1f, 2f)) }
                             var coverOffsetY by remember { mutableFloatStateOf(user.coverOffsetY.coerceIn(-1f, 1f)) }
@@ -1412,6 +1491,34 @@ fun HomeScreen(
                                         shape = RoundedCornerShape(18.dp)
                                     )
                                     Spacer(modifier = Modifier.height(10.dp))
+                                    OutlinedTextField(
+                                        value = inputProfessionalTitle,
+                                        onValueChange = { inputProfessionalTitle = it.take(80) },
+                                        label = { Text("Professional title (optional)") },
+                                        placeholder = { Text("Designer, Founder, Student...") },
+                                        singleLine = true,
+                                        modifier = Modifier.fillMaxWidth(),
+                                        shape = RoundedCornerShape(18.dp)
+                                    )
+                                    OutlinedTextField(
+                                        value = inputPronouns,
+                                        onValueChange = { inputPronouns = it.take(40) },
+                                        label = { Text("Pronouns (optional)") },
+                                        placeholder = { Text("They/Them, She/Her, He/Him") },
+                                        singleLine = true,
+                                        modifier = Modifier.fillMaxWidth(),
+                                        shape = RoundedCornerShape(18.dp)
+                                    )
+                                    OutlinedTextField(
+                                        value = inputPublicContactEmail,
+                                        onValueChange = { inputPublicContactEmail = it.take(160) },
+                                        label = { Text("Public contact email (optional)") },
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+                                        singleLine = true,
+                                        modifier = Modifier.fillMaxWidth(),
+                                        shape = RoundedCornerShape(18.dp)
+                                    )
+                                    Spacer(modifier = Modifier.height(10.dp))
                                     Text("Active profile", fontWeight = FontWeight.Bold)
                                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                                         listOf("Personal", "Creator", "Work", "Student").forEach { type ->
@@ -1495,6 +1602,9 @@ fun HomeScreen(
                                                 coverOffsetY = coverOffsetY,
                                                 profileHidden = profileHidden,
                                                 activeProfileType = activeProfileType,
+                                                pronouns = inputPronouns.trim(),
+                                                professionalTitle = inputProfessionalTitle.trim(),
+                                                publicContactEmail = inputPublicContactEmail.trim(),
                                                 awayReplyEnabled = awayReplyEnabled,
                                                 awayReplyText = awayReplyText,
                                                 awayReplyUntil = awayReplyUntilText.trim().takeIf { it.isNotBlank() }?.let { value -> runCatching { SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).parse(value)?.time ?: 0L }.getOrDefault(0L) } ?: 0L,
@@ -1532,6 +1642,60 @@ fun HomeScreen(
                                         Text("Biometric unlock", Modifier.weight(1f))
                                         Switch(AppLockManager.isBiometricEnabled(context), { AppLockManager.setBiometric(context, it) })
                                     }
+                                }
+                            }
+                        }
+
+                        Card(shape = RoundedCornerShape(28.dp), modifier = Modifier.fillMaxWidth()) {
+                            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Icons.Outlined.Security, null, tint = MaterialTheme.colorScheme.primary)
+                                    Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
+                                        Text("Privacy & Security", fontWeight = FontWeight.Bold)
+                                        Text("Control presence, receipts, AI consent and sensitive-screen protection.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                }
+                                PrivacyToggleRow("Show online status", privacySettings.showOnlineStatus) {
+                                    PrivacyPreferences.update(context) { it.copy(showOnlineStatus = !it.showOnlineStatus) }
+                                }
+                                PrivacyToggleRow("Show last seen", privacySettings.showLastSeen) {
+                                    PrivacyPreferences.update(context) { it.copy(showLastSeen = !it.showLastSeen) }
+                                }
+                                PrivacyToggleRow("Show typing and read receipts", privacySettings.showTypingStatus && privacySettings.sendReadReceipts) {
+                                    PrivacyPreferences.update(context) { it.copy(showTypingStatus = !it.showTypingStatus, sendReadReceipts = !it.sendReadReceipts) }
+                                }
+                                PrivacyToggleRow("Allow AI processing", privacySettings.allowAiProcessing) {
+                                    PrivacyPreferences.update(context) { it.copy(allowAiProcessing = !it.allowAiProcessing) }
+                                }
+                                PrivacyToggleRow("Hide notification content", privacySettings.hideNotificationContent) {
+                                    PrivacyPreferences.update(context) { it.copy(hideNotificationContent = !it.hideNotificationContent) }
+                                }
+                                PrivacyToggleRow("Protect sensitive screens from screenshots", privacySettings.preventScreenshotOnSensitiveScreens) {
+                                    PrivacyPreferences.update(context) { it.copy(preventScreenshotOnSensitiveScreens = !it.preventScreenshotOnSensitiveScreens) }
+                                }
+                                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Icons.Outlined.Timer, null, tint = MaterialTheme.colorScheme.primary)
+                                    Column(Modifier.weight(1f).padding(start = 12.dp)) {
+                                        Text("Disappearing messages", fontWeight = FontWeight.SemiBold)
+                                        Text("Outgoing messages hide after the selected time", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    val expiryLabel = when (privacySettings.disappearingMessageSeconds) {
+                                        10 -> "10 sec"
+                                        60 -> "1 min"
+                                        300 -> "5 min"
+                                        3600 -> "1 hour"
+                                        else -> "Off"
+                                    }
+                                    TextButton(onClick = {
+                                        val next = when (privacySettings.disappearingMessageSeconds) {
+                                            0 -> 10
+                                            10 -> 60
+                                            60 -> 300
+                                            300 -> 3600
+                                            else -> 0
+                                        }
+                                        PrivacyPreferences.update(context) { it.copy(disappearingMessageSeconds = next) }
+                                    }) { Text(expiryLabel) }
                                 }
                             }
                         }
@@ -1576,25 +1740,66 @@ fun HomeScreen(
                                 Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.Devices, null, tint = MaterialTheme.colorScheme.primary); Spacer(Modifier.width(9.dp)); Text("Devices & sessions", fontWeight = FontWeight.ExtraBold, modifier = Modifier.weight(1f)); IconButton(onClick = viewModel::refreshDeviceSessions) { Icon(Icons.Default.Refresh, "Refresh") } }
                                 Text("Approximate city/region comes from the connection edge. Exact home location and full IP are not stored.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 if (deviceSessions.isEmpty()) TextButton(onClick = viewModel::refreshDeviceSessions) { Text("Load signed-in devices") }
-                                deviceSessions.take(12).forEach { session ->
-                                    Surface(shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(.55f)) {
-                                        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                                            Icon(if (session.active) Icons.Default.PhoneAndroid else Icons.Default.PhoneLocked, null, tint = if (session.active) Color(0xFF36C878) else MaterialTheme.colorScheme.outline)
-                                            Spacer(Modifier.width(10.dp)); Column(Modifier.weight(1f)) { Text(session.deviceName, fontWeight = FontWeight.Bold); Text("${session.androidVersion} • Convo ${session.appVersion}", fontSize = 10.sp); Text("📍 ${session.city}, ${session.region} ${session.country} • ${session.maskedIp}", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp); Text("Last active ${SimpleDateFormat("dd MMM, hh:mm a", Locale.getDefault()).format(Date(session.lastSeenAt))}", fontSize = 9.sp) }
-                                        }
+                                deviceSessions.take(3).forEach { session ->
+                                    DeviceSessionRow(session = session, onDelete = { deviceSessionPendingDelete = it })
+                                }
+                                if (deviceSessions.size > 3) {
+                                    OutlinedButton(onClick = { showAllDeviceSessions = true }, modifier = Modifier.fillMaxWidth()) {
+                                        Icon(Icons.Default.MoreHoriz, null); Spacer(Modifier.width(7.dp)); Text("More devices (${deviceSessions.size - 3})")
                                     }
                                 }
                                 if (deviceSessions.isNotEmpty()) {
-                                    TextButton(onClick = viewModel::clearLocalDeviceSessions, modifier = Modifier.fillMaxWidth()) {
+                                    TextButton(onClick = { showClearDeviceHistoryDialog = true }, modifier = Modifier.fillMaxWidth()) {
                                         Icon(Icons.Default.ClearAll, null)
                                         Spacer(Modifier.width(7.dp))
-                                        Text("Clear device list")
+                                        Text("Delete all device history")
                                     }
                                 }
                                 Button(onClick = { viewModel.logout { onSignOut() } }, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Default.SwitchAccount, null); Spacer(Modifier.width(7.dp)); Text("Switch account") }
                                 OutlinedButton(onClick = { viewModel.logoutAllDevices { ok, message -> Toast.makeText(context, message, Toast.LENGTH_LONG).show(); if (ok) onSignOut() } }, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Default.Logout, null); Spacer(Modifier.width(7.dp)); Text("Log out all devices") }
                                 TextButton(onClick = { showReportDialog = true }, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Default.ReportProblem, null); Spacer(Modifier.width(7.dp)); Text("Report a problem to AI/Admin") }
                             }
+                        }
+
+                        if (showAllDeviceSessions) {
+                            AlertDialog(
+                                onDismissRequest = { showAllDeviceSessions = false },
+                                title = { Text("All signed-in devices") },
+                                text = {
+                                    LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.heightIn(max = 520.dp)) {
+                                        items(deviceSessions, key = { it.sessionId }) { session -> DeviceSessionRow(session = session, onDelete = { deviceSessionPendingDelete = it }) }
+                                    }
+                                },
+                                confirmButton = { TextButton(onClick = { showAllDeviceSessions = false }) { Text("Done") } }
+                            )
+                        }
+                        if (showClearDeviceHistoryDialog) {
+                            AlertDialog(
+                                onDismissRequest = { showClearDeviceHistoryDialog = false },
+                                title = { Text("Delete all device history?") },
+                                text = { Text("Every saved device-session record will be deleted from the database. This does not sign you out of the current device.") },
+                                confirmButton = {
+                                    TextButton(onClick = {
+                                        showClearDeviceHistoryDialog = false
+                                        viewModel.clearDeviceSessions { _, message -> Toast.makeText(context, message, Toast.LENGTH_LONG).show() }
+                                    }) { Text("Delete all", color = MaterialTheme.colorScheme.error) }
+                                },
+                                dismissButton = { TextButton(onClick = { showClearDeviceHistoryDialog = false }) { Text("Cancel") } }
+                            )
+                        }
+                        deviceSessionPendingDelete?.let { session ->
+                            AlertDialog(
+                                onDismissRequest = { deviceSessionPendingDelete = null },
+                                title = { Text("Delete device history?") },
+                                text = { Text("${session.deviceName} will be removed from the database and this device list.") },
+                                confirmButton = {
+                                    TextButton(onClick = {
+                                        deviceSessionPendingDelete = null
+                                        viewModel.deleteDeviceSession(session.sessionId) { ok, message -> Toast.makeText(context, message, Toast.LENGTH_LONG).show() }
+                                    }) { Text("Delete", color = MaterialTheme.colorScheme.error) }
+                                },
+                                dismissButton = { TextButton(onClick = { deviceSessionPendingDelete = null }) { Text("Cancel") } }
+                            )
                         }
 
                         // 3. Blocked Users Management
@@ -2037,7 +2242,7 @@ fun HomeScreen(
     if (accountBanned) AlertDialog(onDismissRequest = {}, title = { Text("Account suspended") }, text = { Text("This account was disabled by ADMIN RAKIB after review. Contact support from another account if you believe this is a mistake.") }, confirmButton = { Button(onClick = { viewModel.logout { onSignOut() } }) { Text("Sign out") } })
 
     if (showAnalytics) {
-        AccountAnalyticsSheet(posts = posts.filter { it.senderId == currentUser?.uid }, onDismiss = { showAnalytics = false })
+        AccountAnalyticsSheet(currentUser = currentUser, posts = posts.filter { it.senderId == currentUser?.uid }, onDismiss = { showAnalytics = false })
     }
 
     if (showCreateHub) {
@@ -2075,14 +2280,22 @@ fun SmartSearchDialog(
     onDismiss: () -> Unit
 ) {
     var query by remember { mutableStateOf("") }
+    var searchFilter by remember { mutableStateOf("All") }
     var fullScreenVideo by remember { mutableStateOf<String?>(null) }
     val normalized = query.trim()
-    val matchedUsers = if (normalized.isBlank()) emptyList() else users.filter {
+    val matchedUsers = if (normalized.isBlank() || (searchFilter != "All" && searchFilter != "People")) emptyList() else users.filter {
         it.name.contains(normalized, true) || it.username.contains(normalized, true) || it.bio.contains(normalized, true)
     }
-    val matchedPosts = if (normalized.isBlank()) emptyList() else posts.filter { post ->
-        post.title.contains(normalized, true) || post.text.contains(normalized, true) ||
+    val matchedPosts = if (normalized.isBlank() || searchFilter == "People") emptyList() else posts.filter { post ->
+        val textMatch = post.title.contains(normalized, true) || post.text.contains(normalized, true) ||
             post.feeling.contains(normalized, true) || post.tags.any { it.contains(normalized.removePrefix("#"), true) }
+        val mediaMatch = when (searchFilter) {
+            "Photos" -> post.imageUrl.isNotBlank() || post.imageUrls.isNotEmpty()
+            "Videos" -> post.videoUrl.isNotBlank() || post.isReel
+            "Audio" -> post.audioUrl.isNotBlank()
+            else -> true
+        }
+        textMatch && mediaMatch
     }
     fullScreenVideo?.let { FullScreenVideoPlayer(it) { fullScreenVideo = null } }
 
@@ -2103,6 +2316,18 @@ fun SmartSearchDialog(
                         shape = CircleShape
                     )
                     IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, "Close search") }
+                }
+                Row(
+                    Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    listOf("All", "People", "Posts", "Photos", "Videos", "Audio").forEach { filter ->
+                        FilterChip(
+                            selected = searchFilter == filter,
+                            onClick = { searchFilter = filter },
+                            label = { Text(filter) }
+                        )
+                    }
                 }
                 if (normalized.isBlank()) {
                     Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
@@ -2151,8 +2376,11 @@ fun SmartSearchDialog(
                                         Column(Modifier.weight(1f)) {
                                             Text(post.title.ifBlank { post.senderName }, fontWeight = FontWeight.Bold)
                                             Text(post.text, maxLines = 2, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                            if (post.videoUrl.isNotBlank()) Text("Video • tap to play", color = MaterialTheme.colorScheme.primary, fontSize = 11.sp)
-                                            else if (post.imageUrl.isNotBlank()) Text("Photo", color = MaterialTheme.colorScheme.primary, fontSize = 11.sp)
+                                            when {
+                                                post.videoUrl.isNotBlank() || post.isReel -> Text("Video • tap to play", color = MaterialTheme.colorScheme.primary, fontSize = 11.sp)
+                                                post.imageUrl.isNotBlank() || post.imageUrls.isNotEmpty() -> Text("Photo", color = MaterialTheme.colorScheme.primary, fontSize = 11.sp)
+                                                post.audioUrl.isNotBlank() -> Text("Audio post", color = MaterialTheme.colorScheme.primary, fontSize = 11.sp)
+                                            }
                                         }
                                     }
                                 }
@@ -2860,7 +3088,7 @@ fun FullScreenVideoPlayer(videoUrl: String, onDismiss: () -> Unit) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun AccountAnalyticsSheet(posts: List<Post>, onDismiss: () -> Unit) {
+private fun AccountAnalyticsSheet(currentUser: User?, posts: List<Post>, onDismiss: () -> Unit) {
     var range by remember { mutableStateOf("7 days") }
     val now = System.currentTimeMillis()
     val cutoff = when (range) { "7 days" -> now - 7L * 86_400_000L; "30 days" -> now - 30L * 86_400_000L; else -> 0L }
@@ -2884,6 +3112,15 @@ private fun AccountAnalyticsSheet(posts: List<Post>, onDismiss: () -> Unit) {
                 AnalyticsMetric("Reactions", reactions.toString(), Icons.Outlined.FavoriteBorder, Modifier.weight(1f))
                 AnalyticsMetric("Comments", comments.toString(), Icons.Outlined.ChatBubbleOutline, Modifier.weight(1f))
             }
+            Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                AnalyticsMetric("Reach", views.toString(), Icons.Outlined.Campaign, Modifier.weight(1f))
+                AnalyticsMetric("Follower growth", "+${currentUser?.followerGrowth ?: 0L}", Icons.Outlined.TrendingUp, Modifier.weight(1f))
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                AnalyticsMetric("Followers", (currentUser?.followers?.size ?: 0).toString(), Icons.Outlined.People, Modifier.weight(1f))
+                AnalyticsMetric("Following", (currentUser?.following?.size ?: 0).toString(), Icons.Outlined.PersonAdd, Modifier.weight(1f))
+            }
+            Text("Views and reach are calculated from unique server-side post views; follower growth is updated when follow relationships change.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Card(shape = RoundedCornerShape(22.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(.65f))) {
                 Column(Modifier.padding(16.dp)) {
                     Text("Top content", fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.primary)
@@ -3182,6 +3419,10 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
                     Column {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(post.senderName, fontWeight = FontWeight.Bold, fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurface)
+                            if (postOwner?.activeProfileType.equals("Creator", ignoreCase = true)) {
+                                Spacer(Modifier.width(5.dp)); Icon(Icons.Outlined.AutoAwesome, "Creator", tint = Color(0xFF6C4BFF), modifier = Modifier.size(15.dp))
+                                Text(" CREATOR", color = Color(0xFF6C4BFF), fontSize = 9.sp, fontWeight = FontWeight.ExtraBold)
+                            }
                             if (postOwner?.role == "moderator") {
                                 Spacer(Modifier.width(5.dp)); Icon(Icons.Outlined.Verified, "Moderator", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(15.dp))
                                 Text(" MOD", color = MaterialTheme.colorScheme.primary, fontSize = 9.sp, fontWeight = FontWeight.Bold)
@@ -3911,8 +4152,7 @@ fun ChatConversationUserItem(
                 )
                 val presenceText = if (user.isOnline) "Active now" else {
                     val since = user.offlineSince.takeIf { it > 0L } ?: user.lastActive
-                    val minutes = ((System.currentTimeMillis() - since).coerceAtLeast(0L) / 60000L)
-                    if (minutes < 1L) "Offline just now" else "Offline ${minutes}m ago"
+                    if (since <= 0L) "Offline" else formatOfflineAge(since)
                 }
                 Text(
                     text = presenceText,
@@ -4055,6 +4295,14 @@ private fun postBackgroundColors(style: String): List<Color> = when (style) {
 }
 
 @Composable
+private fun PrivacyToggleRow(label: String, checked: Boolean, onCheckedChange: () -> Unit) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text(label, Modifier.weight(1f), fontSize = 13.sp)
+        Switch(checked = checked, onCheckedChange = { onCheckedChange() })
+    }
+}
+
+@Composable
 private fun AdminStatusRow(label: String, ready: Boolean, requirement: String) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Icon(if (ready) Icons.Default.CheckCircle else Icons.Default.Warning, null, tint = if (ready) Color(0xFF45D483) else MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp))
@@ -4108,3 +4356,4 @@ private fun ActiveContactsStrip(users: List<User>, onSelect: (User) -> Unit) {
         }
     }
 }
+

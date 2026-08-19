@@ -20,6 +20,7 @@ import androidx.core.graphics.drawable.IconCompat
 import com.example.MainActivity
 import com.example.R
 import com.example.security.AppLockManager
+import com.example.security.PrivacyPreferences
 import com.example.call.IncomingCallActivity
 import com.example.call.IncomingGroupCallActivity
 import com.example.data.User
@@ -68,7 +69,8 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         // Extract title and body
         val rawTitle = remoteMessage.notification?.title ?: remoteMessage.data["title"] ?: "New Message"
         val rawBody = remoteMessage.notification?.body ?: remoteMessage.data["body"] ?: "You received a new message"
-        val hideContent = AppLockManager.isEnabled(this)
+        val privacy = PrivacyPreferences.load(this)
+        val hideContent = AppLockManager.isEnabled(this) || privacy.hideNotificationContent
         val title = if (hideContent) "Convo Chat" else rawTitle
         val senderId = remoteMessage.data["senderId"] ?: ""
         val notificationType = remoteMessage.data["notificationType"] ?: "message"
@@ -130,6 +132,7 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
                 "isOnline" to true,
                 "lastActive" to receivedAt,
                 "lastPushReceivedAt" to receivedAt,
+                "onlineUntil" to receivedAt + 5 * 60_000L,
                 "onlineSource" to "push"
             )
         )
@@ -156,7 +159,7 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
                     )
                 }
             }
-        }, 60_000L)
+        }, 5 * 60_000L)
     }
 
     private fun sendIncomingCallNotification(callId: String, callerId: String, callerName: String, callerImage: String, videoCall: Boolean) {
@@ -268,7 +271,10 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
             .setTimeoutAfter(30_000)
             .setStyle(NotificationCompat.CallStyle.forIncomingCall(person, decline, answer))
             .setContentIntent(fullScreen)
-        if (Build.VERSION.SDK_INT < 34 || manager.canUseFullScreenIntent()) builder.setFullScreenIntent(fullScreen, true)
+        // The OS still enforces USE_FULL_SCREEN_INTENT on Android 14+; setting the
+        // intent unconditionally lets permitted devices launch it from the lock screen,
+        // while non-permitted devices retain the public CallStyle notification fallback.
+        builder.setFullScreenIntent(fullScreen, true)
         manager.notify(notificationId, builder.build())
         CallRingtoneController.start(this, roomId)
     }

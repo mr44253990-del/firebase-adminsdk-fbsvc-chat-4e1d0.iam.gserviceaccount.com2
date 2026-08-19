@@ -11,6 +11,10 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.MediaPlayer
 import android.media.MediaRecorder
+import android.os.Bundle
+import android.speech.RecognitionListener
+import android.speech.RecognizerIntent
+import android.speech.SpeechRecognizer
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
@@ -124,6 +128,7 @@ fun ChatScreen(
         mutableStateOf(chatDraftPrefs.getString("draft_${recipient.uid}", "") ?: "")
     }
     var showAttachmentMenu by remember { mutableStateOf(false) }
+    var showScheduleDialog by remember { mutableStateOf(false) }
     var fileUploading by remember { mutableStateOf(false) }
     var fileProgress by remember { mutableIntStateOf(0) }
     var fileEta by remember { mutableLongStateOf(0L) }
@@ -162,12 +167,77 @@ fun ChatScreen(
     var voiceFile by remember { mutableStateOf<File?>(null) }
     var recordStartTime by remember { mutableStateOf(0L) }
 
-    // Request Audio & Storage Permissions Launcher
+    // Audio permission is shared by voice notes, calls, and on-device dictation.
     var audioPermissionGranted by remember {
         mutableStateOf(
             ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
         )
     }
+
+    // On-device voice dictation state; recognized text remains editable before sending.
+    var isDictating by remember { mutableStateOf(false) }
+    var speechRecognizer by remember { mutableStateOf<SpeechRecognizer?>(null) }
+    DisposableEffect(Unit) {
+        onDispose {
+            speechRecognizer?.cancel()
+            speechRecognizer?.destroy()
+            speechRecognizer = null
+        }
+    }
+
+    val stopDictation = {
+        speechRecognizer?.stopListening()
+        speechRecognizer?.cancel()
+        isDictating = false
+    }
+
+    val startDictation = {
+        if (!audioPermissionGranted) {
+            Toast.makeText(context, "Use the voice-note button once to grant microphone access, then try dictation again", Toast.LENGTH_LONG).show()
+        } else if (!SpeechRecognizer.isRecognitionAvailable(context)) {
+            Toast.makeText(context, "Voice dictation is not available on this device", Toast.LENGTH_LONG).show()
+        } else {
+            try {
+                speechRecognizer?.destroy()
+                val recognizer = SpeechRecognizer.createSpeechRecognizer(context)
+                recognizer.setRecognitionListener(object : RecognitionListener {
+                    override fun onReadyForSpeech(params: Bundle?) { isDictating = true }
+                    override fun onBeginningOfSpeech() { isDictating = true }
+                    override fun onRmsChanged(rmsdB: Float) = Unit
+                    override fun onBufferReceived(buffer: ByteArray?) = Unit
+                    override fun onEndOfSpeech() { isDictating = false }
+                    override fun onError(error: Int) {
+                        isDictating = false
+                        if (error != SpeechRecognizer.ERROR_CLIENT && error != SpeechRecognizer.ERROR_SPEECH_TIMEOUT) {
+                            Toast.makeText(context, "Dictation stopped", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                    override fun onResults(results: Bundle?) {
+                        val spoken = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull().orEmpty()
+                        if (spoken.isNotBlank()) {
+                            messageText = listOf(messageText.trim(), spoken.trim()).filter { it.isNotBlank() }.joinToString(" ")
+                        }
+                        isDictating = false
+                    }
+                    override fun onPartialResults(partialResults: Bundle?) = Unit
+                    override fun onEvent(eventType: Int, params: Bundle?) = Unit
+                })
+                speechRecognizer = recognizer
+                val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                    putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                    putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false)
+                    putExtra(RecognizerIntent.EXTRA_PROMPT, "Speak your message")
+                }
+                recognizer.startListening(intent)
+                isDictating = true
+            } catch (error: Exception) {
+                isDictating = false
+                Toast.makeText(context, "Dictation unavailable: ${error.message ?: "unknown error"}", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    // Request Audio & Storage Permissions Launcher
     var pendingCall by remember { mutableStateOf(false) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -995,6 +1065,12 @@ fun ChatScreen(
                             DropdownMenuItem(text = { Text("Document, PDF, APK or audio") }, leadingIcon = { Icon(Icons.Default.AttachFile, null) }, onClick = {
                                 showAttachmentMenu = false; filePickerLauncher.launch(arrayOf("*/*"))
                             })
+                            DropdownMenuItem(text = { Text("Schedule this message") }, leadingIcon = { Icon(Icons.Default.Schedule, null) }, onClick = {
+                                showAttachmentMenu = false
+                                if (messageText.isBlank()) Toast.makeText(context, "Write a message first", Toast.LENGTH_SHORT).show()
+                                else if (!conversationAccepted) Toast.makeText(context, "Wait until the conversation is accepted", Toast.LENGTH_LONG).show()
+                                else showScheduleDialog = true
+                            })
                         }
                     }
 
@@ -1002,11 +1078,22 @@ fun ChatScreen(
                     IconButton(onClick = {
                         if (!conversationAccepted) Toast.makeText(context, "Wait until the message request is confirmed", Toast.LENGTH_LONG).show()
                         else if (isRecording) stopAndSendVoice() else startRecording()
-                    }, enabled = !requestPending && !fileUploading) {
+                    }, enabled = !requestPending && !fileUploading && !isDictating) {
                         Icon(
                             imageVector = if (isRecording) Icons.Default.Stop else Icons.Default.Mic,
                             contentDescription = "Record Voice",
                             tint = if (isRecording) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+                        )
+                    }
+
+                    IconButton(
+                        onClick = { if (isDictating) stopDictation() else startDictation() },
+                        enabled = !requestPending && !fileUploading && !isRecording
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.MicNone,
+                            contentDescription = if (isDictating) "Stop dictation" else "Dictate message",
+                            tint = if (isDictating) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
                         )
                     }
 
@@ -1074,6 +1161,57 @@ fun ChatScreen(
                 }
             }
         }
+    }
+
+    if (showScheduleDialog) {
+        AlertDialog(
+            onDismissRequest = { showScheduleDialog = false },
+            title = { Text("Schedule message") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("Choose when to send this text message.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("\"${messageText.trim().take(120)}${if (messageText.trim().length > 120) "…" else "\""}", fontWeight = FontWeight.SemiBold)
+                }
+            },
+            confirmButton = {
+                Column(horizontalAlignment = Alignment.End) {
+                    TextButton(onClick = {
+                        val at = System.currentTimeMillis() + 10 * 60 * 1000L
+                        viewModel.scheduleMessage(updatedRecipient, messageText, at) {
+                            Toast.makeText(context, "Scheduled for 10 minutes from now", Toast.LENGTH_SHORT).show()
+                            messageText = ""
+                            chatDraftPrefs.edit().remove("draft_${recipient.uid}").apply()
+                        }
+                        showScheduleDialog = false
+                    }) { Text("In 10 minutes") }
+                    TextButton(onClick = {
+                        val at = System.currentTimeMillis() + 60 * 60 * 1000L
+                        viewModel.scheduleMessage(updatedRecipient, messageText, at) {
+                            Toast.makeText(context, "Scheduled for 1 hour from now", Toast.LENGTH_SHORT).show()
+                            messageText = ""
+                            chatDraftPrefs.edit().remove("draft_${recipient.uid}").apply()
+                        }
+                        showScheduleDialog = false
+                    }) { Text("In 1 hour") }
+                    TextButton(onClick = {
+                        val calendar = Calendar.getInstance().apply {
+                            add(Calendar.DAY_OF_YEAR, 1)
+                            set(Calendar.HOUR_OF_DAY, 9)
+                            set(Calendar.MINUTE, 0)
+                            set(Calendar.SECOND, 0)
+                            set(Calendar.MILLISECOND, 0)
+                        }
+                        viewModel.scheduleMessage(updatedRecipient, messageText, calendar.timeInMillis) {
+                            Toast.makeText(context, "Scheduled for tomorrow at 9:00 AM", Toast.LENGTH_SHORT).show()
+                            messageText = ""
+                            chatDraftPrefs.edit().remove("draft_${recipient.uid}").apply()
+                        }
+                        showScheduleDialog = false
+                    }) { Text("Tomorrow at 9:00 AM") }
+                }
+            },
+            dismissButton = { TextButton(onClick = { showScheduleDialog = false }) { Text("Cancel") } }
+        )
     }
 
     forwardingMessage?.let { original ->
@@ -1390,7 +1528,7 @@ fun MessageBubbleItem(
                     ) {
                         if (message.edited) {
                             Text(
-                                text = "Edited  ",
+                                text = if (message.editHistory.isNotEmpty()) "Edited (${message.editHistory.size})  " else "Edited  ",
                                 style = MaterialTheme.typography.labelSmall.copy(fontSize = 8.sp),
                                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
                             )
@@ -1851,15 +1989,18 @@ internal fun LinkPreviewCard(url: String, color: Color) {
     ) {
         Column {
             if (!preview?.image.isNullOrBlank()) {
-                AsyncImage(model = preview?.image, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxWidth().height(120.dp))
+                AsyncImage(model = preview?.image, contentDescription = title, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxWidth().height(160.dp))
             }
             Row(Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Default.Link, null, tint = Color(0xFF71C7FF), modifier = Modifier.size(20.dp))
                 Spacer(Modifier.width(8.dp))
                 Column(Modifier.weight(1f)) {
-                    Text(title, fontWeight = FontWeight.Bold, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    Text(description, fontSize = 10.sp, color = color.copy(alpha = .72f), maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    Text(preview?.site?.ifBlank { fallbackHost } ?: fallbackHost, fontSize = 9.sp, color = color.copy(alpha = .55f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(title, fontWeight = FontWeight.Bold, fontSize = 13.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                    Spacer(Modifier.height(3.dp))
+                    Text(description, fontSize = 11.sp, color = color.copy(alpha = .78f), maxLines = 4, overflow = TextOverflow.Ellipsis)
+                    Spacer(Modifier.height(4.dp))
+                    Text(preview?.site?.ifBlank { fallbackHost } ?: fallbackHost, fontSize = 9.sp, color = color.copy(alpha = .58f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(url, fontSize = 8.sp, color = color.copy(alpha = .42f), maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
                 Icon(Icons.Default.OpenInNew, "Open link", tint = Color(0xFF71C7FF), modifier = Modifier.size(17.dp))
             }

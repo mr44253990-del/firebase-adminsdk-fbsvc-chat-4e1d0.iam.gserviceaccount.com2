@@ -906,3 +906,4 @@ private fun GroupLinkPreviewCard(url: String, isSentByMe: Boolean) {
         color = if (isSentByMe) Color.White else MaterialTheme.colorScheme.onSurface
     )
 }
+

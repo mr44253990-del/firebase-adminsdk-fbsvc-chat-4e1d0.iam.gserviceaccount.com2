@@ -59,6 +59,7 @@ import com.example.ui.theme.PremiumBackground
 import com.example.video.VideoPlayerManager
 import com.example.security.AppLockManager
 import com.example.security.AppLockScreen
+import com.example.security.PrivacyPreferences
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.database.FirebaseDatabase
 import com.google.firebase.firestore.FirebaseFirestore
@@ -87,6 +88,7 @@ class MainActivity : FragmentActivity() {
     private val presenceHeartbeat = object : Runnable {
         override fun run() {
             writePresence(active = true, foreground = true)
+            viewModel.syncPresenceToWorker(active = true, foreground = true)
             presenceHandler.postDelayed(this, 5 * 60 * 1000L)
         }
     }
@@ -109,6 +111,7 @@ class MainActivity : FragmentActivity() {
     private fun startPresenceHeartbeat() {
         presenceHandler.removeCallbacks(presenceHeartbeat)
         writePresence(active = true, foreground = true)
+        viewModel.syncPresenceToWorker(active = true, foreground = true)
         presenceHandler.postDelayed(presenceHeartbeat, 5 * 60 * 1000L)
     }
 
@@ -167,6 +170,7 @@ class MainActivity : FragmentActivity() {
         pendingChatSenderId.value = intent?.getStringExtra("senderId")?.takeIf { it.isNotBlank() }
         captureDeepLink(intent); captureActiveGroupCall(intent); captureSharedContent(intent)
         AppLockManager.initialize(this)
+        PrivacyPreferences.initialize(this)
         enableEdgeToEdge()
 
         // Configure standard Coil cache so images (like profile pics) are cached aggressively offline
@@ -191,7 +195,16 @@ class MainActivity : FragmentActivity() {
 
         setContent {
             val currentTheme by viewModel.themeState.collectAsState()
-            
+            val privacySettings by PrivacyPreferences.settings.collectAsState()
+
+            LaunchedEffect(privacySettings.preventScreenshotOnSensitiveScreens) {
+                if (privacySettings.preventScreenshotOnSensitiveScreens) {
+                    window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+                } else {
+                    window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+                }
+            }
+
             MyApplicationTheme(themeType = currentTheme) {
                 val appLocked by AppLockManager.locked.collectAsState()
                 if (appLocked) {

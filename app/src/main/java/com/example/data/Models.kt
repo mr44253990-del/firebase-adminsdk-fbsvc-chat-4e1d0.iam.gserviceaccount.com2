@@ -18,6 +18,8 @@ data class User(
     val coverImageUrl: String = "",
     val followers: List<String> = emptyList(),
     val following: List<String> = emptyList(),
+    /** Additive server-backed net follower growth counter. */
+    val followerGrowth: Long = 0L,
     val role: String = "user",
     val isPremium: Boolean = false,
     val premiumPlan: String = "",
@@ -33,7 +35,16 @@ data class User(
     val awayReplyUntil: Long = 0L,
     val activeProfileType: String = "Personal",
     val profileVisibility: String = "everyone",
+    val pronouns: String = "",
+    val professionalTitle: String = "",
+    val publicContactEmail: String = "",
     val socialLinks: Map<String, String> = emptyMap()
+)
+
+data class MessageEditRecord(
+    val text: String = "",
+    val editedAt: Long = 0L,
+    val editedBy: String = ""
 )
 
 data class Message(
@@ -58,6 +69,9 @@ data class Message(
     val fileSize: Long? = null,
     val seenByRecipient: Boolean = false,
     val deliveredToRecipient: Boolean = false,
+    /** Epoch millis after which the message should be hidden/removed; 0 means persistent. */
+    val expiresAt: Long = 0L,
+    val editHistory: List<MessageEditRecord> = emptyList(),
     val reactions: Map<String, String> = emptyMap()
 )
 
@@ -142,5 +156,7 @@ data class GroupMessage(
     val timestamp: Long = 0L,
     val imageUrl: String? = null,
     val voiceUrl: String? = null,
-    val voiceDurationSec: Int? = null
+    val voiceDurationSec: Int? = null,
+    /** Epoch millis after which the group message should be hidden/removed; 0 means persistent. */
+    val expiresAt: Long = 0L
 )

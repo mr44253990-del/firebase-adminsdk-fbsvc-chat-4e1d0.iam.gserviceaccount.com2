@@ -110,6 +110,7 @@ data class CachedMessage(
     val fileSize: Long?,
     val seenByRecipient: Boolean,
     val deliveredToRecipient: Boolean,
+    val expiresAt: Long,
     val chatId: String // to query messages per conversation
 ) {
     fun toMessage(): Message {
@@ -119,7 +120,7 @@ data class CachedMessage(
             edited = edited, replyToId = replyToId, replyToText = replyToText,
             replyToSenderName = replyToSenderName, imageUrl = imageUrl,
             voiceUrl = voiceUrl, voiceDurationSec = voiceDurationSec,
-            remoteVoiceUrl = remoteVoiceUrl,
+            remoteVoiceUrl = remoteVoiceUrl, expiresAt = expiresAt,
             fileUrl = fileUrl, remoteFileUrl = remoteFileUrl, fileName = fileName,
             fileMimeType = fileMimeType, fileSize = fileSize,
             seenByRecipient = seenByRecipient, deliveredToRecipient = deliveredToRecipient
@@ -133,7 +134,7 @@ data class CachedMessage(
                 msg.text, msg.timestamp, msg.edited, msg.replyToId, msg.replyToText,
                 msg.replyToSenderName, msg.imageUrl, msg.voiceUrl, msg.voiceDurationSec,
                 msg.remoteVoiceUrl, msg.fileUrl, msg.remoteFileUrl, msg.fileName,
-                msg.fileMimeType, msg.fileSize, msg.seenByRecipient, msg.deliveredToRecipient, chatId
+                msg.fileMimeType, msg.fileSize, msg.seenByRecipient, msg.deliveredToRecipient, msg.expiresAt, chatId
             )
         }
     }
@@ -373,17 +374,18 @@ data class CachedGroupMessage(
     val timestamp: Long,
     val imageUrl: String?,
     val voiceUrl: String?,
-    val voiceDurationSec: Int?
+    val voiceDurationSec: Int?,
+    val expiresAt: Long
 ) {
     fun toGroupMessage(): GroupMessage {
-        return GroupMessage(messageId, groupId, senderId, senderName, text, timestamp, imageUrl, voiceUrl, voiceDurationSec)
+        return GroupMessage(messageId, groupId, senderId, senderName, text, timestamp, imageUrl, voiceUrl, voiceDurationSec, expiresAt)
     }
 
     companion object {
         fun fromGroupMessage(gm: GroupMessage): CachedGroupMessage {
             return CachedGroupMessage(
                 gm.messageId, gm.groupId, gm.senderId, gm.senderName,
-                gm.text, gm.timestamp, gm.imageUrl, gm.voiceUrl, gm.voiceDurationSec
+                gm.text, gm.timestamp, gm.imageUrl, gm.voiceUrl, gm.voiceDurationSec, gm.expiresAt
             )
         }
     }
@@ -529,7 +531,7 @@ interface CacheDao {
         CachedGroupMessage::class,
         CachedActivityNotification::class
     ],
-    version = 12,
+        version = 13,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -602,6 +604,12 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE cached_stories ADD COLUMN spotlightUntil INTEGER NOT NULL DEFAULT 0")
             }
         }
+        private val MIGRATION_12_13 = object : Migration(12, 13) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE cached_messages ADD COLUMN expiresAt INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE cached_group_messages ADD COLUMN expiresAt INTEGER NOT NULL DEFAULT 0")
+            }
+        }
 
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
@@ -609,7 +617,7 @@ abstract class AppDatabase : RoomDatabase() {
                     context.applicationContext,
                     AppDatabase::class.java,
                     "firechat_offline_cache_db"
-                ).addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12)
+                ).addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13)
                     .fallbackToDestructiveMigration()
                     .build()
                 INSTANCE = instance

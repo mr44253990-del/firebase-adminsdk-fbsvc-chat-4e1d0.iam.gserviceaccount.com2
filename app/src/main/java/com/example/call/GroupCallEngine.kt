@@ -33,7 +33,10 @@ data class GroupCallParticipant(
     val image: String = "",
     val video: Boolean = true,
     val muted: Boolean = false,
-    val connected: Boolean = false
+    val connected: Boolean = false,
+    val hostMuted: Boolean = false,
+    val quality: String = "unknown",
+    val iceState: String = "new"
 )
 
 data class GroupCallState(
@@ -48,6 +51,9 @@ data class GroupCallState(
     val cameraOff: Boolean = false,
     val screenSharing: Boolean = false,
     val connectedAt: Long = 0L,
+    val hostId: String = "",
+    val captionsEnabled: Boolean = false,
+    val recording: Boolean = false,
     val error: String? = null
 )
 
@@ -91,6 +97,8 @@ object GroupCallEngine {
     private var myUid: String = ""
     private var activeMemberIds: List<String> = emptyList()
     private var isClosing = false
+    private var hostId: String = ""
+    private var roomValueListener: ValueEventListener? = null
 
     @Synchronized
     private fun initialize(app: Context): Boolean {
@@ -159,7 +167,8 @@ object GroupCallEngine {
         isClosing = false
         val ref = FirebaseDatabase.getInstance().getReference("groupCalls").child(roomId)
         roomRef = ref
-        _state.value = GroupCallState(roomId, groupId, groupName, "connecting", video = video)
+        hostId = if (createRoom) myUid else ""
+        _state.value = GroupCallState(roomId, groupId, groupName, "connecting", video = video, hostId = hostId)
         fetchIceServers { servers, error ->
             if (error != null) { fail(error); onReady(false); return@fetchIceServers }
             if (!createLocalMedia(video)) { fail("Could not start microphone/camera"); onReady(false); return@fetchIceServers }
@@ -176,7 +185,11 @@ object GroupCallEngine {
                 "expiresAt" to System.currentTimeMillis() + 60 * 60 * 1000L
             )
             val write = if (createRoom) ref.setValue(roomData) else ref.get()
-            write.addOnSuccessListener {
+            write.addOnSuccessListener { result ->
+                if (!createRoom) {
+                    hostId = (result as? DataSnapshot)?.child("hostId")?.getValue(String::class.java).orEmpty()
+                    _state.value = _state.value.copy(hostId = hostId)
+                }
                 ref.child("participants").child(myUid).setValue(me).addOnSuccessListener {
                     if (!createRoom && memberIds.isNotEmpty()) {
                         ref.child("participants").get().addOnSuccessListener { snapshot ->
@@ -197,10 +210,29 @@ object GroupCallEngine {
     }
 
     private fun watchRoom(ref: DatabaseReference, servers: List<PeerConnection.IceServer>) {
+        roomValueListener = ref.addValueEventListener(object : ValueEventListener {
+            override fun onDataChange(snapshot: DataSnapshot) {
+                val remoteHostId = snapshot.child("hostId").getValue(String::class.java).orEmpty()
+                if (remoteHostId.isNotBlank()) {
+                    hostId = remoteHostId
+                    _state.value = _state.value.copy(hostId = remoteHostId)
+                }
+                val meeting = snapshot.child("meetingState")
+                _state.value = _state.value.copy(
+                    captionsEnabled = meeting.child("captionsEnabled").getValue(Boolean::class.java) ?: false,
+                    recording = meeting.child("recording").getValue(Boolean::class.java) ?: false
+                )
+            }
+            override fun onCancelled(error: DatabaseError) { Log.w(TAG, "Room state listener cancelled: ${error.message}") }
+        })
         participantsListener = ref.child("participants").addChildEventListener(object : ChildEventListener {
             override fun onChildAdded(snapshot: DataSnapshot, previousChildName: String?) {
+                if (snapshot.child("removed").getValue(Boolean::class.java) == true) {
+                    handleHostRemoval(snapshot.key)
+                    return
+                }
                 participantFrom(snapshot)?.let { participant ->
-                    upsertParticipant(participant)
+                    applyParticipantState(participant)
                     if (participant.uid != myUid) {
                         val offerer = myUid < participant.uid
                         ensurePeer(participant.uid, servers, offerer)
@@ -208,8 +240,12 @@ object GroupCallEngine {
                 }
             }
             override fun onChildChanged(snapshot: DataSnapshot, previousChildName: String?) {
+                if (snapshot.child("removed").getValue(Boolean::class.java) == true) {
+                    handleHostRemoval(snapshot.key)
+                    return
+                }
                 participantFrom(snapshot)?.let { participant ->
-                    upsertParticipant(participant)
+                    applyParticipantState(participant)
                     if (participant.uid != myUid) ensurePeer(participant.uid, servers, myUid < participant.uid)
                 }
             }
@@ -243,8 +279,30 @@ object GroupCallEngine {
             image = snapshot.child("image").getValue(String::class.java).orEmpty(),
             video = snapshot.child("video").getValue(Boolean::class.java) ?: true,
             muted = snapshot.child("muted").getValue(Boolean::class.java) ?: false,
-            connected = uid == myUid || peers[uid]?.connected == true
+            connected = uid == myUid || peers[uid]?.connected == true,
+            hostMuted = snapshot.child("hostMuted").getValue(Boolean::class.java) ?: false,
+            quality = if (uid == myUid) "good" else "unknown",
+            iceState = if (uid == myUid) "local" else "new"
         )
+    }
+
+    private fun applyParticipantState(participant: GroupCallParticipant) {
+        if (participant.uid == myUid) {
+            val effectiveMuted = participant.muted || participant.hostMuted
+            localAudio?.setEnabled(!effectiveMuted)
+            _state.value = _state.value.copy(muted = effectiveMuted)
+        }
+        upsertParticipant(participant)
+    }
+
+    private fun handleHostRemoval(uid: String?) {
+        if (uid.isNullOrBlank()) return
+        if (uid == myUid) {
+            cleanup("removed")
+        } else {
+            removePeer(uid)
+            _state.value = _state.value.copy(participants = _state.value.participants.filterNot { it.uid == uid })
+        }
     }
 
     private fun upsertParticipant(participant: GroupCallParticipant) {
@@ -289,7 +347,7 @@ object GroupCallEngine {
             override fun onIceConnectionChange(state: PeerConnection.IceConnectionState) {
                 val connected = state == PeerConnection.IceConnectionState.CONNECTED || state == PeerConnection.IceConnectionState.COMPLETED
                 peers[remoteUid]?.connected = connected
-                updateParticipantConnection(remoteUid, connected)
+                updateParticipantConnection(remoteUid, connected, qualityForIceState(state), state.name.lowercase())
                 when (state) {
                     PeerConnection.IceConnectionState.DISCONNECTED,
                     PeerConnection.IceConnectionState.CHECKING -> {
@@ -412,9 +470,45 @@ object GroupCallEngine {
         }
     }
 
-    private fun updateParticipantConnection(uid: String, connected: Boolean) {
+    private fun updateParticipantConnection(uid: String, connected: Boolean, quality: String = "unknown", iceState: String = "new") {
         val old = _state.value.participants.firstOrNull { it.uid == uid } ?: return
-        upsertParticipant(old.copy(connected = connected))
+        upsertParticipant(old.copy(connected = connected, quality = quality, iceState = iceState))
+    }
+
+    private fun qualityForIceState(state: PeerConnection.IceConnectionState): String = when (state) {
+        PeerConnection.IceConnectionState.CONNECTED,
+        PeerConnection.IceConnectionState.COMPLETED -> "good"
+        PeerConnection.IceConnectionState.CHECKING,
+        PeerConnection.IceConnectionState.NEW -> "fair"
+        PeerConnection.IceConnectionState.DISCONNECTED -> "poor"
+        PeerConnection.IceConnectionState.FAILED,
+        PeerConnection.IceConnectionState.CLOSED -> "offline"
+        else -> "unknown"
+    }
+
+    fun isHost(): Boolean = hostId.isNotBlank() && hostId == myUid
+
+    fun toggleCaptions() {
+        val enabled = !_state.value.captionsEnabled
+        roomRef?.child("meetingState")?.child("captionsEnabled")?.setValue(enabled)
+        _state.value = _state.value.copy(captionsEnabled = enabled)
+    }
+
+    fun toggleRecordingHook() {
+        if (!isHost()) return
+        val enabled = !_state.value.recording
+        roomRef?.child("meetingState")?.child("recording")?.setValue(enabled)
+        _state.value = _state.value.copy(recording = enabled)
+    }
+
+    fun hostMuteParticipant(uid: String, muted: Boolean) {
+        if (!isHost() || uid == myUid) return
+        roomRef?.child("participants")?.child(uid)?.child("hostMuted")?.setValue(muted)
+    }
+
+    fun removeParticipant(uid: String) {
+        if (!isHost() || uid == myUid) return
+        roomRef?.child("participants")?.child(uid)?.child("removed")?.setValue(true)
     }
 
     fun toggleMute() {
@@ -550,13 +644,19 @@ object GroupCallEngine {
     fun attachLocalRenderer(renderer: SurfaceViewRenderer) {
         mainHandler.post {
             runCatching {
-                localRenderer?.takeIf { it !== renderer }?.let { old -> localVideo?.removeSink(old) }
-                localRenderer = renderer
-                renderer.init(eglBase?.eglBaseContext, null)
-                renderer.setEnableHardwareScaler(true)
-                renderer.setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FIT)
-                renderer.setMirror(true)
-                localVideo?.let { track -> track.setEnabled(true); track.addSink(renderer) }
+                if (localRenderer !== renderer) {
+                    localRenderer?.let { old -> localVideo?.removeSink(old) }
+                    localRenderer = renderer
+                    renderer.init(eglBase?.eglBaseContext, null)
+                    renderer.setEnableHardwareScaler(true)
+                    renderer.setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FIT)
+                    renderer.setMirror(true)
+                }
+                localVideo?.let { track ->
+                    track.setEnabled(true)
+                    track.removeSink(renderer)
+                    track.addSink(renderer)
+                }
             }.onFailure { Log.w(TAG, "Local renderer bind failed", it) }
         }
     }
@@ -576,12 +676,14 @@ object GroupCallEngine {
     fun attachRemoteRenderer(uid: String, renderer: SurfaceViewRenderer) {
         mainHandler.post {
             runCatching {
-                remoteRenderers[uid]?.takeIf { it !== renderer }?.let { old -> peers[uid]?.remoteVideo?.removeSink(old) }
-                remoteRenderers[uid] = renderer
-                renderer.init(eglBase?.eglBaseContext, null)
-                renderer.setEnableHardwareScaler(true)
-                renderer.setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FIT)
-                renderer.setMirror(false)
+                if (remoteRenderers[uid] !== renderer) {
+                    remoteRenderers[uid]?.let { old -> peers[uid]?.remoteVideo?.removeSink(old) }
+                    remoteRenderers[uid] = renderer
+                    renderer.init(eglBase?.eglBaseContext, null)
+                    renderer.setEnableHardwareScaler(true)
+                    renderer.setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FIT)
+                    renderer.setMirror(false)
+                }
                 val track = peers[uid]?.remoteVideo ?: pendingRemoteTracks.remove(uid)
                 track?.let { videoTrack ->
                     peers[uid]?.remoteVideo = videoTrack
@@ -646,16 +748,22 @@ object GroupCallEngine {
         roomRef?.child("participants")?.child(myUid)?.removeValue()
         participantsListener?.let { roomRef?.child("participants")?.removeEventListener(it) }
         signalListener?.let { roomRef?.child("signals")?.child(myUid)?.removeEventListener(it) }
-        participantsListener = null; signalListener = null
-        peers.values.forEach { runCatching { it.peer.close(); it.peer.dispose() } }
-        peers.clear(); remoteRenderers.clear(); pendingRemoteTracks.clear()
+        roomValueListener?.let { roomRef?.removeEventListener(it) }
+        participantsListener = null; signalListener = null; roomValueListener = null
+        peers.values.forEach { slot ->
+            runCatching { slot.remoteVideo?.let { track -> remoteRenderers[slot.uid]?.let(track::removeSink) } }
+            runCatching { slot.peer.close(); slot.peer.dispose() }
+        }
+        runCatching { localVideo?.let { track -> localRenderer?.let(track::removeSink) } }
+        peers.clear(); remoteRenderers.clear(); pendingRemoteTracks.clear(); localRenderer = null
         runCatching { videoCapturer?.stopCapture() }; videoCapturer?.dispose(); videoCapturer = null
         surfaceTextureHelper?.dispose(); surfaceTextureHelper = null
         localVideo?.dispose(); localVideo = null; videoSource?.dispose(); videoSource = null
         localAudio?.dispose(); localAudio = null
         context?.let(CallForegroundService::stop)
         activeMemberIds = emptyList()
-        _state.value = _state.value.copy(status = finalStatus)
+        hostId = ""
+        _state.value = _state.value.copy(status = finalStatus, hostId = "", captionsEnabled = false, recording = false)
     }
 
     private fun fail(message: String) {
@@ -694,3 +802,4 @@ object GroupCallEngine {
         }.addOnFailureListener { callback(emptyList(), it.localizedMessage ?: "TURN authentication failed") }
     }
 }
+

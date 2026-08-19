@@ -11,6 +11,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -41,6 +43,9 @@ fun GroupCallScreen(
     val state by GroupCallEngine.state.collectAsState()
     var permissionResult by remember { mutableStateOf<Map<String, Boolean>?>(null) }
     var started by remember { mutableStateOf(false) }
+    var showDiagnostics by remember { mutableStateOf(false) }
+    val localUid = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid.orEmpty()
+    val isHost = state.hostId.isNotBlank() && state.hostId == localUid
 
     val permissionsLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -122,13 +127,49 @@ fun GroupCallScreen(
                             Icon(Icons.Default.Refresh, "Recover camera")
                         }
                     }
-                    Text("${state.participants.size}/4", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(end = 16.dp))
+                    Surface(
+                        shape = RoundedCornerShape(50),
+                        color = when (state.status) {
+                            "connected" -> Color(0xFF1B5E20).copy(alpha = 0.16f)
+                            "reconnecting" -> MaterialTheme.colorScheme.errorContainer
+                            else -> MaterialTheme.colorScheme.surfaceVariant
+                        },
+                        modifier = Modifier.padding(end = 10.dp)
+                    ) {
+                        Text(
+                            when (state.status) {
+                                "connected" -> "Good connection"
+                                "reconnecting" -> "Reconnecting"
+                                "failed" -> "Call issue"
+                                else -> "Connecting"
+                            },
+                            style = MaterialTheme.typography.labelSmall,
+                            color = when (state.status) {
+                                "connected" -> Color(0xFF1B5E20)
+                                "reconnecting", "failed" -> MaterialTheme.colorScheme.onErrorContainer
+                                else -> MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp)
+                        )
+                    }
+                    if (state.captionsEnabled) {
+                        Surface(shape = RoundedCornerShape(50), color = MaterialTheme.colorScheme.secondaryContainer, modifier = Modifier.padding(end = 6.dp)) {
+                            Text("CC", style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(horizontal = 7.dp, vertical = 5.dp))
+                        }
+                    }
+                    if (state.recording) {
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(end = 8.dp)) {
+                            Icon(Icons.Default.FiberManualRecord, "Recording", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(14.dp))
+                            Text("REC", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+                        }
+                    }
+                    Text("${state.participants.size}/4", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(end = 10.dp))
                 }
             )
         },
         bottomBar = {
             Row(
-                modifier = Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface).padding(12.dp),
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).background(MaterialTheme.colorScheme.surface).padding(12.dp),
                 horizontalArrangement = Arrangement.SpaceEvenly,
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -137,6 +178,9 @@ fun GroupCallScreen(
                 }
                 FilledTonalIconButton(onClick = { GroupCallEngine.toggleCamera() }, enabled = state.video) {
                     Icon(if (state.cameraOff) Icons.Default.VideocamOff else Icons.Default.Videocam, "Camera")
+                }
+                FilledTonalIconButton(onClick = { GroupCallEngine.switchCamera() }, enabled = state.video && !state.screenSharing) {
+                    Icon(Icons.Default.Cameraswitch, "Switch camera")
                 }
                 FilledTonalIconButton(onClick = { GroupCallEngine.toggleSpeaker() }) {
                     Icon(if (state.speaker) Icons.Default.VolumeUp else Icons.Default.VolumeDown, "Speaker")
@@ -149,6 +193,17 @@ fun GroupCallScreen(
                     }
                 }, enabled = state.video) {
                     Icon(if (state.screenSharing) Icons.Default.StopScreenShare else Icons.Default.ScreenShare, "Screen share")
+                }
+                FilledTonalIconButton(onClick = { GroupCallEngine.toggleCaptions() }) {
+                    Icon(Icons.Default.ClosedCaption, "Toggle captions", tint = if (state.captionsEnabled) MaterialTheme.colorScheme.primary else LocalContentColor.current)
+                }
+                if (isHost) {
+                    FilledTonalIconButton(onClick = { GroupCallEngine.toggleRecordingHook() }) {
+                        Icon(Icons.Default.FiberManualRecord, "Toggle recording", tint = if (state.recording) MaterialTheme.colorScheme.error else LocalContentColor.current)
+                    }
+                }
+                FilledTonalIconButton(onClick = { showDiagnostics = !showDiagnostics }) {
+                    Icon(Icons.Default.NetworkCheck, "Call diagnostics")
                 }
                 IconButton(onClick = { GroupCallEngine.end(); onClose() }) {
                     Icon(Icons.Default.CallEnd, "End call", tint = MaterialTheme.colorScheme.error)
@@ -194,15 +249,26 @@ fun GroupCallScreen(
                     Text("Retry call")
                 }
             }
+            if (showDiagnostics && state.participants.isNotEmpty()) {
+                Card(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
+                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                        Text("Call diagnostics", style = MaterialTheme.typography.titleSmall)
+                        state.participants.forEach { participant ->
+                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                Text(participant.name, modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelMedium)
+                                Text(participant.quality.replaceFirstChar { it.uppercase() }, color = qualityColor(participant.quality), style = MaterialTheme.typography.labelSmall)
+                                Spacer(Modifier.width(8.dp))
+                                Text(participant.iceState, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                    }
+                }
+            }
             if (state.status != "idle") {
                 AndroidView(
                     modifier = Modifier.fillMaxWidth().height(230.dp),
-                            factory = { viewContext -> SurfaceViewRenderer(viewContext).also {
-                                it.setEnableHardwareScaler(true)
-                                it.setScalingType(org.webrtc.RendererCommon.ScalingType.SCALE_ASPECT_FIT)
-                                GroupCallEngine.attachLocalRenderer(it)
-                            } },
-                            update = { GroupCallEngine.refreshLocalRenderer() },
+                            factory = { viewContext -> SurfaceViewRenderer(viewContext) },
+                    update = { renderer -> GroupCallEngine.attachLocalRenderer(renderer) },
                             onRelease = { GroupCallEngine.detachLocalRenderer(it) }
                 )
                 Spacer(Modifier.height(8.dp))
@@ -210,14 +276,35 @@ fun GroupCallScreen(
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxSize()) {
                 items(state.participants.filter { it.uid != com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid }, key = { it.uid }) { participant ->
                     Column(Modifier.fillMaxWidth()) {
-                        Text(participant.name + if (participant.muted) " (muted)" else "", style = MaterialTheme.typography.labelMedium)
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Surface(
+                                modifier = Modifier.size(8.dp),
+                                shape = RoundedCornerShape(50),
+                                color = if (participant.connected) Color(0xFF26E86F) else MaterialTheme.colorScheme.error
+                            ) {}
+                            Text(
+                                participant.name + if (participant.muted || participant.hostMuted) " (muted)" else "",
+                                style = MaterialTheme.typography.labelMedium,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Text(
+                                if (participant.connected) "Connected" else "Connecting",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = qualityColor(participant.quality)
+                            )
+                            if (isHost) {
+                                IconButton(onClick = { GroupCallEngine.hostMuteParticipant(participant.uid, !participant.hostMuted) }) {
+                                    Icon(if (participant.hostMuted) Icons.Default.Mic else Icons.Default.MicOff, if (participant.hostMuted) "Allow microphone" else "Mute participant")
+                                }
+                                IconButton(onClick = { GroupCallEngine.removeParticipant(participant.uid) }) {
+                                    Icon(Icons.Default.PersonRemove, "Remove participant", tint = MaterialTheme.colorScheme.error)
+                                }
+                            }
+                        }
                         AndroidView(
                             modifier = Modifier.fillMaxWidth().height(190.dp).background(Color.Black, RoundedCornerShape(12.dp)),
-                            factory = { viewContext -> SurfaceViewRenderer(viewContext).also {
-                                it.setEnableHardwareScaler(true)
-                                it.setScalingType(org.webrtc.RendererCommon.ScalingType.SCALE_ASPECT_FIT)
-                                GroupCallEngine.attachRemoteRenderer(participant.uid, it)
-                            } },
+                            factory = { viewContext -> SurfaceViewRenderer(viewContext) },
+                            update = { renderer -> GroupCallEngine.attachRemoteRenderer(participant.uid, renderer) },
                             onRelease = { GroupCallEngine.detachRemoteRenderer(participant.uid, it) }
                         )
                     }
@@ -225,4 +312,12 @@ fun GroupCallScreen(
             }
         }
     }
+}
+
+
+private fun qualityColor(quality: String): Color = when (quality) {
+    "good" -> Color(0xFF1B5E20)
+    "fair" -> Color(0xFF8A6D1D)
+    "poor", "offline" -> Color(0xFFB3261E)
+    else -> Color.Gray
 }

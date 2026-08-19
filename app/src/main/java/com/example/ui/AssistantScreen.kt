@@ -138,6 +138,27 @@ fun AssistantScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenUser: (U
                             Spacer(Modifier.width(10.dp)); Text("What I can do", fontWeight = FontWeight.ExtraBold)
                         }
                         Text("📊 Account stats and reactions  •  🔎 User search  •  🗑️ Delete your posts with confirmation  •  💬 Convo Chat help  •  🧠 On-device assistant memory", fontSize = 12.sp)
+                        Text("Premium quick actions", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                        if (config.assistantEnabled && config.smartReplyEnabled) {
+                            OutlinedButton(onClick = { input = "Suggest three concise, polite replies to my latest conversation context." }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp)) {
+                                Icon(Icons.Default.Reply, null, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(7.dp)); Text("Suggest smart replies")
+                            }
+                        }
+                        if (config.assistantEnabled) {
+                            OutlinedButton(onClick = { input = "Summarize my recent activity, important conversations, and pending follow-ups in a concise checklist." }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp)) {
+                                Icon(Icons.Default.Summarize, null, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(7.dp)); Text("Summarize my activity")
+                            }
+                        }
+                        if (config.assistantEnabled && config.memorySearchEnabled) {
+                            OutlinedButton(onClick = { input = "Search my assistant memory and explain where I last discussed an important address, date, task, or decision. If the context is missing, say so." }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp)) {
+                                Icon(Icons.Default.ManageSearch, null, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(7.dp)); Text("Search my memory")
+                            }
+                        }
+                        if (config.assistantEnabled && config.taskExtractionEnabled) {
+                            OutlinedButton(onClick = { input = "Create a practical task checklist from my recent conversation context. Include title, priority, and suggested deadline for each task." }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp)) {
+                                Icon(Icons.Default.TaskAlt, null, modifier = Modifier.size(18.dp)); Spacer(Modifier.width(7.dp)); Text("Create task checklist")
+                            }
+                        }
                         if (!config.assistantEnabled) Text("The administrator has currently disabled the Assistant.", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
                     }
                 }

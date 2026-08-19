@@ -11,6 +11,9 @@
  */
 
 export default {
+  async scheduled(controller, env, ctx) {
+    ctx.waitUntil(expireStalePresence(env));
+  },
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const path = url.pathname.replace(/\/+$/, "") || "/";
@@ -306,6 +309,8 @@ export default {
         await firestoreSet(env,`user_sessions/${caller.sub}/devices/${id}`,record); return jsonResponse({success:true,session:record});
       }
       if(path==="/sessions/list") return jsonResponse({success:true,sessions:(await firestoreList(env,`user_sessions/${caller.sub}/devices`)).sort((a,b)=>(b.lastSeenAt||0)-(a.lastSeenAt||0))});
+      if(path==="/sessions/delete") { const id=String(payload.sessionId||"").replace(/[^A-Za-z0-9_-]/g,"").slice(0,100); if(!id)return jsonResponse({error:"sessionId required"},400); const existing=await firestoreGet(env,`user_sessions/${caller.sub}/devices/${id}`); if(!existing)return jsonResponse({success:true,deleted:false}); await firestoreDelete(env,`user_sessions/${caller.sub}/devices/${id}`); return jsonResponse({success:true,deleted:true,sessionId:id}); }
+      if(path==="/sessions/clear") { const sessions=await firestoreList(env,`user_sessions/${caller.sub}/devices`); await Promise.all(sessions.map(x=>x.sessionId?firestoreDelete(env,`user_sessions/${caller.sub}/devices/${String(x.sessionId).replace(/[^A-Za-z0-9_-]/g,"").slice(0,100)}`):null)); return jsonResponse({success:true,deleted:sessions.length}); }
       if(path==="/sessions/revoke-all") { const auth=await updateFirebaseAccount(env,caller.sub,{validSince:String(Math.floor(Date.now()/1000))}); const sessions=await firestoreList(env,`user_sessions/${caller.sub}/devices`); await Promise.all(sessions.map(x=>firestoreSet(env,`user_sessions/${caller.sub}/devices/${x.sessionId}`,{...x,active:false,revokedAt:Date.now()}))); return jsonResponse({success:true,authRevoked:auth.ok}); }
       if(path==="/reports/create") { const id=crypto.randomUUID(); const report={id,reporterId:caller.sub,reporterEmail:caller.email||"",targetUid:String(payload.targetUid||""),category:String(payload.category||"other").slice(0,60),description:String(payload.description||"").slice(0,3000),status:"pending",createdAt:Date.now()}; await firestoreSet(env,`user_reports/${id}`,report); return jsonResponse({success:true,report}); }
       if(path==="/admin/reports/list") { if(caller.email!=="mr4425390@gmail.com")return jsonResponse({error:"Admin only"},403); return jsonResponse({success:true,reports:await firestoreList(env,"user_reports")}); }
@@ -585,7 +590,25 @@ async function fsAuth(env){const a=JSON.parse(env.FIREBASE_SERVICE_ACCOUNT||"{}"
 async function firestoreGet(env,path){const{a,t}=await fsAuth(env);const r=await fetch(`https://firestore.googleapis.com/v1/projects/${a.project_id}/databases/(default)/documents/${path}`,{headers:{Authorization:`Bearer ${t}`}});if(r.status===404)return null;if(!r.ok)throw Error(`Firestore ${r.status}`);const d=await r.json();return Object.fromEntries(Object.entries(d.fields||{}).map(([k,v])=>[k,fromFV(v)]));}
 async function firestoreSet(env,path,data){const{a,t}=await fsAuth(env);const fields=Object.fromEntries(Object.entries(data).map(([k,v])=>[k,toFV(v)]));const r=await fetch(`https://firestore.googleapis.com/v1/projects/${a.project_id}/databases/(default)/documents/${path}`,{method:"PATCH",headers:{Authorization:`Bearer ${t}`,"Content-Type":"application/json"},body:JSON.stringify({fields})});if(!r.ok)throw Error(`Firestore write ${r.status}`);return r.json();}
 async function firestoreMerge(env,path,data){return firestoreSet(env,path,{...((await firestoreGet(env,path))||{}),...data});}
-async function firestoreList(env,path){const{a,t}=await fsAuth(env);const r=await fetch(`https://firestore.googleapis.com/v1/projects/${a.project_id}/databases/(default)/documents/${path}?pageSize=100`,{headers:{Authorization:`Bearer ${t}`}});if(!r.ok)throw Error(`Firestore list ${r.status}`);const d=await r.json();return(d.documents||[]).map(x=>Object.fromEntries(Object.entries(x.fields||{}).map(([k,v])=>[k,fromFV(v)])));}
+async function firestoreDelete(env,path){const{a,t}=await fsAuth(env);const r=await fetch(`https://firestore.googleapis.com/v1/projects/${a.project_id}/databases/(default)/documents/${path}`,{method:"DELETE",headers:{Authorization:`Bearer ${t}`}});if(r.status===404)return true;if(!r.ok)throw Error(`Firestore delete ${r.status}`);return true;}
+async function firestoreList(env,path){const{a,t}=await fsAuth(env);const r=await fetch(`https://firestore.googleapis.com/v1/projects/${a.project_id}/databases/(default)/documents/${path}?pageSize=100`,{headers:{Authorization:`Bearer ${t}`}});if(!r.ok)throw Error(`Firestore list ${r.status}`);const d=await r.json();return(d.documents||[]).map(x=>({...Object.fromEntries(Object.entries(x.fields||{}).map(([k,v])=>[k,fromFV(v)])),__name:String(x.name||"").split("/").pop()}));}
+async function expireStalePresence(env){
+  try {
+    const now = Date.now();
+    const records = await firestoreList(env, "presence");
+    await Promise.all(records.filter(record => {
+      const leaseUntil = Number(record.onlineUntil || 0) || (Number(record.lastActive || 0) + 5 * 60 * 1000);
+      return record.isOnline === true && leaseUntil <= now;
+    }).map(record => {
+      const uid = String(record.uid || record.__name || "").replace(/[^A-Za-z0-9_-]/g, "");
+      if (!uid) return null;
+      const { __name, ...presence } = record;
+      return firestoreSet(env, `presence/${uid}`, {...presence, isOnline: false, offlineSince: Number(presence.offlineSince || now), leaseExpiredAt: now});
+    }));
+  } catch (_) {
+    // Scheduled cleanup is best-effort; authenticated client heartbeats remain authoritative.
+  }
+}
 async function updateFirebaseAccount(env,uid,changes){const a=JSON.parse(env.FIREBASE_SERVICE_ACCOUNT||"{}");const t=await getGoogleAccessToken(a.client_email,a.private_key,"https://www.googleapis.com/auth/identitytoolkit");const r=await fetch(`https://identitytoolkit.googleapis.com/v1/projects/${a.project_id}/accounts:update`,{method:"POST",headers:{Authorization:`Bearer ${t}`,"Content-Type":"application/json"},body:JSON.stringify({localId:uid,...changes})});return{ok:r.ok,status:r.status};}
 
 /**

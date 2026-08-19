@@ -129,6 +129,9 @@ fun MyApplicationTheme(
         "obsidian neon" -> themedDark(Color(0xFFA88BFF), Color(0xFF00F0D0), Color.Black, Color(0xFF0A0B12)).copy(tertiary = Color(0xFFFF3DAA), primaryContainer = Color(0xFF281D55), onPrimaryContainer = Color.White)
         "neon pulse" -> themedDark(Color(0xFFFF8A65), Color(0xFF00E5FF), Color(0xFF0B0612), Color(0xFF1A0C27)).copy(tertiary = Color(0xFFFF4DA6), primaryContainer = Color(0xFF51205D), onPrimaryContainer = Color.White)
         "frosted light" -> LightColors.copy(primary = Color(0xFF6554D9), secondary = Color(0xFF007F9B), background = Color(0xFFF5F5FF), surface = Color(0xFFFCFAFF), surfaceVariant = Color(0xFFE9E8F4), onSurface = Color(0xFF171522), onBackground = Color(0xFF171522))
+        "royal gold" -> themedDark(Color(0xFFFFD166), Color(0xFFFFA62B), Color(0xFF120C02), Color(0xFF241806)).copy(tertiary = Color(0xFFFFE8A3), primaryContainer = Color(0xFF5A4108), onPrimaryContainer = Color.White)
+        "cyber lime" -> themedDark(Color(0xFFC8FF4D), Color(0xFF55E6A5), Color(0xFF071006), Color(0xFF102014)).copy(tertiary = Color(0xFFB2F7FF), primaryContainer = Color(0xFF315C12), onPrimaryContainer = Color.White)
+        "rose quartz" -> themedDark(Color(0xFFFFB3CF), Color(0xFFE5A5FF), Color(0xFF140810), Color(0xFF2A1423)).copy(tertiary = Color(0xFFFFD1DC), primaryContainer = Color(0xFF69324F), onPrimaryContainer = Color.White)
         else -> if (darkTheme) DarkColors else LightColors
     }
 

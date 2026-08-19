@@ -112,6 +112,9 @@
         <receiver
             android:name=".service.CallEndReceiver"
             android:exported="false" />
+        <receiver
+            android:name=".service.ScheduledMessageReceiver"
+            android:exported="false" />
 
         <service
             android:name=".service.CallForegroundService"

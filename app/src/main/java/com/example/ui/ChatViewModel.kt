@@ -17,6 +17,8 @@ import androidx.lifecycle.viewModelScope
 import com.example.R
 import com.example.data.*
 import com.example.call.CallEngine
+import com.example.security.PrivacyPreferences
+import com.example.service.scheduleMessage
 import com.google.firebase.auth.AuthCredential
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.database.DataSnapshot
@@ -127,6 +129,14 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     private val sharedPrefs = application.getSharedPreferences("firechat_prefs", Context.MODE_PRIVATE)
     private val localUploadFiles = ConcurrentHashMap<String, String>()
+
+    private fun outgoingExpiryAt(sentAt: Long = System.currentTimeMillis()): Long {
+        val seconds = PrivacyPreferences.settings.value.disappearingMessageSeconds
+        return if (seconds > 0) sentAt + seconds * 1000L else 0L
+    }
+
+    private fun isVisibleMessage(expiresAt: Long, now: Long = System.currentTimeMillis()): Boolean =
+        expiresAt <= 0L || expiresAt > now
 
     // Offline Cache DB & Dao
     private val appDb = AppDatabase.getDatabase(application)
@@ -510,6 +520,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     fun askAssistant(prompt: String, memory: List<String>, onResult: (String) -> Unit) {
         val user = FirebaseAuth.getInstance().currentUser ?: return onResult("Please sign in again.")
+        if (!PrivacyPreferences.settings.value.allowAiProcessing) return onResult("AI processing is disabled in Privacy & Security. Enable it before sending private chat content to the assistant.")
         if (!_flagshipConfig.value.assistantEnabled) return onResult("Assistant is currently disabled by the admin.")
         user.getIdToken(false).addOnSuccessListener { tokenResult ->
             val token = tokenResult.token ?: return@addOnSuccessListener onResult("Could not authenticate assistant.")
@@ -539,6 +550,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     fun askAssistantStreaming(prompt: String, memory: List<String>, onDelta: (String) -> Unit, onDone: (String?) -> Unit) {
         val user = FirebaseAuth.getInstance().currentUser ?: return onDone("Please sign in again")
+        if (!PrivacyPreferences.settings.value.allowAiProcessing) return onDone("AI processing is disabled in Privacy & Security")
         if (!_flagshipConfig.value.assistantEnabled) return onDone("Assistant is disabled")
         user.getIdToken(false).addOnSuccessListener { tokenResult ->
             val token = tokenResult.token ?: return@addOnSuccessListener onDone("Could not authenticate")
@@ -579,6 +591,18 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }.addOnFailureListener { onResult(false, JSONObject().put("error", it.localizedMessage ?: "Authentication failed")) }
     }
 
+    fun syncPresenceToWorker(active: Boolean = true, foreground: Boolean = true) {
+        if (FirebaseAuth.getInstance().currentUser == null) return
+        workerSecurityPost(
+            "/presence/heartbeat",
+            JSONObject()
+                .put("active", active)
+                .put("foreground", foreground)
+                .put("onlineUntil", if (active) System.currentTimeMillis() + 5 * 60 * 1000L else 0L)
+                .put("appVersion", BuildConfig.VERSION_NAME)
+        ) { _, _ -> }
+    }
+
     fun registerDeviceSession() {
         if (FirebaseAuth.getInstance().currentUser == null) return
         val prefs = getApplication<Application>().getSharedPreferences("convo_device_session", Context.MODE_PRIVATE)
@@ -594,9 +618,19 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         _deviceSessions.value = (0 until array.length()).map { i -> array.optJSONObject(i) ?: JSONObject() }.map { item -> DeviceSession(item.optString("sessionId"), item.optString("deviceName", "Android device"), item.optString("androidVersion"), item.optString("appVersion"), item.optLong("firstSeenAt"), item.optLong("lastSeenAt"), item.optBoolean("active", true), item.optString("maskedIp"), item.optString("city", "Unknown"), item.optString("region"), item.optString("country"), item.optDouble("latitude"), item.optDouble("longitude")) }
     }
 
-    /** Clear only the locally displayed device list; server sessions remain unchanged. */
-    fun clearLocalDeviceSessions() {
-        _deviceSessions.value = emptyList()
+    fun deleteDeviceSession(sessionId: String, onComplete: (Boolean, String) -> Unit = { _, _ -> }) {
+        if (sessionId.isBlank()) return onComplete(false, "Invalid device session")
+        workerSecurityPost("/sessions/delete", JSONObject().put("sessionId", sessionId)) { ok, json ->
+            if (ok) _deviceSessions.value = _deviceSessions.value.filterNot { it.sessionId == sessionId }
+            onComplete(ok, if (ok) "Device history deleted" else json.optString("error", "Could not delete device history"))
+        }
+    }
+
+    fun clearDeviceSessions(onComplete: (Boolean, String) -> Unit = { _, _ -> }) {
+        workerSecurityPost("/sessions/clear", JSONObject()) { ok, json ->
+            if (ok) _deviceSessions.value = emptyList()
+            onComplete(ok, if (ok) "All device history deleted from the database" else json.optString("error", "Could not clear device history"))
+        }
     }
 
     fun logoutAllDevices(onComplete: (Boolean, String) -> Unit) = workerSecurityPost("/sessions/revoke-all", JSONObject()) { ok, json ->
@@ -1412,6 +1446,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 cacheDao.getMessagesForChat(chatId).firstOrNull()?.let { cached ->
                     if (_chatMessagesState.value.isEmpty()) {
                         _chatMessagesState.value = cached.map { it.toMessage() }
+                            .filter { isVisibleMessage(it.expiresAt) }
                     }
                 }
             } catch (e: Exception) {
@@ -1453,13 +1488,14 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                                     fileMimeType = childSnapshot.child("fileMimeType").value as? String,
                                     fileSize = childSnapshot.child("fileSize").value as? Long,
                                     seenByRecipient = childSnapshot.child("seenByRecipient").value as? Boolean ?: false,
-                                    deliveredToRecipient = childSnapshot.child("deliveredToRecipient").value as? Boolean ?: false
+                                    deliveredToRecipient = childSnapshot.child("deliveredToRecipient").value as? Boolean ?: false,
+                                    expiresAt = (childSnapshot.child("expiresAt").value as? Long) ?: 0L
                                 )
                             } catch (ex: Exception) {
                                 null
                             }
                         }
-                        if (message != null) {
+                        if (message != null && isVisibleMessage(message.expiresAt)) {
                             messages.add(message)
                         }
                     }
@@ -1986,7 +2022,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val firestore = FirebaseFirestore.getInstance()
         val batch = firestore.batch()
         batch.update(firestore.collection("users").document(me.uid), "following", if (following) FieldValue.arrayRemove(target.uid) else FieldValue.arrayUnion(target.uid))
-        batch.update(firestore.collection("users").document(target.uid), "followers", if (following) FieldValue.arrayRemove(me.uid) else FieldValue.arrayUnion(me.uid))
+        batch.update(firestore.collection("users").document(target.uid), mapOf(
+            "followers" to if (following) FieldValue.arrayRemove(me.uid) else FieldValue.arrayUnion(me.uid),
+            "followerGrowth" to FieldValue.increment(if (following) -1L else 1L)
+        ))
         batch.commit().addOnSuccessListener {
             if (!following) createActivityNotification(target.uid, "new_follower", me.uid, "started following you")
         }
@@ -2133,6 +2172,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             .child("messages")
 
         val messageId = messageIdOverride ?: chatRef.push().key ?: UUID.randomUUID().toString()
+        val sentAt = System.currentTimeMillis()
         _messageDeliveryStates.update { it + (messageId to "pending") }
         val message = Message(
             messageId = messageId,
@@ -2140,7 +2180,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             senderName = currentUser.name,
             senderUsername = currentUser.username,
             text = text,
-            timestamp = System.currentTimeMillis(),
+            timestamp = sentAt,
             edited = false,
             replyToId = replyToId,
             replyToText = replyToText,
@@ -2150,7 +2190,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             voiceDurationSec = voiceDurationSec,
             fileUrl = fileUrl, remoteFileUrl = fileUrl, fileName = fileName,
             fileMimeType = fileMimeType, fileSize = fileSize,
-            deliveredToRecipient = false
+            deliveredToRecipient = false,
+            expiresAt = outgoingExpiryAt(sentAt)
         )
 
         // Sender owns an immediate durable copy; uploaded media points to the app-private file.
@@ -2205,6 +2246,29 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             }
     }
 
+    fun scheduleMessage(
+        recipientUser: User,
+        text: String,
+        triggerAt: Long,
+        onScheduled: (String) -> Unit = {}
+    ) {
+        val currentUser = _currentUserState.value ?: return
+        val chatId = activeChatId ?: return
+        val cleaned = text.trim().take(10000)
+        if (cleaned.isBlank() || triggerAt <= System.currentTimeMillis() + 5_000L) return
+        val id = getApplication<Application>().scheduleMessage(
+            senderId = currentUser.uid,
+            senderName = currentUser.name,
+            senderUsername = currentUser.username,
+            recipientUid = recipientUser.uid,
+            chatId = chatId,
+            text = cleaned,
+            triggerAt = triggerAt,
+            expiresAt = outgoingExpiryAt(triggerAt)
+        )
+        onScheduled(id)
+    }
+
     fun retryMessage(recipientUser: User, message: Message) {
         sendMessage(
             recipientUser = recipientUser,
@@ -2240,7 +2304,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             messageId = id, senderId = sender.uid, senderName = sender.name,
             senderUsername = sender.username, text = text, timestamp = System.currentTimeMillis(),
             imageUrl = forwardImage, voiceUrl = forwardVoice, voiceDurationSec = original.voiceDurationSec,
-            deliveredToRecipient = false
+            deliveredToRecipient = false,
+            expiresAt = outgoingExpiryAt()
         )
         ref.child(id).setValue(message).addOnSuccessListener {
             viewModelScope.launch(Dispatchers.IO) { cacheDao.insertMessage(CachedMessage.fromMessage(message, chatId)) }
@@ -2259,7 +2324,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val me=getCurrentUserOrFallback()?:return onComplete(false,"Sign in again")
         fun write(text:String,fileUrl:String?=null,fileName:String?=null,mime:String?=null,size:Long?=null,imageUrl:String?=null){
             val chatId=listOf(me.uid,target.uid).sorted().joinToString("_");val ref=getDatabaseInstance().getReference("chats").child(chatId).child("messages");val id=ref.push().key?:UUID.randomUUID().toString()
-            val msg=Message(messageId=id,senderId=me.uid,senderName=me.name,senderUsername=me.username,text=text,timestamp=System.currentTimeMillis(),imageUrl=imageUrl,fileUrl=fileUrl,remoteFileUrl=fileUrl,fileName=fileName,fileMimeType=mime,fileSize=size,deliveredToRecipient=false)
+            val msg=Message(messageId=id,senderId=me.uid,senderName=me.name,senderUsername=me.username,text=text,timestamp=System.currentTimeMillis(),imageUrl=imageUrl,fileUrl=fileUrl,remoteFileUrl=fileUrl,fileName=fileName,fileMimeType=mime,fileSize=size,deliveredToRecipient=false,expiresAt=outgoingExpiryAt())
             ref.child(id).setValue(msg).addOnSuccessListener{withUserFcmToken(target.uid,target.fcmToken){token->triggerFcmGatewayNotification(_webhookUrl.value,token,me.name,if(fileUrl!=null||imageUrl!=null)"Shared an attachment" else text,me.uid,me.profileImageUrl,"message",id)};onComplete(true,"Sent to ${target.name}")}.addOnFailureListener{onComplete(false,"Send failed")}
         }
         val uri=payload.uris.firstOrNull()
@@ -2276,7 +2341,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val ref = getDatabaseInstance().getReference("chats").child(chatId).child("messages")
         val id = ref.push().key ?: UUID.randomUUID().toString()
         val link = "https://solitary-hill-dcdc.mr44253990.workers.dev/post/${post.id}"
-        val message = Message(messageId=id,senderId=me.uid,senderName=me.name,senderUsername=me.username,text="📌 ${post.title.ifBlank { "Shared a post" }}\n${post.text.take(220)}\n$link",timestamp=System.currentTimeMillis(),imageUrl=post.imageUrl.takeIf{it.isNotBlank()},deliveredToRecipient=false)
+        val message = Message(messageId=id,senderId=me.uid,senderName=me.name,senderUsername=me.username,text="📌 ${post.title.ifBlank { "Shared a post" }}\n${post.text.take(220)}\n$link",timestamp=System.currentTimeMillis(),imageUrl=post.imageUrl.takeIf{it.isNotBlank()},deliveredToRecipient=false,expiresAt=outgoingExpiryAt())
         ref.child(id).setValue(message).addOnSuccessListener { withUserFcmToken(target.uid,target.fcmToken){token->triggerFcmGatewayNotification(_webhookUrl.value,token,me.name,"Shared a Convo post",me.uid,me.profileImageUrl,"message",id)};onComplete(true) }.addOnFailureListener{onComplete(false)}
     }
 
@@ -2290,8 +2355,35 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             .child("messages")
             .child(messageId)
 
-        messageRef.child("text").setValue(newText)
-        messageRef.child("edited").setValue(true)
+        val cleanedText = newText.trim().take(10000)
+        if (cleanedText.isBlank()) return
+        messageRef.get().addOnSuccessListener { snapshot ->
+            val previousText = snapshot.child("text").getValue(String::class.java).orEmpty()
+            val existingHistory = snapshot.child("editHistory").children.mapNotNull { item ->
+                val text = item.child("text").getValue(String::class.java) ?: return@mapNotNull null
+                MessageEditRecord(
+                    text = text,
+                    editedAt = item.child("editedAt").getValue(Long::class.java) ?: 0L,
+                    editedBy = item.child("editedBy").getValue(String::class.java).orEmpty()
+                )
+            }.toMutableList()
+            if (previousText.isNotBlank() && previousText != cleanedText) {
+                existingHistory += MessageEditRecord(
+                    text = previousText,
+                    editedAt = System.currentTimeMillis(),
+                    editedBy = currentUid
+                )
+            }
+            messageRef.updateChildren(
+                mapOf(
+                    "text" to cleanedText,
+                    "edited" to true,
+                    "editHistory" to existingHistory.takeLast(20).map { record ->
+                        mapOf("text" to record.text, "editedAt" to record.editedAt, "editedBy" to record.editedBy)
+                    }
+                )
+            )
+        }
     }
 
     fun deleteMessage(recipientUid: String, messageId: String) {
@@ -2333,6 +2425,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         profileHidden: Boolean? = null,
         profileVisibility: String? = null,
         activeProfileType: String? = null,
+        pronouns: String? = null,
+        professionalTitle: String? = null,
+        publicContactEmail: String? = null,
         awayReplyEnabled: Boolean? = null,
         awayReplyText: String? = null,
         awayReplyUntil: Long? = null,
@@ -2353,7 +2448,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             put("coverScale", coverScale.coerceIn(1f, 2f)); put("coverOffsetY", coverOffsetY.coerceIn(-1f, 1f))
             profileHidden?.let { put("profileHidden", it) }
             profileVisibility?.let { put("profileVisibility", it) }
-            activeProfileType?.let { put("activeProfileType", it) }
+            activeProfileType?.let { put("activeProfileType", it.take(32)) }
+            pronouns?.let { put("pronouns", it.take(40)) }
+            professionalTitle?.let { put("professionalTitle", it.take(80)) }
+            publicContactEmail?.let { put("publicContactEmail", it.take(160)) }
             awayReplyEnabled?.let { put("awayReplyEnabled", it) }
             awayReplyText?.let { put("awayReplyText", it.take(280)) }
             awayReplyUntil?.let { put("awayReplyUntil", it.coerceAtLeast(0L)) }
@@ -2374,6 +2472,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     profileHidden = profileHidden ?: _currentUserState.value?.profileHidden ?: false,
                     profileVisibility = profileVisibility ?: _currentUserState.value?.profileVisibility.orEmpty().ifBlank { "everyone" },
                     activeProfileType = activeProfileType ?: _currentUserState.value?.activeProfileType.orEmpty().ifBlank { "Personal" },
+                    pronouns = pronouns ?: _currentUserState.value?.pronouns.orEmpty(),
+                    professionalTitle = professionalTitle ?: _currentUserState.value?.professionalTitle.orEmpty(),
+                    publicContactEmail = publicContactEmail ?: _currentUserState.value?.publicContactEmail.orEmpty(),
                     awayReplyEnabled = awayReplyEnabled ?: _currentUserState.value?.awayReplyEnabled ?: false,
                     awayReplyText = awayReplyText ?: _currentUserState.value?.awayReplyText.orEmpty(),
                     awayReplyUntil = awayReplyUntil ?: _currentUserState.value?.awayReplyUntil ?: 0L,
@@ -2680,9 +2781,17 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     // --- Dynamic Themes & Network ---
 
-    fun updateTheme(themeName: String) {
+    fun hasActivePremiumEntitlement(): Boolean {
+        val user = getCurrentUserOrFallback() ?: return false
+        return user.isPremium && (user.premiumPlan == "lifetime" || user.premiumUntil > System.currentTimeMillis())
+    }
+
+    fun updateTheme(themeName: String): Boolean {
+        val premiumTheme = themeName in setOf("Royal Gold", "Cyber Lime", "Rose Quartz", "Liquid Aurora", "Glass Ocean", "Glass Rose", "Obsidian Neon", "Neon Pulse")
+        if (premiumTheme && (!_flagshipConfig.value.advancedThemesEnabled || !hasActivePremiumEntitlement())) return false
         _themeState.value = themeName
         sharedPrefs.edit().putString("app_theme", themeName).apply()
+        return true
     }
 
     fun setNetworkStatus(online: Boolean) {
@@ -3363,7 +3472,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 cacheDao.getGroupMessages(groupId).firstOrNull()?.let { cached ->
                     if (_groupMessagesState.value.isEmpty()) {
-                        _groupMessagesState.value = cached.map { it.toGroupMessage() }
+                                                    _groupMessagesState.value = cached.map { it.toGroupMessage() }
+                                .filter { isVisibleMessage(it.expiresAt) }
+
                     }
                 }
             } catch (e: Exception) {
@@ -3391,9 +3502,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                                 timestamp = doc.getLong("timestamp") ?: 0L,
                                 imageUrl = doc.getString("imageUrl"),
                                 voiceUrl = doc.getString("voiceUrl"),
-                                voiceDurationSec = doc.getLong("voiceDurationSec")?.toInt()
+                                voiceDurationSec = doc.getLong("voiceDurationSec")?.toInt(),
+                                expiresAt = doc.getLong("expiresAt") ?: 0L
                             )
-                            messages.add(msg)
+                            if (isVisibleMessage(msg.expiresAt)) messages.add(msg)
                         } catch (e: Exception) {}
                     }
                     // Sort locally
@@ -3411,13 +3523,15 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     fun sendGroupMessage(groupId: String, text: String, imageUrl: String? = null, voiceUrl: String? = null, voiceDurationSec: Int? = null) {
         val user = getCurrentUserOrFallback() ?: return
         val messageId = UUID.randomUUID().toString()
+        val sentAt = System.currentTimeMillis()
         val msg = GroupMessage(
             messageId = messageId,
             groupId = groupId,
             senderId = user.uid,
             senderName = user.name,
             text = text,
-            timestamp = System.currentTimeMillis(),
+            timestamp = sentAt,
+            expiresAt = outgoingExpiryAt(sentAt),
             imageUrl = imageUrl,
             voiceUrl = voiceUrl,
             voiceDurationSec = voiceDurationSec
