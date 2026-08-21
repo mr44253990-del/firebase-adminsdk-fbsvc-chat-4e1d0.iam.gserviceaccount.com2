@@ -160,6 +160,7 @@ fun CallScreen(
     var accepted by remember { mutableStateOf(initiallyAccepted || !incoming) }
     BackHandler(enabled = true) { if (accepted) onMinimize() }
     var pendingAccept by remember { mutableStateOf(false) }
+    var showMoreControls by remember { mutableStateOf(false) }
     val screenShareLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode == Activity.RESULT_OK && result.data != null) {
             if (!CallEngine.startScreenShare(result.data!!)) android.widget.Toast.makeText(context, "Could not start screen sharing", android.widget.Toast.LENGTH_LONG).show()
@@ -255,22 +256,50 @@ fun CallScreen(
                 }
             } else {
                 Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-                        CallCircleButton(Color.White.copy(.15f), if (state.muted) Icons.Default.MicOff else Icons.Default.Mic, "Mute") { CallEngine.toggleMute() }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
+                        CallCircleButton(Color.White.copy(.15f), if (state.muted) Icons.Default.MicOff else Icons.Default.Mic, if (state.muted) "Unmute" else "Mute") { CallEngine.toggleMute() }
                         CallCircleButton(Color(0xFFE53935), Icons.Default.CallEnd, "End") { onEndCall(); onClose() }
-                        CallCircleButton(Color.White.copy(.15f), if (state.speaker) Icons.Default.VolumeUp else Icons.Default.Hearing, "Speaker") { CallEngine.toggleSpeaker() }
-                        CallCircleButton(Color.White.copy(.15f), Icons.Default.PersonAdd, "Add participant") { onAddParticipant() }
-                    }
-                    if (effectiveVideo) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-                        CallCircleButton(Color.White.copy(.15f), if (state.cameraOff) Icons.Default.VideocamOff else Icons.Default.Videocam, if (state.cameraOff) "Camera on" else "Camera off") { CallEngine.toggleCamera() }
-                        CallCircleButton(Color.White.copy(.15f), Icons.Default.Cameraswitch, "Flip") { CallEngine.switchCamera() }
-                    }
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-                        CallCircleButton(if (state.screenSharing) Color(0xFF6D5CFF) else Color.White.copy(.15f), if (state.screenSharing) Icons.Default.StopScreenShare else Icons.Default.ScreenShare, if (state.screenSharing) "Stop share" else "Share screen") {
-                            if (state.screenSharing) CallEngine.stopScreenShare()
-                            else {
-                                val manager = context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-                                screenShareLauncher.launch(manager.createScreenCaptureIntent())
+                        Box {
+                            CallCircleButton(Color.White.copy(.15f), Icons.Default.MoreVert, "More") { showMoreControls = true }
+                            DropdownMenu(
+                                expanded = showMoreControls,
+                                onDismissRequest = { showMoreControls = false }
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text(if (state.speaker) "Use earpiece" else "Use speaker") },
+                                    leadingIcon = { Icon(if (state.speaker) Icons.Default.Hearing else Icons.Default.VolumeUp, null) },
+                                    onClick = { CallEngine.toggleSpeaker(); showMoreControls = false }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Add participant") },
+                                    leadingIcon = { Icon(Icons.Default.PersonAdd, null) },
+                                    onClick = { onAddParticipant(); showMoreControls = false }
+                                )
+                                if (effectiveVideo) {
+                                    DropdownMenuItem(
+                                        text = { Text(if (state.cameraOff) "Turn camera on" else "Turn camera off") },
+                                        leadingIcon = { Icon(if (state.cameraOff) Icons.Default.Videocam else Icons.Default.VideocamOff, null) },
+                                        onClick = { CallEngine.toggleCamera(); showMoreControls = false }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Flip camera") },
+                                        leadingIcon = { Icon(Icons.Default.Cameraswitch, null) },
+                                        onClick = { CallEngine.switchCamera(); showMoreControls = false },
+                                        enabled = !state.screenSharing
+                                    )
+                                }
+                                DropdownMenuItem(
+                                    text = { Text(if (state.screenSharing) "Stop screen share" else "Share screen") },
+                                    leadingIcon = { Icon(if (state.screenSharing) Icons.Default.StopScreenShare else Icons.Default.ScreenShare, null) },
+                                    onClick = {
+                                        if (state.screenSharing) CallEngine.stopScreenShare()
+                                        else {
+                                            val manager = context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+                                            screenShareLauncher.launch(manager.createScreenCaptureIntent())
+                                        }
+                                        showMoreControls = false
+                                    }
+                                )
                             }
                         }
                     }

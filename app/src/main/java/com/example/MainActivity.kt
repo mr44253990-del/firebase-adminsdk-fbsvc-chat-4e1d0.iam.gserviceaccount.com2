@@ -145,10 +145,12 @@ class MainActivity : FragmentActivity() {
     }
 
     private fun stopPresenceHeartbeat() {
-        // Keep the five-minute server lease alive while the app is backgrounded.
-        // Do not write an immediate offline state here; RTDB onDisconnect/lease expiry
-        // is responsible for transitioning the user to offline.
+        // Mark the activity as background but keep a short lease. The Worker/FCM
+        // probe can renew this lease every five minutes; if the device is not
+        // reachable, RTDB lease expiry and onDisconnect transition it offline.
         presenceHandler.removeCallbacks(presenceHeartbeat)
+        writePresence(active = true, foreground = false)
+        viewModel.syncPresenceToWorker(active = true, foreground = false)
     }
 
     private fun captureDeepLink(intent: Intent?) {

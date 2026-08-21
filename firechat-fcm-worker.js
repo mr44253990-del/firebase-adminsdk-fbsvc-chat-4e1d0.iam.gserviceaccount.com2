@@ -574,7 +574,7 @@ async function firestoreGet(env,path){const{a,t}=await fsAuth(env);const r=await
 async function firestoreSet(env,path,data){const{a,t}=await fsAuth(env);const fields=Object.fromEntries(Object.entries(data).map(([k,v])=>[k,toFV(v)]));const r=await fetch(`https://firestore.googleapis.com/v1/projects/${a.project_id}/databases/(default)/documents/${path}`,{method:"PATCH",headers:{Authorization:`Bearer ${t}`,"Content-Type":"application/json"},body:JSON.stringify({fields})});if(!r.ok)throw Error(`Firestore write ${r.status}`);return r.json();}
 async function firestoreMerge(env,path,data){return firestoreSet(env,path,{...((await firestoreGet(env,path))||{}),...data});}
 async function firestoreDelete(env,path){const{a,t}=await fsAuth(env);const r=await fetch(`https://firestore.googleapis.com/v1/projects/${a.project_id}/databases/(default)/documents/${path}`,{method:"DELETE",headers:{Authorization:`Bearer ${t}`}});if(r.status===404)return true;if(!r.ok)throw Error(`Firestore delete ${r.status}`);return true;}
-async function firestoreList(env,path){const{a,t}=await fsAuth(env);const r=await fetch(`https://firestore.googleapis.com/v1/projects/${a.project_id}/databases/(default)/documents/${path}?pageSize=100`,{headers:{Authorization:`Bearer ${t}`}});if(!r.ok)throw Error(`Firestore list ${r.status}`);const d=await r.json();return(d.documents||[]).map(x=>({...Object.fromEntries(Object.entries(x.fields||{}).map(([k,v])=>[k,fromFV(v)])),__name:String(x.name||"").split("/").pop()}));}
+async function firestoreList(env,path){const{a,t}=await fsAuth(env);const documents=[];let pageToken="";do{const query=new URLSearchParams({pageSize:"1000"});if(pageToken)query.set("pageToken",pageToken);const r=await fetch(`https://firestore.googleapis.com/v1/projects/${a.project_id}/databases/(default)/documents/${path}?${query}`,{headers:{Authorization:`Bearer ${t}`}});if(!r.ok)throw Error(`Firestore list ${r.status}`);const d=await r.json();documents.push(...(d.documents||[]));pageToken=String(d.nextPageToken||"");}while(pageToken);return documents.map(x=>({...Object.fromEntries(Object.entries(x.fields||{}).map(([k,v])=>[k,fromFV(v)])),__name:String(x.name||"").split("/").pop()}));}
 async function sendPresenceProbes(env) {
   try {
     const account = JSON.parse(env.FIREBASE_SERVICE_ACCOUNT || "{}");
@@ -585,22 +585,28 @@ async function sendPresenceProbes(env) {
     const accessToken = await getGoogleAccessToken(account.client_email, account.private_key);
     const endpoint = `https://fcm.googleapis.com/v1/projects/${account.project_id}/messages:send`;
     const sentAt = String(Date.now());
-    await Promise.all(tokens.map(token => fetch(endpoint, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        message: {
-          token,
-          data: {
-            title: "",
-            body: "",
-            notificationType: "presence_probe",
-            sentAt
-          },
-          android: { priority: "high" }
-        }
-      })
-    })));
+    const results = await Promise.allSettled(tokens.map(async token => {
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: {
+            token,
+            data: {
+              title: "",
+              body: "",
+              notificationType: "presence_probe",
+              sentAt
+            },
+            android: { priority: "HIGH", ttl: "60s" }
+          }
+        })
+      });
+      if (!response.ok) throw new Error(`FCM ${response.status}`);
+      return response;
+    }));
+    const rejected = results.filter(result => result.status === "rejected").length;
+    if (rejected) console.warn(`Presence probes failed at FCM: ${rejected}/${tokens.length}`);
   } catch (_) {
     // A probe failure must not prevent the scheduled stale-lease cleanup.
   }

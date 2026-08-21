@@ -55,6 +55,7 @@ fun GroupCallScreen(
     var started by remember { mutableStateOf(false) }
     var joinRequested by remember { mutableStateOf(autoStart) }
     var showDiagnostics by remember { mutableStateOf(false) }
+    var showMoreControls by remember { mutableStateOf(false) }
     BackHandler(enabled = started && state.status !in listOf("idle", "ended", "failed")) { onMinimize() }
     val localUid = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid.orEmpty()
     val isHost = state.hostId.isNotBlank() && state.hostId == localUid
@@ -185,45 +186,78 @@ fun GroupCallScreen(
             )
         },
         bottomBar = {
-            if (joinRequested && started) Row(
-                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).background(MaterialTheme.colorScheme.surface).navigationBarsPadding().padding(horizontal = 12.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.SpaceEvenly,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                FilledTonalIconButton(onClick = { GroupCallEngine.toggleMute() }) {
-                    Icon(if (state.muted) Icons.Default.MicOff else Icons.Default.Mic, "Mute")
-                }
-                FilledTonalIconButton(onClick = { GroupCallEngine.toggleCamera() }, enabled = state.video) {
-                    Icon(if (state.cameraOff) Icons.Default.VideocamOff else Icons.Default.Videocam, "Camera")
-                }
-                FilledTonalIconButton(onClick = { GroupCallEngine.switchCamera() }, enabled = state.video && !state.screenSharing) {
-                    Icon(Icons.Default.Cameraswitch, "Switch camera")
-                }
-                FilledTonalIconButton(onClick = { GroupCallEngine.toggleSpeaker() }) {
-                    Icon(if (state.speaker) Icons.Default.VolumeUp else Icons.Default.VolumeDown, "Speaker")
-                }
-                FilledTonalIconButton(onClick = {
-                    if (state.screenSharing) GroupCallEngine.stopScreenShare()
-                    else {
-                        val manager = context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-                        projectionLauncher.launch(manager.createScreenCaptureIntent())
+            if (joinRequested && started) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface).navigationBarsPadding().padding(horizontal = 12.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    FilledTonalIconButton(onClick = { GroupCallEngine.toggleMute() }) {
+                        Icon(if (state.muted) Icons.Default.MicOff else Icons.Default.Mic, "Mute")
                     }
-                }, enabled = state.video) {
-                    Icon(if (state.screenSharing) Icons.Default.StopScreenShare else Icons.Default.ScreenShare, "Screen share")
-                }
-                FilledTonalIconButton(onClick = { GroupCallEngine.toggleCaptions() }) {
-                    Icon(Icons.Default.ClosedCaption, "Toggle captions", tint = if (state.captionsEnabled) MaterialTheme.colorScheme.primary else LocalContentColor.current)
-                }
-                if (isHost) {
-                    FilledTonalIconButton(onClick = { GroupCallEngine.toggleRecordingHook() }) {
-                        Icon(Icons.Default.FiberManualRecord, "Toggle recording", tint = if (state.recording) MaterialTheme.colorScheme.error else LocalContentColor.current)
+                    if (state.video) {
+                        FilledTonalIconButton(onClick = { GroupCallEngine.toggleCamera() }) {
+                            Icon(if (state.cameraOff) Icons.Default.VideocamOff else Icons.Default.Videocam, "Camera")
+                        }
                     }
-                }
-                FilledTonalIconButton(onClick = { showDiagnostics = !showDiagnostics }) {
-                    Icon(Icons.Default.NetworkCheck, "Call diagnostics")
-                }
-                IconButton(onClick = { GroupCallEngine.end(); onClose() }) {
-                    Icon(Icons.Default.CallEnd, "End call", tint = MaterialTheme.colorScheme.error)
+                    FilledIconButton(
+                        onClick = { GroupCallEngine.end(); onClose() },
+                        colors = IconButtonDefaults.filledIconButtonColors(containerColor = MaterialTheme.colorScheme.error)
+                    ) {
+                        Icon(Icons.Default.CallEnd, "End call")
+                    }
+                    Box {
+                        FilledTonalIconButton(onClick = { showMoreControls = true }) {
+                            Icon(Icons.Default.MoreVert, "More call controls")
+                        }
+                        DropdownMenu(
+                            expanded = showMoreControls,
+                            onDismissRequest = { showMoreControls = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text(if (state.speaker) "Use earpiece" else "Use speaker") },
+                                leadingIcon = { Icon(if (state.speaker) Icons.Default.Hearing else Icons.Default.VolumeUp, null) },
+                                onClick = { GroupCallEngine.toggleSpeaker(); showMoreControls = false }
+                            )
+                            if (state.video) {
+                                DropdownMenuItem(
+                                    text = { Text("Switch camera") },
+                                    leadingIcon = { Icon(Icons.Default.Cameraswitch, null) },
+                                    onClick = { GroupCallEngine.switchCamera(); showMoreControls = false },
+                                    enabled = !state.screenSharing
+                                )
+                                DropdownMenuItem(
+                                    text = { Text(if (state.screenSharing) "Stop screen share" else "Share screen") },
+                                    leadingIcon = { Icon(if (state.screenSharing) Icons.Default.StopScreenShare else Icons.Default.ScreenShare, null) },
+                                    onClick = {
+                                        if (state.screenSharing) GroupCallEngine.stopScreenShare()
+                                        else {
+                                            val manager = context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+                                            projectionLauncher.launch(manager.createScreenCaptureIntent())
+                                        }
+                                        showMoreControls = false
+                                    }
+                                )
+                            }
+                            DropdownMenuItem(
+                                text = { Text(if (state.captionsEnabled) "Disable captions" else "Enable captions") },
+                                leadingIcon = { Icon(Icons.Default.ClosedCaption, null) },
+                                onClick = { GroupCallEngine.toggleCaptions(); showMoreControls = false }
+                            )
+                            if (isHost) {
+                                DropdownMenuItem(
+                                    text = { Text(if (state.recording) "Stop recording" else "Start recording") },
+                                    leadingIcon = { Icon(Icons.Default.FiberManualRecord, null) },
+                                    onClick = { GroupCallEngine.toggleRecordingHook(); showMoreControls = false }
+                                )
+                            }
+                            DropdownMenuItem(
+                                text = { Text(if (showDiagnostics) "Hide diagnostics" else "Show diagnostics") },
+                                leadingIcon = { Icon(Icons.Default.NetworkCheck, null) },
+                                onClick = { showDiagnostics = !showDiagnostics; showMoreControls = false }
+                            )
+                        }
+                    }
                 }
             }
         }

@@ -10,8 +10,6 @@ import android.graphics.BitmapFactory
 import android.media.AudioAttributes
 import android.net.Uri
 import android.os.Build
-import android.os.Handler
-import android.os.Looper
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.Person
@@ -152,24 +150,10 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
                 "onlineSource" to "disconnected"
             )
         )
-        // A delivered push means the device is reachable, not that the UI stays open.
-        // UI lease evaluation expires at five minutes; the local boolean is cleared
-        // slightly later so a scheduled five-minute probe has delivery jitter room.
-        Handler(Looper.getMainLooper()).postDelayed({
-            statusRef.get().addOnSuccessListener { snapshot ->
-                val latestPush = snapshot.child("lastPushReceivedAt").getValue(Long::class.java) ?: 0L
-                val foreground = snapshot.child("foreground").getValue(Boolean::class.java) ?: false
-                if (!foreground && latestPush == receivedAt) {
-                    statusRef.updateChildren(
-                        mapOf(
-                            "isOnline" to false,
-                            "lastActive" to System.currentTimeMillis(),
-                            "onlineSource" to "push_expired"
-                        )
-                    )
-                }
-            }
-        }, 6 * 60_000L)
+        // The five-minute onlineUntil lease and RTDB presence listeners decide
+        // expiry. Do not schedule a delayed write here: a cron probe may arrive
+        // with normal FCM/network jitter and must not be overwritten by an older
+        // callback that still believes this push was the latest one.
     }
 
     private fun sendIncomingCallNotification(callId: String, callerId: String, callerName: String, callerImage: String, videoCall: Boolean) {
