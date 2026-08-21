@@ -158,7 +158,53 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             } else if (result.reason != "no backup found") {
                 Log.w("TEXT_BACKUP", "Restore skipped: ${result.reason}")
             }
+            // A backup may have been created before the latest incoming message was
+            // written to Room. Rehydrate recent text messages from the server as an
+            // idempotent safety net; media URLs remain intentionally excluded.
+            syncRecentTextConversations(uid)
         }
+    }
+
+    private fun syncRecentTextConversations(uid: String) {
+        FirebaseFirestore.getInstance().collection("users").document(uid).get()
+            .addOnSuccessListener { profile ->
+                val friendIds = (profile.get("friends") as? List<*>)
+                    ?.mapNotNull { it as? String }
+                    ?.filter { it.isNotBlank() && it != uid }
+                    ?.distinct()
+                    ?.take(100)
+                    .orEmpty()
+                friendIds.forEach { peerId ->
+                    val chatId = listOf(uid, peerId).sorted().joinToString("_")
+                    getDatabaseInstance().getReference("chats").child(chatId).child("messages")
+                        .orderByChild("timestamp").limitToLast(300).get()
+                        .addOnSuccessListener { snapshot ->
+                            val messages = snapshot.children.mapNotNull { child ->
+                                runCatching {
+                                    child.getValue(Message::class.java)?.copy(messageId = child.key.orEmpty())
+                                }.getOrNull()
+                            }.filter { message ->
+                                message.messageId.isNotBlank() && message.text.isNotBlank() &&
+                                    isVisibleMessage(message.expiresAt)
+                            }
+                            if (messages.isNotEmpty()) {
+                                viewModelScope.launch(Dispatchers.IO) {
+                                    runCatching {
+                                        cacheDao.insertMessages(messages.map { CachedMessage.fromMessage(it, chatId) })
+                                    }.onFailure { error ->
+                                        Log.w("TEXT_RESTORE", "Failed to cache $chatId", error)
+                                    }
+                                }
+                            }
+                        }
+                        .addOnFailureListener { error ->
+                            Log.w("TEXT_RESTORE", "Failed to sync $chatId", error)
+                        }
+                }
+            }
+            .addOnFailureListener { error ->
+                Log.w("TEXT_RESTORE", "Could not load friend list for text sync", error)
+            }
     }
 
     fun exportTextBackup(onComplete: (TextBackupManager.Result) -> Unit = {}) {
@@ -1573,8 +1619,24 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                             messages.add(message)
                         }
                     }
-                    val merged = (_chatMessagesState.value + messages)
-                        .associateBy { it.messageId }.values.sortedBy { it.timestamp }
+                    val localById = _chatMessagesState.value.associateBy { it.messageId }
+                    val merged = messages.map { remote ->
+                        val local = localById[remote.messageId]
+                        if (local == null) remote else remote.copy(
+                            // RTDB message nodes intentionally keep their original false
+                            // receipt flags; the separate receipt listener and Room cache
+                            // are authoritative after an offline recipient reconnects.
+                            deliveredToRecipient = remote.deliveredToRecipient || local.deliveredToRecipient,
+                            seenByRecipient = remote.seenByRecipient || local.seenByRecipient,
+                            imageUrl = remote.imageUrl ?: local.imageUrl,
+                            voiceUrl = remote.voiceUrl ?: local.voiceUrl,
+                            remoteVoiceUrl = remote.remoteVoiceUrl ?: local.remoteVoiceUrl,
+                            fileUrl = remote.fileUrl ?: local.fileUrl,
+                            remoteFileUrl = remote.remoteFileUrl ?: local.remoteFileUrl
+                        )
+                    }.toMutableList().apply {
+                        addAll(_chatMessagesState.value.filter { local -> messages.none { it.messageId == local.messageId } })
+                    }.distinctBy { it.messageId }.sortedBy { it.timestamp }
                     _chatMessagesState.value = merged
 
                     // Persist before acknowledgement. Incoming RTDB payload is removed only after
@@ -1588,10 +1650,25 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         _chatMessagesState.value = (_chatMessagesState.value + localized)
                             .associateBy { it.messageId }.values.sortedBy { it.timestamp }
                         localized.filter { it.senderId != currentUid }.forEach { incoming ->
+                            // The open-chat listener is also a delivery acknowledgement path. This
+                            // covers devices where a background notification payload does not wake
+                            // FirebaseMessagingService. Persist the message first, then acknowledge
+                            // both delivery and visibility without losing a prior receipt.
+                            val acknowledgedAt = System.currentTimeMillis()
                             getDatabaseInstance().getReference("delivery_receipts")
                                 .child(incoming.senderId).child(chatId).child(incoming.messageId)
-                                .setValue(mapOf("seen" to true, "seenAt" to System.currentTimeMillis()))
+                                .updateChildren(
+                                    mapOf(
+                                        "delivered" to true,
+                                        "deliveredAt" to acknowledgedAt,
+                                        "seen" to true,
+                                        "seenAt" to acknowledgedAt
+                                    )
+                                )
                                 .addOnSuccessListener { chatRef.child(incoming.messageId).removeValue() }
+                                .addOnFailureListener { error ->
+                                    Log.w("DELIVERY_RECEIPT", "Failed to acknowledge ${incoming.messageId}", error)
+                                }
                         }
                     }
                 }

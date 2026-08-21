@@ -5,8 +5,13 @@ import android.content.Context
 import android.content.Intent
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.RemoteInput
+import com.example.data.AppDatabase
+import com.example.data.CachedMessage
 import com.example.data.Message
 import com.google.firebase.auth.FirebaseAuth
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import com.google.firebase.database.FirebaseDatabase
 import com.google.firebase.firestore.FirebaseFirestore
 import okhttp3.*
@@ -32,6 +37,13 @@ class NotificationReplyReceiver : BroadcastReceiver() {
         NotificationManagerCompat.from(context).cancel(intent.getIntExtra("notificationId", 0))
         FirebaseDatabase.getInstance().getReference("chats").child(chatId).child("messages").child(messageId).setValue(immediate).addOnCompleteListener { saved ->
             if (!saved.isSuccessful) { pending.finish(); return@addOnCompleteListener }
+            // Notification replies bypass ChatViewModel, so persist an equivalent local copy.
+            CoroutineScope(Dispatchers.IO).launch {
+                runCatching {
+                    AppDatabase.getDatabase(context).cacheDao()
+                        .insertMessage(CachedMessage.fromMessage(immediate, chatId))
+                }
+            }
             FirebaseDatabase.getInstance().getReference("notifications").child(recipientUid).setValue(mapOf("senderId" to authUser.uid,"senderName" to immediateName,"text" to reply,"timestamp" to sentAt))
             val firestore=FirebaseFirestore.getInstance()
             firestore.collection("users").document(authUser.uid).get().addOnCompleteListener { meTask ->

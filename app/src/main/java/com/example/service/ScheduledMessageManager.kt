@@ -5,6 +5,12 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import com.example.data.AppDatabase
+import com.example.data.CachedMessage
+import com.example.data.Message
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import java.util.UUID
 
 /**
@@ -144,6 +150,21 @@ class ScheduledMessageReceiver : android.content.BroadcastReceiver() {
         chatRef.child("members").updateChildren(mapOf(senderId to true, recipientUid to true))
         chatRef.child("messages").child(id).setValue(message).addOnCompleteListener {
             if (it.isSuccessful) {
+                CoroutineScope(Dispatchers.IO).launch {
+                    runCatching {
+                        val cached = Message(
+                            messageId = id,
+                            senderId = senderId,
+                            senderName = data["senderName"] as String,
+                            senderUsername = data["senderUsername"] as String,
+                            text = text,
+                            timestamp = message["timestamp"] as Long,
+                            expiresAt = data["expiresAt"] as Long
+                        )
+                        AppDatabase.getDatabase(context).cacheDao()
+                            .insertMessage(CachedMessage.fromMessage(cached, chatId))
+                    }
+                }
                 database.getReference("unread_counts").child(recipientUid).child(senderId)
                     .get().addOnSuccessListener { snapshot ->
                         val count = snapshot.getValue(Int::class.java) ?: 0

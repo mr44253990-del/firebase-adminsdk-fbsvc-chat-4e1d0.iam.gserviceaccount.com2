@@ -77,40 +77,41 @@ object TextBackupManager {
         var count = 0
 
         val users = root.optJSONArray("users")?.let { array ->
-            (0 until array.length()).map { userFromJson(array.getJSONObject(it)) }
+            (0 until array.length()).mapNotNull { index -> runCatching { userFromJson(array.getJSONObject(index)) }.getOrNull() }
         }.orEmpty()
         if (users.isNotEmpty()) { dao.insertUsers(users); count += users.size }
 
         val messages = root.optJSONArray("messages")?.let { array ->
-            (0 until array.length()).map { messageFromJson(array.getJSONObject(it)) }
+            (0 until array.length()).mapNotNull { index -> runCatching { messageFromJson(array.getJSONObject(index)) }.getOrNull() }
         }.orEmpty()
         if (messages.isNotEmpty()) { dao.insertMessages(messages); count += messages.size }
 
         val groups = root.optJSONArray("groups")?.let { array ->
-            (0 until array.length()).map { groupFromJson(array.getJSONObject(it)) }
+            (0 until array.length()).mapNotNull { index -> runCatching { groupFromJson(array.getJSONObject(index)) }.getOrNull() }
         }.orEmpty()
         if (groups.isNotEmpty()) { dao.insertGroups(groups); count += groups.size }
 
         val groupMessages = root.optJSONArray("groupMessages")?.let { array ->
-            (0 until array.length()).map { groupMessageFromJson(array.getJSONObject(it)) }
+            (0 until array.length()).mapNotNull { index -> runCatching { groupMessageFromJson(array.getJSONObject(index)) }.getOrNull() }
         }.orEmpty()
         if (groupMessages.isNotEmpty()) { dao.insertGroupMessages(groupMessages); count += groupMessages.size }
 
         val stories = root.optJSONArray("stories")?.let { array ->
-            (0 until array.length()).map { storyFromJson(array.getJSONObject(it)) }
+            (0 until array.length()).mapNotNull { index -> runCatching { storyFromJson(array.getJSONObject(index)) }.getOrNull() }
         }.orEmpty()
         if (stories.isNotEmpty()) { dao.insertStories(stories); count += stories.size }
 
         val posts = root.optJSONArray("posts")?.let { array ->
-            (0 until array.length()).map { postFromJson(array.getJSONObject(it)) }
+            (0 until array.length()).mapNotNull { index -> runCatching { postFromJson(array.getJSONObject(index)) }.getOrNull() }
         }.orEmpty()
         if (posts.isNotEmpty()) { dao.insertPosts(posts); count += posts.size }
         Result(true, count)
     }.getOrElse { Result(false, reason = it.message ?: "restore failed") }
 
     private suspend fun buildMessages(dao: com.example.data.CacheDao): List<JSONObject> {
-        val ids = dao.getConversationChatIds().first()
-        return ids.flatMap { dao.getMessagesForChat(it).first() }.map(::messageJson)
+        // One ordered snapshot avoids races between conversation-ID and per-chat queries
+        // while the app is moving to the background.
+        return dao.getAllMessages().first().map(::messageJson)
     }
 
     private suspend fun buildGroupMessages(dao: com.example.data.CacheDao): List<JSONObject> {

@@ -23,8 +23,14 @@ import com.example.security.AppLockManager
 import com.example.security.PrivacyPreferences
 import com.example.call.IncomingCallActivity
 import com.example.call.IncomingGroupCallActivity
+import com.example.data.AppDatabase
+import com.example.data.CachedMessage
+import com.example.data.Message
 import com.example.data.User
 import com.google.firebase.auth.FirebaseAuth
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.database.FirebaseDatabase
 import com.google.firebase.database.ServerValue
@@ -88,7 +94,7 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
                 if (targetId.isNotBlank()) {
                     FirebaseDatabase.getInstance().getReference("delivery_receipts")
                         .child(senderId).child(chatId).child(targetId)
-                        .setValue(mapOf("delivered" to true, "deliveredAt" to System.currentTimeMillis()))
+                        .updateChildren(mapOf("delivered" to true, "deliveredAt" to System.currentTimeMillis()))
                 }
                 maybeSendAwayReply(receiverUid, senderId, chatId)
             }
@@ -396,6 +402,23 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
                 FirebaseDatabase.getInstance().getReference("chats").child(chatId).child("messages").child(messageId)
                     .setValue(message)
                     .addOnSuccessListener {
+                        CoroutineScope(Dispatchers.IO).launch {
+                            runCatching {
+                                val cached = Message(
+                                    messageId = messageId,
+                                    senderId = receiverUid,
+                                    senderName = profile.getString("name") ?: "Convo user",
+                                    senderUsername = profile.getString("username") ?: "",
+                                    text = replyText,
+                                    timestamp = now,
+                                    deliveredToRecipient = true
+                                )
+                                AppDatabase.getDatabase(this@MyFirebaseMessagingService).cacheDao()
+                                    .insertMessage(CachedMessage.fromMessage(cached, chatId))
+                            }.onFailure { error ->
+                                Log.w("FCM_SERVICE", "Away reply cache failed: ${error.message}")
+                            }
+                        }
                         prefs.edit().putLong(throttleKey, now).apply()
                         FirebaseDatabase.getInstance().getReference("notifications").child(senderUid)
                             .setValue(mapOf(
