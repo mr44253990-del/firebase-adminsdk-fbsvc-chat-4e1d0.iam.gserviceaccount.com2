@@ -84,11 +84,29 @@ class IncomingCallActivity : ComponentActivity() {
                     callId = callId, remoteUid = callerId, remoteName = callerName,
                     remoteImage = callerImage, incoming = true, video = videoCall,
                     initiallyAccepted = intent.action == "com.ebchat.ACCEPT_CALL" && canUseMedia,
-                    onMinimize = { finish() },
+                    onMinimize = { minimizeCallToPip() },
                     onClose = { finish() }
                 )
             }
         }
+    }
+
+    private fun minimizeCallToPip() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            runCatching {
+                enterPictureInPictureMode(
+                    android.app.PictureInPictureParams.Builder()
+                        .setAspectRatio(android.util.Rational(9, 16))
+                        .build()
+                )
+            }.onFailure { finish() }
+        } else finish()
+    }
+
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        val active = CallEngine.state.value.status !in listOf("idle", "ended", "declined", "missed", "failed")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && active && !isInPictureInPictureMode) minimizeCallToPip()
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -246,6 +264,8 @@ fun CallScreen(
                     if (effectiveVideo) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
                         CallCircleButton(Color.White.copy(.15f), if (state.cameraOff) Icons.Default.VideocamOff else Icons.Default.Videocam, if (state.cameraOff) "Camera on" else "Camera off") { CallEngine.toggleCamera() }
                         CallCircleButton(Color.White.copy(.15f), Icons.Default.Cameraswitch, "Flip") { CallEngine.switchCamera() }
+                    }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
                         CallCircleButton(if (state.screenSharing) Color(0xFF6D5CFF) else Color.White.copy(.15f), if (state.screenSharing) Icons.Default.StopScreenShare else Icons.Default.ScreenShare, if (state.screenSharing) "Stop share" else "Share screen") {
                             if (state.screenSharing) CallEngine.stopScreenShare()
                             else {

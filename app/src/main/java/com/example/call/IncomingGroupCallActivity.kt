@@ -78,6 +78,24 @@ class IncomingGroupCallActivity : ComponentActivity() {
         render()
     }
 
+    private fun minimizeCallToPip() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            runCatching {
+                enterPictureInPictureMode(
+                    android.app.PictureInPictureParams.Builder()
+                        .setAspectRatio(android.util.Rational(9, 16))
+                        .build()
+                )
+            }.onFailure { finish() }
+        } else finish()
+    }
+
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        val active = accepted && GroupCallEngine.state.value.status !in listOf("idle", "ended", "failed")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && active && !isInPictureInPictureMode) minimizeCallToPip()
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
@@ -107,7 +125,8 @@ class IncomingGroupCallActivity : ComponentActivity() {
                         // Accepted notification actions must enter the call directly;
                         // the passive Join Call card is only for group-chat banners.
                         autoStart = true,
-                        onClose = { finish() }
+                        onClose = { GroupCallEngine.end(); finish() },
+                        onMinimize = { minimizeCallToPip() }
                     )
                 } else {
                     IncomingGroupCallPrompt(

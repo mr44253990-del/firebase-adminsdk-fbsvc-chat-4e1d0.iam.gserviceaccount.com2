@@ -39,6 +39,7 @@ data class CallState(
     val cameraOff: Boolean = false,
     val remoteCameraOff: Boolean = false,
     val screenSharing: Boolean = false,
+    val remoteScreenSharing: Boolean = false,
     val connectedAt: Long = 0L,
     val error: String? = null
 )
@@ -58,6 +59,7 @@ object CallEngine {
     private var localVideoTrack: VideoTrack? = null
     private var remoteVideoTrack: VideoTrack? = null
     private var videoSource: VideoSource? = null
+    private var startedAsVideoCall = false
     private var videoCapturer: VideoCapturer? = null
     private var surfaceTextureHelper: SurfaceTextureHelper? = null
     private var localRenderer: SurfaceViewRenderer? = null
@@ -97,6 +99,7 @@ object CallEngine {
         if (!initialize(context)) return
         val me = FirebaseAuth.getInstance().currentUser?.uid ?: return fail("Please sign in again")
         val callId = UUID.randomUUID().toString()
+        startedAsVideoCall = video
         _state.value = CallState(callId, remoteUid, remoteName, remoteImage, "outgoing", "connecting", video = video)
         fetchIceServers { servers, error ->
             if (error != null) return@fetchIceServers fail(error)
@@ -138,6 +141,7 @@ object CallEngine {
                 return@addOnSuccessListener fail("Call is no longer available")
             }
             val isVideo = video || snapshot.child("callType").getValue(String::class.java) == "video"
+            startedAsVideoCall = isVideo
             _state.value = _state.value.copy(video = isVideo)
             fetchIceServers { servers, error ->
                 if (error != null) return@fetchIceServers fail(error)
@@ -215,8 +219,9 @@ object CallEngine {
             screenCapturer.startCapture(metrics.widthPixels.coerceAtLeast(720), metrics.heightPixels.coerceAtLeast(1280), 15)
             videoCapturer = screenCapturer
             localVideoTrack?.setEnabled(true)
-            _state.value = _state.value.copy(screenSharing = true, cameraOff = false)
+            _state.value = _state.value.copy(video = true, screenSharing = true, cameraOff = false)
             callRef?.child(if (_state.value.direction == "outgoing") "callerCameraOff" else "calleeCameraOff")?.setValue(false)
+            callRef?.child(if (_state.value.direction == "outgoing") "callerScreenSharing" else "calleeScreenSharing")?.setValue(true)
             true
         }.onFailure { Log.e("CALL_ENGINE", "Screen share failed", it) }.getOrDefault(false)
     }
@@ -228,12 +233,20 @@ object CallEngine {
         return runCatching {
             runCatching { videoCapturer?.stopCapture() }
             videoCapturer?.dispose()
-            val camera = createCameraCapturer(context) ?: error("No camera available")
-            camera.initialize(surfaceTextureHelper, context, source.capturerObserver)
-            camera.startCapture(720, 1280, 24)
-            videoCapturer = camera
-            _state.value = _state.value.copy(screenSharing = false, cameraOff = false)
-            CallForegroundService.start(context, _state.value.callId, _state.value.remoteName, true, screenShare = false)
+            videoCapturer = null
+            if (startedAsVideoCall) {
+                val camera = createCameraCapturer(context) ?: error("No camera available")
+                camera.initialize(surfaceTextureHelper, context, source.capturerObserver)
+                camera.startCapture(720, 1280, 24)
+                videoCapturer = camera
+                localVideoTrack?.setEnabled(true)
+                _state.value = _state.value.copy(video = true, screenSharing = false, cameraOff = false)
+            } else {
+                localVideoTrack?.setEnabled(false)
+                _state.value = _state.value.copy(video = false, screenSharing = false, cameraOff = true)
+            }
+            CallForegroundService.start(context, _state.value.callId, _state.value.remoteName, _state.value.video, screenShare = false)
+            callRef?.child(if (_state.value.direction == "outgoing") "callerScreenSharing" else "calleeScreenSharing")?.setValue(false)
             true
         }.onFailure { Log.e("CALL_ENGINE", "Could not restore camera", it) }.getOrDefault(false)
     }
@@ -292,19 +305,21 @@ object CallEngine {
             ?: throw IllegalStateException("WebRTC audio source could not be created")
         audioTrack = factory?.createAudioTrack("firechat_audio_$myUid", source)?.also { peer?.addTrack(it, listOf("firechat")) }
             ?: throw IllegalStateException("WebRTC audio track could not be created")
+        // Always negotiate a video m-line so either participant can start screen sharing
+        // later, including calls that began as audio-only.
+        val context = appContext ?: throw IllegalStateException("Missing call context")
+        surfaceTextureHelper = SurfaceTextureHelper.create("Convo ChatVideo", eglBase!!.eglBaseContext)
+        videoSource = factory?.createVideoSource(false) ?: throw IllegalStateException("Could not create video source")
+        localVideoTrack = factory?.createVideoTrack("firechat_video_$myUid", videoSource)?.also { track ->
+            track.setEnabled(false)
+            peer?.addTrack(track, listOf("firechat"))
+            localRenderer?.let(track::addSink)
+        } ?: throw IllegalStateException("Could not create video track")
         if (_state.value.video) {
-            val context = appContext ?: throw IllegalStateException("Missing call context")
             videoCapturer = createCameraCapturer(context) ?: throw IllegalStateException("No usable camera found")
-            surfaceTextureHelper = SurfaceTextureHelper.create("Convo ChatCamera", eglBase!!.eglBaseContext)
-            videoSource = factory?.createVideoSource(false) ?: throw IllegalStateException("Could not create video source")
             videoCapturer?.initialize(surfaceTextureHelper, context, videoSource!!.capturerObserver)
             videoCapturer?.startCapture(720, 1280, 24)
-            localVideoTrack = factory?.createVideoTrack("firechat_video_$myUid", videoSource)?.also { track ->
-                peer?.addTrack(track, listOf("firechat"))
-                // Receiver UI may create its preview renderer before permissions/TURN finish.
-                // Attach the track when it actually becomes available.
-                localRenderer?.let(track::addSink)
-            } ?: throw IllegalStateException("Could not create video track")
+            localVideoTrack?.setEnabled(true)
         }
         true
         } catch (error: Throwable) {
@@ -339,7 +354,10 @@ object CallEngine {
             override fun onDataChange(snapshot: DataSnapshot) {
                 val status = snapshot.child("status").getValue(String::class.java) ?: return
                 val remoteCameraOff = snapshot.child(if (isCaller) "calleeCameraOff" else "callerCameraOff").getValue(Boolean::class.java) ?: false
-                if (_state.value.remoteCameraOff != remoteCameraOff) _state.value = _state.value.copy(remoteCameraOff = remoteCameraOff)
+                val remoteScreenSharing = snapshot.child(if (isCaller) "calleeScreenSharing" else "callerScreenSharing").getValue(Boolean::class.java) ?: false
+                if (_state.value.remoteCameraOff != remoteCameraOff || _state.value.remoteScreenSharing != remoteScreenSharing) {
+                    _state.value = _state.value.copy(remoteCameraOff = remoteCameraOff, remoteScreenSharing = remoteScreenSharing, video = _state.value.video || remoteScreenSharing)
+                }
                 if (isCaller && status == "connected" && !answerApplied) {
                     val answerSdp = snapshot.child("answerSdp").getValue(String::class.java)
                     if (!answerSdp.isNullOrBlank()) {
@@ -489,7 +507,8 @@ object CallEngine {
         peer?.close(); peer?.dispose(); peer = null
         audioTrack?.dispose(); audioTrack = null
         if (wasConnected) vibrateCallEnded()
-        _state.value = _state.value.copy(status = finalStatus)
+        startedAsVideoCall = false
+        _state.value = _state.value.copy(status = finalStatus, video = false, cameraOff = false, screenSharing = false, remoteScreenSharing = false)
     }
 
     fun reportFailure(message: String) = fail(message)

@@ -242,7 +242,6 @@ fun HomeScreen(
     var feedFilter by rememberSaveable { mutableStateOf("All Posts") }
     var showAnalytics by remember { mutableStateOf(false) }
     var showAccountMenu by remember { mutableStateOf(false) }
-    var showAdminReelsImporter by remember { mutableStateOf(false) }
     var showActivityCenter by remember { mutableStateOf(false) }
     var showGlobalSearch by remember { mutableStateOf(false) }
     var showLockSetup by remember { mutableStateOf(false) }
@@ -425,11 +424,6 @@ fun HomeScreen(
                                         text = { Text("Admin control center") },
                                         leadingIcon = { Icon(Icons.Outlined.AdminPanelSettings, null) },
                                         onClick = { showAccountMenu = false; viewModel.setCurrentTab(3) }
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text("Admin Reels library") },
-                                        leadingIcon = { Icon(Icons.Outlined.VideoLibrary, null) },
-                                        onClick = { showAccountMenu = false; showAdminReelsImporter = true }
                                     )
                                 }
                                 DropdownMenuItem(
@@ -2031,24 +2025,6 @@ fun HomeScreen(
         )
     }
 
-    if (showAdminReelsImporter && isAdmin) {
-        Dialog(
-            onDismissRequest = { showAdminReelsImporter = false },
-            properties = DialogProperties(usePlatformDefaultWidth = false)
-        ) {
-            Surface(
-                modifier = Modifier.fillMaxWidth().padding(14.dp),
-                shape = RoundedCornerShape(30.dp),
-                tonalElevation = 8.dp
-            ) {
-                AdminReelsImportScreen(
-                    viewModel = viewModel,
-                    onClose = { showAdminReelsImporter = false }
-                )
-            }
-        }
-    }
-
     if (showLockSetup) {
         var pin by remember { mutableStateOf("") }
         var confirmPin by remember { mutableStateOf("") }
@@ -2794,7 +2770,7 @@ fun ReelsFeedScreen(
 ) {
     val context = LocalContext.current
     val reels = remember(posts) {
-        posts.filter { (it.videoUrl.isNotBlank() || it.embedHtml.isNotBlank() || it.thumbnailUrl.isNotBlank()) && (it.isReel || it.r2ObjectKeys.isNotEmpty() || it.isAdminReel) }
+        posts.filter { (it.videoUrl.isNotBlank() || it.thumbnailUrl.isNotBlank()) && (it.isReel || it.r2ObjectKeys.isNotEmpty()) && !it.isAdminReel }
             .sortedWith(compareByDescending<Post> { it.timestamp }.thenBy { it.id })
     }
     if (reels.isEmpty()) {
@@ -2918,11 +2894,6 @@ private fun ImmersiveVideoPage(
                 ownerId = "reel_${post.id}", videoUrl = post.videoUrl,
                 thumbnailUrl = post.thumbnailUrl.ifBlank { post.imageUrl }, active = isActive,
                 playWhenReady = isActive && !isPaused, sound = true, modifier = Modifier.fillMaxSize()
-            )
-            post.embedHtml.isNotBlank() -> AdminOEmbedWebView(
-                html = post.embedHtml,
-                active = isActive,
-                modifier = Modifier.fillMaxSize()
             )
             else -> AsyncImage(
                 model = post.thumbnailUrl.ifBlank { post.imageUrl },

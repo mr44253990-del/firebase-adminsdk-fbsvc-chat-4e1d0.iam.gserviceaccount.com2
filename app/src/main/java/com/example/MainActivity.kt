@@ -1,9 +1,14 @@
 package com.example
 
 import android.os.Bundle
+import android.os.Build
+import android.app.PictureInPictureParams
+import android.util.Rational
+import android.provider.Settings
 import android.os.Handler
 import android.os.Looper
 import android.content.Intent
+import android.net.Uri
 import android.widget.Toast
 import androidx.fragment.app.FragmentActivity
 import androidx.activity.compose.setContent
@@ -42,6 +47,7 @@ import com.example.call.CallScreen
 import com.example.call.CallEngine
 import com.example.call.CallMiniOverlay
 import com.example.call.GroupCallScreen
+import com.example.call.GroupCallEngine
 import com.example.ui.ChatViewModel
 import com.example.ui.HomeScreen
 import com.example.ui.IncomingShareHub
@@ -73,6 +79,29 @@ import kotlinx.coroutines.flow.MutableStateFlow
 
 @androidx.media3.common.util.UnstableApi
 class MainActivity : FragmentActivity() {
+
+    private fun minimizeActiveCall() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            runCatching {
+                enterPictureInPictureMode(
+                    PictureInPictureParams.Builder()
+                        .setAspectRatio(Rational(9, 16))
+                        .build()
+                )
+            }.onFailure { onBackPressedDispatcher.onBackPressed() }
+        } else {
+            onBackPressedDispatcher.onBackPressed()
+        }
+    }
+
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        val privateCallActive = CallEngine.state.value.status !in listOf("idle", "ended", "declined", "missed", "failed")
+        val groupCallActive = GroupCallEngine.state.value.status !in listOf("idle", "ended", "failed")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !isInPictureInPictureMode && (privateCallActive || groupCallActive)) {
+            minimizeActiveCall()
+        }
+    }
 
     private val viewModel: ChatViewModel by viewModels()
     private val pendingChatSenderId = MutableStateFlow<String?>(null)
@@ -233,8 +262,19 @@ class MainActivity : FragmentActivity() {
                 var requestedGroupCallVideo by remember { mutableStateOf(false) }
                 var showCallParticipantPicker by remember { mutableStateOf(false) }
                 val callState by CallEngine.state.collectAsState()
+                val groupCallState by GroupCallEngine.state.collectAsState()
                 val context = LocalContext.current
                 var splashFinished by remember { mutableStateOf(false) }
+                var showOverlayPermissionPrompt by remember { mutableStateOf(false) }
+                var overlayPromptShownThisSession by remember { mutableStateOf(false) }
+                LaunchedEffect(splashFinished, currentUser?.uid, callState.status, groupCallState.status) {
+                    val activeCall = callState.status !in listOf("idle", "ended", "declined", "missed", "failed") ||
+                        groupCallState.status !in listOf("idle", "ended", "failed")
+                    if (!overlayPromptShownThisSession && splashFinished && currentUser != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(context) && activeCall) {
+                        overlayPromptShownThisSession = true
+                        showOverlayPermissionPrompt = true
+                    }
+                }
 
                 // Check starting destination depending on whether onboarding has been completed and if a user is already signed in
                 val destinationAfterSplash = remember {
@@ -456,7 +496,7 @@ class MainActivity : FragmentActivity() {
                                 onEndCall = {
                                     activeRecipient?.let { viewModel.endCall(it, callState.callId) } ?: CallEngine.end()
                                 },
-                                onMinimize = { navController.popBackStack() },
+                                onMinimize = { minimizeActiveCall() },
                                 onClose = { navController.popBackStack() },
                                 onAddParticipant = { showCallParticipantPicker = true }
                             )
@@ -525,7 +565,8 @@ class MainActivity : FragmentActivity() {
                                 GroupCallScreen(
                                     group = group,
                                     video = requestedGroupCallVideo,
-                                    onClose = { navController.popBackStack() },
+                                    onClose = { GroupCallEngine.end(); navController.popBackStack() },
+                                    onMinimize = { minimizeActiveCall() },
                                     joinRoomId = activeGroupRoomId,
                                     // A room ID means this is an explicit Join action. Start
                                     // immediately; only the group-chat banner remains passive.
@@ -573,6 +614,22 @@ class MainActivity : FragmentActivity() {
                                 onEnd = { activeRecipient?.let { viewModel.endCall(it, callState.callId) } ?: CallEngine.end() }
                             )
                         }
+                    }
+                    if (showOverlayPermissionPrompt) {
+                        AlertDialog(
+                            onDismissRequest = { showOverlayPermissionPrompt = false },
+                            title = { Text("Keep calls visible over other apps?") },
+                            text = { Text("Allow Display over other apps so an active call can stay available while you use another app. Android Picture-in-Picture will still be used when supported." ) },
+                            confirmButton = {
+                                Button(onClick = {
+                                    showOverlayPermissionPrompt = false
+                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                                        startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
+                                    }
+                                }) { Text("Open permission") }
+                            },
+                            dismissButton = { TextButton(onClick = { showOverlayPermissionPrompt = false }) { Text("Later") } }
+                        )
                     }
                     }
                 }

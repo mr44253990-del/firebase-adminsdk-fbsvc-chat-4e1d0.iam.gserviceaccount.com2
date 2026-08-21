@@ -7,9 +7,11 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.projection.MediaProjectionManager
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
@@ -42,6 +44,7 @@ fun GroupCallScreen(
     group: Group,
     video: Boolean,
     onClose: () -> Unit,
+    onMinimize: () -> Unit = {},
     onRoomReady: (String) -> Unit = {},
     joinRoomId: String? = null,
     autoStart: Boolean = true
@@ -52,6 +55,7 @@ fun GroupCallScreen(
     var started by remember { mutableStateOf(false) }
     var joinRequested by remember { mutableStateOf(autoStart) }
     var showDiagnostics by remember { mutableStateOf(false) }
+    BackHandler(enabled = started && state.status !in listOf("idle", "ended", "failed")) { onMinimize() }
     val localUid = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid.orEmpty()
     val isHost = state.hostId.isNotBlank() && state.hostId == localUid
 
@@ -175,13 +179,14 @@ fun GroupCallScreen(
                             Text("REC", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
                         }
                     }
-                    Text("${state.participants.size}/4", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(end = 10.dp))
+                                                Text("${state.participants.size}/6", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(end = 10.dp))
+
                 }
             )
         },
         bottomBar = {
             if (joinRequested && started) Row(
-                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).background(MaterialTheme.colorScheme.surface).padding(12.dp),
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).background(MaterialTheme.colorScheme.surface).navigationBarsPadding().padding(horizontal = 12.dp, vertical = 8.dp),
                 horizontalArrangement = Arrangement.SpaceEvenly,
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -300,25 +305,125 @@ fun GroupCallScreen(
             }
             val remoteParticipants = state.participants.filter { it.uid != localUid }
             val tileCount = remoteParticipants.size + 1
-            val gridColumns = if (tileCount <= 1) 1 else 2
+            var focusedParticipantId by remember { mutableStateOf<String?>(null) }
+            LaunchedEffect(tileCount, remoteParticipants.map { it.uid }) {
+                if (focusedParticipantId != null && focusedParticipantId != "local" && remoteParticipants.none { it.uid == focusedParticipantId }) {
+                    focusedParticipantId = null
+                }
+            }
+            val focusedRemote = remoteParticipants.firstOrNull { it.uid == focusedParticipantId }
+            val focusedLocal = focusedParticipantId == "local"
+            val gridColumns = when {
+                tileCount <= 1 -> 1
+                tileCount <= 4 -> 2
+                else -> 3
+            }
             val gridState = rememberLazyGridState()
-            LazyVerticalGrid(
-                columns = GridCells.Fixed(gridColumns),
-                state = gridState,
-                modifier = Modifier.fillMaxWidth().weight(1f),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                contentPadding = PaddingValues(bottom = 12.dp)
-            ) {
-                item(key = "local-tile") {
-                    CallVideoTile(
+            if (focusedParticipantId == null || (!focusedLocal && focusedRemote == null)) {
+                LazyVerticalGrid(
+                    columns = GridCells.Fixed(gridColumns),
+                    state = gridState,
+                    modifier = Modifier.fillMaxWidth().weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    contentPadding = PaddingValues(bottom = 12.dp)
+                ) {
+                    item(key = "local-tile") {
+                        CallVideoTile(
+                            name = "You",
+                            connected = state.status == "connected" || state.status == "reconnecting",
+                            muted = state.muted,
+                            cameraOff = state.cameraOff || !state.video,
+                            isHost = false,
+                            onMute = {},
+                            onRemove = {},
+                            onClick = { focusedParticipantId = "local" }
+                        ) {
+                            AndroidView(
+                                modifier = Modifier.fillMaxSize(),
+                                factory = { viewContext -> SurfaceViewRenderer(viewContext) },
+                                update = { renderer -> GroupCallEngine.attachLocalRenderer(renderer) },
+                                onRelease = { GroupCallEngine.detachLocalRenderer(it) }
+                            )
+                        }
+                    }
+                    items(remoteParticipants, key = { it.uid }) { participant ->
+                        CallVideoTile(
+                            name = participant.name,
+                            connected = participant.connected,
+                            muted = participant.muted || participant.hostMuted,
+                            cameraOff = !participant.video,
+                            isHost = isHost,
+                            onMute = { GroupCallEngine.hostMuteParticipant(participant.uid, !participant.hostMuted) },
+                            onRemove = { GroupCallEngine.removeParticipant(participant.uid) },
+                            onClick = { focusedParticipantId = participant.uid }
+                        ) {
+                            AndroidView(
+                                modifier = Modifier.fillMaxSize(),
+                                factory = { viewContext -> SurfaceViewRenderer(viewContext) },
+                                update = { renderer -> GroupCallEngine.attachRemoteRenderer(participant.uid, renderer) },
+                                onRelease = { GroupCallEngine.detachRemoteRenderer(participant.uid, it) }
+                            )
+                        }
+                    }
+                }
+            } else {
+                Box(Modifier.fillMaxWidth().weight(1f).padding(bottom = 8.dp)) {
+                    if (focusedLocal) {
+                        CallVideoTile(
+                            modifier = Modifier.fillMaxSize(),
+                            name = "You",
+                            connected = state.status == "connected" || state.status == "reconnecting",
+                            muted = state.muted,
+                            cameraOff = state.cameraOff || !state.video,
+                            isHost = false,
+                            onMute = {},
+                            onRemove = {},
+                            onClick = { focusedParticipantId = null }
+                        ) {
+                            AndroidView(
+                                modifier = Modifier.fillMaxSize(),
+                                factory = { viewContext -> SurfaceViewRenderer(viewContext) },
+                                update = { renderer -> GroupCallEngine.attachLocalRenderer(renderer) },
+                                onRelease = { GroupCallEngine.detachLocalRenderer(it) }
+                            )
+                        }
+                    } else {
+                        val focused = focusedRemote!!
+                        CallVideoTile(
+                            modifier = Modifier.fillMaxSize(),
+                            name = focused.name,
+                            connected = focused.connected,
+                            muted = focused.muted || focused.hostMuted,
+                            cameraOff = !focused.video,
+                            isHost = isHost,
+                            onMute = { GroupCallEngine.hostMuteParticipant(focused.uid, !focused.hostMuted) },
+                            onRemove = { GroupCallEngine.removeParticipant(focused.uid) },
+                            onClick = { focusedParticipantId = null }
+                        ) {
+                            AndroidView(
+                                modifier = Modifier.fillMaxSize(),
+                                factory = { viewContext -> SurfaceViewRenderer(viewContext) },
+                                update = { renderer -> GroupCallEngine.attachRemoteRenderer(focused.uid, renderer) },
+                                onRelease = { GroupCallEngine.detachRemoteRenderer(focused.uid, it) }
+                            )
+                        }
+                    }
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth().height(116.dp).horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    if (!focusedLocal) CallVideoTile(
+                        modifier = Modifier.width(112.dp).fillMaxHeight(),
                         name = "You",
                         connected = state.status == "connected" || state.status == "reconnecting",
                         muted = state.muted,
                         cameraOff = state.cameraOff || !state.video,
                         isHost = false,
                         onMute = {},
-                        onRemove = {}
+                        onRemove = {},
+                        onClick = { focusedParticipantId = "local" }
                     ) {
                         AndroidView(
                             modifier = Modifier.fillMaxSize(),
@@ -327,23 +432,25 @@ fun GroupCallScreen(
                             onRelease = { GroupCallEngine.detachLocalRenderer(it) }
                         )
                     }
-                }
-                items(remoteParticipants, key = { it.uid }) { participant ->
-                    CallVideoTile(
-                        name = participant.name,
-                        connected = participant.connected,
-                        muted = participant.muted || participant.hostMuted,
-                        cameraOff = !participant.video,
-                        isHost = isHost,
-                        onMute = { GroupCallEngine.hostMuteParticipant(participant.uid, !participant.hostMuted) },
-                        onRemove = { GroupCallEngine.removeParticipant(participant.uid) }
-                    ) {
-                        AndroidView(
-                            modifier = Modifier.fillMaxSize(),
-                            factory = { viewContext -> SurfaceViewRenderer(viewContext) },
-                            update = { renderer -> GroupCallEngine.attachRemoteRenderer(participant.uid, renderer) },
-                            onRelease = { GroupCallEngine.detachRemoteRenderer(participant.uid, it) }
-                        )
+                    remoteParticipants.filter { it.uid != focusedParticipantId }.forEach { participant ->
+                        CallVideoTile(
+                            modifier = Modifier.width(112.dp).fillMaxHeight(),
+                            name = participant.name,
+                            connected = participant.connected,
+                            muted = participant.muted || participant.hostMuted,
+                            cameraOff = !participant.video,
+                            isHost = isHost,
+                            onMute = { GroupCallEngine.hostMuteParticipant(participant.uid, !participant.hostMuted) },
+                            onRemove = { GroupCallEngine.removeParticipant(participant.uid) },
+                            onClick = { focusedParticipantId = participant.uid }
+                        ) {
+                            AndroidView(
+                                modifier = Modifier.fillMaxSize(),
+                                factory = { viewContext -> SurfaceViewRenderer(viewContext) },
+                                update = { renderer -> GroupCallEngine.attachRemoteRenderer(participant.uid, renderer) },
+                                onRelease = { GroupCallEngine.detachRemoteRenderer(participant.uid, it) }
+                            )
+                        }
                     }
                 }
             }
@@ -354,6 +461,7 @@ fun GroupCallScreen(
 
 @Composable
 private fun CallVideoTile(
+    modifier: Modifier = Modifier.fillMaxWidth().aspectRatio(0.82f),
     name: String,
     connected: Boolean,
     muted: Boolean,
@@ -361,10 +469,11 @@ private fun CallVideoTile(
     isHost: Boolean,
     onMute: () -> Unit,
     onRemove: () -> Unit,
+    onClick: () -> Unit = {},
     videoContent: @Composable () -> Unit
 ) {
     Surface(
-        modifier = Modifier.fillMaxWidth().aspectRatio(0.82f),
+        modifier = modifier.clickable(onClick = onClick),
         shape = RoundedCornerShape(18.dp),
         color = Color.Black,
         tonalElevation = 4.dp

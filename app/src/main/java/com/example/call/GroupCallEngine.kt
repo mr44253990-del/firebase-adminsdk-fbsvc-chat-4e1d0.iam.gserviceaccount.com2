@@ -84,7 +84,7 @@ object GroupCallEngine {
     private var videoCapturer: VideoCapturer? = null
     private var surfaceTextureHelper: SurfaceTextureHelper? = null
     private var localRenderer: SurfaceViewRenderer? = null
-    private val remoteRenderers = ConcurrentHashMap<String, SurfaceViewRenderer>()
+    private val remoteRenderers = ConcurrentHashMap<String, MutableSet<SurfaceViewRenderer>>()
     // Compose may create a SurfaceViewRenderer before EGL is ready. Track successful
     // init calls by renderer identity so a failed bind can be retried safely.
     private val initializedRenderers = Collections.newSetFromMap(IdentityHashMap<SurfaceViewRenderer, Boolean>())
@@ -453,10 +453,10 @@ object GroupCallEngine {
             }
             pendingRemoteTracks.remove(uid)
             if (slot.remoteVideo !== track) {
-                slot.remoteVideo?.let { old -> remoteRenderers[uid]?.let { old.removeSink(it) } }
+                slot.remoteVideo?.let { old -> remoteRenderers[uid]?.forEach(old::removeSink) }
                 slot.remoteVideo = track
             }
-            remoteRenderers[uid]?.let { renderer ->
+            remoteRenderers[uid]?.forEach { renderer ->
                 runCatching { track.setEnabled(true); track.addSink(renderer) }
                     .onFailure { Log.w(TAG, "Remote renderer bind failed for $uid", it) }
             }
@@ -699,17 +699,12 @@ object GroupCallEngine {
 
     fun attachRemoteRenderer(uid: String, renderer: SurfaceViewRenderer) {
         mainHandler.post {
-            if (remoteRenderers[uid] !== renderer) {
-                remoteRenderers[uid]?.let { old ->
-                    runCatching { peers[uid]?.remoteVideo?.removeSink(old) }
-                    initializedRenderers.remove(old)
-                }
-                remoteRenderers[uid] = renderer
-            }
+            val renderers = remoteRenderers.getOrPut(uid) { ConcurrentHashMap.newKeySet() }
+            renderers.add(renderer)
             val eglContext = eglBase?.eglBaseContext
             if (eglContext == null) {
                 mainHandler.postDelayed({
-                    if (remoteRenderers[uid] === renderer && !isClosing) attachRemoteRenderer(uid, renderer)
+                    if (remoteRenderers[uid]?.contains(renderer) == true && !isClosing) attachRemoteRenderer(uid, renderer)
                 }, 100L)
                 return@post
             }
@@ -729,7 +724,7 @@ object GroupCallEngine {
             }.onFailure {
                 initializedRenderers.remove(renderer)
                 Log.w(TAG, "Remote renderer bind failed for $uid", it)
-                if (remoteRenderers[uid] === renderer && !isClosing) {
+                if (remoteRenderers[uid]?.contains(renderer) == true && !isClosing) {
                     mainHandler.postDelayed({ attachRemoteRenderer(uid, renderer) }, 250L)
                 }
             }
@@ -748,7 +743,10 @@ object GroupCallEngine {
     fun detachRemoteRenderer(uid: String, renderer: SurfaceViewRenderer) {
         mainHandler.post {
             runCatching { peers[uid]?.remoteVideo?.removeSink(renderer) }
-            if (remoteRenderers[uid] === renderer) remoteRenderers.remove(uid)
+            remoteRenderers[uid]?.let { renderers ->
+                renderers.remove(renderer)
+                if (renderers.isEmpty()) remoteRenderers.remove(uid, renderers)
+            }
             initializedRenderers.remove(renderer)
             runCatching { renderer.release() }
         }
@@ -795,11 +793,11 @@ object GroupCallEngine {
         roomValueListener?.let { roomRef?.removeEventListener(it) }
         participantsListener = null; signalListener = null; roomValueListener = null
         peers.values.forEach { slot ->
-            runCatching { slot.remoteVideo?.let { track -> remoteRenderers[slot.uid]?.let(track::removeSink) } }
+            runCatching { slot.remoteVideo?.let { track -> remoteRenderers[slot.uid]?.forEach(track::removeSink) } }
             runCatching { slot.peer.close(); slot.peer.dispose() }
         }
         runCatching { localVideo?.let { track -> localRenderer?.let(track::removeSink) } }
-        remoteRenderers.values.forEach { renderer -> runCatching { renderer.release() } }
+        remoteRenderers.values.flatten().forEach { renderer -> runCatching { renderer.release() } }
         localRenderer?.let { renderer -> runCatching { renderer.release() } }
         initializedRenderers.clear()
         peers.clear(); remoteRenderers.clear(); pendingRemoteTracks.clear(); localRenderer = null

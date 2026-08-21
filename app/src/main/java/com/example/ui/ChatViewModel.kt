@@ -3158,7 +3158,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    @Deprecated("Admin link-based Reels are disabled because provider embeds are not reliable in the native feed.")
     fun importAdminReelsFromText(text: String, postEverywhere: Boolean = false) {
+        _adminReelImportState.value = AdminReelImportState(message = "Admin link-based Reels are disabled. Create a native Reel instead.")
+        return
         if (!isCurrentAdmin()) {
             _adminReelImportState.value = AdminReelImportState(message = "Only the configured administrator can import Reels.")
             return
@@ -3267,7 +3270,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 cacheDao.getAllPosts().firstOrNull()?.let { cached ->
                     if (_postsState.value.isEmpty()) {
-                        _postsState.value = cached.map { it.toPost() }
+                        _postsState.value = cached.map { it.toPost() }.filterNot { it.isAdminReel }
                     }
                 }
             } catch (e: Exception) {
@@ -3341,7 +3344,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                                 post.r2ObjectKeys.forEach(::deleteR2Object)
                                 viewModelScope.launch(Dispatchers.IO) { cacheDao.deletePost(post.id) }
                                 doc.reference.delete()
-                            } else if (!myBlocked.contains(post.senderId)) {
+                            } else if (!post.isAdminReel && !myBlocked.contains(post.senderId)) {
                                 if (!post.isPrivate || post.senderId == currentUid) list.add(post)
                             }
                         } catch (e: Exception) {
