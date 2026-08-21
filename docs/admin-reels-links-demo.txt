@@ -1,0 +1,14 @@
+# Convo Chat Admin Reels import format
+# One public HTTPS page URL per line.
+# Blank lines and lines starting with # are ignored.
+# The app discovers the page's public application/json+oembed endpoint.
+# Maximum: 500 unique URLs per import; maximum file size: 2 MB.
+
+https://example.com/video-one
+https://example.com/video-two
+
+# Replace the examples above with supported public provider URLs.
+# Do not paste private/login-only links or protected media URLs.
+
+# Optional: keep a simple audit label in a comment; comments are not imported.
+# batch: summer-2026

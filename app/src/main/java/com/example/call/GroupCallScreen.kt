@@ -15,6 +15,10 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -24,6 +28,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -293,45 +298,48 @@ fun GroupCallScreen(
                     }
                 }
             }
-            if (state.status != "idle") {
-                AndroidView(
-                    modifier = Modifier.fillMaxWidth().height(230.dp),
-                            factory = { viewContext -> SurfaceViewRenderer(viewContext) },
-                    update = { renderer -> GroupCallEngine.attachLocalRenderer(renderer) },
-                            onRelease = { GroupCallEngine.detachLocalRenderer(it) }
-                )
-                Spacer(Modifier.height(8.dp))
-            }
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxSize()) {
-                items(state.participants.filter { it.uid != com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid }, key = { it.uid }) { participant ->
-                    Column(Modifier.fillMaxWidth()) {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Surface(
-                                modifier = Modifier.size(8.dp),
-                                shape = RoundedCornerShape(50),
-                                color = if (participant.connected) Color(0xFF26E86F) else MaterialTheme.colorScheme.error
-                            ) {}
-                            Text(
-                                participant.name + if (participant.muted || participant.hostMuted) " (muted)" else "",
-                                style = MaterialTheme.typography.labelMedium,
-                                modifier = Modifier.weight(1f)
-                            )
-                            Text(
-                                if (participant.connected) "Connected" else "Connecting",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = qualityColor(participant.quality)
-                            )
-                            if (isHost) {
-                                IconButton(onClick = { GroupCallEngine.hostMuteParticipant(participant.uid, !participant.hostMuted) }) {
-                                    Icon(if (participant.hostMuted) Icons.Default.Mic else Icons.Default.MicOff, if (participant.hostMuted) "Allow microphone" else "Mute participant")
-                                }
-                                IconButton(onClick = { GroupCallEngine.removeParticipant(participant.uid) }) {
-                                    Icon(Icons.Default.PersonRemove, "Remove participant", tint = MaterialTheme.colorScheme.error)
-                                }
-                            }
-                        }
+            val remoteParticipants = state.participants.filter { it.uid != localUid }
+            val tileCount = remoteParticipants.size + 1
+            val gridColumns = if (tileCount <= 1) 1 else 2
+            val gridState = rememberLazyGridState()
+            LazyVerticalGrid(
+                columns = GridCells.Fixed(gridColumns),
+                state = gridState,
+                modifier = Modifier.fillMaxWidth().weight(1f),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                contentPadding = PaddingValues(bottom = 12.dp)
+            ) {
+                item(key = "local-tile") {
+                    CallVideoTile(
+                        name = "You",
+                        connected = state.status == "connected" || state.status == "reconnecting",
+                        muted = state.muted,
+                        cameraOff = state.cameraOff || !state.video,
+                        isHost = false,
+                        onMute = {},
+                        onRemove = {}
+                    ) {
                         AndroidView(
-                            modifier = Modifier.fillMaxWidth().height(190.dp).background(Color.Black, RoundedCornerShape(12.dp)),
+                            modifier = Modifier.fillMaxSize(),
+                            factory = { viewContext -> SurfaceViewRenderer(viewContext) },
+                            update = { renderer -> GroupCallEngine.attachLocalRenderer(renderer) },
+                            onRelease = { GroupCallEngine.detachLocalRenderer(it) }
+                        )
+                    }
+                }
+                items(remoteParticipants, key = { it.uid }) { participant ->
+                    CallVideoTile(
+                        name = participant.name,
+                        connected = participant.connected,
+                        muted = participant.muted || participant.hostMuted,
+                        cameraOff = !participant.video,
+                        isHost = isHost,
+                        onMute = { GroupCallEngine.hostMuteParticipant(participant.uid, !participant.hostMuted) },
+                        onRemove = { GroupCallEngine.removeParticipant(participant.uid) }
+                    ) {
+                        AndroidView(
+                            modifier = Modifier.fillMaxSize(),
                             factory = { viewContext -> SurfaceViewRenderer(viewContext) },
                             update = { renderer -> GroupCallEngine.attachRemoteRenderer(participant.uid, renderer) },
                             onRelease = { GroupCallEngine.detachRemoteRenderer(participant.uid, it) }
@@ -343,6 +351,70 @@ fun GroupCallScreen(
     }
 }
 
+
+@Composable
+private fun CallVideoTile(
+    name: String,
+    connected: Boolean,
+    muted: Boolean,
+    cameraOff: Boolean,
+    isHost: Boolean,
+    onMute: () -> Unit,
+    onRemove: () -> Unit,
+    videoContent: @Composable () -> Unit
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth().aspectRatio(0.82f),
+        shape = RoundedCornerShape(18.dp),
+        color = Color.Black,
+        tonalElevation = 4.dp
+    ) {
+        Box(Modifier.fillMaxSize()) {
+            if (!cameraOff && connected) {
+                videoContent()
+            } else {
+                Column(
+                    modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.86f)),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    Box(
+                        modifier = Modifier.size(58.dp).background(MaterialTheme.colorScheme.primaryContainer, RoundedCornerShape(50)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(name.take(1).uppercase(), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold)
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Text(name, style = MaterialTheme.typography.labelLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(if (connected) "Camera off" else "Connecting…", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            Surface(
+                modifier = Modifier.align(Alignment.BottomStart).padding(8.dp),
+                shape = RoundedCornerShape(12.dp),
+                color = Color.Black.copy(alpha = 0.60f)
+            ) {
+                Row(Modifier.padding(horizontal = 8.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(name, color = Color.White, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    if (muted) {
+                        Spacer(Modifier.width(5.dp))
+                        Icon(Icons.Default.MicOff, "Muted", tint = Color.White, modifier = Modifier.size(14.dp))
+                    }
+                }
+            }
+            if (isHost) {
+                Row(Modifier.align(Alignment.TopEnd).padding(5.dp)) {
+                    IconButton(onClick = onMute, modifier = Modifier.size(30.dp)) {
+                        Icon(if (muted) Icons.Default.Mic else Icons.Default.MicOff, "Toggle mute", tint = Color.White, modifier = Modifier.size(18.dp))
+                    }
+                    IconButton(onClick = onRemove, modifier = Modifier.size(30.dp)) {
+                        Icon(Icons.Default.PersonRemove, "Remove participant", tint = Color.White, modifier = Modifier.size(18.dp))
+                    }
+                }
+            }
+        }
+    }
+}
 
 private fun qualityColor(quality: String): Color = when (quality) {
     "good" -> Color(0xFF1B5E20)

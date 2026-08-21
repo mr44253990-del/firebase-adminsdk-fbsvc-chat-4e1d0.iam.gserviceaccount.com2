@@ -82,6 +82,8 @@ import androidx.compose.ui.res.painterResource
 import coil.compose.AsyncImage
 import androidx.compose.ui.viewinterop.AndroidView
 import android.widget.VideoView
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import com.example.R
 import com.example.data.ActivityNotification
 import com.example.security.AppLockManager
@@ -240,6 +242,7 @@ fun HomeScreen(
     var feedFilter by rememberSaveable { mutableStateOf("All Posts") }
     var showAnalytics by remember { mutableStateOf(false) }
     var showAccountMenu by remember { mutableStateOf(false) }
+    var showAdminReelsImporter by remember { mutableStateOf(false) }
     var showActivityCenter by remember { mutableStateOf(false) }
     var showGlobalSearch by remember { mutableStateOf(false) }
     var showLockSetup by remember { mutableStateOf(false) }
@@ -417,11 +420,18 @@ fun HomeScreen(
                                     leadingIcon = { Icon(Icons.Outlined.PersonAdd, null) },
                                     onClick = { showAccountMenu = false; viewModel.setCurrentTab(5) }
                                 )
-                                if (isAdmin) DropdownMenuItem(
-                                    text = { Text("Admin control center") },
-                                    leadingIcon = { Icon(Icons.Outlined.AdminPanelSettings, null) },
-                                    onClick = { showAccountMenu = false; viewModel.setCurrentTab(3) }
-                                )
+                                if (isAdmin) {
+                                    DropdownMenuItem(
+                                        text = { Text("Admin control center") },
+                                        leadingIcon = { Icon(Icons.Outlined.AdminPanelSettings, null) },
+                                        onClick = { showAccountMenu = false; viewModel.setCurrentTab(3) }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Admin Reels library") },
+                                        leadingIcon = { Icon(Icons.Outlined.VideoLibrary, null) },
+                                        onClick = { showAccountMenu = false; showAdminReelsImporter = true }
+                                    )
+                                }
                                 DropdownMenuItem(
                                     text = { Text("Sign out", color = MaterialTheme.colorScheme.error) },
                                     leadingIcon = { Icon(Icons.Outlined.Logout, null, tint = MaterialTheme.colorScheme.error) },
@@ -2013,12 +2023,29 @@ fun HomeScreen(
             }
         }
     } else if (flagshipConfig.noticeEnabled && !dismissNotice && flagshipConfig.noticeTitle.isNotBlank()) {
-        AlertDialog(
-            onDismissRequest = { dismissNotice = true },
-            title = { Text(flagshipConfig.noticeTitle, fontWeight = FontWeight.Bold) },
-            text = { Text(flagshipConfig.noticeBody) },
-            confirmButton = { Button(onClick = { dismissNotice = true }) { Text("Got it") } }
+        AnimatedGlobalNotice(
+            title = flagshipConfig.noticeTitle,
+            body = flagshipConfig.noticeBody,
+            onDismiss = { dismissNotice = true }
         )
+    }
+
+    if (showAdminReelsImporter && isAdmin) {
+        Dialog(
+            onDismissRequest = { showAdminReelsImporter = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false)
+        ) {
+            Surface(
+                modifier = Modifier.fillMaxWidth().padding(14.dp),
+                shape = RoundedCornerShape(30.dp),
+                tonalElevation = 8.dp
+            ) {
+                AdminReelsImportScreen(
+                    viewModel = viewModel,
+                    onClose = { showAdminReelsImporter = false }
+                )
+            }
+        }
     }
 
     if (showLockSetup) {
@@ -2765,7 +2792,7 @@ fun ReelsFeedScreen(
 ) {
     val context = LocalContext.current
     val reels = remember(posts) {
-        posts.filter { it.videoUrl.isNotBlank() && (it.isReel || it.r2ObjectKeys.isNotEmpty()) }
+        posts.filter { (it.videoUrl.isNotBlank() || it.embedHtml.isNotBlank() || it.thumbnailUrl.isNotBlank()) && (it.isReel || it.r2ObjectKeys.isNotEmpty() || it.isAdminReel) }
             .sortedWith(compareByDescending<Post> { it.timestamp }.thenBy { it.id })
     }
     if (reels.isEmpty()) {
@@ -2884,11 +2911,24 @@ private fun ImmersiveVideoPage(
     }).coerceAtLeast(0)
 
     Box(Modifier.fillMaxSize().background(Color.Black)) {
-        SharedCachedVideo(
-            ownerId = "reel_${post.id}", videoUrl = post.videoUrl,
-            thumbnailUrl = post.imageUrl, active = isActive,
-            playWhenReady = isActive && !isPaused, sound = true, modifier = Modifier.fillMaxSize()
-        )
+        when {
+            post.videoUrl.isNotBlank() -> SharedCachedVideo(
+                ownerId = "reel_${post.id}", videoUrl = post.videoUrl,
+                thumbnailUrl = post.thumbnailUrl.ifBlank { post.imageUrl }, active = isActive,
+                playWhenReady = isActive && !isPaused, sound = true, modifier = Modifier.fillMaxSize()
+            )
+            post.embedHtml.isNotBlank() -> AdminOEmbedWebView(
+                html = post.embedHtml,
+                active = isActive,
+                modifier = Modifier.fillMaxSize()
+            )
+            else -> AsyncImage(
+                model = post.thumbnailUrl.ifBlank { post.imageUrl },
+                contentDescription = post.title,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+        }
         Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color.Transparent, Color.Black.copy(alpha = .78f)))))
         Box(Modifier.fillMaxSize().pointerInput(post.id) {
             detectTapGestures(onDoubleTap = {
@@ -3025,6 +3065,90 @@ private fun ImmersiveVideoPage(
                 Spacer(Modifier.height(8.dp)); Text(post.text, style = MaterialTheme.typography.bodyLarge)
                 if (post.tags.isNotEmpty()) { Spacer(Modifier.height(14.dp)); Text(post.tags.joinToString(" ") { "#$it" }, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold) }
                 Spacer(Modifier.height(14.dp)); Text("${post.reactions.size} reactions • ${post.comments.size} comments • ${post.viewsCount} views", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
+}
+
+@Composable
+private fun AdminOEmbedWebView(html: String, active: Boolean, modifier: Modifier = Modifier) {
+    AndroidView(
+        modifier = modifier.background(Color.Black),
+        factory = { context ->
+            WebView(context).apply {
+                settings.javaScriptEnabled = true
+                settings.domStorageEnabled = true
+                settings.mediaPlaybackRequiresUserGesture = false
+                settings.allowFileAccess = false
+                settings.allowContentAccess = false
+                settings.setSupportZoom(false)
+                webViewClient = object : WebViewClient() {
+                    override fun shouldOverrideUrlLoading(view: WebView, request: android.webkit.WebResourceRequest): Boolean {
+                        val scheme = request.url.scheme?.lowercase()
+                        return scheme != "https"
+                    }
+                }
+                setBackgroundColor(android.graphics.Color.BLACK)
+            }
+        },
+        update = { webView ->
+            if (active) webView.onResume() else webView.onPause()
+            if (webView.tag != html) {
+                webView.tag = html
+                webView.loadDataWithBaseURL("https://oembed.local/", html, "text/html", "UTF-8", null)
+            }
+        }
+    )
+}
+
+@Composable
+private fun AnimatedGlobalNotice(title: String, body: String, onDismiss: () -> Unit) {
+    val transition = rememberInfiniteTransition(label = "global_notice_motion")
+    val pulse by transition.animateFloat(
+        initialValue = 0.94f,
+        targetValue = 1.04f,
+        animationSpec = infiniteRepeatable(tween(2200, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+        label = "global_notice_pulse"
+    )
+    val sweep by transition.animateFloat(
+        initialValue = -80f,
+        targetValue = 420f,
+        animationSpec = infiniteRepeatable(tween(3200, easing = LinearEasing), RepeatMode.Restart),
+        label = "global_notice_sweep"
+    )
+    Dialog(onDismissRequest = onDismiss) {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .graphicsLayer { scaleX = pulse; scaleY = pulse }
+                .background(
+                    Brush.linearGradient(
+                        listOf(Color(0xFF00D4FF), Color(0xFF6C4DFF), Color(0xFFFF2C83), Color(0xFFFFA62B))
+                    ),
+                    RoundedCornerShape(30.dp)
+                )
+                .padding(2.dp)
+        ) {
+            Surface(shape = RoundedCornerShape(28.dp), color = MaterialTheme.colorScheme.surface, tonalElevation = 12.dp) {
+                Column(Modifier.fillMaxWidth().padding(22.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .height(5.dp)
+                            .clip(RoundedCornerShape(99.dp))
+                            .background(Brush.horizontalGradient(listOf(Color.Transparent, Color(0xFF00D4FF), Color(0xFFFF2C83), Color.Transparent)))
+                            .graphicsLayer { translationX = sweep }
+                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Surface(shape = CircleShape, color = MaterialTheme.colorScheme.primaryContainer) {
+                            Icon(Icons.Outlined.Campaign, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(11.dp).size(24.dp))
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Black, modifier = Modifier.weight(1f))
+                    }
+                    Text(body, color = MaterialTheme.colorScheme.onSurfaceVariant, lineHeight = 21.sp)
+                    Button(onClick = onDismiss, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp)) { Text("Got it") }
+                }
             }
         }
     }

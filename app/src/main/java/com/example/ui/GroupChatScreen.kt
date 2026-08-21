@@ -77,6 +77,7 @@ fun GroupChatScreen(
     val groupVoiceRecorders by viewModel.groupVoiceRecorders.collectAsState()
     val otherVoiceRecorders = remember(groupVoiceRecorders, currentUserId) { groupVoiceRecorders.filter { it != currentUserId } }
     var showAddMembers by remember { mutableStateOf(false) }
+    var showMembers by remember { mutableStateOf(false) }
     var showMessageSearch by remember { mutableStateOf(false) }
     var messageSearchQuery by remember { mutableStateOf("") }
     val visibleGroupMessages = remember(messages, messageSearchQuery) {
@@ -297,7 +298,13 @@ fun GroupChatScreen(
         topBar = {
             TopAppBar(
                 title = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(18.dp))
+                            .clickable { showMembers = true }
+                            .padding(vertical = 2.dp, horizontal = 4.dp)
+                    ) {
                         if (group.profileUrl.isNotBlank()) {
                             AsyncImage(
                                 model = group.profileUrl,
@@ -372,7 +379,6 @@ fun GroupChatScreen(
                 .fillMaxSize()
                 .background(chatGradientBg)
                 .padding(innerPadding)
-                .imePadding()
         ) {
             AnimatedVisibility(
                 visible = !pendingCallRoomId.isNullOrBlank(),
@@ -578,8 +584,9 @@ fun GroupChatScreen(
                 tonalElevation = 8.dp,
                 modifier = Modifier
                     .fillMaxWidth()
-                    // IME inset is applied once to the parent chat column. Applying it here as
-                    // well causes the list and composer to jump upward by a second keyboard height.
+                    // Apply the IME inset only to the composer. Keeping the message column at its
+                    // stable height prevents the entire chat surface from jumping when the keyboard opens.
+                    .windowInsetsPadding(WindowInsets.ime.only(WindowInsetsSides.Bottom))
                     .glassmorphic(
                         isDark = isDark,
                         shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
@@ -674,6 +681,64 @@ fun GroupChatScreen(
                                 .background(MaterialTheme.colorScheme.primary, CircleShape)
                         ) {
                             Icon(Icons.Default.Send, contentDescription = "Send", tint = MaterialTheme.colorScheme.onPrimary)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (showMembers) {
+        ModalBottomSheet(
+            onDismissRequest = { showMembers = false },
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text("${group.name} members", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold)
+                Text("${group.members.size} people in this group", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                LazyColumn(
+                    modifier = Modifier.fillMaxWidth().heightIn(max = 520.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                    contentPadding = PaddingValues(bottom = 18.dp)
+                ) {
+                    items(group.members, key = { it }) { memberId ->
+                        val member = allUsers.firstOrNull { it.uid == memberId }
+                        Surface(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(18.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                if (!member?.profileImageUrl.isNullOrBlank()) {
+                                    AsyncImage(
+                                        model = member?.profileImageUrl,
+                                        contentDescription = member?.name,
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier.size(42.dp).clip(CircleShape)
+                                    )
+                                } else {
+                                    Box(
+                                        modifier = Modifier.size(42.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text((member?.name ?: memberId).take(1).uppercase(), fontWeight = FontWeight.Bold)
+                                    }
+                                }
+                                Spacer(Modifier.width(12.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text(member?.name?.ifBlank { memberId.take(10) } ?: memberId.take(10), fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text(if (member?.isOnline == true) "Online now" else "Member", style = MaterialTheme.typography.bodySmall, color = if (member?.isOnline == true) Color(0xFF1B8A4B) else MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                                if (memberId == currentUserId) Text("You", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                            }
                         }
                     }
                 }

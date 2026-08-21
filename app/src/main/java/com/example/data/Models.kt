@@ -123,7 +123,14 @@ data class Post(
     val isReel: Boolean = false,
     val expiresAt: Long = 0L,
     val imageUrls: List<String> = emptyList(),
-    val mediaReactions: Map<String, Map<String, String>> = emptyMap()
+    val mediaReactions: Map<String, Map<String, String>> = emptyMap(),
+    /** Original admin-imported URL when the provider does not expose a direct media URL. */
+    val sourceUrl: String = "",
+    /** Sanitized provider embed markup; displayed only inside an isolated WebView. */
+    val embedHtml: String = "",
+    val providerName: String = "",
+    val thumbnailUrl: String = "",
+    val isAdminReel: Boolean = false
 )
 
 data class PostComment(

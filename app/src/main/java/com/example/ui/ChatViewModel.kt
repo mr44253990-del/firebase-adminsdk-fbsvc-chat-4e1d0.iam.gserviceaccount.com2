@@ -83,6 +83,15 @@ data class ActiveUploadState(
     val active: Boolean = false
 )
 
+data class AdminReelImportState(
+    val importing: Boolean = false,
+    val processed: Int = 0,
+    val imported: Int = 0,
+    val skipped: Int = 0,
+    val failed: Int = 0,
+    val message: String = ""
+)
+
 private class ProgressBytesRequestBody(
     private val bytes: ByteArray,
     private val type: MediaType?,
@@ -284,6 +293,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     val accountBanned: StateFlow<Boolean> = _accountBanned.asStateFlow()
     private val _rememberedAccounts = MutableStateFlow(loadRememberedAccounts())
     val rememberedAccounts: StateFlow<List<RememberedAccount>> = _rememberedAccounts.asStateFlow()
+    private val _adminReelImportState = MutableStateFlow(AdminReelImportState())
+    val adminReelImportState: StateFlow<AdminReelImportState> = _adminReelImportState.asStateFlow()
 
     private fun loadRememberedAccounts(): List<RememberedAccount> = runCatching {
         val array = JSONArray(sharedPrefs.getString("remembered_accounts", "[]"))
@@ -3085,6 +3096,132 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     // --- Social Posts Logic ---
 
+    private fun isCurrentAdmin(): Boolean = FirebaseAuth.getInstance().currentUser?.email?.lowercase()?.trim()?.trimEnd('.') == "mr4425390@gmail.com"
+
+    private fun normalizeImportUrl(raw: String): String? = runCatching {
+        val value = raw.trim()
+        val uri = java.net.URI(value)
+        require(uri.scheme.equals("https", ignoreCase = true))
+        require(!uri.host.isNullOrBlank())
+        value.take(2048)
+    }.getOrNull()
+
+    private fun sanitizeOEmbedHtml(raw: String): String {
+        val iframe = Regex("(?is)<iframe\\b[^>]*\\bsrc\\s*=\\s*[\\\"'](https://[^\\\"']+)[\\\"'][^>]*>\\s*</iframe>")
+            .find(raw)?.let { match ->
+                val src = match.groupValues[1].replace("&amp;", "&").replace("\"", "&quot;")
+                "<iframe src=\"$src\" width=\"100%\" height=\"100%\" frameborder=\"0\" allowfullscreen></iframe>"
+            }
+        return iframe.orEmpty()
+    }
+
+    private fun discoverOEmbed(sourceUrl: String): JSONObject? {
+        val client = OkHttpClient.Builder().callTimeout(20, TimeUnit.SECONDS).build()
+        val page = Request.Builder().url(sourceUrl).header("User-Agent", "ConvoChat/4.1 oEmbed importer").get().build()
+        val html = client.newCall(page).execute().use { response ->
+            if (!response.isSuccessful) return null
+            response.body?.string().orEmpty().take(1_500_000)
+        }
+        val href = sequenceOf(
+            Regex("(?is)<link[^>]+href=[\\\"']([^\\\"']+)[\\\"'][^>]+type=[\\\"']application/json\\+oembed[\\\"']"),
+            Regex("(?is)<link[^>]+type=[\\\"']application/json\\+oembed[\\\"'][^>]+href=[\\\"']([^\\\"']+)[\\\"']")
+        ).mapNotNull { it.find(html)?.groupValues?.getOrNull(1) }.firstOrNull() ?: return null
+        val endpoint = java.net.URI(sourceUrl).resolve(href).toString()
+        val separator = if (endpoint.contains('?')) '&' else '?'
+        val requestUrl = endpoint + separator + "url=" + java.net.URLEncoder.encode(sourceUrl, "UTF-8") + "&format=json&maxwidth=1080&maxheight=1920"
+        val request = Request.Builder().url(requestUrl).header("User-Agent", "ConvoChat/4.1 oEmbed importer").get().build()
+        return client.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) null else JSONObject(response.body?.string().orEmpty())
+        }
+    }
+
+    fun importAdminReelsFromText(text: String) {
+        if (!isCurrentAdmin()) {
+            _adminReelImportState.value = AdminReelImportState(message = "Only the configured administrator can import Reels.")
+            return
+        }
+        val urls = text.lineSequence()
+            .map { it.trim().removePrefix("\uFEFF") }
+            .filter { it.isNotBlank() && !it.startsWith('#') }
+            .mapNotNull(::normalizeImportUrl)
+            .distinct()
+            .take(500)
+            .toList()
+        if (urls.isEmpty()) {
+            _adminReelImportState.value = AdminReelImportState(message = "No valid HTTPS links were found.")
+            return
+        }
+        _adminReelImportState.value = AdminReelImportState(importing = true, message = "Reading provider metadata…")
+        val admin = getCurrentUserOrFallback() ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            val records = mutableListOf<Pair<String, Map<String, Any?>>>()
+            var skipped = 0
+            var failed = 0
+            urls.forEachIndexed { index, sourceUrl ->
+                runCatching {
+                    val metadata = discoverOEmbed(sourceUrl) ?: error("No public oEmbed response")
+                    val type = metadata.optString("type", "link")
+                    val title = metadata.optString("title").ifBlank { sourceUrl }
+                    val embedHtml = sanitizeOEmbedHtml(metadata.optString("html"))
+                    val thumbnail = metadata.optString("thumbnail_url").takeIf { it.startsWith("https://") }.orEmpty()
+                    val directUrl = metadata.optString("url").takeIf { it.startsWith("https://") && type == "video" }.orEmpty()
+                    if (embedHtml.isBlank() && directUrl.isBlank() && thumbnail.isBlank()) error("Provider returned no usable media")
+                    val docId = "admin_${sha256(sourceUrl).take(40)}"
+                    val data = hashMapOf<String, Any?>(
+                        "senderId" to admin.uid,
+                        "senderName" to (admin.name.ifBlank { "Convo Admin" }),
+                        "senderProfilePic" to admin.profileImageUrl,
+                        "text" to title,
+                        "title" to title,
+                        "imageUrl" to thumbnail,
+                        "imageUrls" to listOfNotNull(thumbnail.takeIf { it.isNotBlank() }),
+                        "videoUrl" to directUrl,
+                        "sourceUrl" to sourceUrl,
+                        "embedHtml" to embedHtml,
+                        "providerName" to metadata.optString("provider_name", "External provider"),
+                        "thumbnailUrl" to thumbnail,
+                        "isAdminReel" to true,
+                        "isReel" to true,
+                        "isPrivate" to false,
+                        "timestamp" to System.currentTimeMillis(),
+                        "viewsCount" to 0,
+                        "reactions" to emptyMap<String, String>(),
+                        "comments" to emptyList<Map<String, Any>>(),
+                        "tags" to listOf("admin", "imported", "reel")
+                    )
+                    records += docId to data
+                }.onFailure { error ->
+                    if (error.message?.contains("No public", true) == true || error.message?.contains("no usable", true) == true) skipped++ else failed++
+                }
+                withContext(Dispatchers.Main) { _adminReelImportState.value = _adminReelImportState.value.copy(processed = index + 1, skipped = skipped, failed = failed, message = "Reading ${index + 1}/${urls.size}…") }
+            }
+            withContext(Dispatchers.Main) {
+                commitImportedAdminReels(records, 0, skipped, failed)
+            }
+        }
+    }
+
+    private fun sha256(value: String): String = java.security.MessageDigest.getInstance("SHA-256").digest(value.toByteArray()).joinToString("") { "%02x".format(it) }
+
+    private fun commitImportedAdminReels(records: List<Pair<String, Map<String, Any?>>>, index: Int, skipped: Int, failed: Int) {
+        if (index >= records.size) {
+            _adminReelImportState.value = _adminReelImportState.value.copy(importing = false, imported = records.size, skipped = skipped, failed = failed, message = "Imported ${records.size} Reel link(s)." )
+            loadPosts()
+            return
+        }
+        val end = minOf(index + 450, records.size)
+        val batch = FirebaseFirestore.getInstance().batch()
+        records.subList(index, end).forEach { (id, data) ->
+            batch.set(FirebaseFirestore.getInstance().collection("posts").document(id), data, SetOptions.merge())
+        }
+        batch.commit().addOnSuccessListener {
+            _adminReelImportState.value = _adminReelImportState.value.copy(imported = end, message = "Saved $end/${records.size} Reel link(s)…")
+            commitImportedAdminReels(records, end, skipped, failed)
+        }.addOnFailureListener { error ->
+            _adminReelImportState.value = _adminReelImportState.value.copy(importing = false, skipped = skipped, failed = failed + (end - index), message = "Import failed: ${error.localizedMessage ?: "database error"}")
+        }
+    }
+
     fun loadPosts() {
         // Quick initial load from local cache
         viewModelScope.launch {
@@ -3152,7 +3289,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                                 imageUrls = (doc.get("imageUrls") as? List<*>)?.mapNotNull { it as? String } ?: emptyList(),
                                 mediaReactions = (doc.get("mediaReactions") as? Map<*, *>)?.entries?.associate { entry ->
                                     entry.key.toString() to ((entry.value as? Map<*, *>)?.entries?.associate { it.key.toString() to it.value.toString() } ?: emptyMap())
-                                } ?: emptyMap()
+                                } ?: emptyMap(),
+                                sourceUrl = doc.getString("sourceUrl") ?: "",
+                                embedHtml = doc.getString("embedHtml") ?: "",
+                                providerName = doc.getString("providerName") ?: "",
+                                thumbnailUrl = doc.getString("thumbnailUrl") ?: "",
+                                isAdminReel = doc.getBoolean("isAdminReel") ?: false
                             )
 
                             if (post.expiresAt > 0L && System.currentTimeMillis() >= post.expiresAt) {
@@ -3491,7 +3633,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         val roomId = UUID.randomUUID().toString()
-        val members = group.members.distinct().take(4)
+        val members = group.members.distinct().take(6)
         if (members.isEmpty()) {
             onComplete(false)
             return
@@ -3533,11 +3675,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         val callType = if (video) "video" else "audio"
-        val roster = group.members.distinct().take(4).joinToString(",")
+        val roster = group.members.distinct().take(6).joinToString(",")
         val recipients = if (includeCaller) {
-            group.members.distinct().take(4)
+            group.members.distinct().take(6)
         } else {
-            group.members.filterNot { it == caller.uid }.distinct().take(3)
+            group.members.filterNot { it == caller.uid }.distinct().take(5)
         }
         recipients.forEach { memberUid ->
             withUserFcmToken(memberUid) { token ->

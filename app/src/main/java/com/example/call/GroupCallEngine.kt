@@ -27,7 +27,7 @@ import java.util.concurrent.TimeUnit
 /**
  * Small-group WebRTC mesh engine. It deliberately uses the existing RTDB and TURN
  * gateway, so no new client secret or Worker binding is required. Mesh is capped
- * at four participants to keep mobile CPU/bandwidth predictable.
+ * at six participants to support compact group calls while keeping mobile CPU/bandwidth bounded.
  */
 data class GroupCallParticipant(
     val uid: String,
@@ -61,7 +61,7 @@ data class GroupCallState(
 
 object GroupCallEngine {
     private const val TAG = "GROUP_CALL"
-    private const val MAX_PARTICIPANTS = 4
+    private const val MAX_PARTICIPANTS = 6
     private const val GATEWAY = "https://solitary-hill-dcdc.mr44253990.workers.dev/turn-credentials"
 
     private val _state = MutableStateFlow(GroupCallState())
