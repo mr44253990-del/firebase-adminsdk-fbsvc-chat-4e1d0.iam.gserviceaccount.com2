@@ -34,6 +34,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -56,6 +57,7 @@ fun AdminReelsImportScreen(viewModel: ChatViewModel, onClose: () -> Unit) {
     val context = LocalContext.current
     val importState by viewModel.adminReelImportState.collectAsState()
     var links by remember { mutableStateOf("") }
+    var postEverywhere by remember { mutableStateOf(false) }
     var showHelp by remember { mutableStateOf(false) }
     val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
@@ -68,8 +70,9 @@ fun AdminReelsImportScreen(viewModel: ChatViewModel, onClose: () -> Unit) {
         }.onFailure { links = "# Could not read file: ${it.localizedMessage ?: "unknown error"}" }
     }
     val sample = """# One HTTPS source URL per line
-https://example.com/video-one
-https://example.com/video-two
+https://www.youtube.com/shorts/TwkpeQZvIHE
+https://www.youtube.com/embed/VIDEO_ID
+https://www.youtube.com/watch?v=VIDEO_ID
 # Blank lines and lines beginning with # are ignored
 """.trimIndent()
     val count = links.lineSequence().count { it.trim().startsWith("https://") }
@@ -109,6 +112,15 @@ https://example.com/video-two
             supportingText = { Text("$count HTTPS-looking line(s) detected") },
             minLines = 8
         )
+        Card(shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = .72f)), modifier = Modifier.fillMaxWidth()) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Post Everywhere", fontWeight = FontWeight.Bold)
+                    Text(if (postEverywhere) "Also publish to the normal post feed" else "Reels library only", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Switch(checked = postEverywhere, onCheckedChange = { postEverywhere = it })
+            }
+        }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
             FilledTonalButton(onClick = { filePicker.launch(arrayOf("text/plain", "text/*")) }, modifier = Modifier.weight(1f)) {
                 Icon(Icons.Outlined.CloudUpload, null); Spacer(Modifier.width(6.dp)); Text("Choose .txt")
@@ -121,7 +133,7 @@ https://example.com/video-two
             }
         }
         Button(
-            onClick = { viewModel.importAdminReelsFromText(links) },
+            onClick = { viewModel.importAdminReelsFromText(links, postEverywhere) },
             enabled = !importState.importing && count > 0,
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(18.dp)

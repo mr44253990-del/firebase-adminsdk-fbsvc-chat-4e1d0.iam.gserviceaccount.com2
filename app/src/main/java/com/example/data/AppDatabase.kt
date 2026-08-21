@@ -375,17 +375,25 @@ data class CachedGroupMessage(
     val imageUrl: String?,
     val voiceUrl: String?,
     val voiceDurationSec: Int?,
+    val replyToId: String?,
+    val replyToText: String?,
+    val replyToSenderName: String?,
     val expiresAt: Long
 ) {
     fun toGroupMessage(): GroupMessage {
-        return GroupMessage(messageId, groupId, senderId, senderName, text, timestamp, imageUrl, voiceUrl, voiceDurationSec, expiresAt)
+        return GroupMessage(
+            messageId, groupId, senderId, senderName, text, timestamp,
+            imageUrl, voiceUrl, voiceDurationSec, replyToId, replyToText,
+            replyToSenderName, expiresAt
+        )
     }
 
     companion object {
         fun fromGroupMessage(gm: GroupMessage): CachedGroupMessage {
             return CachedGroupMessage(
                 gm.messageId, gm.groupId, gm.senderId, gm.senderName,
-                gm.text, gm.timestamp, gm.imageUrl, gm.voiceUrl, gm.voiceDurationSec, gm.expiresAt
+                gm.text, gm.timestamp, gm.imageUrl, gm.voiceUrl, gm.voiceDurationSec,
+                gm.replyToId, gm.replyToText, gm.replyToSenderName, gm.expiresAt
             )
         }
     }
@@ -531,7 +539,7 @@ interface CacheDao {
         CachedGroupMessage::class,
         CachedActivityNotification::class
     ],
-        version = 13,
+        version = 14,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -610,6 +618,13 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE cached_group_messages ADD COLUMN expiresAt INTEGER NOT NULL DEFAULT 0")
             }
         }
+        private val MIGRATION_13_14 = object : Migration(13, 14) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE cached_group_messages ADD COLUMN replyToId TEXT")
+                db.execSQL("ALTER TABLE cached_group_messages ADD COLUMN replyToText TEXT")
+                db.execSQL("ALTER TABLE cached_group_messages ADD COLUMN replyToSenderName TEXT")
+            }
+        }
 
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
@@ -617,7 +632,7 @@ abstract class AppDatabase : RoomDatabase() {
                     context.applicationContext,
                     AppDatabase::class.java,
                     "firechat_offline_cache_db"
-                ).addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13)
+                ).addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14)
                     .fallbackToDestructiveMigration()
                     .build()
                 INSTANCE = instance

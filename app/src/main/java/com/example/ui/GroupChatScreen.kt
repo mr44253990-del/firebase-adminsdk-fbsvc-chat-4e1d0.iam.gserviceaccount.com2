@@ -19,6 +19,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.ui.input.pointer.pointerInput
@@ -46,6 +47,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
@@ -57,6 +59,8 @@ import java.io.File
 import java.io.InputStream
 import java.text.SimpleDateFormat
 import java.util.*
+import kotlin.math.abs
+import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -88,6 +92,7 @@ fun GroupChatScreen(
     }
 
     var messageText by remember { mutableStateOf("") }
+    var replyingToGroupMessage by remember { mutableStateOf<GroupMessage?>(null) }
     var translationMessage by remember { mutableStateOf<GroupMessage?>(null) }
     var translationText by remember { mutableStateOf("") }
     var translationLoading by remember { mutableStateOf(false) }
@@ -560,6 +565,9 @@ fun GroupChatScreen(
                                 onDeleteSelect = {
                                     viewModel.deleteGroupMessage(group.id, msg.messageId)
                                 },
+                                onReplySelect = { target ->
+                                    replyingToGroupMessage = target
+                                },
                                 onTranslate = { target ->
                                     translationMessage = target
                                     translationText = ""
@@ -592,6 +600,44 @@ fun GroupChatScreen(
                         shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
                     )
             ) {
+                AnimatedVisibility(
+                    visible = replyingToGroupMessage != null,
+                    enter = expandVertically() + fadeIn(),
+                    exit = shrinkVertically() + fadeOut()
+                ) {
+                    Surface(
+                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.85f),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 10.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    text = "Replying to ${replyingToGroupMessage?.senderName.orEmpty()}",
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = replyingToGroupMessage?.text?.ifBlank { "Attachment or voice note" }.orEmpty().take(80),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    fontSize = 12.sp
+                                )
+                            }
+                            IconButton(onClick = { replyingToGroupMessage = null }) {
+                                Icon(Icons.Default.Close, contentDescription = "Cancel reply")
+                            }
+                        }
+                    }
+                }
+
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -672,7 +718,12 @@ fun GroupChatScreen(
                         IconButton(
                             onClick = {
                                 if (messageText.isNotBlank()) {
-                                    viewModel.sendGroupMessage(group.id, messageText)
+                                    viewModel.sendGroupMessage(
+                                        groupId = group.id,
+                                        text = messageText,
+                                        replyTo = replyingToGroupMessage
+                                    )
+                                    replyingToGroupMessage = null
                                     messageText = ""
                                 }
                             },
@@ -797,9 +848,11 @@ fun GroupMessageBubbleItem(
     msg: GroupMessage,
     isSentByMe: Boolean,
     onDeleteSelect: () -> Unit,
+    onReplySelect: (GroupMessage) -> Unit = {},
     onTranslate: (GroupMessage) -> Unit = {}
 ) {
     var showMenu by remember { mutableStateOf(false) }
+    var dragOffset by remember(msg.messageId) { mutableFloatStateOf(0f) }
     val context = LocalContext.current
     val isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
     
@@ -866,6 +919,19 @@ fun GroupMessageBubbleItem(
                             bottomEnd = if (isSentByMe) 2.dp else 16.dp
                         )
                     )
+                    .offset { IntOffset(dragOffset.roundToInt(), 0) }
+                    .pointerInput(msg.messageId) {
+                        detectHorizontalDragGestures(
+                            onHorizontalDrag = { _, amount ->
+                                dragOffset = (dragOffset + amount).coerceIn(-140f, 140f)
+                            },
+                            onDragEnd = {
+                                if (abs(dragOffset) > 72f) onReplySelect(msg)
+                                dragOffset = 0f
+                            },
+                            onDragCancel = { dragOffset = 0f }
+                        )
+                    }
                     .combinedClickable(
                         onClick = { showMenu = true },
                         onLongClick = { showMenu = true },
@@ -879,6 +945,33 @@ fun GroupMessageBubbleItem(
                     )
             ) {
                 Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                    if (!msg.replyToId.isNullOrBlank()) {
+                        Surface(
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 5.dp)
+                        ) {
+                            Column(Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
+                                Text(
+                                    text = msg.replyToSenderName.orEmpty().ifBlank { "Message" },
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = msg.replyToText.orEmpty().ifBlank { "Attachment or voice note" }.take(80),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    fontSize = 11.sp
+                                )
+                            }
+                        }
+                    }
+
                     if (!msg.imageUrl.isNullOrBlank()) {
                         AsyncImage(
                             model = msg.imageUrl,

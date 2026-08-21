@@ -3098,6 +3098,22 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun isCurrentAdmin(): Boolean = FirebaseAuth.getInstance().currentUser?.email?.lowercase()?.trim()?.trimEnd('.') == "mr4425390@gmail.com"
 
+    private fun youtubeVideoId(url: String): String? = runCatching {
+        val uri = java.net.URI(url)
+        val host = uri.host?.lowercase(Locale.US).orEmpty()
+        val pathParts = uri.path.orEmpty().trim('/').split('/').filter { it.isNotBlank() }
+        val candidate = when {
+            host == "youtu.be" -> pathParts.firstOrNull()
+            host == "youtube.com" || host == "www.youtube.com" || host == "m.youtube.com" || host == "youtube-nocookie.com" || host == "www.youtube-nocookie.com" || host.endsWith(".youtube.com") -> when {
+                pathParts.firstOrNull() == "shorts" -> pathParts.getOrNull(1)
+                pathParts.firstOrNull() == "embed" -> pathParts.getOrNull(1)
+                else -> uri.rawQuery.orEmpty().split('&').firstOrNull { it.startsWith("v=") }?.substringAfter('=')
+            }
+            else -> null
+        }
+        candidate?.takeIf { it.matches(Regex("[A-Za-z0-9_-]{6,20}")) }
+    }.getOrNull()
+
     private fun normalizeImportUrl(raw: String): String? = runCatching {
         val value = raw.trim()
         val uri = java.net.URI(value)
@@ -3117,6 +3133,13 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun discoverOEmbed(sourceUrl: String): JSONObject? {
         val client = OkHttpClient.Builder().callTimeout(20, TimeUnit.SECONDS).build()
+        youtubeVideoId(sourceUrl)?.let {
+            val youtubeEndpoint = "https://www.youtube.com/oembed?url=" + java.net.URLEncoder.encode(sourceUrl, "UTF-8") + "&format=json"
+            val request = Request.Builder().url(youtubeEndpoint).header("User-Agent", "ConvoChat/4.1 oEmbed importer").get().build()
+            return client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) null else JSONObject(response.body?.string().orEmpty())
+            }
+        }
         val page = Request.Builder().url(sourceUrl).header("User-Agent", "ConvoChat/4.1 oEmbed importer").get().build()
         val html = client.newCall(page).execute().use { response ->
             if (!response.isSuccessful) return null
@@ -3135,7 +3158,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun importAdminReelsFromText(text: String) {
+    fun importAdminReelsFromText(text: String, postEverywhere: Boolean = false) {
         if (!isCurrentAdmin()) {
             _adminReelImportState.value = AdminReelImportState(message = "Only the configured administrator can import Reels.")
             return
@@ -3157,12 +3180,24 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             val records = mutableListOf<Pair<String, Map<String, Any?>>>()
             var skipped = 0
             var failed = 0
+            val failureDetails = mutableListOf<String>()
             urls.forEachIndexed { index, sourceUrl ->
                 runCatching {
-                    val metadata = discoverOEmbed(sourceUrl) ?: error("No public oEmbed response")
+                    val metadata = discoverOEmbed(sourceUrl) ?: youtubeVideoId(sourceUrl)?.let { id ->
+                        JSONObject().apply {
+                            put("type", "video")
+                            put("title", "YouTube video")
+                            put("provider_name", "YouTube")
+                            put("url", "https://www.youtube.com/embed/$id")
+                        }
+                    } ?: error("No public oEmbed response")
                     val type = metadata.optString("type", "link")
                     val title = metadata.optString("title").ifBlank { sourceUrl }
-                    val embedHtml = sanitizeOEmbedHtml(metadata.optString("html"))
+                    val youtubeId = youtubeVideoId(sourceUrl)
+                    val discoveredEmbed = sanitizeOEmbedHtml(metadata.optString("html"))
+                    val embedHtml = discoveredEmbed.ifBlank {
+                        youtubeId?.let { id -> "<iframe src=\"https://www.youtube.com/embed/$id?rel=0&modestbranding=1\" width=\"100%\" height=\"100%\" frameborder=\"0\" allow=\"accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share\" allowfullscreen></iframe>" }.orEmpty()
+                    }
                     val thumbnail = metadata.optString("thumbnail_url").takeIf { it.startsWith("https://") }.orEmpty()
                     val directUrl = metadata.optString("url").takeIf { it.startsWith("https://") && type == "video" }.orEmpty()
                     if (embedHtml.isBlank() && directUrl.isBlank() && thumbnail.isBlank()) error("Provider returned no usable media")
@@ -3181,6 +3216,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         "providerName" to metadata.optString("provider_name", "External provider"),
                         "thumbnailUrl" to thumbnail,
                         "isAdminReel" to true,
+                        "postEverywhere" to postEverywhere,
                         "isReel" to true,
                         "isPrivate" to false,
                         "timestamp" to System.currentTimeMillis(),
@@ -3191,21 +3227,24 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     )
                     records += docId to data
                 }.onFailure { error ->
+                    val detail = "${sourceUrl.take(72)}: ${error.localizedMessage ?: "provider error"}"
+                    if (failureDetails.size < 3) failureDetails += detail
                     if (error.message?.contains("No public", true) == true || error.message?.contains("no usable", true) == true) skipped++ else failed++
                 }
                 withContext(Dispatchers.Main) { _adminReelImportState.value = _adminReelImportState.value.copy(processed = index + 1, skipped = skipped, failed = failed, message = "Reading ${index + 1}/${urls.size}…") }
             }
             withContext(Dispatchers.Main) {
-                commitImportedAdminReels(records, 0, skipped, failed)
+                commitImportedAdminReels(records, 0, skipped, failed, failureDetails.joinToString(" | "))
             }
         }
     }
 
     private fun sha256(value: String): String = java.security.MessageDigest.getInstance("SHA-256").digest(value.toByteArray()).joinToString("") { "%02x".format(it) }
 
-    private fun commitImportedAdminReels(records: List<Pair<String, Map<String, Any?>>>, index: Int, skipped: Int, failed: Int) {
+    private fun commitImportedAdminReels(records: List<Pair<String, Map<String, Any?>>>, index: Int, skipped: Int, failed: Int, failureSummary: String = "") {
         if (index >= records.size) {
-            _adminReelImportState.value = _adminReelImportState.value.copy(importing = false, imported = records.size, skipped = skipped, failed = failed, message = "Imported ${records.size} Reel link(s)." )
+            val suffix = failureSummary.takeIf { it.isNotBlank() }?.let { " Issues: $it" }.orEmpty()
+            _adminReelImportState.value = _adminReelImportState.value.copy(importing = false, imported = records.size, skipped = skipped, failed = failed, message = "Imported ${records.size} Reel link(s).$suffix" )
             loadPosts()
             return
         }
@@ -3216,7 +3255,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
         batch.commit().addOnSuccessListener {
             _adminReelImportState.value = _adminReelImportState.value.copy(imported = end, message = "Saved $end/${records.size} Reel link(s)…")
-            commitImportedAdminReels(records, end, skipped, failed)
+            commitImportedAdminReels(records, end, skipped, failed, failureSummary)
         }.addOnFailureListener { error ->
             _adminReelImportState.value = _adminReelImportState.value.copy(importing = false, skipped = skipped, failed = failed + (end - index), message = "Import failed: ${error.localizedMessage ?: "database error"}")
         }
@@ -3294,7 +3333,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                                 embedHtml = doc.getString("embedHtml") ?: "",
                                 providerName = doc.getString("providerName") ?: "",
                                 thumbnailUrl = doc.getString("thumbnailUrl") ?: "",
-                                isAdminReel = doc.getBoolean("isAdminReel") ?: false
+                                isAdminReel = doc.getBoolean("isAdminReel") ?: false,
+                                postEverywhere = doc.getBoolean("postEverywhere") ?: true
                             )
 
                             if (post.expiresAt > 0L && System.currentTimeMillis() >= post.expiresAt) {
@@ -3780,6 +3820,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                                 imageUrl = doc.getString("imageUrl"),
                                 voiceUrl = doc.getString("voiceUrl"),
                                 voiceDurationSec = doc.getLong("voiceDurationSec")?.toInt(),
+                                replyToId = doc.getString("replyToId"),
+                                replyToText = doc.getString("replyToText"),
+                                replyToSenderName = doc.getString("replyToSenderName"),
                                 expiresAt = doc.getLong("expiresAt") ?: 0L
                             )
                             if (isVisibleMessage(msg.expiresAt)) messages.add(msg)
@@ -3797,7 +3840,14 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             }
     }
 
-    fun sendGroupMessage(groupId: String, text: String, imageUrl: String? = null, voiceUrl: String? = null, voiceDurationSec: Int? = null) {
+    fun sendGroupMessage(
+        groupId: String,
+        text: String,
+        imageUrl: String? = null,
+        voiceUrl: String? = null,
+        voiceDurationSec: Int? = null,
+        replyTo: GroupMessage? = null
+    ) {
         val user = getCurrentUserOrFallback() ?: return
         val messageId = UUID.randomUUID().toString()
         val sentAt = System.currentTimeMillis()
@@ -3811,7 +3861,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             expiresAt = outgoingExpiryAt(sentAt),
             imageUrl = imageUrl,
             voiceUrl = voiceUrl,
-            voiceDurationSec = voiceDurationSec
+            voiceDurationSec = voiceDurationSec,
+            replyToId = replyTo?.messageId,
+            replyToText = replyTo?.text?.take(240),
+            replyToSenderName = replyTo?.senderName
         )
 
         // Webhooks strictly disabled for groups ("গ্রুপের ভিতর লগ এড করা যাবে এখানেও কোন ওয়েব যাবে না")

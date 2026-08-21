@@ -169,13 +169,17 @@ object TextBackupManager {
 
     private fun groupMessageJson(x: CachedGroupMessage) = JSONObject().apply {
         put("messageId", x.messageId); put("groupId", x.groupId); put("senderId", x.senderId)
-        put("senderName", x.senderName); put("text", x.text); put("timestamp", x.timestamp); put("expiresAt", x.expiresAt)
+        put("senderName", x.senderName); put("text", x.text); put("timestamp", x.timestamp)
+        put("replyToId", x.replyToId); put("replyToText", x.replyToText); put("replyToSenderName", x.replyToSenderName)
+        put("expiresAt", x.expiresAt)
     }
 
     private fun groupMessageFromJson(x: JSONObject) = CachedGroupMessage(
         messageId = x.optString("messageId"), groupId = x.optString("groupId"), senderId = x.optString("senderId"),
         senderName = x.optString("senderName"), text = x.optString("text"), timestamp = x.optLong("timestamp"),
-        imageUrl = null, voiceUrl = null, voiceDurationSec = null, expiresAt = x.optLong("expiresAt")
+        imageUrl = null, voiceUrl = null, voiceDurationSec = null,
+        replyToId = x.optNullableString("replyToId"), replyToText = x.optNullableString("replyToText"),
+        replyToSenderName = x.optNullableString("replyToSenderName"), expiresAt = x.optLong("expiresAt")
     )
 
     private fun storyJson(x: CachedStory) = JSONObject().apply {

@@ -130,7 +130,9 @@ data class Post(
     val embedHtml: String = "",
     val providerName: String = "",
     val thumbnailUrl: String = "",
-    val isAdminReel: Boolean = false
+    val isAdminReel: Boolean = false,
+    /** Admin library imports stay in Reels unless explicitly published everywhere. */
+    val postEverywhere: Boolean = true
 )
 
 data class PostComment(
@@ -164,6 +166,9 @@ data class GroupMessage(
     val imageUrl: String? = null,
     val voiceUrl: String? = null,
     val voiceDurationSec: Int? = null,
+    val replyToId: String? = null,
+    val replyToText: String? = null,
+    val replyToSenderName: String? = null,
     /** Epoch millis after which the group message should be hidden/removed; 0 means persistent. */
     val expiresAt: Long = 0L
 )

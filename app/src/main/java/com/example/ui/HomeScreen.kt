@@ -517,12 +517,13 @@ fun HomeScreen(
             when (currentTab) {
                 0 -> {
                     val feedState = rememberLazyListState()
-                    val visibleFeedPosts = remember(posts, feedFilter, currentUser?.friends, currentUser?.following, savedPostIds) {
+                    val regularFeedPosts = remember(posts) { posts.filter { !it.isAdminReel || it.postEverywhere } }
+                    val visibleFeedPosts = remember(regularFeedPosts, feedFilter, currentUser?.friends, currentUser?.following, savedPostIds) {
                         when (feedFilter) {
-                            "Friends" -> posts.filter { it.senderId in currentUser?.friends.orEmpty() }
-                            "Following" -> posts.filter { it.senderId in currentUser?.following.orEmpty() }
-                            "Saved" -> posts.filter { it.id in savedPostIds }
-                            else -> posts
+                            "Friends" -> regularFeedPosts.filter { it.senderId in currentUser?.friends.orEmpty() }
+                            "Following" -> regularFeedPosts.filter { it.senderId in currentUser?.following.orEmpty() }
+                            "Saved" -> regularFeedPosts.filter { it.id in savedPostIds }
+                            else -> regularFeedPosts
                         }
                     }
                     val suggestions = remember(allUsers, currentUser) {
@@ -2314,6 +2315,7 @@ fun SmartSearchDialog(
         it.name.contains(normalized, true) || it.username.contains(normalized, true) || it.bio.contains(normalized, true)
     }
     val matchedPosts = if (normalized.isBlank() || searchFilter == "People") emptyList() else posts.filter { post ->
+        if (post.isAdminReel && !post.postEverywhere) return@filter false
         val textMatch = post.title.contains(normalized, true) || post.text.contains(normalized, true) ||
             post.feeling.contains(normalized, true) || post.tags.any { it.contains(normalized.removePrefix("#"), true) }
         val mediaMatch = when (searchFilter) {
