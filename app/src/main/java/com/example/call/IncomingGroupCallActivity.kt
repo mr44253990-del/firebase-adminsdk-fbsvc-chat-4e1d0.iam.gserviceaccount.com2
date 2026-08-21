@@ -104,7 +104,9 @@ class IncomingGroupCallActivity : ComponentActivity() {
                         group = Group(id = groupId, name = groupName, members = memberIds),
                         video = videoCall,
                         joinRoomId = roomId,
-                        autoStart = false,
+                        // Accepted notification actions must enter the call directly;
+                        // the passive Join Call card is only for group-chat banners.
+                        autoStart = true,
                         onClose = { finish() }
                     )
                 } else {

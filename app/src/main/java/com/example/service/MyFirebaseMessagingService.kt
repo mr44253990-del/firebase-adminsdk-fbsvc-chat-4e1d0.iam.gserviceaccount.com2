@@ -74,6 +74,9 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         val title = if (hideContent) "Convo Chat" else rawTitle
         val senderId = remoteMessage.data["senderId"] ?: ""
         val notificationType = remoteMessage.data["notificationType"] ?: "message"
+        // Presence probes are data-only and are intentionally not user-visible.
+        // markDeviceReachableFromPush() above has already renewed the RTDB lease.
+        if (notificationType == "presence_probe") return
         val sentAt = remoteMessage.data["sentAt"]?.toLongOrNull() ?: System.currentTimeMillis()
         val minutesLate = ((System.currentTimeMillis() - sentAt).coerceAtLeast(0L) / 60_000L)
         val age = when { minutesLate < 1 -> "now"; minutesLate < 60 -> "$minutesLate min ago"; minutesLate < 1440 -> "${minutesLate / 60} hr ago"; else -> "${minutesLate / 1440} day ago" }
@@ -144,7 +147,8 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
             )
         )
         // A delivered push means the device is reachable, not that the UI stays open.
-        // Keep the online badge briefly and only expire the exact heartbeat that we wrote.
+        // UI lease evaluation expires at five minutes; the local boolean is cleared
+        // slightly later so a scheduled five-minute probe has delivery jitter room.
         Handler(Looper.getMainLooper()).postDelayed({
             statusRef.get().addOnSuccessListener { snapshot ->
                 val latestPush = snapshot.child("lastPushReceivedAt").getValue(Long::class.java) ?: 0L
@@ -159,7 +163,7 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
                     )
                 }
             }
-        }, 5 * 60_000L)
+        }, 6 * 60_000L)
     }
 
     private fun sendIncomingCallNotification(callId: String, callerId: String, callerName: String, callerImage: String, videoCall: Boolean) {

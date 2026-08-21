@@ -3480,7 +3480,51 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }.addOnFailureListener { onComplete(false) }
     }
 
-    fun inviteGroupMembersToCall(group: Group, video: Boolean, roomId: String = "") {
+    /**
+     * Creates the signaling room and sends invitations without mounting the host's
+     * WebRTC screen. The host joins later from the notification, matching invitees.
+     */
+    fun createNotificationOnlyGroupCall(group: Group, video: Boolean, onComplete: (Boolean) -> Unit = {}) {
+        val caller = getCurrentUserOrFallback()
+        if (caller == null || caller.uid !in group.members) {
+            onComplete(false)
+            return
+        }
+        val roomId = UUID.randomUUID().toString()
+        val members = group.members.distinct().take(4)
+        if (members.isEmpty()) {
+            onComplete(false)
+            return
+        }
+        val now = System.currentTimeMillis()
+        val roomData = mapOf(
+            "roomId" to roomId,
+            "groupId" to group.id,
+            "groupName" to group.name,
+            "hostId" to caller.uid,
+            "status" to "active",
+            "video" to video,
+            "memberIds" to members.associateWith { true },
+            "createdAt" to now,
+            "expiresAt" to now + 60 * 60 * 1000L
+        )
+        getDatabaseInstance().getReference("groupCalls").child(roomId).setValue(roomData)
+            .addOnSuccessListener {
+                inviteGroupMembersToCall(group, video, roomId, includeCaller = true)
+                onComplete(true)
+            }
+            .addOnFailureListener {
+                Log.e("GROUP_CALL", "Could not create notification-only room", it)
+                onComplete(false)
+            }
+    }
+
+    fun inviteGroupMembersToCall(
+        group: Group,
+        video: Boolean,
+        roomId: String = "",
+        includeCaller: Boolean = false
+    ) {
         val caller = getCurrentUserOrFallback() ?: return
         if (caller.uid !in group.members || roomId.isBlank()) return
         val inviteKey = "${caller.uid}:${group.id}:$roomId"
@@ -3490,7 +3534,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
         val callType = if (video) "video" else "audio"
         val roster = group.members.distinct().take(4).joinToString(",")
-        group.members.filterNot { it == caller.uid }.distinct().take(3).forEach { memberUid ->
+        val recipients = if (includeCaller) {
+            group.members.distinct().take(4)
+        } else {
+            group.members.filterNot { it == caller.uid }.distinct().take(3)
+        }
+        recipients.forEach { memberUid ->
             withUserFcmToken(memberUid) { token ->
                 triggerFcmGatewayNotification(
                     gatewayUrl = _webhookUrl.value,

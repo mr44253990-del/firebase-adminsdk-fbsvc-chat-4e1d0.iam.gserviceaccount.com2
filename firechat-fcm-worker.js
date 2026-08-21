@@ -12,7 +12,13 @@
 
 export default {
   async scheduled(controller, env, ctx) {
-    ctx.waitUntil(expireStalePresence(env));
+    // Configure a Cron Trigger for */5 * * * * in the Cloudflare dashboard.
+    // Cleanup and reachability probes share the existing Firebase service account;
+    // no new binding or secret is required.
+    ctx.waitUntil((async () => {
+      await expireStalePresence(env);
+      await sendPresenceProbes(env);
+    })());
   },
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
@@ -162,7 +168,8 @@ export default {
 
     // Presence is an authenticated, short-lived Firestore lease. The Android client
     // still writes its primary RTDB status heartbeat; this endpoint is the Worker-side
-    // mirror used by web/profile integrations and diagnostics.
+    // mirror used by web/profile integrations and diagnostics. This is the only
+    // heartbeat route; the authenticated branch below must never duplicate it.
     if (request.method === "POST" && path === "/presence/heartbeat") {
       const auth = await authenticateCaller(request, env);
       if (!auth.ok) return auth.response;
@@ -276,30 +283,6 @@ export default {
           status: 401,
           headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
         });
-      }
-
-      // Presence is client-heartbeat driven: the Android app sends this every five
-      // minutes while active. The Worker stores a bounded, privacy-safe snapshot in
-      // Firestore so clients can sort active contacts without exposing auth tokens.
-      if (path === "/presence/heartbeat") {
-        const now = Date.now();
-        const active = payload.active !== false && payload.foreground !== false;
-        const record = {
-          uid: caller.sub,
-          isOnline: active,
-          lastActive: now,
-          offlineSince: active ? null : now,
-          foreground: Boolean(payload.foreground),
-          appVersion: String(payload.appVersion || "").slice(0, 32),
-          platform: "android",
-          updatedAt: now
-        };
-        await firestoreSet(env, `presence/${caller.sub}`, record);
-        return jsonResponse({ success: true, presence: record });
-      }
-      if (path === "/presence/me") {
-        const presence = await firestoreGet(env, `presence/${caller.sub}`);
-        return jsonResponse({ success: true, presence });
       }
 
       if (path === "/sessions/register") {
@@ -592,6 +575,37 @@ async function firestoreSet(env,path,data){const{a,t}=await fsAuth(env);const fi
 async function firestoreMerge(env,path,data){return firestoreSet(env,path,{...((await firestoreGet(env,path))||{}),...data});}
 async function firestoreDelete(env,path){const{a,t}=await fsAuth(env);const r=await fetch(`https://firestore.googleapis.com/v1/projects/${a.project_id}/databases/(default)/documents/${path}`,{method:"DELETE",headers:{Authorization:`Bearer ${t}`}});if(r.status===404)return true;if(!r.ok)throw Error(`Firestore delete ${r.status}`);return true;}
 async function firestoreList(env,path){const{a,t}=await fsAuth(env);const r=await fetch(`https://firestore.googleapis.com/v1/projects/${a.project_id}/databases/(default)/documents/${path}?pageSize=100`,{headers:{Authorization:`Bearer ${t}`}});if(!r.ok)throw Error(`Firestore list ${r.status}`);const d=await r.json();return(d.documents||[]).map(x=>({...Object.fromEntries(Object.entries(x.fields||{}).map(([k,v])=>[k,fromFV(v)])),__name:String(x.name||"").split("/").pop()}));}
+async function sendPresenceProbes(env) {
+  try {
+    const account = JSON.parse(env.FIREBASE_SERVICE_ACCOUNT || "{}");
+    if (!account.project_id || !account.client_email || !account.private_key) return;
+    const users = await firestoreList(env, "users");
+    const tokens = [...new Set(users.map(user => String(user.fcmToken || "").trim()).filter(Boolean))];
+    if (!tokens.length) return;
+    const accessToken = await getGoogleAccessToken(account.client_email, account.private_key);
+    const endpoint = `https://fcm.googleapis.com/v1/projects/${account.project_id}/messages:send`;
+    const sentAt = String(Date.now());
+    await Promise.all(tokens.map(token => fetch(endpoint, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        message: {
+          token,
+          data: {
+            title: "",
+            body: "",
+            notificationType: "presence_probe",
+            sentAt
+          },
+          android: { priority: "high" }
+        }
+      })
+    })));
+  } catch (_) {
+    // A probe failure must not prevent the scheduled stale-lease cleanup.
+  }
+}
+
 async function expireStalePresence(env){
   try {
     const now = Date.now();

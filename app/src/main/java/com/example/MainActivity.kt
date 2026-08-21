@@ -492,10 +492,17 @@ class MainActivity : FragmentActivity() {
                                     pendingCallVideo = activeGroupVideo,
                                     onBack = { navController.popBackStack() },
                                     onGroupCall = { video ->
-                                        requestedGroupCallVideo = video
-                                        pendingGroupRoomId.value = null
-                                        pendingGroupVideo.value = video
-                                        navController.navigate("group_call") { launchSingleTop = true }
+                                        // Starting a group call only creates the signaling room and
+                                        // sends notifications. The host joins from that notification,
+                                        // so pressing Call never opens a black/empty call screen.
+                                        viewModel.createNotificationOnlyGroupCall(group, video) { ok ->
+                                            Toast.makeText(
+                                                this@MainActivity,
+                                                if (ok) "Call invitation sent. Join from your notification."
+                                                else "Could not start the group call",
+                                                Toast.LENGTH_SHORT
+                                            ).show()
+                                        }
                                     },
                                     onJoinPendingCall = { roomId, video ->
                                         requestedGroupCallVideo = video
@@ -520,7 +527,9 @@ class MainActivity : FragmentActivity() {
                                     video = requestedGroupCallVideo,
                                     onClose = { navController.popBackStack() },
                                     joinRoomId = activeGroupRoomId,
-                                    autoStart = false,
+                                    // A room ID means this is an explicit Join action. Start
+                                    // immediately; only the group-chat banner remains passive.
+                                    autoStart = true,
                                     onRoomReady = { roomId ->
                                         viewModel.inviteGroupMembersToCall(group, requestedGroupCallVideo, roomId)
                                         if (activeGroupRoomId == roomId) pendingGroupRoomId.value = null

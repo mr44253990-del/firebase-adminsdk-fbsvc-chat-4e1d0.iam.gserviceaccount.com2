@@ -19,6 +19,8 @@ import org.json.JSONArray
 import org.json.JSONObject
 import org.webrtc.*
 import java.util.UUID
+import java.util.Collections
+import java.util.IdentityHashMap
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 
@@ -83,6 +85,9 @@ object GroupCallEngine {
     private var surfaceTextureHelper: SurfaceTextureHelper? = null
     private var localRenderer: SurfaceViewRenderer? = null
     private val remoteRenderers = ConcurrentHashMap<String, SurfaceViewRenderer>()
+    // Compose may create a SurfaceViewRenderer before EGL is ready. Track successful
+    // init calls by renderer identity so a failed bind can be retried safely.
+    private val initializedRenderers = Collections.newSetFromMap(IdentityHashMap<SurfaceViewRenderer, Boolean>())
     // A remote track may arrive before the PeerSlot is published or before Compose creates its renderer.
     // Keep it briefly so the host never loses the first video track and renders a permanent black tile.
     private val pendingRemoteTracks = ConcurrentHashMap<String, VideoTrack>()
@@ -643,11 +648,24 @@ object GroupCallEngine {
 
     fun attachLocalRenderer(renderer: SurfaceViewRenderer) {
         mainHandler.post {
+            if (localRenderer !== renderer) {
+                localRenderer?.let { old ->
+                    runCatching { localVideo?.removeSink(old) }
+                    initializedRenderers.remove(old)
+                }
+                localRenderer = renderer
+            }
+            val eglContext = eglBase?.eglBaseContext
+            if (eglContext == null) {
+                // Keep the reference; the next retry binds the track after EGL is ready.
+                mainHandler.postDelayed({
+                    if (localRenderer === renderer && !isClosing) attachLocalRenderer(renderer)
+                }, 100L)
+                return@post
+            }
             runCatching {
-                if (localRenderer !== renderer) {
-                    localRenderer?.let { old -> localVideo?.removeSink(old) }
-                    localRenderer = renderer
-                    renderer.init(eglBase?.eglBaseContext, null)
+                if (initializedRenderers.add(renderer)) {
+                    renderer.init(eglContext, null)
                     renderer.setEnableHardwareScaler(true)
                     renderer.setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FIT)
                     renderer.setMirror(true)
@@ -657,7 +675,13 @@ object GroupCallEngine {
                     track.removeSink(renderer)
                     track.addSink(renderer)
                 }
-            }.onFailure { Log.w(TAG, "Local renderer bind failed", it) }
+            }.onFailure {
+                initializedRenderers.remove(renderer)
+                Log.w(TAG, "Local renderer bind failed", it)
+                if (localRenderer === renderer && !isClosing) {
+                    mainHandler.postDelayed({ attachLocalRenderer(renderer) }, 250L)
+                }
+            }
         }
     }
 
@@ -675,11 +699,23 @@ object GroupCallEngine {
 
     fun attachRemoteRenderer(uid: String, renderer: SurfaceViewRenderer) {
         mainHandler.post {
+            if (remoteRenderers[uid] !== renderer) {
+                remoteRenderers[uid]?.let { old ->
+                    runCatching { peers[uid]?.remoteVideo?.removeSink(old) }
+                    initializedRenderers.remove(old)
+                }
+                remoteRenderers[uid] = renderer
+            }
+            val eglContext = eglBase?.eglBaseContext
+            if (eglContext == null) {
+                mainHandler.postDelayed({
+                    if (remoteRenderers[uid] === renderer && !isClosing) attachRemoteRenderer(uid, renderer)
+                }, 100L)
+                return@post
+            }
             runCatching {
-                if (remoteRenderers[uid] !== renderer) {
-                    remoteRenderers[uid]?.let { old -> peers[uid]?.remoteVideo?.removeSink(old) }
-                    remoteRenderers[uid] = renderer
-                    renderer.init(eglBase?.eglBaseContext, null)
+                if (initializedRenderers.add(renderer)) {
+                    renderer.init(eglContext, null)
                     renderer.setEnableHardwareScaler(true)
                     renderer.setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FIT)
                     renderer.setMirror(false)
@@ -690,7 +726,13 @@ object GroupCallEngine {
                     videoTrack.setEnabled(true)
                     videoTrack.addSink(renderer)
                 }
-            }.onFailure { Log.w(TAG, "Remote renderer bind failed for $uid", it) }
+            }.onFailure {
+                initializedRenderers.remove(renderer)
+                Log.w(TAG, "Remote renderer bind failed for $uid", it)
+                if (remoteRenderers[uid] === renderer && !isClosing) {
+                    mainHandler.postDelayed({ attachRemoteRenderer(uid, renderer) }, 250L)
+                }
+            }
         }
     }
 
@@ -698,6 +740,7 @@ object GroupCallEngine {
         mainHandler.post {
             runCatching { localVideo?.removeSink(renderer) }
             if (localRenderer === renderer) localRenderer = null
+            initializedRenderers.remove(renderer)
             runCatching { renderer.release() }
         }
     }
@@ -705,7 +748,8 @@ object GroupCallEngine {
     fun detachRemoteRenderer(uid: String, renderer: SurfaceViewRenderer) {
         mainHandler.post {
             runCatching { peers[uid]?.remoteVideo?.removeSink(renderer) }
-            remoteRenderers.remove(uid)
+            if (remoteRenderers[uid] === renderer) remoteRenderers.remove(uid)
+            initializedRenderers.remove(renderer)
             runCatching { renderer.release() }
         }
     }
@@ -755,6 +799,9 @@ object GroupCallEngine {
             runCatching { slot.peer.close(); slot.peer.dispose() }
         }
         runCatching { localVideo?.let { track -> localRenderer?.let(track::removeSink) } }
+        remoteRenderers.values.forEach { renderer -> runCatching { renderer.release() } }
+        localRenderer?.let { renderer -> runCatching { renderer.release() } }
+        initializedRenderers.clear()
         peers.clear(); remoteRenderers.clear(); pendingRemoteTracks.clear(); localRenderer = null
         runCatching { videoCapturer?.stopCapture() }; videoCapturer?.dispose(); videoCapturer = null
         surfaceTextureHelper?.dispose(); surfaceTextureHelper = null
