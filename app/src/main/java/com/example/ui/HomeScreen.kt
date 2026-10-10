@@ -217,6 +217,9 @@ fun HomeScreen(
     val posts by viewModel.postsState.collectAsState()
     val webhookUrl by viewModel.webhookUrl.collectAsState()
     val gatewayHealth by viewModel.gatewayHealth.collectAsState()
+    val presenceWorkerUrl by viewModel.presenceWorkerUrl.collectAsState()
+    val presenceWorkerHealth by viewModel.presenceWorkerHealth.collectAsState()
+    val presenceDashboard by viewModel.presenceDashboard.collectAsState()
     val flagshipConfig by viewModel.flagshipConfig.collectAsState()
     val featureRequests by viewModel.featureRequests.collectAsState()
     val premiumRequests by viewModel.premiumRequests.collectAsState()
@@ -905,6 +908,8 @@ fun HomeScreen(
                             )
 
                             var adminUrlInput by remember { mutableStateOf(webhookUrl) }
+                            var adminPresenceUrlInput by remember(presenceWorkerUrl) { mutableStateOf(presenceWorkerUrl) }
+                            var presenceQuery by rememberSaveable { mutableStateOf("") }
 
                             Card(shape = RoundedCornerShape(28.dp), modifier = Modifier.fillMaxWidth()) {
                                 Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -1091,6 +1096,120 @@ fun HomeScreen(
                                 }
                             }
 
+                            Card(shape = RoundedCornerShape(28.dp), modifier = Modifier.fillMaxWidth()) {
+                                Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(Icons.Outlined.Groups, null, tint = MaterialTheme.colorScheme.primary)
+                                        Spacer(Modifier.width(9.dp))
+                                        Text("Separate Presence Monitor Worker", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                                    }
+                                    Text(
+                                        "Independent from the chat/call gateway. It counts Firestore user profiles, sends a five-minute FCM topic probe, and shows recent device responses. Add the Cron Trigger in Cloudflare; Android/FCM may delay background delivery.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    OutlinedTextField(
+                                        value = adminPresenceUrlInput,
+                                        onValueChange = { adminPresenceUrlInput = it },
+                                        label = { Text("Presence Worker HTTPS URL") },
+                                        placeholder = { Text("https://your-presence-worker.workers.dev") },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        singleLine = true,
+                                        shape = RoundedCornerShape(18.dp)
+                                    )
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Button(
+                                            onClick = {
+                                                viewModel.updatePresenceWorkerUrl(adminPresenceUrlInput) { ok, message ->
+                                                    Toast.makeText(context, message, if (ok) Toast.LENGTH_SHORT else Toast.LENGTH_LONG).show()
+                                                }
+                                            },
+                                            modifier = Modifier.weight(1f)
+                                        ) { Text("Save URL") }
+                                        OutlinedButton(
+                                            onClick = { viewModel.testPresenceWorker(adminPresenceUrlInput) },
+                                            enabled = !presenceWorkerHealth.checking,
+                                            modifier = Modifier.weight(1f)
+                                        ) {
+                                            if (presenceWorkerHealth.checking) CircularProgressIndicator(Modifier.size(17.dp), strokeWidth = 2.dp)
+                                            else Icon(Icons.Outlined.HealthAndSafety, null)
+                                            Spacer(Modifier.width(6.dp))
+                                            Text("Test")
+                                        }
+                                    }
+                                    Surface(
+                                        color = if (presenceWorkerHealth.configured) Color(0xFF1F7A4D).copy(alpha = .16f) else MaterialTheme.colorScheme.errorContainer.copy(alpha = .65f),
+                                        shape = RoundedCornerShape(16.dp),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                                            Icon(
+                                                if (presenceWorkerHealth.configured) Icons.Default.CheckCircle else Icons.Default.Info,
+                                                null,
+                                                tint = if (presenceWorkerHealth.configured) Color(0xFF45D483) else MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                            Spacer(Modifier.width(8.dp))
+                                            Column {
+                                                Text(presenceWorkerHealth.message, fontWeight = FontWeight.SemiBold)
+                                                if (presenceWorkerHealth.version.isNotBlank()) Text("Worker ${presenceWorkerHealth.version} • confirm the Cloudflare Cron is enabled", fontSize = 10.sp)
+                                            }
+                                        }
+                                    }
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        PresenceMetric("Users", presenceDashboard.totalUsers.toString(), Modifier.weight(1f))
+                                        PresenceMetric("Online", presenceDashboard.foregroundUsers.toString(), Modifier.weight(1f))
+                                        PresenceMetric("Reachable", presenceDashboard.reachableUsers.toString(), Modifier.weight(1f))
+                                    }
+                                    Text("${presenceDashboard.activeUsers} active/recent • ${presenceDashboard.registeredDevices} registered devices • last probe: ${if (presenceDashboard.lastProbeAt > 0L) SimpleDateFormat("MMM d, HH:mm", Locale.getDefault()).format(Date(presenceDashboard.lastProbeAt)) else "not received yet"}", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    OutlinedTextField(
+                                        value = presenceQuery,
+                                        onValueChange = { presenceQuery = it.take(100) },
+                                        label = { Text("Search name, username, or UID") },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        singleLine = true
+                                    )
+                                    OutlinedButton(
+                                        onClick = { viewModel.loadPresenceUsers(presenceQuery) },
+                                        enabled = !presenceDashboard.checking && presenceWorkerHealth.configured,
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        if (presenceDashboard.checking) CircularProgressIndicator(Modifier.size(17.dp), strokeWidth = 2.dp)
+                                        else Icon(Icons.Default.Refresh, null)
+                                        Spacer(Modifier.width(7.dp))
+                                        Text("Refresh Firebase user list")
+                                    }
+                                    if (presenceDashboard.message.isNotBlank()) Text(presenceDashboard.message, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    presenceDashboard.users.forEach { person ->
+                                        val statusColor = when (person.status) {
+                                            "online" -> Color(0xFF2CBF79)
+                                            "reachable" -> Color(0xFFFFB74D)
+                                            else -> MaterialTheme.colorScheme.outline
+                                        }
+                                        val seenText = if (person.lastActive > 0L) SimpleDateFormat("MMM d, HH:mm", Locale.getDefault()).format(Date(person.lastActive)) else "No recent signal"
+                                        val probeText = if (person.lastProbeReceivedAt > 0L) "Probe reply ${SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(person.lastProbeReceivedAt))}" else "No probe reply yet"
+                                        Surface(color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .5f), shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()) {
+                                            Row(Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                                                Icon(Icons.Default.Circle, null, tint = statusColor, modifier = Modifier.size(10.dp))
+                                                Spacer(Modifier.width(9.dp))
+                                                Column(Modifier.weight(1f)) {
+                                                    Text(person.name, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                                    Text("${if (person.username.isNotBlank()) "@${person.username} · " else ""}last seen $seenText", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                                    Text("$probeText · ${if (person.hasFcmToken) "FCM ready" else "no FCM token"}", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                                }
+                                                Text(person.status.uppercase(), fontSize = 9.sp, fontWeight = FontWeight.Bold, color = statusColor)
+                                            }
+                                        }
+                                    }
+                                    presenceDashboard.nextCursor?.let { nextPresenceCursor ->
+                                        OutlinedButton(
+                                            onClick = { viewModel.loadPresenceUsers(presenceQuery, nextPresenceCursor) },
+                                            enabled = !presenceDashboard.checking,
+                                            modifier = Modifier.fillMaxWidth()
+                                        ) { Text("Load more users") }
+                                    }
+                                }
+                            }
+
                             Card(
                                 shape = RoundedCornerShape(28.dp),
                                 modifier = Modifier.fillMaxWidth()
@@ -1179,6 +1298,7 @@ fun HomeScreen(
                                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
                                     Text("Infrastructure checklist", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
                                     AdminStatusRow("Firebase / FCM", gatewayHealth.configured, "FIREBASE_SERVICE_ACCOUNT")
+                                    AdminStatusRow("Presence monitor Worker", presenceWorkerHealth.configured, "Separate URL + five-minute Cloudflare Cron")
                                     AdminStatusRow("Cloudflare R2", gatewayHealth.r2Configured, "MEDIA_BUCKET + R2_PUBLIC_BASE_URL")
                                     AdminStatusRow("TURN calling", gatewayHealth.turnConfigured, "TURN_TOKEN_ID + TURN_API_TOKEN")
                                     AdminStatusRow("Realtime SFU", gatewayHealth.sfuConfigured, "CALLS_APP_ID + CALLS_APP_TOKEN")
@@ -1725,17 +1845,57 @@ fun HomeScreen(
                                         onCheckedChange = { viewModel.updateSoundPreferences(notificationSounds, it) }
                                     )
                                 }
-                                if (Build.VERSION.SDK_INT >= 34) {
-                                    val manager = context.getSystemService(android.app.NotificationManager::class.java)
-                                    if (!manager.canUseFullScreenIntent()) {
-                                        OutlinedButton(
-                                            onClick = {
-                                                context.startActivity(Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT).apply {
-                                                    data = Uri.parse("package:${context.packageName}")
-                                                })
-                                            }, modifier = Modifier.fillMaxWidth()
-                                        ) { Icon(Icons.Default.Call, null); Spacer(Modifier.width(8.dp)); Text("Allow full-screen incoming calls") }
+                                val notificationManager = androidx.core.app.NotificationManagerCompat.from(context)
+                                val systemNotificationManager = context.getSystemService(android.app.NotificationManager::class.java)
+                                val appNotificationsEnabled = notificationManager.areNotificationsEnabled()
+                                val callChannelImportance = if (Build.VERSION.SDK_INT >= 26) {
+                                    systemNotificationManager.getNotificationChannel("convo_calls_v4")?.importance
+                                        ?: android.app.NotificationManager.IMPORTANCE_HIGH
+                                } else android.app.NotificationManager.IMPORTANCE_HIGH
+                                val callChannelEnabled = callChannelImportance >= android.app.NotificationManager.IMPORTANCE_HIGH
+                                val fullScreenAllowed = Build.VERSION.SDK_INT < 34 || systemNotificationManager.canUseFullScreenIntent()
+                                val callAlertsReady = appNotificationsEnabled && callChannelEnabled && fullScreenAllowed
+                                Surface(
+                                    color = if (callAlertsReady) Color(0xFF1F7A4D).copy(alpha = .14f) else MaterialTheme.colorScheme.errorContainer.copy(alpha = .6f),
+                                    shape = RoundedCornerShape(16.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(if (callAlertsReady) Icons.Default.CheckCircle else Icons.Default.Warning, null, tint = if (callAlertsReady) Color(0xFF2CBF79) else MaterialTheme.colorScheme.error)
+                                        Spacer(Modifier.width(9.dp))
+                                        Column {
+                                            Text(if (callAlertsReady) "Lock-screen call alerts are enabled" else "Incoming-call access needs attention", fontWeight = FontWeight.Bold)
+                                            Text("Android can still choose a heads-up banner while the phone is unlocked.", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
                                     }
+                                }
+                                if (!appNotificationsEnabled) {
+                                    OutlinedButton(
+                                        onClick = {
+                                            val settingsIntent = if (Build.VERSION.SDK_INT >= 26) {
+                                                Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+                                            } else Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}"))
+                                            context.startActivity(settingsIntent)
+                                        }, modifier = Modifier.fillMaxWidth()
+                                    ) { Icon(Icons.Default.NotificationsActive, null); Spacer(Modifier.width(8.dp)); Text("Enable app notifications") }
+                                }
+                                if (Build.VERSION.SDK_INT >= 26 && !callChannelEnabled) {
+                                    OutlinedButton(
+                                        onClick = {
+                                            context.startActivity(Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS)
+                                                .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+                                                .putExtra(Settings.EXTRA_CHANNEL_ID, "convo_calls_v4"))
+                                        }, modifier = Modifier.fillMaxWidth()
+                                    ) { Icon(Icons.Default.Notifications, null); Spacer(Modifier.width(8.dp)); Text("Enable incoming-call channel") }
+                                }
+                                if (Build.VERSION.SDK_INT >= 34 && !fullScreenAllowed) {
+                                    OutlinedButton(
+                                        onClick = {
+                                            context.startActivity(Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT).apply {
+                                                data = Uri.parse("package:${context.packageName}")
+                                            })
+                                        }, modifier = Modifier.fillMaxWidth()
+                                    ) { Icon(Icons.Default.Call, null); Spacer(Modifier.width(8.dp)); Text("Allow full-screen incoming calls") }
                                 }
                             }
                         }
@@ -4396,6 +4556,20 @@ private fun PrivacyToggleRow(label: String, checked: Boolean, onCheckedChange: (
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Text(label, Modifier.weight(1f), fontSize = 13.sp)
         Switch(checked = checked, onCheckedChange = { onCheckedChange() })
+    }
+}
+
+@Composable
+private fun PresenceMetric(label: String, value: String, modifier: Modifier = Modifier) {
+    Surface(
+        modifier = modifier,
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .62f),
+        shape = RoundedCornerShape(14.dp)
+    ) {
+        Column(Modifier.padding(horizontal = 10.dp, vertical = 8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(value, fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.primary)
+            Text(label, fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+        }
     }
 }
 

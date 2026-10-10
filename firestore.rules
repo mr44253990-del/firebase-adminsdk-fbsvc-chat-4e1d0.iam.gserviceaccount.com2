@@ -40,6 +40,27 @@ service cloud.firestore {
       allow read: if owner(uid); // Worker service account bypasses client rules.
     }
 
+    // Clients may acknowledge their own push/probe only. The Worker service account
+    // owns presence leases and admin reads; client writes cannot extend onlineUntil.
+    match /presence/{uid} {
+      allow read: if owner(uid);
+      allow create: if owner(uid)
+        && request.resource.data.keys().hasOnly(['lastPushReceivedAt', 'lastProbeReceivedAt', 'lastProbeId'])
+        && request.resource.data.lastPushReceivedAt == request.time
+        && (!('lastProbeReceivedAt' in request.resource.data)
+          || request.resource.data.lastProbeReceivedAt == request.time)
+        && (!('lastProbeId' in request.resource.data)
+          || (request.resource.data.lastProbeId is string && request.resource.data.lastProbeId.size() <= 128));
+      allow update: if owner(uid)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastPushReceivedAt', 'lastProbeReceivedAt', 'lastProbeId'])
+        && request.resource.data.lastPushReceivedAt == request.time
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['lastProbeReceivedAt'])
+          || request.resource.data.lastProbeReceivedAt == request.time)
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['lastProbeId'])
+          || (request.resource.data.lastProbeId is string && request.resource.data.lastProbeId.size() <= 128));
+      allow delete: if owner(uid);
+    }
+
     match /friend_requests/{requestId} {
       allow create: if signedIn() && request.resource.data.senderId == request.auth.uid;
       allow read, delete: if signedIn() &&

@@ -29,9 +29,12 @@ import com.google.firebase.auth.FirebaseAuth
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.SetOptions
 import com.google.firebase.database.FirebaseDatabase
 import com.google.firebase.database.ServerValue
+import com.google.firebase.messaging.FirebaseMessaging
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
 import java.net.HttpURLConnection
@@ -49,10 +52,12 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
 
     override fun onNewToken(token: String) {
         super.onNewToken(token)
-        Log.d("FCM_SERVICE", "Refreshed FCM Token: $token")
-        // If a user is currently authenticated, update their token in Firestore
+        // Never log the raw registration token; it is a device-routing credential.
+        // If a user is currently authenticated, refresh its profile token and topic membership.
         val currentUid = FirebaseAuth.getInstance().currentUser?.uid
         if (currentUid != null) {
+            FirebaseMessaging.getInstance().subscribeToTopic("convo_presence_v1")
+                .addOnFailureListener { error -> Log.w("FCM_SERVICE", "Presence topic subscription failed: ${error.message}") }
             FirebaseFirestore.getInstance().collection("users")
                 .document(currentUid)
                 .update(mapOf("fcmToken" to token, "fcmTokenUpdatedAt" to System.currentTimeMillis()))
@@ -67,7 +72,8 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
 
     override fun onMessageReceived(remoteMessage: RemoteMessage) {
         super.onMessageReceived(remoteMessage)
-        markDeviceReachableFromPush()
+        val notificationType = remoteMessage.data["notificationType"] ?: "message"
+        markDeviceReachableFromPush(notificationType, remoteMessage.data["probeId"])
         Log.d("FCM_SERVICE", "Message received from: ${remoteMessage.from}")
 
         // Extract title and body
@@ -77,9 +83,8 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         val hideContent = AppLockManager.isEnabled(this) || privacy.hideNotificationContent
         val title = if (hideContent) "Convo Chat" else rawTitle
         val senderId = remoteMessage.data["senderId"] ?: ""
-        val notificationType = remoteMessage.data["notificationType"] ?: "message"
-        // Presence probes are data-only and are intentionally not user-visible.
-        // markDeviceReachableFromPush() above has already renewed the RTDB lease.
+        // Presence probes are data-only and intentionally not user-visible. Both the
+        // RTDB reachability lease and the Firestore dashboard acknowledgement update.
         if (notificationType == "presence_probe") return
         val sentAt = remoteMessage.data["sentAt"]?.toLongOrNull() ?: System.currentTimeMillis()
         val minutesLate = ((System.currentTimeMillis() - sentAt).coerceAtLeast(0L) / 60_000L)
@@ -130,7 +135,7 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         }
     }
 
-    private fun markDeviceReachableFromPush() {
+    private fun markDeviceReachableFromPush(notificationType: String, probeId: String?) {
         val uid = FirebaseAuth.getInstance().currentUser?.uid ?: return
         val receivedAt = System.currentTimeMillis()
         val statusRef = FirebaseDatabase.getInstance().getReference("status").child(uid)
@@ -150,10 +155,21 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
                 "onlineSource" to "disconnected"
             )
         )
+
+        // Write only acknowledgement fields to Firestore. The Worker owns lease state,
+        // and a device must not be able to extend its own server-side online lease.
+        val presenceUpdate = mutableMapOf<String, Any>("lastPushReceivedAt" to FieldValue.serverTimestamp())
+        if (notificationType == "presence_probe") {
+            presenceUpdate["lastProbeReceivedAt"] = FieldValue.serverTimestamp()
+            if (!probeId.isNullOrBlank()) presenceUpdate["lastProbeId"] = probeId.take(128)
+        }
+        FirebaseFirestore.getInstance().collection("presence").document(uid)
+            .set(presenceUpdate, SetOptions.merge())
+            .addOnFailureListener { error -> Log.w("FCM_SERVICE", "Presence acknowledgement failed: ${error.message}") }
+
         // The five-minute onlineUntil lease and RTDB presence listeners decide
-        // expiry. Do not schedule a delayed write here: a cron probe may arrive
-        // with normal FCM/network jitter and must not be overwritten by an older
-        // callback that still believes this push was the latest one.
+        // expiry. Do not schedule a delayed write here: FCM/network jitter must
+        // not be overwritten by an older callback that assumes it was latest.
     }
 
     private fun sendIncomingCallNotification(callId: String, callerId: String, callerName: String, callerImage: String, videoCall: Boolean) {
@@ -199,7 +215,13 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
             .setOngoing(true).setAutoCancel(false).setOnlyAlertOnce(false).setShowWhen(true).setTimeoutAfter(45_000)
             .setStyle(NotificationCompat.CallStyle.forIncomingCall(person, decline, answer))
             .setContentIntent(fullScreen)
-        if (Build.VERSION.SDK_INT < 34 || manager.canUseFullScreenIntent()) builder.setFullScreenIntent(fullScreen, true)
+        if (Build.VERSION.SDK_INT >= 34 && !manager.canUseFullScreenIntent()) {
+            Log.w("FCM_SERVICE", "Full-screen intent access is disabled; Android will show the call notification fallback")
+        }
+        // Always attach the explicit full-screen target. Android 14+ enforces the
+        // user's special-app-access setting and degrades to a heads-up notification
+        // when denied; omitting the intent here would also block permitted devices.
+        builder.setFullScreenIntent(fullScreen, true)
         manager.notify(callId.hashCode(), builder.build())
         CallRingtoneController.start(this, callId)
     }

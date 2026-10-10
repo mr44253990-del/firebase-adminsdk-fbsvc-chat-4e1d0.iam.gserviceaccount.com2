@@ -69,6 +69,37 @@ data class GatewayHealth(
     val sfuConfigured: Boolean = false
 )
 
+data class PresenceWorkerHealth(
+    val checking: Boolean = false,
+    val configured: Boolean = false,
+    val message: String = "Not checked",
+    val version: String = ""
+)
+
+data class PresenceMonitorUser(
+    val uid: String = "",
+    val name: String = "Convo Chat user",
+    val username: String = "",
+    val status: String = "offline",
+    val lastActive: Long = 0L,
+    val lastProbeReceivedAt: Long = 0L,
+    val hasFcmToken: Boolean = false
+)
+
+data class PresenceDashboard(
+    val checking: Boolean = false,
+    val message: String = "No presence Worker configured",
+    val totalUsers: Int = 0,
+    val activeUsers: Int = 0,
+    val foregroundUsers: Int = 0,
+    val reachableUsers: Int = 0,
+    val registeredDevices: Int = 0,
+    val lastProbeAt: Long = 0L,
+    val users: List<PresenceMonitorUser> = emptyList(),
+    val nextCursor: String? = null,
+    val query: String = ""
+)
+
 data class R2MediaResult(
     val publicUrl: String,
     val key: String,
@@ -428,6 +459,16 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private val _gatewayHealth = MutableStateFlow(GatewayHealth())
     val gatewayHealth: StateFlow<GatewayHealth> = _gatewayHealth.asStateFlow()
 
+    private val _presenceWorkerUrl = MutableStateFlow(
+        sharedPrefs.getString("presence_worker_url", "").orEmpty()
+            .trim().trimEnd('/').takeIf { it.startsWith("https://") }.orEmpty()
+    )
+    val presenceWorkerUrl: StateFlow<String> = _presenceWorkerUrl.asStateFlow()
+    private val _presenceWorkerHealth = MutableStateFlow(PresenceWorkerHealth())
+    val presenceWorkerHealth: StateFlow<PresenceWorkerHealth> = _presenceWorkerHealth.asStateFlow()
+    private val _presenceDashboard = MutableStateFlow(PresenceDashboard())
+    val presenceDashboard: StateFlow<PresenceDashboard> = _presenceDashboard.asStateFlow()
+
     private var activeChatListener: ValueEventListener? = null
     private var activeChatId: String? = null
     private var activeTypingListener: ValueEventListener? = null
@@ -520,6 +561,147 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun updatePresenceWorkerUrl(url: String, onComplete: (Boolean, String) -> Unit = { _, _ -> }) {
+        if (!isCurrentAdmin()) {
+            onComplete(false, "Admin access required")
+            return
+        }
+        val cleanUrl = url.trim().trimEnd('/')
+        val parsed = runCatching { Uri.parse(cleanUrl) }.getOrNull()
+        if (!cleanUrl.startsWith("https://", ignoreCase = true) || parsed?.host.isNullOrBlank()) {
+            _presenceWorkerHealth.value = PresenceWorkerHealth(message = "Enter a valid HTTPS Worker URL")
+            onComplete(false, "Enter a valid HTTPS Worker URL")
+            return
+        }
+        getDatabaseInstance().getReference("config").child("app_settings")
+            .updateChildren(mapOf("presenceWorkerUrl" to cleanUrl))
+            .addOnSuccessListener {
+                _presenceWorkerUrl.value = cleanUrl
+                sharedPrefs.edit().putString("presence_worker_url", cleanUrl).apply()
+                _presenceDashboard.value = PresenceDashboard(message = "Worker URL saved. Refresh the user list to load presence.")
+                onComplete(true, "Presence Worker URL saved")
+                testPresenceWorker(cleanUrl)
+            }
+            .addOnFailureListener { error ->
+                _presenceWorkerHealth.value = PresenceWorkerHealth(message = "Could not save Worker URL: ${error.localizedMessage}")
+                onComplete(false, error.localizedMessage ?: "Could not save Worker URL")
+            }
+    }
+
+    fun testPresenceWorker(url: String = _presenceWorkerUrl.value) {
+        val cleanUrl = url.trim().trimEnd('/')
+        if (!cleanUrl.startsWith("https://", ignoreCase = true) || runCatching { Uri.parse(cleanUrl).host.isNullOrBlank() }.getOrDefault(true)) {
+            _presenceWorkerHealth.value = PresenceWorkerHealth(message = "Enter a valid HTTPS Worker URL")
+            return
+        }
+        _presenceWorkerHealth.value = PresenceWorkerHealth(checking = true, message = "Checking presence Worker…")
+        val request = Request.Builder().url("$cleanUrl/health").get().build()
+        OkHttpClient.Builder().callTimeout(12, TimeUnit.SECONDS).build()
+            .newCall(request).enqueue(object : Callback {
+                override fun onFailure(call: Call, e: IOException) {
+                    _presenceWorkerHealth.value = PresenceWorkerHealth(message = "Presence Worker unreachable: ${e.localizedMessage}")
+                }
+                override fun onResponse(call: Call, response: Response) {
+                    response.use {
+                        val json = try { JSONObject(it.body?.string().orEmpty()) } catch (_: Exception) { JSONObject() }
+                        val ready = it.isSuccessful && json.optBoolean("ok", false)
+                        _presenceWorkerHealth.value = PresenceWorkerHealth(
+                            configured = ready,
+                            message = if (ready) "Presence Worker endpoint is ready · verify the five-minute Cloudflare Cron" else json.optString("error", "Worker is online but Firebase is not configured"),
+                            version = json.optString("version")
+                        )
+                    }
+                }
+            })
+    }
+
+    fun loadPresenceUsers(query: String = "", cursor: String? = null) {
+        if (!isCurrentAdmin()) {
+            _presenceDashboard.value = _presenceDashboard.value.copy(checking = false, message = "Admin access required")
+            return
+        }
+        val baseUrl = _presenceWorkerUrl.value.trimEnd('/')
+        if (baseUrl.isBlank()) {
+            _presenceDashboard.value = PresenceDashboard(message = "Save a Presence Worker URL first")
+            return
+        }
+        val authUser = FirebaseAuth.getInstance().currentUser
+        if (authUser == null) {
+            _presenceDashboard.value = _presenceDashboard.value.copy(checking = false, message = "Sign in as admin to view users")
+            return
+        }
+        val normalizedQuery = query.trim().take(100)
+        val previous = _presenceDashboard.value
+        _presenceDashboard.value = previous.copy(
+            checking = true,
+            message = if (cursor == null) "Loading Firebase user presence…" else "Loading more users…",
+            query = normalizedQuery
+        )
+        authUser.getIdToken(false).addOnSuccessListener { tokenResult ->
+            val idToken = tokenResult.token
+            if (idToken.isNullOrBlank()) {
+                _presenceDashboard.value = _presenceDashboard.value.copy(checking = false, message = "Could not create admin session token")
+                return@addOnSuccessListener
+            }
+            val cursorParam = Uri.encode(cursor ?: "0")
+            val queryParam = Uri.encode(normalizedQuery)
+            val endpoint = "$baseUrl/admin/users?limit=50&cursor=$cursorParam&q=$queryParam"
+            val request = Request.Builder().url(endpoint).header("Authorization", "Bearer $idToken").get().build()
+            OkHttpClient.Builder().callTimeout(25, TimeUnit.SECONDS).build()
+                .newCall(request).enqueue(object : Callback {
+                    override fun onFailure(call: Call, e: IOException) {
+                        _presenceDashboard.value = _presenceDashboard.value.copy(checking = false, message = "Could not load presence list: ${e.localizedMessage}")
+                    }
+                    override fun onResponse(call: Call, response: Response) {
+                        response.use {
+                            val body = it.body?.string().orEmpty()
+                            val json = try { JSONObject(body) } catch (_: Exception) { JSONObject() }
+                            if (!it.isSuccessful || !json.optBoolean("ok", false)) {
+                                _presenceDashboard.value = _presenceDashboard.value.copy(
+                                    checking = false,
+                                    message = json.optString("error", "Presence request failed (${it.code})")
+                                )
+                                return
+                            }
+                            val resultUsers = json.optJSONArray("users") ?: JSONArray()
+                            val users = (0 until resultUsers.length()).mapNotNull { index ->
+                                val item = resultUsers.optJSONObject(index) ?: return@mapNotNull null
+                                PresenceMonitorUser(
+                                    uid = item.optString("uid"),
+                                    name = item.optString("name", "Convo Chat user"),
+                                    username = item.optString("username"),
+                                    status = item.optString("status", "offline"),
+                                    lastActive = item.optLong("lastActive"),
+                                    lastProbeReceivedAt = item.optLong("lastProbeReceivedAt"),
+                                    hasFcmToken = item.optBoolean("hasFcmToken")
+                                )
+                            }
+                            val nextCursor = json.opt("nextCursor")
+                                ?.takeUnless { value -> value == JSONObject.NULL || value.toString().isBlank() }
+                                ?.toString()
+                            val append = cursor != null && previous.query == normalizedQuery
+                            val mergedUsers = if (append) previous.users + users else users
+                            _presenceDashboard.value = PresenceDashboard(
+                                checking = false,
+                                message = "Presence list updated",
+                                totalUsers = json.optInt("totalUsers"),
+                                activeUsers = json.optInt("activeUsers"),
+                                foregroundUsers = json.optInt("foregroundUsers"),
+                                reachableUsers = json.optInt("reachableUsers"),
+                                registeredDevices = json.optInt("registeredDevices"),
+                                lastProbeAt = json.optLong("lastProbeAt"),
+                                users = mergedUsers.distinctBy { user -> user.uid },
+                                nextCursor = nextCursor,
+                                query = normalizedQuery
+                            )
+                        }
+                    }
+                })
+        }.addOnFailureListener { error ->
+            _presenceDashboard.value = _presenceDashboard.value.copy(checking = false, message = "Admin token error: ${error.localizedMessage}")
+        }
+    }
+
     fun updateWebhookUrl(url: String) {
         _webhookUrl.value = url
         sharedPrefs.edit().putString("webhook_url", url).apply()
@@ -527,9 +709,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         try {
             getDatabaseInstance().getReference("config")
                 .child("app_settings")
-                .setValue(mapOf("webhookUrl" to url, "workerUrl" to url))
+                .updateChildren(mapOf("webhookUrl" to url, "workerUrl" to url))
                 .addOnSuccessListener {
-                    Log.d("RTDB_CONFIG", "Successfully saved webhook URL to RTDB: $url")
+                    Log.d("RTDB_CONFIG", "Successfully saved webhook URL to RTDB")
                 }
                 .addOnFailureListener { e ->
                     Log.e("RTDB_CONFIG", "Failed to save webhook URL to RTDB: ${e.message}")
@@ -965,11 +1147,17 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         } ?: defaultWebhookUrl
                         _webhookUrl.value = url
                         sharedPrefs.edit().putString("webhook_url", url).apply()
+                        val configuredPresenceUrl = snapshot.child("presenceWorkerUrl").getValue(String::class.java)
+                        val presenceUrl = configuredPresenceUrl?.trim()?.trimEnd('/')
+                            ?.takeIf { it.startsWith("https://", ignoreCase = true) }
+                            ?: _presenceWorkerUrl.value
+                        _presenceWorkerUrl.value = presenceUrl
+                        if (presenceUrl.isNotBlank()) sharedPrefs.edit().putString("presence_worker_url", presenceUrl).apply()
                         if (configured != url) {
                             configRef.updateChildren(mapOf("webhookUrl" to url, "workerUrl" to url))
                         }
-                        Log.d("RTDB_CONFIG", "Loaded direct FCM gateway URL: $url")
-                    } else {
+                        Log.d("RTDB_CONFIG", "Loaded direct FCM gateway URL")
+                    } else if (isCurrentAdmin()) {
                         configRef.setValue(mapOf("webhookUrl" to defaultWebhookUrl, "workerUrl" to defaultWebhookUrl))
                     }
                 }
@@ -987,6 +1175,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             val auth = FirebaseAuth.getInstance()
             listenToGlobalConfig()
             if (auth.currentUser != null) {
+                FirebaseMessaging.getInstance().subscribeToTopic("convo_presence_v1")
+                    .addOnFailureListener { Log.w("FCM_PRESENCE", "Presence topic subscription failed: ${it.message}") }
                 val uid = auth.currentUser!!.uid
                 loadCurrentUserProfile(uid)
                 setupPresence(uid)
@@ -1192,6 +1382,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 getDatabaseInstance().getReference("status").child(uid)
                     .setValue(mapOf("isOnline" to false, "lastActive" to System.currentTimeMillis()))
             }
+            FirebaseMessaging.getInstance().unsubscribeFromTopic("convo_presence_v1")
+                .addOnFailureListener { Log.w("FCM_PRESENCE", "Presence topic unsubscribe failed: ${it.message}") }
             FirebaseAuth.getInstance().signOut()
             currentUserProfileListener?.remove()
             currentUserProfileListener = null
@@ -1210,6 +1402,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun retrieveFCMTokenAndStore(uid: String) {
         try {
+            if (FirebaseAuth.getInstance().currentUser?.uid == uid) {
+                FirebaseMessaging.getInstance().subscribeToTopic("convo_presence_v1")
+                    .addOnFailureListener { Log.w("FCM_PRESENCE", "Presence topic subscription failed: ${it.message}") }
+            }
             FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
                 if (!task.isSuccessful) {
                     Log.w("FCM_TOKEN", "Fetching FCM registration token failed", task.exception)
@@ -1701,6 +1897,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     fun stopListeningToChat() {
         stopListeningToTyping()
+        stopListeningToVoiceRecording()
+        stopListeningToUpload()
         val chatId = activeChatId
         if (chatId != null) {
             activeChatListener?.let {
@@ -1718,10 +1916,24 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     // Typing Status Handling
+    fun refreshTypingStatus(recipientUid: String) {
+        if (recipientUid.isBlank()) return
+        if (!PrivacyPreferences.settings.value.showTypingStatus) {
+            setTypingState(false)
+            stopListeningToTyping()
+        } else if (activeChatId != null) {
+            startListeningToTyping(recipientUid)
+        }
+    }
+
     fun setTypingState(isTyping: Boolean) {
         val currentUid = FirebaseAuth.getInstance().currentUser?.uid ?: return
         val chatId = activeChatId ?: return
         val ref = getDatabaseInstance().getReference("typing").child(chatId).child(currentUid)
+        if (isTyping && !PrivacyPreferences.settings.value.showTypingStatus) {
+            ref.removeValue()
+            return
+        }
         if (isTyping) {
             ref.setValue(mapOf("active" to true, "updatedAt" to ServerValue.TIMESTAMP))
             ref.onDisconnect().removeValue()
@@ -1765,6 +1977,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun startListeningToTyping(recipientUid: String) {
         stopListeningToTyping()
+        if (!PrivacyPreferences.settings.value.showTypingStatus) {
+            _isRecipientTyping.value = false
+            return
+        }
         val chatId = activeChatId ?: return
         activeTypingChatId = chatId
         activeTypingRecipientUid = recipientUid
@@ -1881,8 +2097,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         activeTypingChatId = null
         activeTypingRecipientUid = null
         _isRecipientTyping.value = false
-        stopListeningToVoiceRecording()
-        stopListeningToUpload()
     }
 
     private fun stopListeningToVoiceRecording() {
@@ -3973,6 +4187,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val chatId = activeChatId
 
         stopListeningToTyping()
+        stopListeningToVoiceRecording()
+        stopListeningToUpload()
         stopListeningToGroupVoice()
         activeChatListener?.let { listener -> if (database != null && chatId != null) database.getReference("chats").child(chatId).child("messages").removeEventListener(listener) }
         activeReceiptListener?.let { listener -> if (database != null && chatId != null && currentUid != null) database.getReference("delivery_receipts").child(currentUid).child(chatId).removeEventListener(listener) }

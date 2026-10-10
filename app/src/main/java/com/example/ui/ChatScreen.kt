@@ -78,6 +78,7 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
 import coil.compose.AsyncImage
 import com.example.call.CallEngine
+import com.example.security.PrivacyPreferences
 import com.example.data.Message
 import com.example.data.User
 import com.google.firebase.auth.FirebaseAuth
@@ -115,6 +116,7 @@ fun ChatScreen(
     val requestPending = recipient.uid in pendingRequestRecipients
     val typingSounds by viewModel.typingSoundsEnabled.collectAsState()
     val notificationSounds by viewModel.notificationSoundsEnabled.collectAsState()
+    val privacySettings by PrivacyPreferences.settings.collectAsState()
     val callState by CallEngine.state.collectAsState()
     var showThemePicker by remember { mutableStateOf(false) }
     var showChatSettings by remember { mutableStateOf(false) }
@@ -271,6 +273,10 @@ fun ChatScreen(
         viewModel.startListeningToChat(recipient.uid)
     }
 
+    LaunchedEffect(recipient.uid, privacySettings.showTypingStatus) {
+        viewModel.refreshTypingStatus(recipient.uid)
+    }
+
     // Debounced typing signal with cancellation-safe cleanup. The old coroutine must always
     // clear its lease when the text changes or the screen leaves, otherwise stale RTDB events
     // can race a newly selected chat and destabilize the recipient UI.
@@ -293,18 +299,6 @@ fun ChatScreen(
             viewModel.setVoiceRecordingState(false)
             viewModel.stopListeningToChat()
             mediaRecorder?.release()
-        }
-    }
-
-    // Typing sound feedback when recipient starts typing
-    val currentView = androidx.compose.ui.platform.LocalView.current
-    LaunchedEffect(isTyping) {
-        if (isTyping) {
-            try {
-                currentView.playSoundEffect(android.view.SoundEffectConstants.CLICK)
-            } catch (e: Exception) {
-                // Fallback gracefully
-            }
         }
     }
 

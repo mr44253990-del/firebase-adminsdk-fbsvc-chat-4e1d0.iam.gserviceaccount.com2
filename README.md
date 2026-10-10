@@ -68,7 +68,7 @@ CALLS_APP_ID=<fresh Cloudflare Realtime SFU app ID>
 CALLS_APP_TOKEN=<fresh Cloudflare Realtime SFU API token>
 ```
 
-Worker `4.1.0` exposes authenticated SFU proxy routes for session creation, local/remote tracks, renegotiation, and track closing. The health endpoint reports `sfuConfigured`; no long-lived Calls/TURN token is embedded in Android. Incoming-call sound uses an explicit single ringtone controller and the silent `firechat_calls_v3` channel, preventing both lock-screen silence and ringtone continuing after Accept/Decline.
+Worker `4.1.0` exposes authenticated SFU proxy routes for session creation, local/remote tracks, renegotiation, and track closing. The health endpoint reports `sfuConfigured`; no long-lived Calls/TURN token is embedded in Android. Incoming-call sound uses an explicit ringtone controller and the silent `convo_calls_v4` notification channel to avoid duplicate system sound and stop ringing on Accept/Decline.
 
 Deploy with:
 
@@ -79,9 +79,11 @@ export TURN_API_TOKEN='fresh-token'
 firebase deploy --only database,firestore:rules
 ```
 
-Android 14+ may require the user to enable **Allow full-screen incoming calls** under Profile & appearance. Without that special access, Android correctly falls back to a high-priority CallStyle heads-up notification. Incoming calls ring with the device ringtone, expire after 30 seconds, support accept/decline, mute, speaker, reconnect state, and retain a lightweight call item in local chat history.
+Profile & appearance now checks app notification access, the incoming-call channel importance, and Android 14+ **Allow full-screen incoming calls** access. The FCM service always attaches the explicit full-screen target; Android enforces its special access and may fall back to a CallStyle heads-up notification when the user or OS disallows full-screen launch. Calls cannot be forced past Android notification, Doze, battery, or manufacturer restrictions. Incoming calls ring with the device ringtone, expire after 30 seconds, support accept/decline, mute, speaker, reconnect state, and retain a lightweight call item in local chat history.
 
-Convo Chat does not run a persistent background-presence service. Foreground means online; background/closed means offline with last-seen. FCM remains responsible for messages and incoming calls. When an incoming-call FCM reaches the callee, the device changes RTDB status from `calling` to `ringing`; the caller then hears ringback. Connecting vibrates briefly, audio calls use the proximity sensor to turn the screen off near the ear, and notification messages support inline replies. Only an active call starts a temporary phone-call foreground service and CPU wake lock, keeping microphone/camera alive with the screen off; it stops immediately when the call ends.
+The app does not keep a persistent Android presence service. A separate Cloudflare `firechat-presence-worker.js` can send a normal-priority FCM topic probe every five minutes; signed-in installs subscribe while authenticated and acknowledge a received probe. Admin Control Center lists Firestore app profiles with Online, Reachable, or Offline status, last signal, last probe acknowledgement, and FCM registration state. Normal-priority FCM, Doze, battery/network restrictions, and OEM behavior can delay or suppress delivery, so this is best-effort reachability—not a guaranteed wake-up or continuous location/device monitor. See [docs/presence-worker.md](docs/presence-worker.md) and deploy with `wrangler-presence.toml`.
+
+When an incoming-call FCM reaches the callee, the device changes RTDB status from `calling` to `ringing`; the caller then hears ringback. Connecting vibrates briefly, audio calls use the proximity sensor to turn the screen off near the ear, and notification messages support inline replies. Only an active call starts a temporary phone-call foreground service and CPU wake lock, keeping microphone/camera alive with the screen off; it stops immediately when the call ends.
 
 ### Cloudflare R2 posts and reels
 
