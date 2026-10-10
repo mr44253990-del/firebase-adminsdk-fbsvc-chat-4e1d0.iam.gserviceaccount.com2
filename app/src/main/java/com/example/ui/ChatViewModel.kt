@@ -23,6 +23,7 @@ import com.example.security.AccountCredentialVault
 import com.example.service.scheduleMessage
 import com.google.firebase.auth.AuthCredential
 import com.google.firebase.auth.FirebaseAuth
+import com.google.android.gms.tasks.Tasks
 import com.google.firebase.database.DataSnapshot
 import com.google.firebase.database.DatabaseError
 import com.google.firebase.database.FirebaseDatabase
@@ -98,6 +99,15 @@ data class PresenceDashboard(
     val users: List<PresenceMonitorUser> = emptyList(),
     val nextCursor: String? = null,
     val query: String = ""
+)
+
+data class StorageSetupHealth(
+    val checking: Boolean = false,
+    val ok: Boolean = false,
+    val message: String = "Not tested",
+    val projectHost: String = "",
+    val bucketChecks: List<String> = emptyList(),
+    val instructions: List<String> = emptyList()
 )
 
 data class R2MediaResult(
@@ -468,6 +478,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     val presenceWorkerHealth: StateFlow<PresenceWorkerHealth> = _presenceWorkerHealth.asStateFlow()
     private val _presenceDashboard = MutableStateFlow(PresenceDashboard())
     val presenceDashboard: StateFlow<PresenceDashboard> = _presenceDashboard.asStateFlow()
+    private val _storageRoutingConfig = MutableStateFlow(StorageRoutingConfig())
+    val storageRoutingConfig: StateFlow<StorageRoutingConfig> = _storageRoutingConfig.asStateFlow()
+    private val _storageSetupHealth = MutableStateFlow(StorageSetupHealth())
+    val storageSetupHealth: StateFlow<StorageSetupHealth> = _storageSetupHealth.asStateFlow()
 
     private var activeChatListener: ValueEventListener? = null
     private var activeChatId: String? = null
@@ -491,6 +505,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private var activityNotificationListener: ListenerRegistration? = null
     private var currentUserProfileListener: ListenerRegistration? = null
     private var flagshipListener: ListenerRegistration? = null
+    private var storageConfigListener: ListenerRegistration? = null
     private var flagshipRtdbListener: ValueEventListener? = null
     private var flagshipRtdbRef: com.google.firebase.database.DatabaseReference? = null
     private var featureRequestListener: ListenerRegistration? = null
@@ -518,6 +533,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     init {
         checkFirebaseConfiguration()
         listenFlagshipControl()
+        listenStorageRoutingConfig()
         registerNetworkCallback(application)
     }
 
@@ -962,6 +978,188 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private fun listenStorageRoutingConfig() {
+        storageConfigListener?.remove()
+        storageConfigListener = FirebaseFirestore.getInstance().collection("app_config").document("storage")
+            .addSnapshotListener { document, error ->
+                if (error != null) {
+                    Log.w("STORAGE_CONFIG", "Storage config listener failed: ${error.message}")
+                } else if (document != null && document.exists()) {
+                    document.toObject(StorageRoutingConfig::class.java)?.let { remote ->
+                        val normalized = remote.copy(
+                            provider = if (remote.provider.equals("supabase", true)) "supabase" else "legacy",
+                            supabaseUrl = remote.supabaseUrl.trim().trimEnd('/'),
+                            storageWorkerUrl = remote.storageWorkerUrl.trim().trimEnd('/'),
+                            bucketAvatars = remote.bucketAvatars.trim().lowercase(),
+                            bucketChatImages = remote.bucketChatImages.trim().lowercase(),
+                            bucketVoiceNotes = remote.bucketVoiceNotes.trim().lowercase(),
+                            bucketPosts = remote.bucketPosts.trim().lowercase(),
+                            bucketReels = remote.bucketReels.trim().lowercase(),
+                            bucketThumbnails = remote.bucketThumbnails.trim().lowercase(),
+                            bucketUpdates = remote.bucketUpdates.trim().lowercase()
+                        )
+                        if (normalized.updatedAt > _storageRoutingConfig.value.updatedAt) {
+                            _storageSetupHealth.value = StorageSetupHealth(
+                                message = if (normalized.provider == "supabase") "Storage settings changed; run Save + test to verify the new project and buckets" else "Supabase routing is off; the existing mixed storage route is active"
+                            )
+                        }
+                        _storageRoutingConfig.value = normalized
+                    }
+                } else if (document != null) {
+                    _storageRoutingConfig.value = StorageRoutingConfig()
+                    _storageSetupHealth.value = StorageSetupHealth(message = "No saved storage settings; existing mixed storage route is active")
+                }
+            }
+    }
+
+    fun saveStorageRoutingConfig(
+        provider: String,
+        supabaseUrl: String,
+        storageWorkerUrl: String,
+        autoCreateBuckets: Boolean = true,
+        bucketAvatars: String = "avatars",
+        bucketChatImages: String = "chat_images",
+        bucketVoiceNotes: String = "voice_notes",
+        bucketPosts: String = "posts",
+        bucketReels: String = "reels",
+        bucketThumbnails: String = "thumbnails",
+        bucketUpdates: String = "updates",
+        onComplete: (Boolean, String) -> Unit
+    ) {
+        val admin = FirebaseAuth.getInstance().currentUser
+        if (admin == null || admin.email?.lowercase()?.trim()?.trimEnd('.') != "mr4425390@gmail.com") {
+            return onComplete(false, "Admin account required")
+        }
+        val normalizedProvider = if (provider.equals("supabase", true)) "supabase" else "legacy"
+        val cleanSupabase = supabaseUrl.trim().trimEnd('/')
+        val cleanWorker = storageWorkerUrl.trim().trimEnd('/')
+        val bucketNames = listOf(bucketAvatars, bucketChatImages, bucketVoiceNotes, bucketPosts, bucketReels, bucketThumbnails, bucketUpdates)
+            .map { it.trim().lowercase() }
+        val bucketIdPattern = Regex("^[a-z0-9][a-z0-9_-]{1,62}$")
+        if (normalizedProvider == "supabase") {
+            val projectUri = runCatching { Uri.parse(cleanSupabase) }.getOrNull()
+            if (projectUri?.scheme != "https" || projectUri.host.isNullOrBlank() || projectUri.path.orEmpty().trim('/').isNotEmpty() || !projectUri.query.isNullOrBlank() || !projectUri.fragment.isNullOrBlank() || cleanSupabase.substringAfter("://").contains('@')) {
+                return onComplete(false, "Enter the Supabase Project URL, e.g. https://your-project.supabase.co (no /storage/v1 path)")
+            }
+            val workerUri = runCatching { Uri.parse(cleanWorker) }.getOrNull()
+            if (workerUri?.scheme != "https" || workerUri.host.isNullOrBlank() || workerUri.path.orEmpty().trim('/').isNotEmpty() || !workerUri.query.isNullOrBlank() || !workerUri.fragment.isNullOrBlank()) {
+                return onComplete(false, "Enter the deployed Storage Worker origin, e.g. https://your-worker.workers.dev (no endpoint path)")
+            }
+            if (bucketNames.any { !bucketIdPattern.matches(it) }) {
+                return onComplete(false, "Bucket IDs must be 2–63 lowercase letters, digits, underscores, or hyphens, and start with a letter or digit")
+            }
+            if (bucketNames.distinct().size != bucketNames.size) {
+                return onComplete(false, "Each storage category must use a unique bucket ID")
+            }
+        }
+        val config = StorageRoutingConfig(
+            provider = normalizedProvider,
+            supabaseUrl = cleanSupabase,
+            storageWorkerUrl = cleanWorker,
+            bucketAvatars = bucketNames[0],
+            bucketChatImages = bucketNames[1],
+            bucketVoiceNotes = bucketNames[2],
+            bucketPosts = bucketNames[3],
+            bucketReels = bucketNames[4],
+            bucketThumbnails = bucketNames[5],
+            bucketUpdates = bucketNames[6],
+            autoCreateBuckets = autoCreateBuckets,
+            updatedAt = System.currentTimeMillis(),
+            updatedBy = admin.uid
+        )
+        FirebaseFirestore.getInstance().collection("app_config").document("storage")
+            .set(config, SetOptions.merge())
+            .addOnSuccessListener {
+                _storageRoutingConfig.value = config
+                _storageSetupHealth.value = StorageSetupHealth(
+                    message = if (normalizedProvider == "supabase") "Settings saved to Firebase; tap Save + test to validate the Worker and buckets" else "Supabase is disabled; the existing mixed storage route is active"
+                )
+                onComplete(true, if (normalizedProvider == "supabase") "Storage settings saved. The Worker reads the new config automatically." else "Legacy storage routing restored")
+            }
+            .addOnFailureListener { error -> onComplete(false, error.localizedMessage ?: "Could not save storage settings") }
+    }
+
+    fun testStorageRoutingConfig(workerUrl: String, onComplete: ((Boolean, String) -> Unit)? = null) {
+        val admin = FirebaseAuth.getInstance().currentUser
+        if (admin == null || admin.email?.lowercase()?.trim()?.trimEnd('.') != "mr4425390@gmail.com") {
+            val message = "Admin account required"
+            _storageSetupHealth.value = StorageSetupHealth(ok = false, message = message)
+            onComplete?.invoke(false, message)
+            return
+        }
+        val cleanWorker = workerUrl.trim().trimEnd('/')
+        val workerUri = runCatching { Uri.parse(cleanWorker) }.getOrNull()
+        if (workerUri?.scheme != "https" || workerUri.host.isNullOrBlank() || workerUri.path.orEmpty().trim('/').isNotEmpty() || !workerUri.query.isNullOrBlank() || !workerUri.fragment.isNullOrBlank()) {
+            val message = "Enter the Storage Worker HTTPS origin only (no endpoint path)"
+            _storageSetupHealth.value = StorageSetupHealth(ok = false, message = message)
+            onComplete?.invoke(false, message)
+            return
+        }
+        _storageSetupHealth.value = StorageSetupHealth(checking = true, message = "Checking Worker, Supabase credentials, buckets, and upload permissions…")
+        admin.getIdToken(false)
+            .addOnSuccessListener { tokenResult ->
+                val idToken = tokenResult.token
+                if (idToken.isNullOrBlank()) {
+                    val message = "Could not authenticate the storage test"
+                    _storageSetupHealth.value = StorageSetupHealth(ok = false, message = message)
+                    onComplete?.invoke(false, message)
+                    return@addOnSuccessListener
+                }
+                val request = Request.Builder()
+                    .url("$cleanWorker/admin/storage/test")
+                    .header("Authorization", "Bearer $idToken")
+                    .post(JSONObject().put("createMissingBuckets", _storageRoutingConfig.value.autoCreateBuckets).toString()
+                        .toRequestBody("application/json".toMediaTypeOrNull()))
+                    .build()
+                OkHttpClient.Builder().callTimeout(90, TimeUnit.SECONDS).build().newCall(request)
+                    .enqueue(object : Callback {
+                        override fun onFailure(call: Call, e: IOException) {
+                            val message = "Storage Worker could not be reached: ${e.localizedMessage ?: "network error"}. Check its deployed HTTPS URL and Cloudflare route."
+                            _storageSetupHealth.value = StorageSetupHealth(ok = false, message = message, instructions = listOf("Deploy firechat-storage-worker.js", "Save the correct Worker URL, then test again"))
+                            onComplete?.invoke(false, message)
+                        }
+                        override fun onResponse(call: Call, response: Response) {
+                            val raw = response.body?.string().orEmpty()
+                            val json = runCatching { JSONObject(raw) }.getOrElse { JSONObject() }
+                            val ok = response.isSuccessful && json.optBoolean("ok", json.optBoolean("success", false))
+                            val buckets = mutableListOf<String>()
+                            json.optJSONArray("buckets")?.let { array ->
+                                for (index in 0 until array.length()) {
+                                    val item = array.optJSONObject(index) ?: continue
+                                    val id = item.optString("id", "bucket")
+                                    val ready = item.optBoolean("ready", item.optBoolean("write", false))
+                                    val created = item.optBoolean("created", false)
+                                    val message = item.optString("message")
+                                    buckets += "$id: ${if (ready) if (created) "created + upload/delete OK" else "upload/delete OK" else message.ifBlank { "not ready" }}"
+                                }
+                            }
+                            val instructions = mutableListOf<String>()
+                            json.optJSONArray("instructions")?.let { array -> for (index in 0 until array.length()) array.optString(index).takeIf(String::isNotBlank)?.let(instructions::add) }
+                            val projectHost = json.optString("projectHost")
+                            val message = json.optString("message").ifBlank {
+                                json.optString("error").ifBlank { if (ok) "Supabase storage is ready" else "Storage setup failed (HTTP ${response.code})" }
+                            }
+                            val state = StorageSetupHealth(
+                                checking = false,
+                                ok = ok,
+                                message = message,
+                                projectHost = projectHost,
+                                bucketChecks = buckets,
+                                instructions = instructions
+                            )
+                            _storageSetupHealth.value = state
+                            onComplete?.invoke(ok, message)
+                            response.close()
+                        }
+                    })
+            }
+            .addOnFailureListener { error ->
+                val message = "Could not obtain an admin Firebase token: ${error.localizedMessage ?: "sign in again"}"
+                _storageSetupHealth.value = StorageSetupHealth(ok = false, message = message)
+                onComplete?.invoke(false, message)
+            }
+    }
+
     private fun listenFlagshipControl() {
         flagshipListener?.remove()
         flagshipListener = FirebaseFirestore.getInstance().collection("app_config").document("flagship")
@@ -1285,17 +1483,23 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             }
     }
 
-    fun signup(email: String, name: String, dob: String, password: String, profileImageUrl: String, onSuccess: () -> Unit) {
+    fun signup(
+        email: String,
+        name: String,
+        dob: String,
+        password: String,
+        profileImageUrl: String,
+        onSuccess: () -> Unit,
+        profileImageBytes: ByteArray? = null
+    ) {
         if (!_isFirebaseConfigured.value) {
             _authError.value = "Firebase is not configured properly."
             return
         }
-
         if (email.isBlank() || name.isBlank() || dob.isBlank() || password.isBlank()) {
             _authError.value = "Please fill in all fields"
             return
         }
-
         if (password.length < 6) {
             _authError.value = "Password must be at least 6 characters"
             return
@@ -1307,45 +1511,65 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 FirebaseAuth.getInstance().createUserWithEmailAndPassword(email, password)
                     .addOnSuccessListener { authResult ->
-                        val uid = authResult.user?.uid ?: ""
+                        val uid = authResult.user?.uid.orEmpty()
+                        if (uid.isBlank()) {
+                            _authError.value = "Firebase created no user ID"
+                            _authLoading.value = false
+                            return@addOnSuccessListener
+                        }
                         val cleanName = name.lowercase().replace("\\s".toRegex(), "")
-                        val randomSuffix = (1000..9999).random()
-                        val generatedUsername = "${cleanName}_$randomSuffix"
-
+                        val generatedUsername = "${cleanName}_${(1000..9999).random()}"
                         val createdAt = System.currentTimeMillis()
-                        val newUser = User(
-                            uid = uid, name = name, dob = dob, username = generatedUsername,
-                            profileImageUrl = profileImageUrl, createdAt = createdAt,
-                            isPremium = true, premiumPlan = "trial",
-                            premiumUntil = createdAt + 14L * 86_400_000L,
-                            premiumApprovedAt = createdAt, premiumTrialClaimed = true,
-                            premiumSource = "signup_trial"
-                        )
+                        val persistProfile: (String) -> Unit = { finalProfileImageUrl ->
+                            val newUser = User(
+                                uid = uid, name = name, dob = dob, username = generatedUsername,
+                                profileImageUrl = finalProfileImageUrl, createdAt = createdAt,
+                                isPremium = true, premiumPlan = "trial",
+                                premiumUntil = createdAt + 14L * 86_400_000L,
+                                premiumApprovedAt = createdAt, premiumTrialClaimed = true,
+                                premiumSource = "signup_trial"
+                            )
+                            FirebaseFirestore.getInstance().collection("users").document(uid)
+                                .set(newUser)
+                                .addOnSuccessListener {
+                                    AccountCredentialVault.save(getApplication(), email, password)
+                                    retrieveFCMTokenAndStore(uid)
+                                    _currentUserState.value = newUser
+                                    setupPresence(uid)
+                                    loadAllUsers()
+                                    listenToAllPresences()
+                                    listenForInAppNotifications()
+                                    registerDeviceSession()
+                                    restoreTextBackup(uid)
+                                    loadStories()
+                                    loadPosts()
+                                    loadGroups()
+                                    listenToUnreadCounts()
+                                    _authLoading.value = false
+                                    onSuccess()
+                                }
+                                .addOnFailureListener { exception ->
+                                    _authError.value = "Failed to save profile: ${exception.localizedMessage}"
+                                    _authLoading.value = false
+                                }
+                        }
 
-                        FirebaseFirestore.getInstance().collection("users")
-                            .document(uid)
-                            .set(newUser)
-                            .addOnSuccessListener {
-                                AccountCredentialVault.save(getApplication(), email, password)
-                                retrieveFCMTokenAndStore(uid)
-                                _currentUserState.value = newUser
-                                setupPresence(uid)
-                                loadAllUsers()
-                                listenToAllPresences()
-                                listenForInAppNotifications()
-                                registerDeviceSession()
-                                restoreTextBackup(uid)
-                                loadStories()
-                                loadPosts()
-                                loadGroups()
-                                listenToUnreadCounts()
-                                _authLoading.value = false
-                                onSuccess()
-                            }
-                            .addOnFailureListener { exception ->
-                                _authError.value = "Failed to save profile: ${exception.localizedMessage}"
-                                _authLoading.value = false
-                            }
+                        val pendingPhoto = profileImageBytes?.takeIf { it.isNotEmpty() }
+                        if (pendingPhoto != null) {
+                            uploadFileToSupabase(
+                                bucket = "avatars",
+                                fileName = "signup_${uid}_${System.currentTimeMillis()}.jpg",
+                                fileBytes = pendingPhoto,
+                                contentType = "image/jpeg",
+                                onSuccess = persistProfile,
+                                onFailure = { error ->
+                                    Log.w("SIGNUP_PHOTO", "Profile photo upload failed; finishing signup without it: $error")
+                                    persistProfile("")
+                                }
+                            )
+                        } else {
+                            persistProfile(profileImageUrl)
+                        }
                     }
                     .addOnFailureListener { exception ->
                         _authError.value = exception.localizedMessage ?: "Signup failed"
@@ -1427,6 +1651,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun loadCurrentUserProfile(uid: String) {
+        listenStorageRoutingConfig()
         conversationIdsJob?.cancel()
         conversationIdsJob = viewModelScope.launch {
             cacheDao.getConversationChatIds().collect { chatIds ->
@@ -1724,6 +1949,23 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun deleteSupabaseObject(publicUrl: String): Boolean {
+        val config = _storageRoutingConfig.value
+        if (config.provider.equals("supabase", true) && config.supabaseUrl.isNotBlank() && publicUrl.startsWith("${config.supabaseUrl.trimEnd('/')}/storage/v1/object/public/")) {
+            return try {
+                val user = FirebaseAuth.getInstance().currentUser ?: return false
+                val token = Tasks.await(user.getIdToken(false)).token ?: return false
+                val payload = JSONObject().put("url", publicUrl).toString()
+                val request = Request.Builder()
+                    .url("${config.storageWorkerUrl.trimEnd('/')}/storage/delete")
+                    .header("Authorization", "Bearer $token")
+                    .post(payload.toRequestBody("application/json".toMediaTypeOrNull()))
+                    .build()
+                OkHttpClient().newCall(request).execute().use { it.isSuccessful || it.code == 404 }
+            } catch (e: Exception) {
+                Log.w("SUPABASE_DELETE", "Storage Worker cleanup failed: ${e.message}")
+                false
+            }
+        }
         val marker = "/storage/v1/object/public/"
         val objectPath = publicUrl.substringAfter(marker, "")
         if (objectPath.isBlank()) return false
@@ -2929,6 +3171,70 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private fun canonicalStorageBucket(input: String, config: StorageRoutingConfig): String? = when (input.lowercase().trim()) {
+        "avatars", "avatar", "profile", "profile_images" -> config.bucketAvatars
+        "chat_images", "chat", "stories", "story_media" -> config.bucketChatImages
+        "voice_notes", "voice" -> config.bucketVoiceNotes
+        "posts", "post" -> config.bucketPosts
+        "reels", "reel" -> config.bucketReels
+        "thumbnails", "thumbnail" -> config.bucketThumbnails
+        "updates", "update", "apk" -> config.bucketUpdates
+        else -> null
+    }
+
+    /** All Supabase uploads are proxied through the authenticated Storage Worker; the service-role key never reaches Android. */
+    private fun uploadThroughStorageWorker(
+        requestBody: RequestBody,
+        bucket: String,
+        fileName: String,
+        contentType: String,
+        uploadKind: String = "attachment",
+        onSuccess: (JSONObject) -> Unit,
+        onFailure: (String) -> Unit
+    ) {
+        val config = _storageRoutingConfig.value
+        if (!config.provider.equals("supabase", true)) return onFailure("Supabase storage is not the selected provider")
+        if (config.supabaseUrl.isBlank()) return onFailure("Supabase Project URL is missing in Admin Settings")
+        if (config.storageWorkerUrl.isBlank()) return onFailure("Storage Worker URL is missing in Admin Settings")
+        val safeBucket = canonicalStorageBucket(bucket, config) ?: return onFailure("Unsupported storage bucket: $bucket")
+        val user = FirebaseAuth.getInstance().currentUser ?: return onFailure("Please sign in again")
+        user.getIdToken(false).addOnSuccessListener { tokenResult ->
+            val token = tokenResult.token
+            if (token.isNullOrBlank()) return@addOnSuccessListener onFailure("Could not authenticate upload")
+            val query = "bucket=${Uri.encode(safeBucket)}&filename=${Uri.encode(fileName.takeLast(180))}&kind=${Uri.encode(uploadKind)}"
+            val request = Request.Builder()
+                .url("${config.storageWorkerUrl.trimEnd('/')}/storage/upload?$query")
+                .header("Authorization", "Bearer $token")
+                .header("Content-Type", contentType.ifBlank { "application/octet-stream" })
+                .post(requestBody)
+                .build()
+            OkHttpClient.Builder().callTimeout(30, TimeUnit.MINUTES).build().newCall(request)
+                .enqueue(object : Callback {
+                    override fun onFailure(call: Call, e: IOException) {
+                        val message = "Storage Worker upload failed: ${e.localizedMessage ?: "network error"}"
+                        viewModelScope.launch(Dispatchers.Main) { onFailure(message) }
+                    }
+                    override fun onResponse(call: Call, response: Response) {
+                        val raw = response.body?.string().orEmpty()
+                        val json = runCatching { JSONObject(raw) }.getOrElse { JSONObject() }
+                        val ok = response.isSuccessful && json.optBoolean("ok", json.optBoolean("success", false))
+                        response.close()
+                        viewModelScope.launch(Dispatchers.Main) {
+                            if (ok) onSuccess(json) else {
+                                val details = mutableListOf<String>()
+                                json.optString("message").takeIf(String::isNotBlank)?.let(details::add)
+                                json.optString("error").takeIf(String::isNotBlank)?.let { if (it !in details) details.add(it) }
+                                json.optJSONArray("instructions")?.let { array ->
+                                    for (index in 0 until array.length()) array.optString(index).takeIf(String::isNotBlank)?.let(details::add)
+                                }
+                                onFailure(details.distinct().joinToString("\n").ifBlank { "Storage upload failed (HTTP ${response.code})" })
+                            }
+                        }
+                    }
+                })
+        }.addOnFailureListener { error -> onFailure(error.localizedMessage ?: "Upload authentication failed") }
+    }
+
     fun uploadMediaToR2(
         bytes: ByteArray,
         contentType: String,
@@ -2939,12 +3245,36 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         onSuccess: (R2MediaResult) -> Unit,
         onFailure: (String) -> Unit
     ) {
+        val uploadKind = when (kind) { "reel" -> "reel"; "thumbnail" -> "thumbnail"; "update" -> "update"; else -> "post" }
+        if (_storageRoutingConfig.value.provider.equals("supabase", true)) {
+            val bucket = when (uploadKind) {
+                "reel" -> "reels"
+                "thumbnail" -> "thumbnails"
+                "update" -> "updates"
+                else -> "posts"
+            }
+            val fileName = "${uploadKind}_${System.currentTimeMillis()}_${UUID.randomUUID()}.$extension"
+            val body = ProgressBytesRequestBody(bytes, contentType.toMediaTypeOrNull()) { percent, eta ->
+                viewModelScope.launch(Dispatchers.Main) { onProgress(percent, eta) }
+            }
+            uploadThroughStorageWorker(body, bucket, fileName, contentType, uploadKind,
+                onSuccess = { json ->
+                    onSuccess(R2MediaResult(
+                        publicUrl = json.optString("publicUrl"),
+                        key = json.optString("key"),
+                        expiresAt = json.optLong("expiresAt"),
+                        kind = json.optString("kind", uploadKind)
+                    ))
+                },
+                onFailure = onFailure
+            )
+            return
+        }
         val user = FirebaseAuth.getInstance().currentUser ?: return onFailure("Please sign in again")
         user.getIdToken(false).addOnSuccessListener { tokenResult ->
             val idToken = tokenResult.token ?: return@addOnSuccessListener onFailure("Could not authenticate upload")
             viewModelScope.launch(Dispatchers.IO) {
                 try {
-                    val uploadKind = when (kind) { "reel" -> "reel"; "thumbnail" -> "thumbnail"; "update" -> "update"; else -> "post" }
                     val url = _webhookUrl.value.trimEnd('/') + "/media/upload?kind=$uploadKind&extension=$extension"
                     val request = Request.Builder().url(url)
                         .header("Authorization", "Bearer $idToken")
@@ -2979,8 +3309,16 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val user = FirebaseAuth.getInstance().currentUser ?: return onComplete?.invoke() ?: Unit
         user.getIdToken(false).addOnSuccessListener { tokenResult ->
             val token = tokenResult.token ?: return@addOnSuccessListener onComplete?.invoke() ?: Unit
+            val isSupabaseObject = key.startsWith("supabase:")
+            val storageConfig = _storageRoutingConfig.value
+            val endpoint = if (isSupabaseObject) {
+                if (storageConfig.storageWorkerUrl.isBlank()) return@addOnSuccessListener onComplete?.invoke() ?: Unit
+                "${storageConfig.storageWorkerUrl.trimEnd('/')}/storage/delete"
+            } else {
+                _webhookUrl.value.trimEnd('/') + "/media/delete"
+            }
             val payload = JSONObject().put("key", key).toString()
-            val request = Request.Builder().url(_webhookUrl.value.trimEnd('/') + "/media/delete")
+            val request = Request.Builder().url(endpoint)
                 .header("Authorization", "Bearer $token")
                 .post(payload.toRequestBody("application/json".toMediaTypeOrNull())).build()
             OkHttpClient().newCall(request).enqueue(object : Callback {
@@ -2995,6 +3333,20 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         uri: Uri, fileName: String, contentType: String, contentLength: Long,
         onProgress: (Int, Long) -> Unit, onSuccess: (String) -> Unit, onFailure: (String) -> Unit
     ) {
+        if (_storageRoutingConfig.value.provider.equals("supabase", true)) {
+            val body = ProgressUriRequestBody(getApplication(), uri, contentLength, contentType.toMediaTypeOrNull()) { percent, eta ->
+                viewModelScope.launch(Dispatchers.Main) { onProgress(percent, eta) }
+            }
+            uploadThroughStorageWorker(body, "chat_images", fileName, contentType, "attachment",
+                onSuccess = { json ->
+                    val publicUrl = json.optString("publicUrl")
+                    if (publicUrl.isBlank()) onFailure("Storage Worker returned no public URL")
+                    else { localUploadFiles[publicUrl] = uri.toString(); onSuccess(publicUrl) }
+                },
+                onFailure = onFailure
+            )
+            return
+        }
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val safe = fileName.replace(Regex("[^A-Za-z0-9._-]"), "_").takeLast(180)
@@ -3038,6 +3390,22 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         onSuccess: (String) -> Unit,
         onFailure: (String) -> Unit
     ) {
+        if (_storageRoutingConfig.value.provider.equals("supabase", true)) {
+            uploadThroughStorageWorker(
+                fileBytes.toRequestBody(contentType.toMediaTypeOrNull()),
+                bucket,
+                fileName,
+                contentType,
+                "attachment",
+                onSuccess = { json ->
+                    val publicUrl = json.optString("publicUrl")
+                    if (publicUrl.isBlank()) onFailure("Storage Worker returned no public URL")
+                    else { cacheOutgoingMedia(publicUrl, fileName, fileBytes); onSuccess(publicUrl) }
+                },
+                onFailure = onFailure
+            )
+            return
+        }
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val url = "https://srfztgcdejfaesrvkarg.supabase.co/storage/v1/object/$bucket/$fileName"

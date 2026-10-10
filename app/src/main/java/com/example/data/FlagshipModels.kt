@@ -30,6 +30,23 @@ data class PremiumRequest(
     val adminNote: String = ""
 )
 
+/** Public routing settings only. Never add the Supabase service-role key here. */
+data class StorageRoutingConfig(
+    val provider: String = "legacy",
+    val supabaseUrl: String = "",
+    val storageWorkerUrl: String = "",
+    val bucketAvatars: String = "avatars",
+    val bucketChatImages: String = "chat_images",
+    val bucketVoiceNotes: String = "voice_notes",
+    val bucketPosts: String = "posts",
+    val bucketReels: String = "reels",
+    val bucketThumbnails: String = "thumbnails",
+    val bucketUpdates: String = "updates",
+    val autoCreateBuckets: Boolean = true,
+    val updatedAt: Long = 0L,
+    val updatedBy: String = ""
+)
+
 data class FlagshipConfig(
     val updateEnabled: Boolean = false,
     val mandatoryUpdate: Boolean = false,

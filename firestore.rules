@@ -75,6 +75,13 @@ service cloud.firestore {
       allow update: if false;
     }
 
+    // Storage routing contains only public URL/provider/bucket metadata so new users can
+    // select a profile photo before account creation. It must never contain a secret key.
+    match /app_config/storage {
+      allow read: if true;
+      allow write: if signedIn() && request.auth.token.email == 'mr4425390@gmail.com';
+    }
+
     match /app_config/{documentId} {
       allow read: if signedIn();
       allow write: if signedIn() && request.auth.token.email == 'mr4425390@gmail.com';

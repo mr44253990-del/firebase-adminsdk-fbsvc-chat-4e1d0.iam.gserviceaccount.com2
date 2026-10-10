@@ -50,8 +50,6 @@ import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import com.google.firebase.auth.GoogleAuthProvider
 import kotlinx.coroutines.launch
-import java.io.InputStream
-import java.text.SimpleDateFormat
 import java.util.*
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -100,6 +98,7 @@ fun AuthScreen(
     
     // Profile Picture fields for Sign Up
     var signupProfilePicUrl by remember { mutableStateOf("") }
+    var signupProfilePicBytes by remember { mutableStateOf<ByteArray?>(null) }
     var isUploadingPic by remember { mutableStateOf(false) }
 
     // Forgot Password states
@@ -121,40 +120,26 @@ fun AuthScreen(
         calendar.get(Calendar.DAY_OF_MONTH)
     )
 
-    // Gallery Picker for Profile Pic
+    // Hold the optional signup photo locally until Firebase creates the account. The
+    // authenticated storage Worker must never accept an anonymous service-role upload.
     val galleryLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
         if (uri != null) {
             isUploadingPic = true
             try {
-                val inputStream: InputStream? = context.contentResolver.openInputStream(uri)
-                val bytes = inputStream?.readBytes()
+                val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
                 if (bytes != null) {
-                    val fileExtension = "jpg"
-                    val tempFileName = "signup_${UUID.randomUUID()}_${System.currentTimeMillis()}.$fileExtension"
-                    
-                    viewModel.uploadFileToSupabase(
-                        bucket = "avatars",
-                        fileName = tempFileName,
-                        fileBytes = bytes,
-                        contentType = "image/jpeg",
-                        onSuccess = { publicUrl ->
-                            isUploadingPic = false
-                            signupProfilePicUrl = publicUrl
-                            Toast.makeText(context, "Profile picture selected successfully!", Toast.LENGTH_SHORT).show()
-                        },
-                        onFailure = { errorMsg ->
-                            isUploadingPic = false
-                            Toast.makeText(context, "Upload failed: $errorMsg", Toast.LENGTH_LONG).show()
-                        }
-                    )
+                    signupProfilePicBytes = bytes
+                    signupProfilePicUrl = uri.toString()
+                    Toast.makeText(context, "Profile photo ready; it will upload securely after account creation.", Toast.LENGTH_SHORT).show()
                 } else {
-                    isUploadingPic = false
+                    Toast.makeText(context, "Could not read the selected image", Toast.LENGTH_SHORT).show()
                 }
             } catch (e: Exception) {
-                isUploadingPic = false
                 Toast.makeText(context, "Error reading image: ${e.message}", Toast.LENGTH_SHORT).show()
+            } finally {
+                isUploadingPic = false
             }
         }
     }
@@ -655,7 +640,12 @@ fun AuthScreen(
                                 if (isLoginMode) {
                                     viewModel.login(email, password, onAuthSuccess)
                                 } else {
-                                    viewModel.signup(email, name, dob, password, signupProfilePicUrl, onAuthSuccess)
+                                    viewModel.signup(
+                                        email, name, dob, password,
+                                        if (signupProfilePicBytes == null) signupProfilePicUrl else "",
+                                        onAuthSuccess,
+                                        profileImageBytes = signupProfilePicBytes
+                                    )
                                 }
                             }
                             .testTag("submit_button"),

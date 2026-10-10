@@ -66,6 +66,7 @@ private val postCanvasStyles = listOf(
 @Composable
 fun PostComposerScreen(viewModel: ChatViewModel, onBack: () -> Unit, onPublished: () -> Unit) {
     val context = LocalContext.current
+    val storageRoutingConfig by viewModel.storageRoutingConfig.collectAsState()
     val initialMode = remember { viewModel.consumeComposerMode() }
     val externalShare = remember { viewModel.consumeExternalShare() }
     val users by viewModel.usersState.collectAsState()
@@ -158,7 +159,7 @@ fun PostComposerScreen(viewModel: ChatViewModel, onBack: () -> Unit, onPublished
         containerColor = Color.Transparent,
         topBar = {
             TopAppBar(
-                title = { Column { Text("Create post", fontWeight = FontWeight.Bold); Text("R2 media expires in 10 days", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) } },
+                title = { Column { Text("Create post", fontWeight = FontWeight.Bold); Text("${if (storageRoutingConfig.provider == "supabase") "Supabase" else "R2"} media expires in 10 days", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) } },
                 navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
                 actions = {
                     Button(

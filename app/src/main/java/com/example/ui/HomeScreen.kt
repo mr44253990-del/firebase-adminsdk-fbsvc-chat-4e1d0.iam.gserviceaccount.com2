@@ -220,6 +220,8 @@ fun HomeScreen(
     val presenceWorkerUrl by viewModel.presenceWorkerUrl.collectAsState()
     val presenceWorkerHealth by viewModel.presenceWorkerHealth.collectAsState()
     val presenceDashboard by viewModel.presenceDashboard.collectAsState()
+    val storageRoutingConfig by viewModel.storageRoutingConfig.collectAsState()
+    val storageSetupHealth by viewModel.storageSetupHealth.collectAsState()
     val flagshipConfig by viewModel.flagshipConfig.collectAsState()
     val featureRequests by viewModel.featureRequests.collectAsState()
     val premiumRequests by viewModel.premiumRequests.collectAsState()
@@ -909,6 +911,18 @@ fun HomeScreen(
 
                             var adminUrlInput by remember { mutableStateOf(webhookUrl) }
                             var adminPresenceUrlInput by remember(presenceWorkerUrl) { mutableStateOf(presenceWorkerUrl) }
+                            var storageProviderInput by remember(storageRoutingConfig.provider) { mutableStateOf(storageRoutingConfig.provider) }
+                            var storageProjectUrlInput by remember(storageRoutingConfig.supabaseUrl) { mutableStateOf(storageRoutingConfig.supabaseUrl) }
+                            var storageWorkerUrlInput by remember(storageRoutingConfig.storageWorkerUrl) { mutableStateOf(storageRoutingConfig.storageWorkerUrl) }
+                            var storageAutoCreateInput by remember(storageRoutingConfig.autoCreateBuckets) { mutableStateOf(storageRoutingConfig.autoCreateBuckets) }
+                            var storageBucketAvatarsInput by remember(storageRoutingConfig.bucketAvatars) { mutableStateOf(storageRoutingConfig.bucketAvatars) }
+                            var storageBucketChatInput by remember(storageRoutingConfig.bucketChatImages) { mutableStateOf(storageRoutingConfig.bucketChatImages) }
+                            var storageBucketVoiceInput by remember(storageRoutingConfig.bucketVoiceNotes) { mutableStateOf(storageRoutingConfig.bucketVoiceNotes) }
+                            var storageBucketPostsInput by remember(storageRoutingConfig.bucketPosts) { mutableStateOf(storageRoutingConfig.bucketPosts) }
+                            var storageBucketReelsInput by remember(storageRoutingConfig.bucketReels) { mutableStateOf(storageRoutingConfig.bucketReels) }
+                            var storageBucketThumbsInput by remember(storageRoutingConfig.bucketThumbnails) { mutableStateOf(storageRoutingConfig.bucketThumbnails) }
+                            var storageBucketUpdatesInput by remember(storageRoutingConfig.bucketUpdates) { mutableStateOf(storageRoutingConfig.bucketUpdates) }
+                            var storageSaving by remember { mutableStateOf(false) }
                             var presenceQuery by rememberSaveable { mutableStateOf("") }
 
                             Card(shape = RoundedCornerShape(28.dp), modifier = Modifier.fillMaxWidth()) {
@@ -1206,6 +1220,137 @@ fun HomeScreen(
                                             enabled = !presenceDashboard.checking,
                                             modifier = Modifier.fillMaxWidth()
                                         ) { Text("Load more users") }
+                                    }
+                                }
+                            }
+
+                            Card(shape = RoundedCornerShape(28.dp), modifier = Modifier.fillMaxWidth()) {
+                                Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(Icons.Outlined.CloudUpload, null, tint = MaterialTheme.colorScheme.primary)
+                                        Spacer(Modifier.width(9.dp))
+                                        Text("Unified app storage", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                                    }
+                                    Text(
+                                        "Choose Supabase for every new upload: chat files and media, avatars, stories, posts, reels, thumbnails, and APK updates. The Worker reads the saved config from Firebase automatically, so ordinary URL/settings changes do not require editing its source.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Column(Modifier.weight(1f)) {
+                                            Text("Use Supabase for all uploads", fontWeight = FontWeight.SemiBold)
+                                            Text(if (storageProviderInput == "supabase") "Supabase is the active provider" else "Existing mixed upload routes are active", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
+                                        Switch(
+                                            checked = storageProviderInput == "supabase",
+                                            onCheckedChange = { storageProviderInput = if (it) "supabase" else "legacy" }
+                                        )
+                                    }
+                                    if (storageProviderInput == "supabase") {
+                                        OutlinedTextField(
+                                            value = storageProjectUrlInput,
+                                            onValueChange = { storageProjectUrlInput = it.trim() },
+                                            label = { Text("Supabase Project URL") },
+                                            placeholder = { Text("https://your-project.supabase.co") },
+                                            supportingText = { Text("Project URL only — do not include /storage/v1 or any API key.") },
+                                            modifier = Modifier.fillMaxWidth(),
+                                            singleLine = true,
+                                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri)
+                                        )
+                                        OutlinedTextField(
+                                            value = storageWorkerUrlInput,
+                                            onValueChange = { storageWorkerUrlInput = it.trim() },
+                                            label = { Text("Storage Worker HTTPS URL") },
+                                            placeholder = { Text("https://convo-storage.your-account.workers.dev") },
+                                            supportingText = { Text("Deploy firechat-storage-worker.js once, then save its HTTPS URL here.") },
+                                            modifier = Modifier.fillMaxWidth(),
+                                            singleLine = true,
+                                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri)
+                                        )
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Checkbox(checked = storageAutoCreateInput, onCheckedChange = { storageAutoCreateInput = it })
+                                            Column {
+                                                Text("Create missing buckets during setup test", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                                Text("Requires the Worker service-role secret", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            }
+                                        }
+                                        Text("Public Supabase bucket IDs (saved to Firebase config; created by Test & prepare)", fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            OutlinedTextField(storageBucketAvatarsInput, { storageBucketAvatarsInput = it.lowercase().filter { c -> c.isLetterOrDigit() || c == '_' || c == '-' }.take(63) }, label = { Text("Avatars") }, singleLine = true, modifier = Modifier.weight(1f))
+                                            OutlinedTextField(storageBucketChatInput, { storageBucketChatInput = it.lowercase().filter { c -> c.isLetterOrDigit() || c == '_' || c == '-' }.take(63) }, label = { Text("Chat / stories") }, singleLine = true, modifier = Modifier.weight(1f))
+                                        }
+                                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            OutlinedTextField(storageBucketVoiceInput, { storageBucketVoiceInput = it.lowercase().filter { c -> c.isLetterOrDigit() || c == '_' || c == '-' }.take(63) }, label = { Text("Voice notes") }, singleLine = true, modifier = Modifier.weight(1f))
+                                            OutlinedTextField(storageBucketPostsInput, { storageBucketPostsInput = it.lowercase().filter { c -> c.isLetterOrDigit() || c == '_' || c == '-' }.take(63) }, label = { Text("Posts") }, singleLine = true, modifier = Modifier.weight(1f))
+                                        }
+                                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            OutlinedTextField(storageBucketReelsInput, { storageBucketReelsInput = it.lowercase().filter { c -> c.isLetterOrDigit() || c == '_' || c == '-' }.take(63) }, label = { Text("Reels") }, singleLine = true, modifier = Modifier.weight(1f))
+                                            OutlinedTextField(storageBucketThumbsInput, { storageBucketThumbsInput = it.lowercase().filter { c -> c.isLetterOrDigit() || c == '_' || c == '-' }.take(63) }, label = { Text("Thumbnails") }, singleLine = true, modifier = Modifier.weight(1f))
+                                        }
+                                        OutlinedTextField(storageBucketUpdatesInput, { storageBucketUpdatesInput = it.lowercase().filter { c -> c.isLetterOrDigit() || c == '_' || c == '-' }.take(63) }, label = { Text("APK updates") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                                        Text("Folders are virtual and appear automatically after the first upload. These media buckets must be public; do not store private documents here. Use unique IDs with 2–63 lowercase letters, digits, underscores, or hyphens.", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text(
+                                            "Security: never paste a service-role key into Android or Firestore. Configure SUPABASE_SERVICE_ROLE_KEY as a Cloudflare Worker secret once; the app only stores the non-secret Project URL and routing settings.",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.error
+                                        )
+                                    }
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Button(
+                                            onClick = {
+                                                storageSaving = true
+                                                viewModel.saveStorageRoutingConfig(storageProviderInput, storageProjectUrlInput, storageWorkerUrlInput, storageAutoCreateInput, storageBucketAvatarsInput, storageBucketChatInput, storageBucketVoiceInput, storageBucketPostsInput, storageBucketReelsInput, storageBucketThumbsInput, storageBucketUpdatesInput) { ok, message ->
+                                                    storageSaving = false
+                                                    Toast.makeText(context, message, if (ok) Toast.LENGTH_SHORT else Toast.LENGTH_LONG).show()
+                                                }
+                                            },
+                                            enabled = !storageSaving,
+                                            modifier = Modifier.weight(1f)
+                                        ) {
+                                            if (storageSaving) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                                            else Icon(Icons.Default.Save, null)
+                                            Spacer(Modifier.width(6.dp)); Text("Save settings")
+                                        }
+                                        OutlinedButton(
+                                            onClick = {
+                                                storageSaving = true
+                                                viewModel.saveStorageRoutingConfig(storageProviderInput, storageProjectUrlInput, storageWorkerUrlInput, storageAutoCreateInput, storageBucketAvatarsInput, storageBucketChatInput, storageBucketVoiceInput, storageBucketPostsInput, storageBucketReelsInput, storageBucketThumbsInput, storageBucketUpdatesInput) { saved, message ->
+                                                    if (!saved) {
+                                                        storageSaving = false
+                                                        Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+                                                    } else {
+                                                        viewModel.testStorageRoutingConfig(storageWorkerUrlInput) { testOk, resultMessage ->
+                                                            uiScope.launch(Dispatchers.Main) {
+                                                                storageSaving = false
+                                                                Toast.makeText(context, resultMessage, if (testOk) Toast.LENGTH_SHORT else Toast.LENGTH_LONG).show()
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            },
+                                            enabled = !storageSaving && storageProviderInput == "supabase",
+                                            modifier = Modifier.weight(1f)
+                                        ) {
+                                            if (storageSaving || storageSetupHealth.checking) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                                            else Icon(Icons.Outlined.HealthAndSafety, null)
+                                            Spacer(Modifier.width(6.dp)); Text("Save + test")
+                                        }
+                                    }
+                                    Surface(
+                                        color = if (storageSetupHealth.ok) Color(0xFF1F7A4D).copy(alpha = .16f) else MaterialTheme.colorScheme.errorContainer.copy(alpha = .45f),
+                                        shape = RoundedCornerShape(16.dp),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Icon(if (storageSetupHealth.ok) Icons.Default.CheckCircle else Icons.Default.Info, null, tint = if (storageSetupHealth.ok) Color(0xFF45D483) else MaterialTheme.colorScheme.onSurfaceVariant)
+                                                Spacer(Modifier.width(8.dp))
+                                                Text(storageSetupHealth.message, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+                                            }
+                                            if (storageSetupHealth.projectHost.isNotBlank()) Text("Project: ${storageSetupHealth.projectHost}", fontSize = 10.sp)
+                                            storageSetupHealth.bucketChecks.forEach { Text("• $it", fontSize = 10.sp) }
+                                            storageSetupHealth.instructions.forEach { Text("Next step: $it", fontSize = 10.sp, color = MaterialTheme.colorScheme.error) }
+                                        }
                                     }
                                 }
                             }

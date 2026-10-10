@@ -85,17 +85,13 @@ The app does not keep a persistent Android presence service. A separate Cloudfla
 
 When an incoming-call FCM reaches the callee, the device changes RTDB status from `calling` to `ringing`; the caller then hears ringback. Connecting vibrates briefly, audio calls use the proximity sensor to turn the screen off near the ear, and notification messages support inline replies. Only an active call starts a temporary phone-call foreground service and CPU wake lock, keeping microphone/camera alive with the screen off; it stops immediately when the call ends.
 
-### Cloudflare R2 posts and reels
+### Unified app storage (Supabase + Cloudflare Worker)
 
-Stories and chat media retain their existing storage flow. New post photos/videos and reels upload through authenticated Worker `4.2.0` directly to the `MEDIA_BUCKET` R2 binding. Configure:
+Admin Settings → **Unified app storage** can route every new upload through Supabase: chat attachments, voice messages, avatars, stories, posts, reels, thumbnails, and signed APK updates. The admin can set the Project URL and each public bucket ID, save the settings to Firestore `app_config/storage`, and run **Save + test**. The dedicated `firechat-storage-worker.js` reads those non-secret settings live, so changing the URL/provider/bucket IDs does not require editing or redeploying Worker source.
 
-```text
-R2_BUCKET_NAME=firechat-media
-R2_PUBLIC_BASE_URL=https://pub-....r2.dev
-Worker binding name=MEDIA_BUCKET
-```
+Deploy and configure the new Worker once with [`docs/storage-worker.md`](docs/storage-worker.md) and `wrangler-storage.toml`. Keep `FIREBASE_SERVICE_ACCOUNT` and `SUPABASE_SERVICE_ROLE_KEY` only in Cloudflare Worker secrets. The Worker verifies Firebase ID tokens, keeps the Supabase service-role key server-side, limits upload size, restricts APK upload/delete to the admin, checks ownership on deletes, creates missing buckets when enabled, and reports exact bucket/write/delete diagnostics. Standard buckets start as `avatars`, `chat_images`, `voice_notes`, `posts`, `reels`, `thumbnails`, and `updates`; folders are virtual and appear on first upload. Public visibility is required because media URLs are served to other app users.
 
-Set the bucket public in R2, deploy `r2-lifecycle.json`, and apply the 10-day expiration lifecycle to all post/reel objects. Worker endpoints are `/media/upload`, `/media/delete`, `/media/reels/list`, and `/media/reels/search`. Firestore stores mutable metadata, likes, comments and R2 object keys; R2 stores binaries only.
+Deploy the branch's `firestore.rules` so the **non-secret** `app_config/storage` document can be read before account creation (needed for signup profile-photo routing); all other app config remains signed-in only, and only the admin can write it. Turning the Supabase switch off restores the existing mixed R2/direct-Supabase route. Post/reel/thumbnail metadata keeps the existing ten-day expiry behavior; APK files do not expire.
 
 ### App lock and notification privacy
 
