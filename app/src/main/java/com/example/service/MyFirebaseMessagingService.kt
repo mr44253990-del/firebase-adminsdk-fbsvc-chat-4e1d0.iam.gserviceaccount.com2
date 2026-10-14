@@ -34,7 +34,6 @@ import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.SetOptions
 import com.google.firebase.database.FirebaseDatabase
 import com.google.firebase.database.ServerValue
-import com.google.firebase.messaging.FirebaseMessaging
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
 import java.net.HttpURLConnection
@@ -53,11 +52,9 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
     override fun onNewToken(token: String) {
         super.onNewToken(token)
         // Never log the raw registration token; it is a device-routing credential.
-        // If a user is currently authenticated, refresh its profile token and topic membership.
+        // If a user is currently authenticated, refresh the Firestore token used by the Worker.
         val currentUid = FirebaseAuth.getInstance().currentUser?.uid
         if (currentUid != null) {
-            FirebaseMessaging.getInstance().subscribeToTopic("convo_presence_v1")
-                .addOnFailureListener { error -> Log.w("FCM_SERVICE", "Presence topic subscription failed: ${error.message}") }
             FirebaseFirestore.getInstance().collection("users")
                 .document(currentUid)
                 .update(mapOf("fcmToken" to token, "fcmTokenUpdatedAt" to System.currentTimeMillis()))

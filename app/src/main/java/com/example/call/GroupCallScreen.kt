@@ -28,6 +28,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -50,7 +51,10 @@ fun GroupCallScreen(
     autoStart: Boolean = true
 ) {
     val context = LocalContext.current
+    val callSkinId by CallSkinPreferences.selectedId.collectAsState()
     val state by GroupCallEngine.state.collectAsState()
+    LaunchedEffect(context.applicationContext) { CallSkinPreferences.load(context) }
+    val callPalette = CallSkinPreferences.palette(callSkinId)
     var permissionResult by remember { mutableStateOf<Map<String, Boolean>?>(null) }
     var started by remember { mutableStateOf(false) }
     var joinRequested by remember { mutableStateOf(autoStart) }
@@ -126,6 +130,8 @@ fun GroupCallScreen(
     }
 
     Scaffold(
+        containerColor = Color.Transparent,
+        contentColor = Color.White,
         topBar = {
             TopAppBar(
                 title = { Text(group.name) },
@@ -182,13 +188,19 @@ fun GroupCallScreen(
                     }
                                                 Text("${state.participants.size}/6", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(end = 10.dp))
 
-                }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = callPalette.surface,
+                    titleContentColor = Color.White,
+                    navigationIconContentColor = Color.White,
+                    actionIconContentColor = Color.White
+                )
             )
         },
         bottomBar = {
             if (joinRequested && started) {
                 Row(
-                    modifier = Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface).navigationBarsPadding().padding(horizontal = 12.dp, vertical = 8.dp),
+                    modifier = Modifier.fillMaxWidth().background(callPalette.surface).navigationBarsPadding().padding(horizontal = 12.dp, vertical = 8.dp),
                     horizontalArrangement = Arrangement.SpaceEvenly,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -262,7 +274,7 @@ fun GroupCallScreen(
             }
         }
     ) { padding ->
-        Column(Modifier.fillMaxSize().padding(padding).padding(8.dp)) {
+        Column(Modifier.fillMaxSize().background(Brush.verticalGradient(callPalette.background)).padding(padding).padding(8.dp)) {
             if (!joinRequested) {
                 Card(
                     modifier = Modifier.fillMaxWidth().padding(12.dp),

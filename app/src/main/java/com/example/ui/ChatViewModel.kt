@@ -623,7 +623,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         val ready = it.isSuccessful && json.optBoolean("ok", false)
                         _presenceWorkerHealth.value = PresenceWorkerHealth(
                             configured = ready,
-                            message = if (ready) "Presence API is ready · confirm that exactly one five-minute schedule is active" else json.optString("error", "Endpoint is online but Firebase is not configured"),
+                            message = if (ready) "Presence Worker is ready · confirm that exactly one five-minute Cron is active" else json.optString("error", "Worker is reachable but its service-account secret is not configured"),
                             version = json.optString("version")
                         )
                     }
@@ -905,14 +905,47 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     fun syncPresenceToWorker(active: Boolean = true, foreground: Boolean = true) {
         if (FirebaseAuth.getInstance().currentUser == null) return
-        workerSecurityPost(
+        presenceWorkerPost(
             "/presence/heartbeat",
-            JSONObject()
-                .put("active", active)
-                .put("foreground", foreground)
-                .put("onlineUntil", if (active) System.currentTimeMillis() + 5 * 60 * 1000L else 0L)
-                .put("appVersion", BuildConfig.VERSION_NAME)
-        ) { _, _ -> }
+            JSONObject().put("active", active).put("foreground", foreground)
+        ) { ok, json ->
+            if (!ok) Log.w("FCM_PRESENCE", "Worker heartbeat was not accepted: ${json.optString("error", "request failed")}")
+        }
+    }
+
+    fun sendPresenceProbeNow(onComplete: (Boolean, String) -> Unit = { _, _ -> }) {
+        if (!isCurrentAdmin()) return onComplete(false, "Admin access required")
+        presenceWorkerPost("/admin/probe", JSONObject()) { ok, json ->
+            val result = if (ok) "FCM accepted ${json.optInt("acceptedByFcm")} of ${json.optInt("devicesTargeted")} device sends; acceptance does not confirm receipt. Refresh later for acknowledgements."
+            else json.optString("error", "Could not send presence probe")
+            onComplete(ok, result)
+        }
+    }
+
+    private fun presenceWorkerPost(path: String, payload: JSONObject, onResult: (Boolean, JSONObject) -> Unit) {
+        val baseUrl = _presenceWorkerUrl.value.trimEnd('/')
+        if (!baseUrl.startsWith("https://", ignoreCase = true) || runCatching { Uri.parse(baseUrl).host.isNullOrBlank() }.getOrDefault(true)) {
+            return onResult(false, JSONObject().put("error", "Save a valid HTTPS Presence Worker URL first"))
+        }
+        val user = FirebaseAuth.getInstance().currentUser ?: return onResult(false, JSONObject().put("error", "Not signed in"))
+        user.getIdToken(false).addOnSuccessListener { tokenResult ->
+            val token = tokenResult.token ?: return@addOnSuccessListener onResult(false, JSONObject().put("error", "Missing Firebase ID token"))
+            viewModelScope.launch(Dispatchers.IO) {
+                try {
+                    val request = Request.Builder()
+                        .url(baseUrl + path)
+                        .header("Authorization", "Bearer $token")
+                        .post(payload.toString().toRequestBody("application/json".toMediaTypeOrNull()))
+                        .build()
+                    OkHttpClient.Builder().callTimeout(45, TimeUnit.SECONDS).build().newCall(request).execute().use { response ->
+                        val json = runCatching { JSONObject(response.body?.string().orEmpty()) }.getOrDefault(JSONObject())
+                        withContext(Dispatchers.Main) { onResult(response.isSuccessful && json.optBoolean("ok", response.isSuccessful), json) }
+                    }
+                } catch (error: Throwable) {
+                    withContext(Dispatchers.Main) { onResult(false, JSONObject().put("error", error.localizedMessage ?: "Presence Worker request failed")) }
+                }
+            }
+        }.addOnFailureListener { error -> onResult(false, JSONObject().put("error", error.localizedMessage ?: "Authentication failed")) }
     }
 
     fun registerDeviceSession() {
@@ -1376,8 +1409,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             val auth = FirebaseAuth.getInstance()
             listenToGlobalConfig()
             if (auth.currentUser != null) {
-                FirebaseMessaging.getInstance().subscribeToTopic("convo_presence_v1")
-                    .addOnFailureListener { Log.w("FCM_PRESENCE", "Presence topic subscription failed: ${it.message}") }
                 val uid = auth.currentUser!!.uid
                 loadCurrentUserProfile(uid)
                 setupPresence(uid)
@@ -1609,8 +1640,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 getDatabaseInstance().getReference("status").child(uid)
                     .setValue(mapOf("isOnline" to false, "lastActive" to System.currentTimeMillis()))
             }
-            FirebaseMessaging.getInstance().unsubscribeFromTopic("convo_presence_v1")
-                .addOnFailureListener { Log.w("FCM_PRESENCE", "Presence topic unsubscribe failed: ${it.message}") }
+            if (uid != null) syncPresenceToWorker(active = false, foreground = false)
             FirebaseAuth.getInstance().signOut()
             currentUserProfileListener?.remove()
             currentUserProfileListener = null
@@ -1629,10 +1659,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun retrieveFCMTokenAndStore(uid: String) {
         try {
-            if (FirebaseAuth.getInstance().currentUser?.uid == uid) {
-                FirebaseMessaging.getInstance().subscribeToTopic("convo_presence_v1")
-                    .addOnFailureListener { Log.w("FCM_PRESENCE", "Presence topic subscription failed: ${it.message}") }
-            }
             FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
                 if (!task.isSuccessful) {
                     Log.w("FCM_TOKEN", "Fetching FCM registration token failed", task.exception)
@@ -1853,6 +1879,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     val now = System.currentTimeMillis()
                     statusRef.setValue(mapOf("isOnline" to true, "lastActive" to now, "onlineUntil" to now + 5 * 60 * 1000L, "offlineSince" to 0L))
                     statusRef.onDisconnect().setValue(mapOf("isOnline" to false, "lastActive" to now, "onlineUntil" to 0L, "offlineSince" to now))
+                    syncPresenceToWorker(active = true, foreground = true)
                 }
             }
             override fun onCancelled(error: DatabaseError) {}

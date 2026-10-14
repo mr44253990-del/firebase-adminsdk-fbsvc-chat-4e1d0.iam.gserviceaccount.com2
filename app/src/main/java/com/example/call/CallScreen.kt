@@ -132,7 +132,10 @@ fun CallScreen(
 ) {
     val context = LocalContext.current
     val view = LocalView.current
+    val callSkinId by CallSkinPreferences.selectedId.collectAsState()
     val state by CallEngine.state.collectAsState()
+    LaunchedEffect(context.applicationContext) { CallSkinPreferences.load(context) }
+    val callPalette = CallSkinPreferences.palette(callSkinId)
     val effectiveVideo = video || state.video
     var elapsedSeconds by remember { mutableLongStateOf(0L) }
     val callMotion = rememberInfiniteTransition(label = "call_liquid_motion")
@@ -176,15 +179,18 @@ fun CallScreen(
     }
     LaunchedEffect(state.status) { if (state.status in listOf("ended", "declined", "missed", "failed")) kotlinx.coroutines.delay(900).also { onClose() } }
     Box(
-        Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF080A12), Color(0xFF28204B), Color(0xFF071B26)))),
+        Modifier.fillMaxSize().background(Brush.verticalGradient(callPalette.background)),
         contentAlignment = Alignment.Center
     ) {
-        if (remoteImage.isNotBlank() && !effectiveVideo) AsyncImage(remoteImage, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize().blur(70.dp))
+        if (remoteImage.isNotBlank() && !effectiveVideo) {
+            AsyncImage(remoteImage, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize().blur(70.dp))
+            Box(Modifier.fillMaxSize().background(Brush.verticalGradient(callPalette.background.map { it.copy(alpha = .72f) })))
+        }
         if (effectiveVideo && accepted) {
             if (state.remoteCameraOff) {
-                Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF090A13), Color(0xFF26213F)))), contentAlignment = Alignment.Center) {
+                Box(Modifier.fillMaxSize().background(Brush.verticalGradient(callPalette.background)), contentAlignment = Alignment.Center) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        AsyncImage(remoteImage.ifBlank { null }, remoteName, error = painterResource(R.drawable.img_app_logo), contentScale = ContentScale.Crop, modifier = Modifier.size(150.dp).clip(CircleShape).border(3.dp, Color.White.copy(.75f), CircleShape))
+                        AsyncImage(remoteImage.ifBlank { null }, remoteName, error = painterResource(R.drawable.img_app_logo), contentScale = ContentScale.Crop, modifier = Modifier.size(150.dp).clip(CircleShape).border(3.dp, callPalette.accent.copy(.82f), CircleShape))
                         Spacer(Modifier.height(14.dp)); Text("$remoteName turned off the camera", color = Color.White, fontWeight = FontWeight.Bold)
                     }
                 }
@@ -218,7 +224,7 @@ fun CallScreen(
                     AsyncImage(
                         model = remoteImage.ifBlank { null }, contentDescription = remoteName,
                         error = painterResource(R.drawable.img_app_logo), contentScale = ContentScale.Crop,
-                        modifier = Modifier.size(138.dp).scale(if (!accepted && incoming) callPulse else 1f).clip(CircleShape).border(4.dp, Brush.sweepGradient(listOf(Color(0xFF66E5FF),Color(0xFF9A6CFF),Color(0xFFFF5BAD),Color(0xFF66E5FF))), CircleShape)
+                        modifier = Modifier.size(138.dp).scale(if (!accepted && incoming) callPulse else 1f).clip(CircleShape).border(4.dp, Brush.sweepGradient(listOf(callPalette.accent, Color.White.copy(alpha = .88f), callPalette.accent)), CircleShape)
                     )
                     Spacer(Modifier.height(26.dp))
                     Text(remoteName, color = Color.White, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.ExtraBold, textAlign = TextAlign.Center)
@@ -306,7 +312,7 @@ fun CallScreen(
                 }
             }
             Spacer(Modifier.height(30.dp))
-            Text("Secured with WebRTC • Cloudflare TURN", color = Color.White.copy(.4f), style = MaterialTheme.typography.labelSmall)
+            Text("Secured with WebRTC • Cloudflare TURN", color = callPalette.accent.copy(.55f), style = MaterialTheme.typography.labelSmall)
         }
     }
 }

@@ -1,21 +1,66 @@
 /**
- * Convo Chat Presence Worker — intentionally separate from the FCM/media gateway.
+ * Convo Chat Presence Worker — Cloudflare-only presence scheduling and admin API.
  *
- * Cloudflare setup:
- *   - Secret: FIREBASE_SERVICE_ACCOUNT (fresh Firebase service-account JSON)
- *   - Cron trigger: every five minutes
- *
- * The cron sends one normal-priority, data-only FCM topic signal to all signed-in
- * Convo Chat installations. Each device records its response in its own
- * Firestore presence/{uid} document. Admin-only /admin/users returns the profile
- * count and a paginated reachability view without exposing FCM tokens.
+ * Configure FIREBASE_SERVICE_ACCOUNT as an encrypted Cloudflare Worker secret and
+ * deploy a Cron trigger that runs every five minutes. Each run reads
+ * users/{uid}.fcmToken and
+ * sends a silent, normal-priority data-only FCM probe to each distinct device.
+ * Devices acknowledge delivery in presence/{uid}; this Worker reconciles the
+ * persisted online/reachable/offline status from that acknowledgement and lease.
+ * Raw FCM tokens are never returned by an API response or written to probe logs.
  */
 
-const VERSION = "1.0.0";
-const PRESENCE_TOPIC = "convo_presence_v1";
+const VERSION = "2.0.0";
 const ADMIN_EMAIL = "mr4425390@gmail.com";
 const AUTH_SCOPE = "https://www.googleapis.com/auth/datastore https://www.googleapis.com/auth/firebase.messaging";
 const ACTIVE_GRACE_MS = 12 * 60 * 1000;
+const ONLINE_LEASE_MS = 5 * 60 * 1000;
+const FCM_SEND_CONCURRENCY = 8;
+
+export function normalizePresenceRoute(pathname) {
+  const normalized = String(pathname || "/").replace(/\/+$/, "") || "/";
+  const routes = ["/health", "/presence/heartbeat", "/admin/users", "/admin/probe"];
+  return routes.find(route => normalized === route || normalized.endsWith(route)) || normalized;
+}
+
+export function classifyPresence(presence = {}, now = Date.now()) {
+  const lastActive = asMillis(presence.lastActive);
+  const lastPushReceivedAt = asMillis(presence.lastPushReceivedAt);
+  const lastProbeReceivedAt = asMillis(presence.lastProbeReceivedAt);
+  const lastSignalAt = Math.max(lastActive, lastPushReceivedAt, lastProbeReceivedAt);
+  const onlineUntil = asMillis(presence.onlineUntil);
+  const leaseActive = presence.isOnline === true && onlineUntil > now;
+  const explicitlyOffline = presence.source === "presence-worker-heartbeat" && presence.isOnline === false;
+  const acknowledgementAt = Math.max(lastPushReceivedAt, lastProbeReceivedAt);
+  const offlineSince = asMillis(presence.offlineSince);
+  const recentSignal = explicitlyOffline
+    ? acknowledgementAt > offlineSince && now - acknowledgementAt <= ACTIVE_GRACE_MS
+    : lastSignalAt > 0 && now - lastSignalAt <= ACTIVE_GRACE_MS;
+  const foreground = leaseActive && presence.foreground === true;
+  const reachable = leaseActive || recentSignal;
+  return {
+    status: foreground ? "online" : reachable ? "reachable" : "offline",
+    isActive: reachable,
+    foreground,
+    lastActive: lastSignalAt,
+    lastProbeReceivedAt,
+    onlineUntil
+  };
+}
+
+export function buildPresenceProbeMessage(token, probeId, sentAt) {
+  return {
+    message: {
+      token,
+      data: {
+        notificationType: "presence_probe",
+        probeId: String(probeId),
+        sentAt: String(sentAt)
+      },
+      android: { priority: "NORMAL", ttl: "60s" }
+    }
+  };
+}
 
 let jwksCache = null;
 let jwksExpiresAt = 0;
@@ -27,7 +72,7 @@ export default {
 
   async fetch(request, env) {
     const url = new URL(request.url);
-    const path = url.pathname.replace(/\/+$/, "") || "/";
+    const path = normalizePresenceRoute(url.pathname);
 
     if (request.method === "OPTIONS") {
       return new Response("OK", {
@@ -45,11 +90,35 @@ export default {
         ok: configured,
         service: "Convo Chat Presence Monitor",
         version: VERSION,
-        topicConfigured: true,
+        deliveryMode: "per-device-token",
         probeIntervalMinutes: 5,
         userCollection: "users",
         timestamp: Date.now()
       }, configured ? 200 : 503);
+    }
+
+    if (request.method === "POST" && path === "/presence/heartbeat") {
+      const auth = await authenticateUser(request, env);
+      if (!auth.ok) return auth.response;
+      try {
+        const body = await request.json().catch(() => ({}));
+        const now = Date.now();
+        const active = body.active !== false;
+        const foreground = active && body.foreground !== false;
+        const state = {
+          uid: auth.caller.sub,
+          isOnline: active,
+          foreground,
+          lastActive: now,
+          onlineUntil: active ? now + ONLINE_LEASE_MS : 0,
+          offlineSince: active ? 0 : now,
+          source: "presence-worker-heartbeat"
+        };
+        await firestorePatch(auth.account.project_id, `presence/${auth.caller.sub}`, state, auth.token);
+        return jsonResponse({ ok: true, status: classifyPresence(state, now).status, onlineUntil: state.onlineUntil });
+      } catch (error) {
+        return jsonResponse({ ok: false, error: safeError(error) }, 500);
+      }
     }
 
     if (request.method === "GET" && path === "/admin/users") {
@@ -71,24 +140,16 @@ export default {
         const allUsers = profiles.map(profile => {
           const uid = String(profile.uid || profile.__id || "");
           const presence = presenceByUid.get(uid) || {};
-          const lastActive = asMillis(presence.lastActive);
-          const lastPushReceivedAt = asMillis(presence.lastPushReceivedAt);
-          const lastSignalAt = Math.max(lastActive, lastPushReceivedAt);
-          const onlineUntil = asMillis(presence.onlineUntil);
-          const leaseActive = presence.isOnline === true && onlineUntil > now;
-          const recentSignal = lastSignalAt > 0 && now - lastSignalAt <= ACTIVE_GRACE_MS;
-          const reachable = leaseActive || recentSignal;
-          const foreground = reachable && presence.foreground === true;
-          const status = foreground ? "online" : reachable ? "reachable" : "offline";
+          const state = classifyPresence(presence, now);
           return {
             uid,
             name: String(profile.name || profile.username || "Convo Chat user").slice(0, 120),
             username: String(profile.username || "").slice(0, 80),
-            status,
-            isActive: reachable,
-            foreground,
-            lastActive: lastSignalAt,
-            lastProbeReceivedAt: asMillis(presence.lastProbeReceivedAt),
+            status: state.status,
+            isActive: state.isActive,
+            foreground: state.foreground,
+            lastActive: state.lastActive,
+            lastProbeReceivedAt: state.lastProbeReceivedAt,
             hasFcmToken: typeof profile.fcmToken === "string" && profile.fcmToken.length > 0
           };
         }).sort((a, b) => Number(b.isActive) - Number(a.isActive) || b.lastActive - a.lastActive || a.name.localeCompare(b.name));
@@ -141,61 +202,141 @@ async function runPresenceProbe(env) {
   const token = await getGoogleAccessToken(account, AUTH_SCOPE);
   const now = Date.now();
   const probeId = crypto.randomUUID();
-  const endpoint = `https://fcm.googleapis.com/v1/projects/${encodeURIComponent(account.project_id)}/messages:send`;
-  const response = await fetch(endpoint, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      message: {
-        topic: PRESENCE_TOPIC,
-        data: {
-          title: "",
-          body: "",
-          notificationType: "presence_probe",
-          probeId,
-          sentAt: String(now)
-        },
-        android: {
-          priority: "NORMAL",
-          ttl: "60s"
-        }
-      }
-    })
-  });
-  const result = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(`FCM topic delivery failed (${response.status}): ${String(result?.error?.message || "upstream rejected request").slice(0, 240)}`);
+  const [profiles, presences] = await Promise.all([
+    firestoreListAll(account.project_id, "users", token),
+    firestoreListAll(account.project_id, "presence", token)
+  ]);
+  const presenceByUid = new Map(presences.map(item => [item.__id, item]));
+  const targetsByToken = new Map();
+  let noTokenUsers = 0;
+  for (const profile of profiles) {
+    const uid = String(profile.uid || profile.__id || "");
+    const fcmToken = typeof profile.fcmToken === "string" ? profile.fcmToken.trim() : "";
+    if (!uid || !fcmToken) { noTokenUsers++; continue; }
+    const existing = targetsByToken.get(fcmToken);
+    if (existing) existing.uids.push(uid);
+    else targetsByToken.set(fcmToken, { token: fcmToken, uids: [uid] });
   }
+  const targets = Array.from(targetsByToken.values());
+  const endpoint = `https://fcm.googleapis.com/v1/projects/${encodeURIComponent(account.project_id)}/messages:send`;
+  const results = await mapWithConcurrency(targets, FCM_SEND_CONCURRENCY, async target => {
+    try {
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify(buildPresenceProbeMessage(target.token, probeId, now))
+      });
+      const body = await response.json().catch(() => ({}));
+      const detailCodes = Array.isArray(body?.error?.details)
+        ? body.error.details.map(detail => String(detail?.errorCode || "").toUpperCase()).filter(Boolean)
+        : [];
+      const fcmCode = String(body?.error?.status || response.status).toUpperCase();
+      const invalidToken = [fcmCode, ...detailCodes].some(code => code === "UNREGISTERED" || code === "INVALID_ARGUMENT");
+      return {
+        uids: target.uids,
+        accepted: response.ok,
+        invalidToken,
+        errorCode: response.ok ? "" : fcmCode
+      };
+    } catch (_) {
+      return { uids: target.uids, accepted: false, invalidToken: false, errorCode: "NETWORK_ERROR" };
+    }
+  });
+
+  const acceptedUids = new Set();
+  let accepted = 0;
+  let failed = 0;
+  let invalidTokens = 0;
+  for (const result of results) {
+    if (result.accepted) {
+      accepted++;
+      result.uids.forEach(uid => acceptedUids.add(uid));
+    } else {
+      failed++;
+      if (result.invalidToken) invalidTokens++;
+    }
+  }
+
+  const statusCounts = { online: 0, reachable: 0, offline: 0 };
+  const updates = [];
+  for (const profile of profiles) {
+    const uid = String(profile.uid || profile.__id || "");
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(uid)) continue;
+    const presence = presenceByUid.get(uid) || {};
+    const state = classifyPresence(presence, now);
+    statusCounts[state.status]++;
+    const fields = {};
+    if (presence.presenceStatus !== state.status) {
+      fields.presenceStatus = state.status;
+      fields.statusUpdatedAt = now;
+    }
+    if (acceptedUids.has(uid)) {
+      fields.lastProbeSentAt = now;
+      fields.lastProbeSentId = probeId;
+    }
+    if (Object.keys(fields).length) updates.push({ uid, fields });
+  }
+  if (updates.length) await firestoreBatchPatch(account.project_id, updates, token);
 
   await firestoreSet(account.project_id, "presence_monitor/state", {
     lastProbeAt: now,
     lastProbeId: probeId,
-    lastProbeMessage: String(result.name || ""),
-    lastProbeTopic: PRESENCE_TOPIC,
-    lastProbeStatus: "sent"
+    lastProbeMode: "per-device-token",
+    lastProbeStatus: targets.length === 0 ? "no-targets" : failed > 0 ? (accepted > 0 ? "partial" : "failed") : "sent",
+    totalProfiles: profiles.length,
+    devicesTargeted: targets.length,
+    devicesAcceptedByFcm: accepted,
+    devicesFailed: failed,
+    invalidTokens,
+    usersWithoutToken: noTokenUsers,
+    statusCounts
   }, token);
   return {
     probeId,
     sentAt: now,
-    topic: PRESENCE_TOPIC,
-    fcmMessageId: String(result.name || "")
+    mode: "per-device-token",
+    totalProfiles: profiles.length,
+    devicesTargeted: targets.length,
+    acceptedByFcm: accepted,
+    failed,
+    invalidTokens,
+    usersWithoutToken: noTokenUsers,
+    statusCounts
   };
 }
 
-async function authenticateAdmin(request, env) {
+async function mapWithConcurrency(items, concurrency, mapper) {
+  const results = new Array(items.length);
+  let nextIndex = 0;
+  const count = Math.min(Math.max(1, concurrency), items.length);
+  await Promise.all(Array.from({ length: count }, async () => {
+    while (true) {
+      const index = nextIndex++;
+      if (index >= items.length) return;
+      results[index] = await mapper(items[index], index);
+    }
+  }));
+  return results;
+}
+
+async function authenticateUser(request, env) {
   const account = readServiceAccount(env);
   if (!account?.project_id) {
     return { ok: false, response: jsonResponse({ error: "FIREBASE_SERVICE_ACCOUNT is not configured" }, 503) };
   }
   const caller = await verifyFirebaseIdToken(request, account.project_id);
   if (!caller) return { ok: false, response: jsonResponse({ error: "Unauthorized Firebase caller" }, 401) };
-  const email = String(caller.email || "").trim().toLowerCase().replace(/\.+$/, "");
+  const token = await getGoogleAccessToken(account, AUTH_SCOPE);
+  return { ok: true, caller, account, token };
+}
+
+async function authenticateAdmin(request, env) {
+  const auth = await authenticateUser(request, env);
+  if (!auth.ok) return auth;
+  const email = String(auth.caller.email || "").trim().toLowerCase().replace(/\.+$/, "");
   const configuredAdmin = String(env.ADMIN_EMAIL || ADMIN_EMAIL).trim().toLowerCase().replace(/\.+$/, "");
   if (email !== configuredAdmin) return { ok: false, response: jsonResponse({ error: "Admin only" }, 403) };
-  return { ok: true, caller, account };
+  return auth;
 }
 
 async function verifyFirebaseIdToken(request, projectId) {
@@ -310,6 +451,42 @@ async function firestoreGet(projectId, documentPath, token) {
   if (!response.ok) throw new Error(`Firestore read failed (${response.status})`);
   const document = await response.json();
   return Object.fromEntries(Object.entries(document.fields || {}).map(([key, value]) => [key, fromFirestoreValue(value)]));
+}
+
+async function firestorePatch(projectId, documentPath, data, token) {
+  const fields = Object.fromEntries(Object.entries(data).map(([key, value]) => [key, toFirestoreValue(value)]));
+  const url = new URL(`https://firestore.googleapis.com/v1/projects/${encodeURIComponent(projectId)}/databases/(default)/documents/${documentPath}`);
+  Object.keys(data).forEach(field => url.searchParams.append("updateMask.fieldPaths", field));
+  const response = await fetch(url.toString(), {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ fields })
+  });
+  if (!response.ok) throw new Error(`Firestore merge failed (${response.status})`);
+  return response.json().catch(() => ({}));
+}
+
+async function firestoreBatchPatch(projectId, updates, token) {
+  const endpoint = `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(projectId)}/databases/(default)/documents:batchWrite`;
+  for (let offset = 0; offset < updates.length; offset += 400) {
+    const chunk = updates.slice(offset, offset + 400);
+    const writes = chunk.map(({ uid, fields }) => ({
+      update: {
+        name: `projects/${projectId}/databases/(default)/documents/presence/${encodeURIComponent(uid)}`,
+        fields: Object.fromEntries(Object.entries(fields).map(([key, value]) => [key, toFirestoreValue(value)]))
+      },
+      updateMask: { fieldPaths: Object.keys(fields) }
+    }));
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ writes })
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || (result.status || []).some(status => Number(status.code || 0) !== 0)) {
+      throw new Error(`Firestore presence reconciliation failed (${response.status})`);
+    }
+  }
 }
 
 async function firestoreSet(projectId, documentPath, data, token) {

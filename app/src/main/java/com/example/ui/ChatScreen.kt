@@ -518,6 +518,8 @@ fun ChatScreen(
         "Aurora Mist" -> Brush.radialGradient(listOf(Color(0xFFB8FFF9).copy(.64f), Color(0xFF6C63FF).copy(.38f), Color(0xFF11142B)))
         "Monochrome Grid" -> Brush.verticalGradient(listOf(Color(0xFF0B0D12), Color(0xFF252936), Color(0xFF6B7280).copy(.30f)))
         "Cherry Blossom" -> Brush.linearGradient(listOf(Color(0xFF32162C), Color(0xFF8C4A72), Color(0xFFFFD3E1).copy(.58f)))
+        "Monsoon" -> Brush.verticalGradient(listOf(Color(0xFF071B2D), Color(0xFF0D5470), Color(0xFF58C4C9).copy(.40f)))
+        "Starlight" -> Brush.radialGradient(listOf(Color(0xFFB9A8FF).copy(.50f), Color(0xFF17102E), Color(0xFF05040A)))
         else -> Brush.verticalGradient(listOf(MaterialTheme.colorScheme.background, MaterialTheme.colorScheme.primary.copy(alpha = .12f), MaterialTheme.colorScheme.surfaceVariant))
     }
 
@@ -548,6 +550,17 @@ fun ChatScreen(
                     drawCircle(Color(0xFFFFE6EF).copy(alpha = .18f), radius = 9f, center = androidx.compose.ui.geometry.Offset(w * x + 14f, h * y - 9f))
                 }
             }
+            "Monsoon" -> {
+                for (i in 0..22) {
+                    val x = w * (i / 22f)
+                    drawLine(Color(0xFFB8F7FF).copy(alpha = .08f), androidx.compose.ui.geometry.Offset(x, h * .08f), androidx.compose.ui.geometry.Offset(x - 24f, h * .28f), strokeWidth = 1.4f)
+                }
+            }
+            "Starlight" -> {
+                listOf(.10f to .15f, .28f to .36f, .74f to .18f, .88f to .46f, .16f to .72f, .62f to .82f, .47f to .54f, .92f to .92f).forEach { (x, y) ->
+                    drawCircle(Color.White.copy(alpha = .48f), radius = 2.1f, center = androidx.compose.ui.geometry.Offset(w * x, h * y))
+                }
+            }
         }
     }
 
@@ -558,7 +571,7 @@ fun ChatScreen(
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     val premiumActive = currentUser?.isPremium == true && (currentUser?.premiumPlan == "lifetime" || (currentUser?.premiumUntil ?: 0L) > System.currentTimeMillis())
-                    val availableThemes = listOf("Aurora", "Sunset", "Ocean", "Forest", "Midnight", "Sakura", "Neon", "Desert", "Galaxy", "Pearl", "Liquid Aurora", "Crystal Ocean", "Velvet Rose", "Obsidian", "Frost", "Glassmorphism", "Paper Texture", "Aurora Mist", "Monochrome Grid", "Cherry Blossom") + if (premiumActive) listOf("Royal Gold", "Cyber Lime", "Rose Quartz") else emptyList()
+                    val availableThemes = listOf("Aurora", "Sunset", "Ocean", "Forest", "Midnight", "Sakura", "Neon", "Desert", "Galaxy", "Pearl", "Liquid Aurora", "Crystal Ocean", "Velvet Rose", "Obsidian", "Frost", "Glassmorphism", "Paper Texture", "Aurora Mist", "Monochrome Grid", "Cherry Blossom", "Monsoon", "Starlight") + if (premiumActive) listOf("Royal Gold", "Cyber Lime", "Rose Quartz") else emptyList()
                     availableThemes.forEach { theme ->
                         Row(
                             Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp))
@@ -570,7 +583,7 @@ fun ChatScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             val previewColors = when (theme) {
-                                "Sunset" -> listOf(Color(0xFF7B2D45), Color(0xFFFF8A5B)); "Ocean" -> listOf(Color(0xFF004E64), Color(0xFF00A5CF)); "Forest" -> listOf(Color(0xFF174A35), Color(0xFF5BC88A)); "Midnight" -> listOf(Color.Black, Color(0xFF35205E)); "Sakura" -> listOf(Color(0xFF8E3E62), Color(0xFFFFA9C6)); "Neon" -> listOf(Color(0xFF00FFD5), Color(0xFFFF3DF2)); "Desert" -> listOf(Color(0xFF875B3A), Color(0xFFE8B26A)); "Galaxy" -> listOf(Color(0xFF7D4DFF), Color(0xFF14102A)); "Pearl" -> listOf(Color(0xFFF7F1FF), Color(0xFFDDEEFF)); "Royal Gold" -> listOf(Color(0xFF5B3A08), Color(0xFFFFD166)); "Cyber Lime" -> listOf(Color.Black, Color(0xFFA7FF4F)); "Rose Quartz" -> listOf(Color(0xFF7A3157), Color(0xFFFFB4D7)); "Liquid Aurora" -> listOf(Color(0xFF32256B), Color(0xFF00D9E8), Color(0xFFFF3CA6)); "Crystal Ocean" -> listOf(Color(0xFF07506A), Color(0xFF4CE6FF)); "Velvet Rose" -> listOf(Color(0xFF5A1945), Color(0xFFFF72BC)); "Obsidian" -> listOf(Color.Black, Color(0xFF302060)); "Frost" -> listOf(Color(0xFFF8F6FF), Color(0xFFDDEEFF)); "Glassmorphism" -> listOf(Color(0xFF304E68), Color(0xFF7AC7C4)); "Paper Texture" -> listOf(Color(0xFFFFF8E7), Color(0xFFD99A6C)); "Aurora Mist" -> listOf(Color(0xFFB8FFF9), Color(0xFF6C63FF)); "Monochrome Grid" -> listOf(Color(0xFF0B0D12), Color(0xFF6B7280)); "Cherry Blossom" -> listOf(Color(0xFF8C4A72), Color(0xFFFFD3E1)); else -> listOf(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.secondary)
+                                "Sunset" -> listOf(Color(0xFF7B2D45), Color(0xFFFF8A5B)); "Ocean" -> listOf(Color(0xFF004E64), Color(0xFF00A5CF)); "Forest" -> listOf(Color(0xFF174A35), Color(0xFF5BC88A)); "Midnight" -> listOf(Color.Black, Color(0xFF35205E)); "Sakura" -> listOf(Color(0xFF8E3E62), Color(0xFFFFA9C6)); "Neon" -> listOf(Color(0xFF00FFD5), Color(0xFFFF3DF2)); "Desert" -> listOf(Color(0xFF875B3A), Color(0xFFE8B26A)); "Galaxy" -> listOf(Color(0xFF7D4DFF), Color(0xFF14102A)); "Pearl" -> listOf(Color(0xFFF7F1FF), Color(0xFFDDEEFF)); "Royal Gold" -> listOf(Color(0xFF5B3A08), Color(0xFFFFD166)); "Cyber Lime" -> listOf(Color.Black, Color(0xFFA7FF4F)); "Rose Quartz" -> listOf(Color(0xFF7A3157), Color(0xFFFFB4D7)); "Liquid Aurora" -> listOf(Color(0xFF32256B), Color(0xFF00D9E8), Color(0xFFFF3CA6)); "Crystal Ocean" -> listOf(Color(0xFF07506A), Color(0xFF4CE6FF)); "Velvet Rose" -> listOf(Color(0xFF5A1945), Color(0xFFFF72BC)); "Obsidian" -> listOf(Color.Black, Color(0xFF302060)); "Frost" -> listOf(Color(0xFFF8F6FF), Color(0xFFDDEEFF)); "Glassmorphism" -> listOf(Color(0xFF304E68), Color(0xFF7AC7C4)); "Paper Texture" -> listOf(Color(0xFFFFF8E7), Color(0xFFD99A6C)); "Aurora Mist" -> listOf(Color(0xFFB8FFF9), Color(0xFF6C63FF)); "Monochrome Grid" -> listOf(Color(0xFF0B0D12), Color(0xFF6B7280)); "Cherry Blossom" -> listOf(Color(0xFF8C4A72), Color(0xFFFFD3E1)); "Monsoon" -> listOf(Color(0xFF0D5470), Color(0xFF58C4C9)); "Starlight" -> listOf(Color(0xFFB9A8FF), Color(0xFF17102E)); else -> listOf(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.secondary)
                             }
                             Box(Modifier.size(width = 48.dp, height = 32.dp).clip(RoundedCornerShape(10.dp)).background(Brush.linearGradient(previewColors)).border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(10.dp)))
                             Spacer(Modifier.width(10.dp))

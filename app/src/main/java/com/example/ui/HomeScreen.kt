@@ -44,6 +44,8 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.VerticalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.text.ClickableText
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -55,6 +57,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import com.example.ui.theme.*
+import com.example.call.CallSkinPreferences
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -186,7 +189,7 @@ private fun DeviceSessionRow(session: DeviceSession, onDelete: (DeviceSession) -
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun HomeScreen(
     viewModel: ChatViewModel,
@@ -804,7 +807,15 @@ fun HomeScreen(
                     }
                 }
                 4 -> {
-                    LaunchedEffect(Unit) { viewModel.refreshDeviceSessions() }
+                    val themeSectionRequester = remember { BringIntoViewRequester() }
+                    val callSkinSectionRequester = remember { BringIntoViewRequester() }
+                    val profileSectionRequester = remember { BringIntoViewRequester() }
+                    val privacySectionRequester = remember { BringIntoViewRequester() }
+                    val notificationsSectionRequester = remember { BringIntoViewRequester() }
+                    val devicesSectionRequester = remember { BringIntoViewRequester() }
+                    val blockedSectionRequester = remember { BringIntoViewRequester() }
+                    val callSkinId by CallSkinPreferences.selectedId.collectAsState()
+                    LaunchedEffect(Unit) { CallSkinPreferences.load(context); viewModel.refreshDeviceSessions() }
                     // SETTINGS & PROFILE TAB: Theme selector + User details modification
                     Column(
                         modifier = Modifier
@@ -817,7 +828,7 @@ fun HomeScreen(
                         Box(Modifier.fillMaxWidth().glassmorphic(isDark = MaterialTheme.colorScheme.background.luminance() < .5f, backgroundColor = MaterialTheme.colorScheme.surface.copy(.68f), borderColor = MaterialTheme.colorScheme.primary.copy(.38f), shape = RoundedCornerShape(28.dp)).padding(18.dp)) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Box(Modifier.size(48.dp).clip(CircleShape).background(Brush.linearGradient(listOf(Color(0xFF6C58FF), Color(0xFFFF46B8)))), contentAlignment = Alignment.Center) { Icon(Icons.Default.Tune, null, tint = Color.White) }
-                                Spacer(Modifier.width(12.dp)); Column { Text("Liquid Control Center", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface); Text("Profile • themes • privacy • notifications • premium", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp) }
+                                Spacer(Modifier.width(12.dp)); Column { Text("User Settings dashboard", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface); Text("Account • appearance • privacy • calls • devices", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp) }
                             }
                         }
 
@@ -833,6 +844,20 @@ fun HomeScreen(
                             }
                         }
 
+                        Text("Jump to a section", modifier = Modifier.align(Alignment.Start), fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        Row(
+                            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            AssistChip(onClick = { uiScope.launch { themeSectionRequester.bringIntoView() } }, label = { Text("App theme") }, leadingIcon = { Icon(Icons.Default.Palette, null) })
+                            AssistChip(onClick = { uiScope.launch { callSkinSectionRequester.bringIntoView() } }, label = { Text("Call skin") }, leadingIcon = { Icon(Icons.Default.Call, null) })
+                            AssistChip(enabled = currentUser != null, onClick = { uiScope.launch { profileSectionRequester.bringIntoView() } }, label = { Text("Profile") }, leadingIcon = { Icon(Icons.Default.Person, null) })
+                            AssistChip(onClick = { uiScope.launch { privacySectionRequester.bringIntoView() } }, label = { Text("Privacy") }, leadingIcon = { Icon(Icons.Default.Security, null) })
+                            AssistChip(onClick = { uiScope.launch { notificationsSectionRequester.bringIntoView() } }, label = { Text("Notifications") }, leadingIcon = { Icon(Icons.Default.Notifications, null) })
+                            AssistChip(onClick = { uiScope.launch { devicesSectionRequester.bringIntoView() } }, label = { Text("Devices") }, leadingIcon = { Icon(Icons.Default.Devices, null) })
+                            AssistChip(enabled = currentUser != null, onClick = { uiScope.launch { blockedSectionRequester.bringIntoView() } }, label = { Text("Blocked") }, leadingIcon = { Icon(Icons.Default.Block, null) })
+                        }
+
                         Card(onClick = onPremium, shape = RoundedCornerShape(24.dp), modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
                             Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                                 Icon(Icons.Default.WorkspacePremium, null, tint = Color(0xFFFFA000), modifier = Modifier.size(34.dp))
@@ -844,7 +869,7 @@ fun HomeScreen(
                         // 1. Theme selection block
                         Card(
                             shape = RoundedCornerShape(28.dp),
-                            modifier = Modifier.fillMaxWidth()
+                            modifier = Modifier.fillMaxWidth().bringIntoViewRequester(themeSectionRequester)
                         ) {
                             Column(modifier = Modifier.padding(16.dp)) {
                                 Text(
@@ -902,6 +927,41 @@ fun HomeScreen(
                                                 Spacer(Modifier.height(5.dp))
                                                 Text(themeName, fontSize = 10.sp, maxLines = 1, fontWeight = if (currentTheme == themeName) FontWeight.ExtraBold else FontWeight.Medium)
                                                 if (currentTheme == themeName) Icon(Icons.Default.Check, "Active", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(14.dp))
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        Card(shape = RoundedCornerShape(28.dp), modifier = Modifier.fillMaxWidth().bringIntoViewRequester(callSkinSectionRequester)) {
+                            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                                Text("Call appearance", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                                Text("Choose a call-screen skin. This is stored on this device and can be changed anytime.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("Chat backgrounds are per conversation: open a chat menu → Chat theme.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                LazyRow(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                                    items(CallSkinPreferences.options, key = { it.id }) { option ->
+                                        val selected = callSkinId == option.id
+                                        Surface(
+                                            color = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(.45f),
+                                            shape = RoundedCornerShape(17.dp),
+                                            modifier = Modifier.width(112.dp).clickable {
+                                                CallSkinPreferences.select(context, option.id)
+                                                Toast.makeText(context, "${option.label} call skin applied", Toast.LENGTH_SHORT).show()
+                                            }
+                                        ) {
+                                            Column(Modifier.padding(8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                                                Box(
+                                                    Modifier.fillMaxWidth().height(54.dp).clip(RoundedCornerShape(11.dp))
+                                                        .background(Brush.verticalGradient(option.background))
+                                                        .border(2.dp, option.accent.copy(alpha = if (selected) .95f else .55f), RoundedCornerShape(11.dp)),
+                                                    contentAlignment = Alignment.Center
+                                                ) {
+                                                    Icon(Icons.Default.Call, null, tint = Color.White, modifier = Modifier.size(23.dp))
+                                                }
+                                                Spacer(Modifier.height(5.dp))
+                                                Text(option.label, maxLines = 1, fontSize = 10.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium)
+                                                if (selected) Text("ACTIVE", fontSize = 8.sp, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.ExtraBold)
                                             }
                                         }
                                     }
@@ -987,7 +1047,7 @@ fun HomeScreen(
 
                             Card(
                                 shape = RoundedCornerShape(28.dp),
-                                modifier = Modifier.fillMaxWidth()
+                                modifier = Modifier.fillMaxWidth().bringIntoViewRequester(profileSectionRequester)
                             ) {
                                 Column(
                                     modifier = Modifier.padding(16.dp),
@@ -1235,7 +1295,7 @@ fun HomeScreen(
                             }
                         }
 
-                        Card(shape = RoundedCornerShape(28.dp), modifier = Modifier.fillMaxWidth()) {
+                        Card(shape = RoundedCornerShape(28.dp), modifier = Modifier.fillMaxWidth().bringIntoViewRequester(privacySectionRequester)) {
                             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Icon(Icons.Outlined.Security, null, tint = MaterialTheme.colorScheme.primary)
@@ -1289,7 +1349,7 @@ fun HomeScreen(
                             }
                         }
 
-                        Card(shape = RoundedCornerShape(28.dp), modifier = Modifier.fillMaxWidth()) {
+                        Card(shape = RoundedCornerShape(28.dp), modifier = Modifier.fillMaxWidth().bringIntoViewRequester(notificationsSectionRequester)) {
                             Column(Modifier.padding(16.dp)) {
                                 Text("Sounds & activity", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                                 Text("Control notification and live typing feedback.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -1364,7 +1424,7 @@ fun HomeScreen(
                             }
                         }
 
-                        Card(shape = RoundedCornerShape(28.dp), modifier = Modifier.fillMaxWidth()) {
+                        Card(shape = RoundedCornerShape(28.dp), modifier = Modifier.fillMaxWidth().bringIntoViewRequester(devicesSectionRequester)) {
                             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                                 Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.Devices, null, tint = MaterialTheme.colorScheme.primary); Spacer(Modifier.width(9.dp)); Text("Devices & sessions", fontWeight = FontWeight.ExtraBold, modifier = Modifier.weight(1f)); IconButton(onClick = viewModel::refreshDeviceSessions) { Icon(Icons.Default.Refresh, "Refresh") } }
                                 Text("Approximate city/region comes from the connection edge. Exact home location and full IP are not stored.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -1438,7 +1498,7 @@ fun HomeScreen(
                             Spacer(modifier = Modifier.height(16.dp))
                             Card(
                                 shape = RoundedCornerShape(28.dp),
-                                modifier = Modifier.fillMaxWidth(),
+                                modifier = Modifier.fillMaxWidth().bringIntoViewRequester(blockedSectionRequester),
                                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
                             ) {
                                 Column(modifier = Modifier.padding(16.dp)) {

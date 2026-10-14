@@ -14,9 +14,6 @@
 .externalNativeBuild
 .cxx
 /.firebase/
-/functions/node_modules/
-/functions/.env.*
-/functions/.secret.local
 local.properties
 .env
 debug.keystore

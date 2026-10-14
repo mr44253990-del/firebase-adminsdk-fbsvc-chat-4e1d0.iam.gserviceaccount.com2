@@ -191,7 +191,7 @@ fun AdminControlCenterScreen(
         AdminMenuEntry("feature_requests", "Feature requests", "Review community suggestions", Icons.Outlined.Lightbulb, Color(0xFF2F9A89), featureRequests.size.takeIf { it > 0 }?.toString().orEmpty()),
         AdminMenuEntry("premium_requests", "Payment approvals", "Approve or reject Premium requests", Icons.Outlined.Payments, Color(0xFFBD8B24), premiumRequests.size.takeIf { it > 0 }?.toString().orEmpty()),
         AdminMenuEntry("premium_access", "Gifts & access", "Grant Premium or revoke access", Icons.Outlined.CardGiftcard, Color(0xFFCB5C90)),
-        AdminMenuEntry("presence", "Presence / 5-min probe", "Firebase Functions or Worker setup", Icons.Outlined.Groups, Color(0xFF358B9A)),
+        AdminMenuEntry("presence", "Presence / 5-min probe", "Cloudflare Worker + Cron", Icons.Outlined.Groups, Color(0xFF358B9A)),
         AdminMenuEntry("reels", "Reels & TikTok", "Choose the Reels experience", Icons.Outlined.SmartDisplay, Color(0xFF1B9A8B)),
         AdminMenuEntry("storage", "Storage routing", "Supabase buckets and upload tests", Icons.Outlined.CloudUpload, Color(0xFF5386CA)),
         AdminMenuEntry("gateway", "Push / FCM gateway", "Chat, call and diagnostic push", Icons.Outlined.SendToMobile, Color(0xFF4E78B8)),
@@ -607,19 +607,19 @@ fun AdminControlCenterScreen(
                         }
                     }
                     "presence" -> {
-                        AdminPanelCard("Five-minute presence probe", "Firebase Functions can run the schedule without Cloudflare; the probe itself is silent", Icons.Outlined.Groups) {
+                        AdminPanelCard("Five-minute presence probe", "Cloudflare Worker sends silent, per-device probes on its five-minute Cron", Icons.Outlined.Groups) {
                             Text(
-                                "বাংলা কনফিগারেশন: এই probe সাধারণ notification banner বা শব্দ দেখায় না—এটি FCM-এর data-only উপস্থিতি সংকেত। Firebase Functions ব্যবহার করলে deploy-এর পর presenceAdmin ফাংশনের HTTPS base URL দিন; Cloudflare Worker ব্যবহার করলে Worker base URL দিন। দুই জায়গায় cron একসাথে চালাবেন না, নইলে duplicate probe যাবে।",
+                                "বাংলা কনফিগারেশন: এই silent data-only probe সাধারণ notification banner বা শব্দ দেখায় না। Cloudflare Worker-এ Firebase service-account JSON শুধু encrypted secret হিসেবে দিন; এরপর wrangler-presence.toml দিয়ে Worker deploy করে Cloudflare-এ পাঁচ মিনিটের Cron Trigger enabled আছে নিশ্চিত করুন। অ্যাপে Worker-এর HTTPS base URL দিন। URL save করলেই Cron চালু হয় না—একটিই presence schedule সক্রিয় রাখুন। FCM acceptance receipt-এর প্রমাণ নয়; device acknowledgement-ই reachability।",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
-                            AdminInlineInfo("Firebase Functions-এর service account JSON Android/Firestore-এ দেবেন না। Admin SDK server-এর runtime credentials ব্যবহার করে। বাংলা ধাপে ধাপে গাইড: docs/presence-worker-bn.md")
+                            AdminInlineInfo("Service-account JSON/key শুধু Cloudflare Worker secret-এ রাখুন—Android, Firestore, Git বা public log-এ নয়। সেটআপ: docs/presence-worker-bn.md")
                             OutlinedTextField(
                                 value = adminPresenceUrlInput,
                                 onValueChange = { adminPresenceUrlInput = it.trim() },
                                 label = { Text("Presence API base URL") },
-                                placeholder = { Text("https://asia-south1-PROJECT.cloudfunctions.net/presenceAdmin") },
-                                supportingText = { Text("Firebase Function অথবা Cloudflare Worker base URL; /health লিখবেন না") },
+                                placeholder = { Text("https://presence.example.com/api") },
+                                supportingText = { Text("Cloudflare Worker HTTPS base URL; omit /health. Configure its Cron Trigger separately.") },
                                 modifier = Modifier.fillMaxWidth(), singleLine = true
                             )
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -634,12 +634,19 @@ fun AdminControlCenterScreen(
                                 }
                             }
                             AdminHealthBanner(presenceHealth.configured, presenceHealth.message, presenceHealth.version)
+                            OutlinedButton(
+                                onClick = { viewModel.sendPresenceProbeNow { _, message -> Toast.makeText(context, message, Toast.LENGTH_LONG).show() } },
+                                enabled = presenceHealth.configured,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Icon(Icons.Default.SendToMobile, null); Spacer(Modifier.width(7.dp)); Text("Send one-time silent probe")
+                            }
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 PresenceMetric("Profiles", presenceDashboard.totalUsers.toString(), Modifier.weight(1f))
                                 PresenceMetric("Online", presenceDashboard.foregroundUsers.toString(), Modifier.weight(1f))
                                 PresenceMetric("Reachable", presenceDashboard.reachableUsers.toString(), Modifier.weight(1f))
                             }
-                            Text("${presenceDashboard.activeUsers} active/recent • ${presenceDashboard.registeredDevices} registered devices • last probe: ${if (presenceDashboard.lastProbeAt > 0L) SimpleDateFormat("MMM d, HH:mm", Locale.getDefault()).format(Date(presenceDashboard.lastProbeAt)) else "not received yet"}", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text("${presenceDashboard.activeUsers} active/recent • ${presenceDashboard.registeredDevices} registered devices • last probe sent: ${if (presenceDashboard.lastProbeAt > 0L) SimpleDateFormat("MMM d, HH:mm", Locale.getDefault()).format(Date(presenceDashboard.lastProbeAt)) else "not sent yet"}", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             OutlinedTextField(presenceQuery, { presenceQuery = it.take(100) }, label = { Text("Search name, username, or UID") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                             OutlinedButton(onClick = { viewModel.loadPresenceUsers(presenceQuery) }, enabled = !presenceDashboard.checking && presenceHealth.configured, modifier = Modifier.fillMaxWidth()) {
                                 if (presenceDashboard.checking) CircularProgressIndicator(Modifier.size(17.dp), strokeWidth = 2.dp) else Icon(Icons.Default.Refresh, null)
@@ -748,7 +755,7 @@ fun AdminControlCenterScreen(
                     "infrastructure" -> {
                         AdminPanelCard("Service health & tools", "Check key services and run safe diagnostics", Icons.Outlined.HealthAndSafety) {
                             AdminStatusRow("Firebase / FCM gateway", gatewayHealth.configured, "Server-side FCM service account")
-                            AdminStatusRow("Presence scheduler endpoint", presenceHealth.configured, "Firebase Functions schedule or one Worker Cron")
+                            AdminStatusRow("Presence Worker endpoint", presenceHealth.configured, "Cloudflare Worker secret and one five-minute Cron")
                             AdminStatusRow("Cloudflare R2", gatewayHealth.r2Configured, "Media bucket and public base URL")
                             AdminStatusRow("TURN calling", gatewayHealth.turnConfigured, "TURN token ID and API token")
                             AdminStatusRow("Realtime SFU", gatewayHealth.sfuConfigured, "Calls application ID and token")

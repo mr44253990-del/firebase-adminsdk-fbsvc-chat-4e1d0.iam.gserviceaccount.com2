@@ -115,7 +115,7 @@ fun AssistantScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenUser: (U
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Row(verticalAlignment = Alignment.CenterVertically) { Box(Modifier.size(40.dp).clip(CircleShape).background(Brush.linearGradient(listOf(Color(0xFF6657FF), Color(0xFFFF42B8)))), contentAlignment = Alignment.Center) { Icon(Icons.Default.AutoAwesome, null, tint = Color.White) }; Spacer(Modifier.width(10.dp)); Column { Text(config.aiDisplayName, fontWeight = FontWeight.Black); Text("Private • account-aware • ${config.aiModel}", fontSize = 9.sp, color = MaterialTheme.colorScheme.primary) } } },
+                title = { Row(verticalAlignment = Alignment.CenterVertically) { Box(Modifier.size(40.dp).clip(CircleShape).background(Brush.linearGradient(listOf(Color(0xFF6657FF), Color(0xFFFF42B8)))), contentAlignment = Alignment.Center) { Icon(Icons.Default.AutoAwesome, null, tint = Color.White) }; Spacer(Modifier.width(10.dp)); Column { Text(config.aiDisplayName, fontWeight = FontWeight.Black); Text("Consent-controlled • account-aware • ${config.aiModel}", fontSize = 9.sp, color = MaterialTheme.colorScheme.primary) } } },
                 navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
                 actions = { IconButton(onClick = { prefs.edit().clear().apply(); lines = emptyList() }) { Icon(Icons.Default.DeleteSweep, "Clear assistant memory") } }
             )
@@ -138,6 +138,7 @@ fun AssistantScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenUser: (U
                             Spacer(Modifier.width(10.dp)); Text("What I can do", fontWeight = FontWeight.ExtraBold)
                         }
                         Text("📊 Account stats and reactions  •  🔎 User search  •  🗑️ Delete your posts with confirmation  •  💬 Convo Chat help  •  🧠 On-device assistant memory", fontSize = 12.sp)
+                        Text("General AI replies send your prompt and selected account context to the configured AI provider only when Allow AI processing is enabled. In-app account actions use Convo Chat services and are separate from AI requests.", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Text("Premium quick actions", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
                         if (config.assistantEnabled && config.smartReplyEnabled) {
                             OutlinedButton(onClick = { input = "Suggest three concise, polite replies to my latest conversation context." }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp)) {

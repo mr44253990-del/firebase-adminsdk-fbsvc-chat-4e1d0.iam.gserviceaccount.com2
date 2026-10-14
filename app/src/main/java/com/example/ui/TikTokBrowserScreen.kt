@@ -2,6 +2,10 @@ package com.example.ui
 
 import android.net.Uri
 import android.os.Build
+import android.view.Gravity
+import android.view.View
+import android.view.ViewGroup
+import android.widget.FrameLayout
 import android.webkit.CookieManager
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
@@ -11,6 +15,7 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -44,6 +49,17 @@ fun TikTokBrowserScreen(onClose: () -> Unit) {
     var canGoBack by remember { mutableStateOf(false) }
     var canGoForward by remember { mutableStateOf(false) }
     var pageError by remember { mutableStateOf("") }
+    var fullScreenVideoView by remember { mutableStateOf<View?>(null) }
+    var fullScreenVideoCallback by remember { mutableStateOf<WebChromeClient.CustomViewCallback?>(null) }
+
+    fun exitFullScreenVideo() {
+        val activeView = fullScreenVideoView
+        val callback = fullScreenVideoCallback
+        fullScreenVideoView = null
+        fullScreenVideoCallback = null
+        (activeView?.parent as? ViewGroup)?.removeView(activeView)
+        callback?.onCustomViewHidden()
+    }
 
     fun syncNavigation(view: WebView?) {
         if (view == null) return
@@ -53,17 +69,22 @@ fun TikTokBrowserScreen(onClose: () -> Unit) {
     }
 
     BackHandler(enabled = true) {
-        val view = webView
-        if (view?.canGoBack() == true) {
-            view.goBack()
-            syncNavigation(view)
+        if (fullScreenVideoView != null) {
+            exitFullScreenVideo()
         } else {
-            onClose()
+            val view = webView
+            if (view?.canGoBack() == true) {
+                view.goBack()
+                syncNavigation(view)
+            } else {
+                onClose()
+            }
         }
     }
 
     DisposableEffect(Unit) {
         onDispose {
+            exitFullScreenVideo()
             webView?.let { view ->
                 runCatching { view.stopLoading() }
                 runCatching { view.webChromeClient = null }
@@ -76,7 +97,7 @@ fun TikTokBrowserScreen(onClose: () -> Unit) {
     }
 
     Column(Modifier.fillMaxSize()) {
-        Surface(color = MaterialTheme.colorScheme.surface, tonalElevation = 2.dp) {
+        if (fullScreenVideoView == null) Surface(color = MaterialTheme.colorScheme.surface, tonalElevation = 2.dp) {
             Column {
                 Row(
                     Modifier.fillMaxWidth().heightIn(min = 58.dp).padding(horizontal = 6.dp),
@@ -144,6 +165,19 @@ fun TikTokBrowserScreen(onClose: () -> Unit) {
                                 progress = newProgress
                                 if (newProgress >= 100) syncNavigation(view)
                             }
+
+                            override fun onShowCustomView(view: View?, callback: CustomViewCallback?) {
+                                if (view == null || fullScreenVideoView != null) {
+                                    callback?.onCustomViewHidden()
+                                    return
+                                }
+                                fullScreenVideoView = view
+                                fullScreenVideoCallback = callback
+                            }
+
+                            override fun onHideCustomView() {
+                                exitFullScreenVideo()
+                            }
                         }
                         webViewClient = object : WebViewClient() {
                             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
@@ -168,7 +202,7 @@ fun TikTokBrowserScreen(onClose: () -> Unit) {
                             override fun onPageFinished(view: WebView?, url: String?) {
                                 progress = 100
                                 syncNavigation(view)
-                                view?.evaluateJavascript(NOT_NOW_PROMPT_SCRIPT, null)
+                                if (isTikTokHost(view?.url)) view?.evaluateJavascript(NOT_NOW_PROMPT_SCRIPT, null)
                             }
 
                             @Suppress("DEPRECATION")
@@ -187,7 +221,33 @@ fun TikTokBrowserScreen(onClose: () -> Unit) {
                 update = { view -> if (webView !== view) webView = view }
             )
 
-            if (pageError.isNotBlank()) {
+            if (fullScreenVideoView != null) {
+                AndroidView(
+                    modifier = Modifier.fillMaxSize(),
+                    factory = { ctx ->
+                        FrameLayout(ctx).apply {
+                            setBackgroundColor(android.graphics.Color.BLACK)
+                            fullScreenVideoView?.let { active ->
+                                (active.parent as? ViewGroup)?.removeView(active)
+                                addView(active, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.CENTER))
+                            }
+                        }
+                    },
+                    update = { container ->
+                        val active = fullScreenVideoView ?: return@AndroidView
+                        if (active.parent !== container) {
+                            (active.parent as? ViewGroup)?.removeView(active)
+                            container.addView(active, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.CENTER))
+                        }
+                    }
+                )
+                IconButton(
+                    onClick = ::exitFullScreenVideo,
+                    modifier = Modifier.align(Alignment.TopEnd).padding(12.dp).background(Color.Black.copy(.56f), CircleShape)
+                ) { Icon(Icons.Default.Close, "Exit full-screen video", tint = Color.White) }
+            }
+
+            if (pageError.isNotBlank() && fullScreenVideoView == null) {
                 Surface(
                     modifier = Modifier.align(Alignment.Center).padding(22.dp),
                     shape = RoundedCornerShape(24.dp),
@@ -203,6 +263,11 @@ fun TikTokBrowserScreen(onClose: () -> Unit) {
             }
         }
     }
+}
+
+private fun isTikTokHost(url: String?): Boolean {
+    val host = runCatching { Uri.parse(url.orEmpty()).host?.lowercase().orEmpty() }.getOrDefault("")
+    return host == "tiktok.com" || host.endsWith(".tiktok.com")
 }
 
 private val NOT_NOW_PROMPT_SCRIPT = """

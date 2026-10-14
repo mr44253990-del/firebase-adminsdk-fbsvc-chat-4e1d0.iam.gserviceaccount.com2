@@ -27,6 +27,10 @@ import org.webrtc.SurfaceViewRenderer
 
 @Composable
 fun CallMiniOverlay(state: CallState, onExpand: () -> Unit, onEnd: () -> Unit) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val callSkinId by CallSkinPreferences.selectedId.collectAsState()
+    LaunchedEffect(context.applicationContext) { CallSkinPreferences.load(context) }
+    val callPalette = CallSkinPreferences.palette(callSkinId)
     var seconds by remember(state.callId) { mutableLongStateOf(0L) }
     var dragX by remember(state.callId) { mutableFloatStateOf(0f) }
     var dragY by remember(state.callId) { mutableFloatStateOf(0f) }
@@ -38,11 +42,11 @@ fun CallMiniOverlay(state: CallState, onExpand: () -> Unit, onEnd: () -> Unit) {
     }
     Surface(
         shape = RoundedCornerShape(28.dp), tonalElevation = 10.dp, shadowElevation = 12.dp,
-        color = Color(0xEE121421),
+        color = callPalette.surface,
         modifier = Modifier.offset { IntOffset(dragX.roundToInt(), dragY.roundToInt()) }
             .width(if (state.video) 158.dp else 270.dp).height(if (state.video) 208.dp else 76.dp)
             .pointerInput(state.callId) { detectDragGestures { change, amount -> change.consume(); dragX += amount.x; dragY += amount.y } }
-            .border(1.dp, Color(0xFF8B72FF).copy(.7f), RoundedCornerShape(28.dp)).clickable(onClick = onExpand)
+            .border(1.dp, callPalette.accent.copy(.78f), RoundedCornerShape(28.dp)).clickable(onClick = onExpand)
     ) {
         if (state.video) {
             Box(Modifier.fillMaxSize().background(Color.Black)) {
