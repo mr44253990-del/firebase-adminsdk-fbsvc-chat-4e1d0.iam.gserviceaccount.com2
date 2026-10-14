@@ -103,7 +103,7 @@ fun TikTokBrowserScreen(onClose: () -> Unit) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Previous page")
                     }
                     IconButton(onClick = { webView?.goForward(); syncNavigation(webView) }, enabled = canGoForward) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Next page", modifier = Modifier.rotate180())
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Next page", modifier = Modifier.rotate180())
                     }
                     IconButton(onClick = { pageError = ""; webView?.reload() }) {
                         Icon(Icons.Default.Refresh, contentDescription = "Reload")

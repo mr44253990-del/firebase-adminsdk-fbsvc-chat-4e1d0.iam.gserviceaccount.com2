@@ -2,6 +2,8 @@
 
 package com.example.ui
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
@@ -137,6 +139,9 @@ fun AdminControlCenterScreen(
     var bucketUpdates by remember(storageConfig.bucketUpdates) { mutableStateOf(storageConfig.bucketUpdates) }
     var storageSaving by remember { mutableStateOf(false) }
     var presenceQuery by rememberSaveable { mutableStateOf("") }
+    var adminUserSearch by rememberSaveable { mutableStateOf("") }
+    var adminUserFilter by rememberSaveable { mutableStateOf("all") }
+    var selectedAdminUser by remember { mutableStateOf<User?>(null) }
     var giftDays by rememberSaveable { mutableStateOf("5") }
     var giftCount by rememberSaveable { mutableStateOf("10") }
     var updateUploading by remember { mutableStateOf(false) }
@@ -181,6 +186,7 @@ fun AdminControlCenterScreen(
         AdminMenuEntry("ai", "AI & feature flags", "Assistant and staged capabilities", Icons.Outlined.AutoAwesome, Color(0xFF8E5CE6)),
         AdminMenuEntry("premium", "Premium & payments", "Plans, pricing and payment methods", Icons.Outlined.WorkspacePremium, Color(0xFFCF9829)),
         AdminMenuEntry("campaigns", "Campaigns", "One-time Friday Fun message", Icons.Outlined.Campaign, Color(0xFFDB5B8C)),
+        AdminMenuEntry("users", "User management", "Search profiles, filter status and open quick details", Icons.Outlined.Groups, Color(0xFF4B83BE), users.size.takeIf { it > 0 }?.toString().orEmpty()),
         AdminMenuEntry("reports", "Safety reports", "Review reports and take action", Icons.Outlined.Security, Color(0xFFD84949), reports.size.takeIf { it > 0 }?.toString().orEmpty()),
         AdminMenuEntry("feature_requests", "Feature requests", "Review community suggestions", Icons.Outlined.Lightbulb, Color(0xFF2F9A89), featureRequests.size.takeIf { it > 0 }?.toString().orEmpty()),
         AdminMenuEntry("premium_requests", "Payment approvals", "Approve or reject Premium requests", Icons.Outlined.Payments, Color(0xFFBD8B24), premiumRequests.size.takeIf { it > 0 }?.toString().orEmpty()),
@@ -296,6 +302,77 @@ fun AdminControlCenterScreen(
             ) {
                 pageEntry?.let { AdminPageIntro(it) }
                 when (selectedPage) {
+                    "users" -> {
+                        val now = System.currentTimeMillis()
+                        val query = adminUserSearch.trim()
+                        val visibleAdminUsers = users.filter { person ->
+                            val isOnlineNow = person.isOnline && (person.onlineUntil <= 0L || person.onlineUntil > now)
+                            val hasPremium = person.isPremium && (person.premiumPlan.equals("lifetime", true) || person.premiumUntil > now)
+                            val matchesQuery = query.isBlank() || person.name.contains(query, true) ||
+                                person.username.contains(query, true) || person.uid.contains(query, true)
+                            val matchesFilter = when (adminUserFilter) {
+                                "online" -> isOnlineNow
+                                "offline" -> !isOnlineNow
+                                "premium" -> hasPremium
+                                else -> true
+                            }
+                            matchesQuery && matchesFilter
+                        }.sortedWith(
+                            compareByDescending<User> { it.isOnline && (it.onlineUntil <= 0L || it.onlineUntil > now) }
+                                .thenBy { it.name.lowercase(Locale.getDefault()) }
+                        )
+                        val onlineCount = users.count { it.isOnline && (it.onlineUntil <= 0L || it.onlineUntil > now) }
+                        val premiumCount = users.count { it.isPremium && (it.premiumPlan.equals("lifetime", true) || it.premiumUntil > now) }
+
+                        AdminPanelCard("User directory", "Search profiles, filter online status and open quick profile actions", Icons.Outlined.Groups) {
+                            OutlinedTextField(
+                                value = adminUserSearch,
+                                onValueChange = { adminUserSearch = it.take(120) },
+                                label = { Text("Search name, username or UID") },
+                                leadingIcon = { Icon(Icons.Default.Search, null) },
+                                trailingIcon = {
+                                    if (adminUserSearch.isNotBlank()) IconButton(onClick = { adminUserSearch = "" }) {
+                                        Icon(Icons.Default.Close, contentDescription = "Clear user search")
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                                singleLine = true
+                            )
+                            Row(
+                                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(7.dp)
+                            ) {
+                                listOf(
+                                    "all" to "All (${users.size})",
+                                    "online" to "Online ($onlineCount)",
+                                    "offline" to "Offline (${users.size - onlineCount})",
+                                    "premium" to "Premium ($premiumCount)"
+                                ).forEach { (filter, label) ->
+                                    FilterChip(
+                                        selected = adminUserFilter == filter,
+                                        onClick = { adminUserFilter = filter },
+                                        label = { Text(label, fontSize = 11.sp) }
+                                    )
+                                }
+                            }
+                            Text("${visibleAdminUsers.size} shown • profiles update from Firestore", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            when {
+                                users.isEmpty() -> Text("No user profiles are loaded yet.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                visibleAdminUsers.isEmpty() -> Text("No users match this search and filter.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                else -> visibleAdminUsers.take(150).forEach { person ->
+                                    AdminUserManagementRow(
+                                        user = person,
+                                        now = now,
+                                        onOpenProfile = { selectedAdminUser = person },
+                                        onCopyUid = { copyAdminUserUid(context, person.uid) }
+                                    )
+                                }
+                            }
+                            if (visibleAdminUsers.size > 150) {
+                                Text("Showing 150 of ${visibleAdminUsers.size}; narrow the search to find a specific profile.", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                    }
                     "updates" -> {
                         AdminPanelCard("APK update campaign", "Verify and publish a signed Convo Chat APK", Icons.Outlined.Publish) {
                             AdminSwitchRow("Publish APK update", "Users see this campaign once; the admin keeps emergency access.", updateEnabled, { updateEnabled = it })
@@ -690,6 +767,65 @@ fun AdminControlCenterScreen(
             }
         }
     }
+
+    selectedAdminUser?.let { person ->
+        val now = System.currentTimeMillis()
+        val onlineNow = person.isOnline && (person.onlineUntil <= 0L || person.onlineUntil > now)
+        val premiumNow = person.isPremium && (person.premiumPlan.equals("lifetime", true) || person.premiumUntil > now)
+        AlertDialog(
+            onDismissRequest = { selectedAdminUser = null },
+            icon = {
+                AsyncImage(
+                    model = person.profileImageUrl.ifBlank { null },
+                    contentDescription = person.name,
+                    error = painterResource(R.drawable.img_app_logo),
+                    modifier = Modifier.size(54.dp).clip(CircleShape)
+                )
+            },
+            title = {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(person.name.ifBlank { "User profile" }, fontWeight = FontWeight.Bold)
+                    if (person.username.isNotBlank()) Text("@${person.username}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            },
+            text = {
+                Column(
+                    Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text("UID: ${person.uid}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Status: ${if (onlineNow) "Online" else "Offline"} • ${if (premiumNow) "Premium" else "Standard"}", fontWeight = FontWeight.SemiBold)
+                    if (person.bio.isNotBlank()) Text(person.bio, style = MaterialTheme.typography.bodySmall)
+                    Text("Role: ${person.role.ifBlank { "user" }}", fontSize = 11.sp)
+                    Text("Last active: ${formatAdminTimestamp(person.lastActive)}", fontSize = 11.sp)
+                    Text("Joined: ${formatAdminTimestamp(person.createdAt)}", fontSize = 11.sp)
+                    if (premiumNow && !person.premiumPlan.equals("lifetime", true)) {
+                        Text("Premium until: ${formatAdminTimestamp(person.premiumUntil)}", fontSize = 11.sp)
+                    }
+                    OutlinedButton(
+                        onClick = {
+                            val uid = person.uid
+                            selectedAdminUser = null
+                            selectedPage = "presence"
+                            presenceQuery = uid
+                            viewModel.loadPresenceUsers(uid)
+                        },
+                        enabled = presenceHealth.configured && person.uid.isNotBlank(),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Default.Wifi, null); Spacer(Modifier.width(7.dp)); Text("Check presence")
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    copyAdminUserUid(context, person.uid)
+                    selectedAdminUser = null
+                }) { Icon(Icons.Default.ContentCopy, null); Spacer(Modifier.width(5.dp)); Text("Copy UID") }
+            },
+            dismissButton = { TextButton(onClick = { selectedAdminUser = null }) { Text("Close") } }
+        )
+    }
 }
 
 @Composable
@@ -704,6 +840,83 @@ fun AdminAccessDeniedScreen() {
         }
     }
 }
+
+@Composable
+private fun AdminUserManagementRow(
+    user: User,
+    now: Long,
+    onOpenProfile: () -> Unit,
+    onCopyUid: () -> Unit
+) {
+    val onlineNow = user.isOnline && (user.onlineUntil <= 0L || user.onlineUntil > now)
+    val premiumNow = user.isPremium && (user.premiumPlan.equals("lifetime", true) || user.premiumUntil > now)
+    Card(
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onOpenProfile),
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .45f))
+    ) {
+        Column(Modifier.fillMaxWidth().padding(11.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                AsyncImage(
+                    model = user.profileImageUrl.ifBlank { null },
+                    contentDescription = user.name,
+                    error = painterResource(R.drawable.img_app_logo),
+                    modifier = Modifier.size(46.dp).clip(CircleShape)
+                )
+                Spacer(Modifier.width(10.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(user.name.ifBlank { "Unnamed user" }, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(
+                        buildString {
+                            if (user.username.isNotBlank()) append("@${user.username} · ")
+                            append("last active ${formatAdminTimestamp(user.lastActive)}")
+                        },
+                        fontSize = 10.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                IconButton(onClick = onCopyUid) { Icon(Icons.Default.ContentCopy, contentDescription = "Copy user UID") }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                Surface(shape = CircleShape, color = if (onlineNow) Color(0xFF2CBF79).copy(alpha = .15f) else MaterialTheme.colorScheme.outline.copy(alpha = .12f)) {
+                    Text(
+                        if (onlineNow) "ONLINE" else "OFFLINE",
+                        Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = if (onlineNow) Color(0xFF218E5C) else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                if (premiumNow) {
+                    Surface(shape = CircleShape, color = Color(0xFFFFC857).copy(alpha = .2f)) {
+                        Text("PREMIUM", Modifier.padding(horizontal = 8.dp, vertical = 4.dp), fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color(0xFF9B6711))
+                    }
+                }
+                Spacer(Modifier.weight(1f))
+                TextButton(onClick = onOpenProfile) { Icon(Icons.Default.Person, null); Spacer(Modifier.width(4.dp)); Text("Quick profile") }
+            }
+        }
+    }
+}
+
+private fun copyAdminUserUid(context: Context, uid: String) {
+    if (uid.isBlank()) {
+        Toast.makeText(context, "User UID is missing", Toast.LENGTH_SHORT).show()
+        return
+    }
+    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+    if (clipboard == null) {
+        Toast.makeText(context, "Clipboard is unavailable", Toast.LENGTH_SHORT).show()
+        return
+    }
+    clipboard.setPrimaryClip(ClipData.newPlainText("Convo Chat user UID", uid))
+    Toast.makeText(context, "User UID copied", Toast.LENGTH_SHORT).show()
+}
+
+private fun formatAdminTimestamp(timestamp: Long): String =
+    if (timestamp > 0L) SimpleDateFormat("MMM d, yyyy HH:mm", Locale.getDefault()).format(Date(timestamp)) else "Not available"
 
 @Composable
 private fun AdminMenuTile(entry: AdminMenuEntry, modifier: Modifier = Modifier, onClick: () -> Unit) {
