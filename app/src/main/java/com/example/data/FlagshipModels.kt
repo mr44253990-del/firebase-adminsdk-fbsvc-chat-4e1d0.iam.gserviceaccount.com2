@@ -60,6 +60,7 @@ data class FlagshipConfig(
     val updateId: String = "",
     val updatePublishedAt: Long = 0L,
     val releaseNotes: String = "",
+    val tiktokModeEnabled: Boolean = false,
     val noticeEnabled: Boolean = false,
     val noticeTitle: String = "",
     val noticeBody: String = "",

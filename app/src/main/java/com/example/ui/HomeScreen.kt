@@ -89,7 +89,6 @@ import com.example.data.ActivityNotification
 import com.example.security.AppLockManager
 import com.example.security.PrivacyPreferences
 import com.example.data.FriendRequest
-import com.example.data.FlagshipConfig
 import com.example.data.Group
 import com.example.data.MessageRequest
 import com.example.data.Post
@@ -110,10 +109,10 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-private data class VerifiedUpdateApk(val bytes: ByteArray, val versionCode: Long, val versionName: String)
+internal data class VerifiedUpdateApk(val bytes: ByteArray, val versionCode: Long, val versionName: String)
 
 @Suppress("DEPRECATION")
-private fun signerDigests(info: PackageInfo): Set<String> {
+internal fun signerDigests(info: PackageInfo): Set<String> {
     val signatures = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
         info.signingInfo?.apkContentsSigners.orEmpty()
     } else {
@@ -126,7 +125,7 @@ private fun signerDigests(info: PackageInfo): Set<String> {
 }
 
 @Suppress("DEPRECATION")
-private fun verifyUpdateApk(context: Context, uri: Uri): Result<VerifiedUpdateApk> = runCatching {
+internal fun verifyUpdateApk(context: Context, uri: Uri): Result<VerifiedUpdateApk> = runCatching {
     val temp = File(context.cacheDir, "flagship-update-check.apk")
     try {
         context.contentResolver.openInputStream(uri)?.use { input ->
@@ -261,7 +260,8 @@ fun HomeScreen(
     val privacySettings by PrivacyPreferences.settings.collectAsState()
     val currentTab by viewModel.currentTabState.collectAsState()
     val selectedReelPostId by viewModel.selectedReelPostId.collectAsState()
-    BackHandler(enabled = currentTab == 6) { viewModel.setCurrentTab(0) }
+    BackHandler(enabled = currentTab == 6 && !flagshipConfig.tiktokModeEnabled) { viewModel.setCurrentTab(0) }
+    BackHandler(enabled = currentTab == 7) { viewModel.setCurrentTab(3) }
     val isAdmin = FirebaseAuth.getInstance().currentUser?.email?.lowercase()?.trim()?.trimEnd('.') == "mr4425390@gmail.com"
     var dismissNotice by remember(flagshipConfig.updatedAt) { mutableStateOf(false) }
     val validUpdate = flagshipConfig.updateEnabled && flagshipConfig.apkUrl.startsWith("https://")
@@ -425,6 +425,11 @@ fun HomeScreen(
                                     onClick = { showAccountMenu = false; viewModel.setCurrentTab(5) }
                                 )
                                 if (isAdmin) {
+                                    DropdownMenuItem(
+                                        text = { Text("Admin analytics dashboard") },
+                                        leadingIcon = { Icon(Icons.Outlined.Analytics, null) },
+                                        onClick = { showAccountMenu = false; viewModel.setCurrentTab(7) }
+                                    )
                                     DropdownMenuItem(
                                         text = { Text("Admin control center") },
                                         leadingIcon = { Icon(Icons.Outlined.AdminPanelSettings, null) },
@@ -789,699 +794,13 @@ fun HomeScreen(
                     }
                 }
                 3 -> {
-                    // SERVICE TAB (Strictly admin access restricted to mr4425390@gmail.com)
-                    val email = FirebaseAuth.getInstance().currentUser?.email ?: ""
-                    val isAdmin = email.lowercase().trim().trimEnd('.') == "mr4425390@gmail.com"
-
-                    if (!isAdmin) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(24.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Card(
-                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
-                                shape = RoundedCornerShape(28.dp),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Column(
-                                    modifier = Modifier.padding(24.dp),
-                                    horizontalAlignment = Alignment.CenterHorizontally
-                                ) {
-                                    Icon(Icons.Default.Block, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(60.dp))
-                                    Spacer(modifier = Modifier.height(14.dp))
-                                    Text(
-                                        text = "Admin access only",
-                                        style = MaterialTheme.typography.titleMedium,
-                                        fontWeight = FontWeight.ExtraBold,
-                                        color = MaterialTheme.colorScheme.onErrorContainer,
-                                        textAlign = TextAlign.Center
-                                    )
-                                    Spacer(modifier = Modifier.height(6.dp))
-                                    Text(
-                                        text = "The service configuration panel is restricted to the admin mr4425390@gmail.com. Non-authorized access is disabled.",
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color = MaterialTheme.colorScheme.onErrorContainer,
-                                        textAlign = TextAlign.Center
-                                    )
-                                }
-                            }
-                        }
+                    if (isAdmin) {
+                        AdminControlCenterScreen(
+                            viewModel = viewModel,
+                            onOpenAnalytics = { viewModel.setCurrentTab(7) }
+                        )
                     } else {
-                        // Admin Dashboard / Flagship Control
-                        LaunchedEffect(webhookUrl) { viewModel.testFcmGateway(webhookUrl); viewModel.loadAdminReports() }
-                        var draftUpdateEnabled by remember(flagshipConfig) { mutableStateOf(flagshipConfig.updateEnabled) }
-                        var draftVersionCode by remember(flagshipConfig) { mutableStateOf(flagshipConfig.latestVersionCode.toString()) }
-                        var draftVersionName by remember(flagshipConfig) { mutableStateOf(flagshipConfig.versionName) }
-                        var draftNotes by remember(flagshipConfig) { mutableStateOf(flagshipConfig.releaseNotes) }
-                        var draftApkUrl by remember(flagshipConfig) { mutableStateOf(flagshipConfig.apkUrl) }
-                        var draftApkKey by remember(flagshipConfig) { mutableStateOf(flagshipConfig.apkR2Key) }
-                        var draftNoticeEnabled by remember(flagshipConfig) { mutableStateOf(flagshipConfig.noticeEnabled) }
-                        var draftNoticeTitle by remember(flagshipConfig) { mutableStateOf(flagshipConfig.noticeTitle) }
-                        var draftNoticeBody by remember(flagshipConfig) { mutableStateOf(flagshipConfig.noticeBody) }
-                        var draftMaintenance by remember(flagshipConfig) { mutableStateOf(flagshipConfig.maintenanceMode) }
-                        var draftAssistantEnabled by remember(flagshipConfig) { mutableStateOf(flagshipConfig.assistantEnabled) }
-                        var draftAiModel by remember(flagshipConfig) { mutableStateOf(flagshipConfig.aiModel) }
-                        var draftAiName by remember(flagshipConfig) { mutableStateOf(flagshipConfig.aiDisplayName) }
-                        var draftAiPrompt by remember(flagshipConfig) { mutableStateOf(flagshipConfig.aiSystemPrompt) }
-                        var draftPremiumEnabled by remember(flagshipConfig) { mutableStateOf(flagshipConfig.premiumEnabled) }
-                        var draftPremiumUpsell by remember(flagshipConfig) { mutableStateOf(flagshipConfig.premiumUpsellEnabled) }
-                        var draftPaymentNumber by remember(flagshipConfig) { mutableStateOf(flagshipConfig.premiumPaymentNumber) }
-                        var draftMonthlyPrice by remember(flagshipConfig) { mutableStateOf(flagshipConfig.premiumMonthlyPrice.toString()) }
-                        var draftYearlyPrice by remember(flagshipConfig) { mutableStateOf(flagshipConfig.premiumYearlyPrice.toString()) }
-                        var draftLifetimePrice by remember(flagshipConfig) { mutableStateOf(flagshipConfig.premiumLifetimePrice.toString()) }
-                        var draftMonthlyEnabled by remember(flagshipConfig) { mutableStateOf(flagshipConfig.premiumMonthlyEnabled) }
-                        var draftYearlyEnabled by remember(flagshipConfig) { mutableStateOf(flagshipConfig.premiumYearlyEnabled) }
-                        var draftLifetimeEnabled by remember(flagshipConfig) { mutableStateOf(flagshipConfig.premiumLifetimeEnabled) }
-                        var draftBkash by remember(flagshipConfig) { mutableStateOf(flagshipConfig.premiumBkashEnabled) }
-                        var draftNagad by remember(flagshipConfig) { mutableStateOf(flagshipConfig.premiumNagadEnabled) }
-                        var draftRocket by remember(flagshipConfig) { mutableStateOf(flagshipConfig.premiumRocketEnabled) }
-                        var draftSmartReply by remember(flagshipConfig) { mutableStateOf(flagshipConfig.smartReplyEnabled) }
-                        var draftMemorySearch by remember(flagshipConfig) { mutableStateOf(flagshipConfig.memorySearchEnabled) }
-                        var draftTaskExtraction by remember(flagshipConfig) { mutableStateOf(flagshipConfig.taskExtractionEnabled) }
-                        var draftCallQuality by remember(flagshipConfig) { mutableStateOf(flagshipConfig.advancedCallQualityEnabled) }
-                        var draftAdvancedThemes by remember(flagshipConfig) { mutableStateOf(flagshipConfig.advancedThemesEnabled) }
-                        var draftCreatorProfile by remember(flagshipConfig) { mutableStateOf(flagshipConfig.creatorProfileEnabled) }
-                        var draftAnalytics by remember(flagshipConfig) { mutableStateOf(flagshipConfig.analyticsEnabled) }
-                        var draftFunEnabled by remember(flagshipConfig) { mutableStateOf(flagshipConfig.funCampaignEnabled) }
-                        var draftFunTitle by remember(flagshipConfig) { mutableStateOf(flagshipConfig.funCampaignTitle) }
-                        var draftFunBody by remember(flagshipConfig) { mutableStateOf(flagshipConfig.funCampaignBody) }
-                        var giftDays by remember { mutableStateOf("5") }
-                        var giftCount by remember { mutableStateOf("10") }
-                        var updateUploading by remember { mutableStateOf(false) }
-                        var updateUploadProgress by remember { mutableIntStateOf(0) }
-                        val updateApkPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-                            uri ?: return@rememberLauncherForActivityResult
-                            updateUploading = true
-                            updateUploadProgress = 0
-                            uiScope.launch {
-                                val candidate = withContext(Dispatchers.IO) { verifyUpdateApk(context, uri) }
-                                candidate.onSuccess { apk ->
-                                    draftVersionCode = apk.versionCode.toString()
-                                    if (apk.versionName.isNotBlank()) draftVersionName = apk.versionName
-                                    viewModel.uploadMediaToR2(apk.bytes, "application/vnd.android.package-archive", "update", "apk",
-                                        onProgress = { percent, _ -> updateUploadProgress = percent },
-                                        onSuccess = { media ->
-                                            updateUploading = false
-                                            draftApkUrl = media.publicUrl
-                                            draftApkKey = media.key
-                                            draftUpdateEnabled = true
-                                        },
-                                        onFailure = { error -> updateUploading = false; Toast.makeText(context, error, Toast.LENGTH_LONG).show() })
-                                }.onFailure { error ->
-                                    updateUploading = false
-                                    Toast.makeText(context, error.message ?: "APK verification failed", Toast.LENGTH_LONG).show()
-                                }
-                            }
-                        }
-                        Column(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(20.dp)
-                                .verticalScroll(rememberScrollState()),
-                            verticalArrangement = Arrangement.spacedBy(16.dp)
-                        ) {
-                            Text(
-                                text = "Admin control center",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-
-                            var adminUrlInput by remember { mutableStateOf(webhookUrl) }
-                            var adminPresenceUrlInput by remember(presenceWorkerUrl) { mutableStateOf(presenceWorkerUrl) }
-                            var storageProviderInput by remember(storageRoutingConfig.provider) { mutableStateOf(storageRoutingConfig.provider) }
-                            var storageProjectUrlInput by remember(storageRoutingConfig.supabaseUrl) { mutableStateOf(storageRoutingConfig.supabaseUrl) }
-                            var storageWorkerUrlInput by remember(storageRoutingConfig.storageWorkerUrl) { mutableStateOf(storageRoutingConfig.storageWorkerUrl) }
-                            var storageAutoCreateInput by remember(storageRoutingConfig.autoCreateBuckets) { mutableStateOf(storageRoutingConfig.autoCreateBuckets) }
-                            var storageBucketAvatarsInput by remember(storageRoutingConfig.bucketAvatars) { mutableStateOf(storageRoutingConfig.bucketAvatars) }
-                            var storageBucketChatInput by remember(storageRoutingConfig.bucketChatImages) { mutableStateOf(storageRoutingConfig.bucketChatImages) }
-                            var storageBucketVoiceInput by remember(storageRoutingConfig.bucketVoiceNotes) { mutableStateOf(storageRoutingConfig.bucketVoiceNotes) }
-                            var storageBucketPostsInput by remember(storageRoutingConfig.bucketPosts) { mutableStateOf(storageRoutingConfig.bucketPosts) }
-                            var storageBucketReelsInput by remember(storageRoutingConfig.bucketReels) { mutableStateOf(storageRoutingConfig.bucketReels) }
-                            var storageBucketThumbsInput by remember(storageRoutingConfig.bucketThumbnails) { mutableStateOf(storageRoutingConfig.bucketThumbnails) }
-                            var storageBucketUpdatesInput by remember(storageRoutingConfig.bucketUpdates) { mutableStateOf(storageRoutingConfig.bucketUpdates) }
-                            var storageSaving by remember { mutableStateOf(false) }
-                            var presenceQuery by rememberSaveable { mutableStateOf("") }
-
-                            Card(shape = RoundedCornerShape(28.dp), modifier = Modifier.fillMaxWidth()) {
-                                Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                    Text("Flagship Update Control", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                                    Text("Every published APK starts a new required-update campaign. Each user installs it once; the admin keeps emergency access.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    Row(verticalAlignment = Alignment.CenterVertically) { Text("Publish APK update", Modifier.weight(1f)); Switch(draftUpdateEnabled, { draftUpdateEnabled = it }) }
-                                    if (flagshipConfig.updateId.isNotBlank()) Text("Campaign: ${flagshipConfig.updateId.take(8)} • installed users will not be asked twice", fontSize = 10.sp, color = MaterialTheme.colorScheme.primary)
-                                    Row(verticalAlignment = Alignment.CenterVertically) { Text("Maintenance mode", Modifier.weight(1f)); Switch(draftMaintenance, { draftMaintenance = it }) }
-                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        OutlinedTextField(draftVersionCode, { draftVersionCode = it.filter(Char::isDigit).take(8) }, label = { Text("Version code") }, singleLine = true, modifier = Modifier.weight(1f))
-                                        OutlinedTextField(draftVersionName, { draftVersionName = it.take(30) }, label = { Text("Version name") }, singleLine = true, modifier = Modifier.weight(1f))
-                                    }
-                                    OutlinedTextField(draftNotes, { draftNotes = it.take(4000) }, label = { Text("What's new / release notes") }, minLines = 4, modifier = Modifier.fillMaxWidth())
-                                    OutlinedButton(onClick = { updateApkPicker.launch("application/vnd.android.package-archive") }, enabled = !updateUploading, modifier = Modifier.fillMaxWidth()) {
-                                        Icon(Icons.Outlined.UploadFile, null); Spacer(Modifier.width(8.dp)); Text(if (draftApkUrl.isBlank()) "Choose signed APK" else "Replace update APK")
-                                    }
-                                    if (updateUploading) { LinearProgressIndicator(progress = { updateUploadProgress / 100f }, modifier = Modifier.fillMaxWidth()); Text("Uploading update • $updateUploadProgress%", fontSize = 11.sp) }
-                                    if (draftApkUrl.isNotBlank()) Text("APK ready: ${draftApkKey.ifBlank { draftApkUrl }}", fontSize = 10.sp, color = Color(0xFF45D483), maxLines = 2, overflow = TextOverflow.Ellipsis)
-                                    HorizontalDivider()
-                                    Text("Mistral AI Assistant", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                                    Row(verticalAlignment = Alignment.CenterVertically) { Text("Show assistant to all users", Modifier.weight(1f)); Switch(draftAssistantEnabled, { draftAssistantEnabled = it }) }
-                                    OutlinedTextField(draftAiName, { draftAiName = it.take(60) }, label = { Text("Assistant name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                                    OutlinedTextField(draftAiModel, { draftAiModel = it.filter { c -> c.isLetterOrDigit() || c in "-_." }.take(80) }, label = { Text("Mistral model") }, supportingText = { Text("Example: mistral-small-latest") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                                    OutlinedTextField(draftAiPrompt, { draftAiPrompt = it.take(2000) }, label = { Text("Safe system instructions") }, minLines = 3, modifier = Modifier.fillMaxWidth())
-                                    Text("API key is never stored in Android/Firestore. Set Worker secret MISTRAL_API_KEY.", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    HorizontalDivider()
-                                    Text("Remote premium feature flags", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                                    Text("These switches can stage-roll out capabilities without changing the APK.", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    Row(verticalAlignment = Alignment.CenterVertically) { Text("Smart replies", Modifier.weight(1f)); Switch(draftSmartReply, { draftSmartReply = it }) }
-                                    Row(verticalAlignment = Alignment.CenterVertically) { Text("AI memory search", Modifier.weight(1f)); Switch(draftMemorySearch, { draftMemorySearch = it }) }
-                                    Row(verticalAlignment = Alignment.CenterVertically) { Text("Task extraction", Modifier.weight(1f)); Switch(draftTaskExtraction, { draftTaskExtraction = it }) }
-                                    Row(verticalAlignment = Alignment.CenterVertically) { Text("Advanced call quality", Modifier.weight(1f)); Switch(draftCallQuality, { draftCallQuality = it }) }
-                                    Row(verticalAlignment = Alignment.CenterVertically) { Text("Advanced themes", Modifier.weight(1f)); Switch(draftAdvancedThemes, { draftAdvancedThemes = it }) }
-                                    Row(verticalAlignment = Alignment.CenterVertically) { Text("Creator profile", Modifier.weight(1f)); Switch(draftCreatorProfile, { draftCreatorProfile = it }) }
-                                    Row(verticalAlignment = Alignment.CenterVertically) { Text("Usage analytics", Modifier.weight(1f)); Switch(draftAnalytics, { draftAnalytics = it }) }
-                                    HorizontalDivider()
-                                    Text("Premium payment control", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                                    Row(verticalAlignment = Alignment.CenterVertically) { Text("Premium purchase enabled", Modifier.weight(1f)); Switch(draftPremiumEnabled, { draftPremiumEnabled = it }) }
-                                    Row(verticalAlignment = Alignment.CenterVertically) { Text("First-login Premium showcase", Modifier.weight(1f)); Switch(draftPremiumUpsell, { draftPremiumUpsell = it }) }
-                                    OutlinedTextField(draftPaymentNumber, { draftPaymentNumber = it.filter(Char::isDigit).take(15) }, label = { Text("Payment number") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                        FilterChip(draftMonthlyEnabled, { draftMonthlyEnabled = !draftMonthlyEnabled }, { Text("Monthly") })
-                                        FilterChip(draftYearlyEnabled, { draftYearlyEnabled = !draftYearlyEnabled }, { Text("Yearly") })
-                                        FilterChip(draftLifetimeEnabled, { draftLifetimeEnabled = !draftLifetimeEnabled }, { Text("Lifetime") })
-                                    }
-                                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                        OutlinedTextField(draftMonthlyPrice, { draftMonthlyPrice = it.filter(Char::isDigit).take(7) }, label = { Text("Monthly ৳") }, modifier = Modifier.weight(1f))
-                                        OutlinedTextField(draftYearlyPrice, { draftYearlyPrice = it.filter(Char::isDigit).take(7) }, label = { Text("Yearly ৳") }, modifier = Modifier.weight(1f))
-                                        OutlinedTextField(draftLifetimePrice, { draftLifetimePrice = it.filter(Char::isDigit).take(7) }, label = { Text("Lifetime ৳") }, modifier = Modifier.weight(1f))
-                                    }
-                                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                        FilterChip(draftBkash, { draftBkash = !draftBkash }, { Text("bKash") })
-                                        FilterChip(draftNagad, { draftNagad = !draftNagad }, { Text("Nagad") })
-                                        FilterChip(draftRocket, { draftRocket = !draftRocket }, { Text("Rocket") })
-                                    }
-                                    OutlinedButton(onClick = { viewModel.updateFlagshipFields(mapOf(
-                                        "assistantEnabled" to draftAssistantEnabled, "aiModel" to draftAiModel, "aiDisplayName" to draftAiName, "aiSystemPrompt" to draftAiPrompt,
-                                        "premiumEnabled" to draftPremiumEnabled, "premiumUpsellEnabled" to draftPremiumUpsell, "premiumPaymentNumber" to draftPaymentNumber,
-                                        "premiumMonthlyPrice" to (draftMonthlyPrice.toIntOrNull() ?: 199), "premiumYearlyPrice" to (draftYearlyPrice.toIntOrNull() ?: 1499), "premiumLifetimePrice" to (draftLifetimePrice.toIntOrNull() ?: 3999),
-                                        "premiumMonthlyEnabled" to draftMonthlyEnabled, "premiumYearlyEnabled" to draftYearlyEnabled, "premiumLifetimeEnabled" to draftLifetimeEnabled,
-                                        "premiumBkashEnabled" to draftBkash, "premiumNagadEnabled" to draftNagad, "premiumRocketEnabled" to draftRocket,
-                                        "smartReplyEnabled" to draftSmartReply, "memorySearchEnabled" to draftMemorySearch, "taskExtractionEnabled" to draftTaskExtraction,
-                                        "advancedCallQualityEnabled" to draftCallQuality, "advancedThemesEnabled" to draftAdvancedThemes,
-                                        "creatorProfileEnabled" to draftCreatorProfile, "analyticsEnabled" to draftAnalytics
-                                    )) { Toast.makeText(context, if (it) "AI & Premium saved" else "Save failed", Toast.LENGTH_LONG).show() } }, modifier = Modifier.fillMaxWidth()) { Text("Save AI & Premium only") }
-                                    HorizontalDivider()
-                                    Text("One-time Friday Fun campaign", fontWeight=FontWeight.Bold,color=MaterialTheme.colorScheme.primary)
-                                    Row(verticalAlignment=Alignment.CenterVertically){Text("Campaign enabled",Modifier.weight(1f));Switch(draftFunEnabled,{draftFunEnabled=it})}
-                                    OutlinedTextField(draftFunTitle,{draftFunTitle=it.take(100)},label={Text("Campaign title")},modifier=Modifier.fillMaxWidth())
-                                    OutlinedTextField(draftFunBody,{draftFunBody=it.take(500)},label={Text("Editable message")},minLines=2,modifier=Modifier.fillMaxWidth())
-                                    OutlinedButton(onClick={viewModel.updateFlagshipFields(mapOf("funCampaignEnabled" to draftFunEnabled,"funCampaignId" to "fun_${System.currentTimeMillis()}","funCampaignTitle" to draftFunTitle,"funCampaignBody" to draftFunBody)){Toast.makeText(context,if(it)"New campaign published" else "Publish failed",Toast.LENGTH_LONG).show()}},modifier=Modifier.fillMaxWidth()){Text("Publish as a new one-time campaign")}
-                                    HorizontalDivider()
-                                    Row(verticalAlignment = Alignment.CenterVertically) { Text("Show global notice", Modifier.weight(1f)); Switch(draftNoticeEnabled, { draftNoticeEnabled = it }) }
-                                    OutlinedTextField(draftNoticeTitle, { draftNoticeTitle = it.take(100) }, label = { Text("Notice title") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                                    OutlinedTextField(draftNoticeBody, { draftNoticeBody = it.take(1000) }, label = { Text("Notice details") }, minLines = 2, modifier = Modifier.fillMaxWidth())
-                                    OutlinedButton(onClick = { viewModel.updateFlagshipFields(mapOf("noticeEnabled" to draftNoticeEnabled, "noticeTitle" to draftNoticeTitle, "noticeBody" to draftNoticeBody, "maintenanceMode" to draftMaintenance)) { Toast.makeText(context, if (it) "Notice & maintenance saved" else "Save failed", Toast.LENGTH_LONG).show() } }, modifier = Modifier.fillMaxWidth()) { Text("Save Notice & Maintenance only") }
-                                    Button(onClick = {
-                                        val code = draftVersionCode.toIntOrNull() ?: com.example.BuildConfig.VERSION_CODE
-                                        viewModel.publishFlagshipConfig(
-                                            FlagshipConfig(
-                                                updateEnabled = draftUpdateEnabled, mandatoryUpdate = draftUpdateEnabled,
-                                                latestVersionCode = code, minimumVersionCode = if (draftUpdateEnabled) code else 1,
-                                                versionName = draftVersionName, apkUrl = draftApkUrl, apkR2Key = draftApkKey,
-                                                releaseNotes = draftNotes, noticeEnabled = draftNoticeEnabled,
-                                                noticeTitle = draftNoticeTitle, noticeBody = draftNoticeBody,
-                                                maintenanceMode = draftMaintenance,
-                                                assistantEnabled = draftAssistantEnabled,
-                                                aiModel = draftAiModel.ifBlank { "mistral-small-latest" },
-                                                aiDisplayName = draftAiName.ifBlank { "Convo Chat Assistant" },
-                                                aiSystemPrompt = draftAiPrompt,
-                                                premiumEnabled = draftPremiumEnabled,
-                                                premiumUpsellEnabled = draftPremiumUpsell,
-                                                premiumPaymentNumber = draftPaymentNumber.ifBlank { "01755070708" },
-                                                premiumMonthlyPrice = draftMonthlyPrice.toIntOrNull() ?: 199,
-                                                premiumYearlyPrice = draftYearlyPrice.toIntOrNull() ?: 1499,
-                                                premiumLifetimePrice = draftLifetimePrice.toIntOrNull() ?: 3999,
-                                                premiumMonthlyEnabled = draftMonthlyEnabled,
-                                                premiumYearlyEnabled = draftYearlyEnabled,
-                                                premiumLifetimeEnabled = draftLifetimeEnabled,
-                                                premiumBkashEnabled = draftBkash,
-                                                premiumNagadEnabled = draftNagad,
-                                                premiumRocketEnabled = draftRocket,
-                                                smartReplyEnabled = draftSmartReply,
-                                                memorySearchEnabled = draftMemorySearch,
-                                                taskExtractionEnabled = draftTaskExtraction,
-                                                advancedCallQualityEnabled = draftCallQuality,
-                                                advancedThemesEnabled = draftAdvancedThemes,
-                                                creatorProfileEnabled = draftCreatorProfile,
-                                                analyticsEnabled = draftAnalytics,
-                                                funCampaignEnabled = draftFunEnabled,
-                                                funCampaignId = flagshipConfig.funCampaignId,
-                                                funCampaignTitle = draftFunTitle,
-                                                funCampaignBody = draftFunBody
-                                            )
-                                        ) { ok -> Toast.makeText(context, if (ok) "Flagship configuration published" else "Publish failed", Toast.LENGTH_LONG).show() }
-                                    }, enabled = draftUpdateEnabled && draftApkUrl.startsWith("https://"), modifier = Modifier.fillMaxWidth()) { Icon(Icons.Outlined.Publish, null); Spacer(Modifier.width(8.dp)); Text("Publish APK Update only") }
-                                    if (flagshipConfig.updateEnabled) TextButton(onClick = { viewModel.publishFlagshipConfig(flagshipConfig.copy(updateEnabled = false, mandatoryUpdate = false)) }) { Text("Disable current update") }
-                                }
-                            }
-
-                            if (adminReports.isNotEmpty()) Card(shape = RoundedCornerShape(26.dp), modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer.copy(.45f))) {
-                                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                    Text("Safety reports (${adminReports.size})", fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.error)
-                                    adminReports.sortedByDescending { it.createdAt }.take(30).forEach { report ->
-                                        Surface(shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.surface.copy(.75f)) {
-                                            Column(Modifier.padding(12.dp)) { Text(report.category, fontWeight = FontWeight.Bold); Text(report.description, maxLines = 4, overflow = TextOverflow.Ellipsis); Text("Reporter: ${report.reporterEmail}", fontSize = 10.sp); if (report.targetUid.isNotBlank()) Row { Button(onClick = { viewModel.setUserBanned(report.targetUid, true, report.description) { _, message -> Toast.makeText(context, message, Toast.LENGTH_LONG).show() } }) { Text("Ban target") }; Spacer(Modifier.width(8.dp)); OutlinedButton(onClick = { viewModel.setUserBanned(report.targetUid, false) { _, message -> Toast.makeText(context, message, Toast.LENGTH_LONG).show() } }) { Text("Unban") } } }
-                                        }
-                                    }
-                                }
-                            }
-
-                            Card(shape = RoundedCornerShape(26.dp), modifier = Modifier.fillMaxWidth()) {
-                                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
-                                    Text("Premium Gift & Revoke", fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.primary)
-                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        OutlinedTextField(giftDays, { giftDays = it.filter(Char::isDigit).take(3) }, label = { Text("Days") }, modifier = Modifier.weight(1f), singleLine = true)
-                                        OutlinedTextField(giftCount, { giftCount = it.filter(Char::isDigit).take(3) }, label = { Text("Random users") }, modifier = Modifier.weight(1f), singleLine = true)
-                                    }
-                                    Button(onClick = { val days = giftDays.toIntOrNull()?.coerceIn(1,365) ?: 5; val targets = allUsers.filterNot { it.isPremium && (it.premiumPlan == "lifetime" || it.premiumUntil > System.currentTimeMillis()) }.shuffled().take(giftCount.toIntOrNull()?.coerceIn(1,100) ?: 10); viewModel.grantPremiumGift(targets.map { it.uid }, days) { Toast.makeText(context, if (it) "Gift sent to ${targets.size} users" else "Gift failed", Toast.LENGTH_LONG).show() } }, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Default.CardGiftcard, null); Spacer(Modifier.width(7.dp)); Text("Send random gifts") }
-                                    allUsers.filter { it.isPremium && (it.premiumPlan == "lifetime" || it.premiumUntil > System.currentTimeMillis()) }.take(15).forEach { person -> Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) { Text(person.name, Modifier.weight(1f), maxLines = 1); TextButton(onClick = { viewModel.revokePremium(person.uid) }) { Text("Cancel", color = MaterialTheme.colorScheme.error) } } }
-                                }
-                            }
-
-                            if (premiumRequests.isNotEmpty()) Card(shape = RoundedCornerShape(28.dp), modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
-                                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                    Text("Premium payment approvals (${premiumRequests.size})", fontWeight = FontWeight.ExtraBold)
-                                    premiumRequests.take(30).forEach { request ->
-                                        Surface(shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.surface.copy(.75f)) {
-                                            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                                    AsyncImage(request.userImageUrl.ifBlank { null }, request.userName, Modifier.size(38.dp).clip(CircleShape))
-                                                    Spacer(Modifier.width(8.dp)); Column { Text(request.userName, fontWeight = FontWeight.Bold); Text(request.userEmail, fontSize = 10.sp) }
-                                                }
-                                                Text("${request.plan.uppercase()} • ৳${request.amount} • ${request.paymentMethod.uppercase()}")
-                                                Text("Transaction: ${request.transactionId}", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
-                                                if (request.paymentProofUrl.isNotBlank()) AsyncImage(request.paymentProofUrl, "Payment screenshot", Modifier.fillMaxWidth().height(160.dp).clip(RoundedCornerShape(14.dp)), contentScale = ContentScale.Crop)
-                                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                                    Button(onClick = { viewModel.reviewPremiumRequest(request, true) { Toast.makeText(context, if (it) "Premium activated" else "Approval failed", Toast.LENGTH_LONG).show() } }, modifier = Modifier.weight(1f)) { Text("Approve") }
-                                                    OutlinedButton(onClick = { viewModel.reviewPremiumRequest(request, false) { Toast.makeText(context, if (it) "Request rejected" else "Reject failed", Toast.LENGTH_LONG).show() } }, modifier = Modifier.weight(1f)) { Text("Reject") }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-
-                            if (featureRequests.isNotEmpty()) Card(shape = RoundedCornerShape(28.dp), modifier = Modifier.fillMaxWidth()) {
-                                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
-                                    Text("User feature requests (${featureRequests.size})", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                                    featureRequests.take(20).forEach { request ->
-                                        Surface(color = MaterialTheme.colorScheme.surfaceVariant.copy(.45f), shape = RoundedCornerShape(16.dp)) {
-                                            Column(Modifier.padding(12.dp)) {
-                                                Text(request.title, fontWeight = FontWeight.Bold)
-                                                Text("${request.requesterName} • ${request.status}", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                                Text(request.description, maxLines = 3, overflow = TextOverflow.Ellipsis)
-                                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                                    TextButton(onClick = { viewModel.updateFeatureRequest(request.id, "accepted") }) { Text("Accept") }
-                                                    TextButton(onClick = { viewModel.updateFeatureRequest(request.id, "pending") }) { Text("Pending") }
-                                                    TextButton(onClick = { viewModel.updateFeatureRequest(request.id, "rejected") }) { Text("Reject", color = MaterialTheme.colorScheme.error) }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-
-                            Card(shape = RoundedCornerShape(28.dp), modifier = Modifier.fillMaxWidth()) {
-                                Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Icon(Icons.Outlined.Groups, null, tint = MaterialTheme.colorScheme.primary)
-                                        Spacer(Modifier.width(9.dp))
-                                        Text("Separate Presence Monitor Worker", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                                    }
-                                    Text(
-                                        "Independent from the chat/call gateway. It counts Firestore user profiles, sends a five-minute FCM topic probe, and shows recent device responses. Add the Cron Trigger in Cloudflare; Android/FCM may delay background delivery.",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                    OutlinedTextField(
-                                        value = adminPresenceUrlInput,
-                                        onValueChange = { adminPresenceUrlInput = it },
-                                        label = { Text("Presence Worker HTTPS URL") },
-                                        placeholder = { Text("https://your-presence-worker.workers.dev") },
-                                        modifier = Modifier.fillMaxWidth(),
-                                        singleLine = true,
-                                        shape = RoundedCornerShape(18.dp)
-                                    )
-                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        Button(
-                                            onClick = {
-                                                viewModel.updatePresenceWorkerUrl(adminPresenceUrlInput) { ok, message ->
-                                                    Toast.makeText(context, message, if (ok) Toast.LENGTH_SHORT else Toast.LENGTH_LONG).show()
-                                                }
-                                            },
-                                            modifier = Modifier.weight(1f)
-                                        ) { Text("Save URL") }
-                                        OutlinedButton(
-                                            onClick = { viewModel.testPresenceWorker(adminPresenceUrlInput) },
-                                            enabled = !presenceWorkerHealth.checking,
-                                            modifier = Modifier.weight(1f)
-                                        ) {
-                                            if (presenceWorkerHealth.checking) CircularProgressIndicator(Modifier.size(17.dp), strokeWidth = 2.dp)
-                                            else Icon(Icons.Outlined.HealthAndSafety, null)
-                                            Spacer(Modifier.width(6.dp))
-                                            Text("Test")
-                                        }
-                                    }
-                                    Surface(
-                                        color = if (presenceWorkerHealth.configured) Color(0xFF1F7A4D).copy(alpha = .16f) else MaterialTheme.colorScheme.errorContainer.copy(alpha = .65f),
-                                        shape = RoundedCornerShape(16.dp),
-                                        modifier = Modifier.fillMaxWidth()
-                                    ) {
-                                        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                                            Icon(
-                                                if (presenceWorkerHealth.configured) Icons.Default.CheckCircle else Icons.Default.Info,
-                                                null,
-                                                tint = if (presenceWorkerHealth.configured) Color(0xFF45D483) else MaterialTheme.colorScheme.onSurfaceVariant
-                                            )
-                                            Spacer(Modifier.width(8.dp))
-                                            Column {
-                                                Text(presenceWorkerHealth.message, fontWeight = FontWeight.SemiBold)
-                                                if (presenceWorkerHealth.version.isNotBlank()) Text("Worker ${presenceWorkerHealth.version} • confirm the Cloudflare Cron is enabled", fontSize = 10.sp)
-                                            }
-                                        }
-                                    }
-                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        PresenceMetric("Users", presenceDashboard.totalUsers.toString(), Modifier.weight(1f))
-                                        PresenceMetric("Online", presenceDashboard.foregroundUsers.toString(), Modifier.weight(1f))
-                                        PresenceMetric("Reachable", presenceDashboard.reachableUsers.toString(), Modifier.weight(1f))
-                                    }
-                                    Text("${presenceDashboard.activeUsers} active/recent • ${presenceDashboard.registeredDevices} registered devices • last probe: ${if (presenceDashboard.lastProbeAt > 0L) SimpleDateFormat("MMM d, HH:mm", Locale.getDefault()).format(Date(presenceDashboard.lastProbeAt)) else "not received yet"}", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    OutlinedTextField(
-                                        value = presenceQuery,
-                                        onValueChange = { presenceQuery = it.take(100) },
-                                        label = { Text("Search name, username, or UID") },
-                                        modifier = Modifier.fillMaxWidth(),
-                                        singleLine = true
-                                    )
-                                    OutlinedButton(
-                                        onClick = { viewModel.loadPresenceUsers(presenceQuery) },
-                                        enabled = !presenceDashboard.checking && presenceWorkerHealth.configured,
-                                        modifier = Modifier.fillMaxWidth()
-                                    ) {
-                                        if (presenceDashboard.checking) CircularProgressIndicator(Modifier.size(17.dp), strokeWidth = 2.dp)
-                                        else Icon(Icons.Default.Refresh, null)
-                                        Spacer(Modifier.width(7.dp))
-                                        Text("Refresh Firebase user list")
-                                    }
-                                    if (presenceDashboard.message.isNotBlank()) Text(presenceDashboard.message, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    presenceDashboard.users.forEach { person ->
-                                        val statusColor = when (person.status) {
-                                            "online" -> Color(0xFF2CBF79)
-                                            "reachable" -> Color(0xFFFFB74D)
-                                            else -> MaterialTheme.colorScheme.outline
-                                        }
-                                        val seenText = if (person.lastActive > 0L) SimpleDateFormat("MMM d, HH:mm", Locale.getDefault()).format(Date(person.lastActive)) else "No recent signal"
-                                        val probeText = if (person.lastProbeReceivedAt > 0L) "Probe reply ${SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(person.lastProbeReceivedAt))}" else "No probe reply yet"
-                                        Surface(color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .5f), shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()) {
-                                            Row(Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                                                Icon(Icons.Default.Circle, null, tint = statusColor, modifier = Modifier.size(10.dp))
-                                                Spacer(Modifier.width(9.dp))
-                                                Column(Modifier.weight(1f)) {
-                                                    Text(person.name, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                                    Text("${if (person.username.isNotBlank()) "@${person.username} · " else ""}last seen $seenText", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                                    Text("$probeText · ${if (person.hasFcmToken) "FCM ready" else "no FCM token"}", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                                }
-                                                Text(person.status.uppercase(), fontSize = 9.sp, fontWeight = FontWeight.Bold, color = statusColor)
-                                            }
-                                        }
-                                    }
-                                    presenceDashboard.nextCursor?.let { nextPresenceCursor ->
-                                        OutlinedButton(
-                                            onClick = { viewModel.loadPresenceUsers(presenceQuery, nextPresenceCursor) },
-                                            enabled = !presenceDashboard.checking,
-                                            modifier = Modifier.fillMaxWidth()
-                                        ) { Text("Load more users") }
-                                    }
-                                }
-                            }
-
-                            Card(shape = RoundedCornerShape(28.dp), modifier = Modifier.fillMaxWidth()) {
-                                Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Icon(Icons.Outlined.CloudUpload, null, tint = MaterialTheme.colorScheme.primary)
-                                        Spacer(Modifier.width(9.dp))
-                                        Text("Unified app storage", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                                    }
-                                    Text(
-                                        "Choose Supabase for every new upload: chat files and media, avatars, stories, posts, reels, thumbnails, and APK updates. The Worker reads the saved config from Firebase automatically, so ordinary URL/settings changes do not require editing its source.",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Column(Modifier.weight(1f)) {
-                                            Text("Use Supabase for all uploads", fontWeight = FontWeight.SemiBold)
-                                            Text(if (storageProviderInput == "supabase") "Supabase is the active provider" else "Existing mixed upload routes are active", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                        }
-                                        Switch(
-                                            checked = storageProviderInput == "supabase",
-                                            onCheckedChange = { storageProviderInput = if (it) "supabase" else "legacy" }
-                                        )
-                                    }
-                                    if (storageProviderInput == "supabase") {
-                                        OutlinedTextField(
-                                            value = storageProjectUrlInput,
-                                            onValueChange = { storageProjectUrlInput = it.trim() },
-                                            label = { Text("Supabase Project URL") },
-                                            placeholder = { Text("https://your-project.supabase.co") },
-                                            supportingText = { Text("Project URL only — do not include /storage/v1 or any API key.") },
-                                            modifier = Modifier.fillMaxWidth(),
-                                            singleLine = true,
-                                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri)
-                                        )
-                                        OutlinedTextField(
-                                            value = storageWorkerUrlInput,
-                                            onValueChange = { storageWorkerUrlInput = it.trim() },
-                                            label = { Text("Storage Worker HTTPS URL") },
-                                            placeholder = { Text("https://convo-storage.your-account.workers.dev") },
-                                            supportingText = { Text("Deploy firechat-storage-worker.js once, then save its HTTPS URL here.") },
-                                            modifier = Modifier.fillMaxWidth(),
-                                            singleLine = true,
-                                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri)
-                                        )
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            Checkbox(checked = storageAutoCreateInput, onCheckedChange = { storageAutoCreateInput = it })
-                                            Column {
-                                                Text("Create missing buckets during setup test", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                                                Text("Requires the Worker service-role secret", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                            }
-                                        }
-                                        Text("Public Supabase bucket IDs (saved to Firebase config; created by Test & prepare)", fontWeight = FontWeight.Bold, fontSize = 11.sp)
-                                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                            OutlinedTextField(storageBucketAvatarsInput, { storageBucketAvatarsInput = it.lowercase().filter { c -> c.isLetterOrDigit() || c == '_' || c == '-' }.take(63) }, label = { Text("Avatars") }, singleLine = true, modifier = Modifier.weight(1f))
-                                            OutlinedTextField(storageBucketChatInput, { storageBucketChatInput = it.lowercase().filter { c -> c.isLetterOrDigit() || c == '_' || c == '-' }.take(63) }, label = { Text("Chat / stories") }, singleLine = true, modifier = Modifier.weight(1f))
-                                        }
-                                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                            OutlinedTextField(storageBucketVoiceInput, { storageBucketVoiceInput = it.lowercase().filter { c -> c.isLetterOrDigit() || c == '_' || c == '-' }.take(63) }, label = { Text("Voice notes") }, singleLine = true, modifier = Modifier.weight(1f))
-                                            OutlinedTextField(storageBucketPostsInput, { storageBucketPostsInput = it.lowercase().filter { c -> c.isLetterOrDigit() || c == '_' || c == '-' }.take(63) }, label = { Text("Posts") }, singleLine = true, modifier = Modifier.weight(1f))
-                                        }
-                                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                            OutlinedTextField(storageBucketReelsInput, { storageBucketReelsInput = it.lowercase().filter { c -> c.isLetterOrDigit() || c == '_' || c == '-' }.take(63) }, label = { Text("Reels") }, singleLine = true, modifier = Modifier.weight(1f))
-                                            OutlinedTextField(storageBucketThumbsInput, { storageBucketThumbsInput = it.lowercase().filter { c -> c.isLetterOrDigit() || c == '_' || c == '-' }.take(63) }, label = { Text("Thumbnails") }, singleLine = true, modifier = Modifier.weight(1f))
-                                        }
-                                        OutlinedTextField(storageBucketUpdatesInput, { storageBucketUpdatesInput = it.lowercase().filter { c -> c.isLetterOrDigit() || c == '_' || c == '-' }.take(63) }, label = { Text("APK updates") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                                        Text("Folders are virtual and appear automatically after the first upload. These media buckets must be public; do not store private documents here. Use unique IDs with 2–63 lowercase letters, digits, underscores, or hyphens.", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                        Text(
-                                            "Security: never paste a service-role key into Android or Firestore. Configure SUPABASE_SERVICE_ROLE_KEY as a Cloudflare Worker secret once; the app only stores the non-secret Project URL and routing settings.",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.error
-                                        )
-                                    }
-                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        Button(
-                                            onClick = {
-                                                storageSaving = true
-                                                viewModel.saveStorageRoutingConfig(storageProviderInput, storageProjectUrlInput, storageWorkerUrlInput, storageAutoCreateInput, storageBucketAvatarsInput, storageBucketChatInput, storageBucketVoiceInput, storageBucketPostsInput, storageBucketReelsInput, storageBucketThumbsInput, storageBucketUpdatesInput) { ok, message ->
-                                                    storageSaving = false
-                                                    Toast.makeText(context, message, if (ok) Toast.LENGTH_SHORT else Toast.LENGTH_LONG).show()
-                                                }
-                                            },
-                                            enabled = !storageSaving,
-                                            modifier = Modifier.weight(1f)
-                                        ) {
-                                            if (storageSaving) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
-                                            else Icon(Icons.Default.Save, null)
-                                            Spacer(Modifier.width(6.dp)); Text("Save settings")
-                                        }
-                                        OutlinedButton(
-                                            onClick = {
-                                                storageSaving = true
-                                                viewModel.saveStorageRoutingConfig(storageProviderInput, storageProjectUrlInput, storageWorkerUrlInput, storageAutoCreateInput, storageBucketAvatarsInput, storageBucketChatInput, storageBucketVoiceInput, storageBucketPostsInput, storageBucketReelsInput, storageBucketThumbsInput, storageBucketUpdatesInput) { saved, message ->
-                                                    if (!saved) {
-                                                        storageSaving = false
-                                                        Toast.makeText(context, message, Toast.LENGTH_LONG).show()
-                                                    } else {
-                                                        viewModel.testStorageRoutingConfig(storageWorkerUrlInput) { testOk, resultMessage ->
-                                                            uiScope.launch(Dispatchers.Main) {
-                                                                storageSaving = false
-                                                                Toast.makeText(context, resultMessage, if (testOk) Toast.LENGTH_SHORT else Toast.LENGTH_LONG).show()
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            },
-                                            enabled = !storageSaving && storageProviderInput == "supabase",
-                                            modifier = Modifier.weight(1f)
-                                        ) {
-                                            if (storageSaving || storageSetupHealth.checking) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
-                                            else Icon(Icons.Outlined.HealthAndSafety, null)
-                                            Spacer(Modifier.width(6.dp)); Text("Save + test")
-                                        }
-                                    }
-                                    Surface(
-                                        color = if (storageSetupHealth.ok) Color(0xFF1F7A4D).copy(alpha = .16f) else MaterialTheme.colorScheme.errorContainer.copy(alpha = .45f),
-                                        shape = RoundedCornerShape(16.dp),
-                                        modifier = Modifier.fillMaxWidth()
-                                    ) {
-                                        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                                Icon(if (storageSetupHealth.ok) Icons.Default.CheckCircle else Icons.Default.Info, null, tint = if (storageSetupHealth.ok) Color(0xFF45D483) else MaterialTheme.colorScheme.onSurfaceVariant)
-                                                Spacer(Modifier.width(8.dp))
-                                                Text(storageSetupHealth.message, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
-                                            }
-                                            if (storageSetupHealth.projectHost.isNotBlank()) Text("Project: ${storageSetupHealth.projectHost}", fontSize = 10.sp)
-                                            storageSetupHealth.bucketChecks.forEach { Text("• $it", fontSize = 10.sp) }
-                                            storageSetupHealth.instructions.forEach { Text("Next step: $it", fontSize = 10.sp, color = MaterialTheme.colorScheme.error) }
-                                        }
-                                    }
-                                }
-                            }
-
-                            Card(
-                                shape = RoundedCornerShape(28.dp),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Column(modifier = Modifier.padding(20.dp)) {
-                                    Text(
-                                        text = "Direct FCM Gateway Configuration",
-                                        style = MaterialTheme.typography.titleSmall,
-                                        fontWeight = FontWeight.Bold,
-                                        color = MaterialTheme.colorScheme.primary
-                                    )
-                                    Spacer(modifier = Modifier.height(6.dp))
-                                    Text(
-                                        text = "Messages, friend requests, tags and activity alerts are sent directly through your secure FCM v1 Worker. No n8n webhook is used. Keep the service-account key only in the Worker secret.",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                    Spacer(modifier = Modifier.height(14.dp))
-
-                                    OutlinedTextField(
-                                        value = adminUrlInput,
-                                        onValueChange = { adminUrlInput = it },
-                                        placeholder = { Text("https://solitary-hill-dcdc.mr44253990.workers.dev/") },
-                                        modifier = Modifier.fillMaxWidth(),
-                                        singleLine = true,
-                                        shape = RoundedCornerShape(18.dp)
-                                    )
-
-                                    Spacer(modifier = Modifier.height(12.dp))
-
-                                    Button(
-                                        onClick = {
-                                            viewModel.updateWebhookUrl(adminUrlInput)
-                                            Toast.makeText(context, "Saved direct FCM gateway URL!", Toast.LENGTH_SHORT).show()
-                                        },
-                                        modifier = Modifier.fillMaxWidth()
-                                    ) {
-                                        Text("Save FCM Gateway", fontWeight = FontWeight.Bold)
-                                    }
-                                    Spacer(Modifier.height(8.dp))
-                                    OutlinedButton(
-                                        onClick = { viewModel.testFcmGateway(adminUrlInput) },
-                                        modifier = Modifier.fillMaxWidth()
-                                    ) {
-                                        if (gatewayHealth.checking) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                                        else Icon(Icons.Outlined.HealthAndSafety, null)
-                                        Spacer(Modifier.width(8.dp))
-                                        Text("Test gateway")
-                                    }
-                                    Spacer(Modifier.height(8.dp))
-                                    Button(
-                                        onClick = { viewModel.sendAdminTestNotification() },
-                                        enabled = gatewayHealth.configured,
-                                        modifier = Modifier.fillMaxWidth()
-                                    ) {
-                                        Icon(Icons.Outlined.SendToMobile, null)
-                                        Spacer(Modifier.width(8.dp))
-                                        Text("Send test notification to this device")
-                                    }
-                                    Spacer(Modifier.height(10.dp))
-                                    Surface(
-                                        color = if (gatewayHealth.configured) Color(0xFF1F7A4D).copy(alpha = .16f) else MaterialTheme.colorScheme.errorContainer,
-                                        shape = RoundedCornerShape(16.dp),
-                                        modifier = Modifier.fillMaxWidth()
-                                    ) {
-                                        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                                            Icon(
-                                                if (gatewayHealth.configured) Icons.Default.CheckCircle else Icons.Default.Warning,
-                                                null,
-                                                tint = if (gatewayHealth.configured) Color(0xFF45D483) else MaterialTheme.colorScheme.error
-                                            )
-                                            Spacer(Modifier.width(9.dp))
-                                            Column {
-                                                Text(gatewayHealth.message, fontWeight = FontWeight.Bold)
-                                                if (gatewayHealth.projectId.isNotBlank()) {
-                                                    Text("Project: ${gatewayHealth.projectId} • Worker ${gatewayHealth.version}", fontSize = 11.sp)
-                                                    Text("R2 ${if (gatewayHealth.r2Configured) "✓" else "✗"}  •  TURN ${if (gatewayHealth.turnConfigured) "✓" else "✗"}  •  SFU ${if (gatewayHealth.sfuConfigured) "✓" else "✗"}", fontSize = 11.sp)
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-
-                            Card(shape = RoundedCornerShape(24.dp), modifier = Modifier.fillMaxWidth()) {
-                                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
-                                    Text("Infrastructure checklist", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                                    AdminStatusRow("Firebase / FCM", gatewayHealth.configured, "FIREBASE_SERVICE_ACCOUNT")
-                                    AdminStatusRow("Presence monitor Worker", presenceWorkerHealth.configured, "Separate URL + five-minute Cloudflare Cron")
-                                    AdminStatusRow("Cloudflare R2", gatewayHealth.r2Configured, "MEDIA_BUCKET + R2_PUBLIC_BASE_URL")
-                                    AdminStatusRow("TURN calling", gatewayHealth.turnConfigured, "TURN_TOKEN_ID + TURN_API_TOKEN")
-                                    AdminStatusRow("Realtime SFU", gatewayHealth.sfuConfigured, "CALLS_APP_ID + CALLS_APP_TOKEN")
-                                    Text("Post and reel media retention: 10 days", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                }
-                            }
-
-                            Card(shape = RoundedCornerShape(24.dp), modifier = Modifier.fillMaxWidth()) {
-                                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Text("Smart admin actions", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        OutlinedButton(onClick = { viewModel.testFcmGateway(webhookUrl) }, modifier = Modifier.weight(1f)) { Text("Health check") }
-                                        OutlinedButton(onClick = { viewModel.loadPosts(); viewModel.loadStories(); viewModel.loadGroups() }, modifier = Modifier.weight(1f)) { Text("Refresh data") }
-                                    }
-                                    Button(onClick = { viewModel.sendAdminTestNotification() }, enabled = gatewayHealth.configured, modifier = Modifier.fillMaxWidth()) {
-                                        Icon(Icons.Outlined.SendToMobile, null); Spacer(Modifier.width(8.dp)); Text("Send diagnostic push")
-                                    }
-                                }
-                            }
-
-                            Card(
-                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
-                                shape = RoundedCornerShape(24.dp),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(16.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Icon(Icons.Default.VerifiedUser, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimaryContainer, modifier = Modifier.size(24.dp))
-                                    Spacer(modifier = Modifier.width(12.dp))
-                                    Column {
-                                        Text("Admin Session Authenticated", color = MaterialTheme.colorScheme.onPrimaryContainer, fontWeight = FontWeight.Bold)
-                                        Text("Logged in as: mr4425390@gmail.com", color = MaterialTheme.colorScheme.onPrimaryContainer, fontSize = 11.sp)
-                                    }
-                                }
-                            }
-                        }
+                        AdminAccessDeniedScreen()
                     }
                 }
                 4 -> {
@@ -2188,16 +1507,28 @@ fun HomeScreen(
                     }
                 }
                 6 -> {
-                    ReelsFeedScreen(
-                        posts = posts,
-                        users = allUsers,
-                        viewModel = viewModel,
-                        initialPostId = selectedReelPostId,
-                        onProfileSelected = onProfileSelected,
-                        onCreateReel = { viewModel.prepareComposer("reel"); onCreatePost() },
-                        onClose = { viewModel.setCurrentTab(0) }
-                    )
+                    if (flagshipConfig.tiktokModeEnabled) {
+                        TikTokBrowserScreen(onClose = { viewModel.setCurrentTab(0) })
+                    } else {
+                        ReelsFeedScreen(
+                            posts = posts,
+                            users = allUsers,
+                            viewModel = viewModel,
+                            initialPostId = selectedReelPostId,
+                            onProfileSelected = onProfileSelected,
+                            onCreateReel = { viewModel.prepareComposer("reel"); onCreatePost() },
+                            onClose = { viewModel.setCurrentTab(0) }
+                        )
+                    }
                 }
+                7 -> AdminAnalyticsDashboard(
+                    users = allUsers,
+                    posts = posts,
+                    stories = stories,
+                    reports = adminReports,
+                    onRefreshReports = { viewModel.loadAdminReports() },
+                    onOpenControlCenter = { viewModel.setCurrentTab(3) }
+                )
                 5 -> {
                     var peopleQuery by remember { mutableStateOf("") }
                     val visiblePeople = allUsers.filter {
@@ -4703,31 +4034,6 @@ private fun PrivacyToggleRow(label: String, checked: Boolean, onCheckedChange: (
         Switch(checked = checked, onCheckedChange = { onCheckedChange() })
     }
 }
-
-@Composable
-private fun PresenceMetric(label: String, value: String, modifier: Modifier = Modifier) {
-    Surface(
-        modifier = modifier,
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .62f),
-        shape = RoundedCornerShape(14.dp)
-    ) {
-        Column(Modifier.padding(horizontal = 10.dp, vertical = 8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(value, fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.primary)
-            Text(label, fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
-        }
-    }
-}
-
-@Composable
-private fun AdminStatusRow(label: String, ready: Boolean, requirement: String) {
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Icon(if (ready) Icons.Default.CheckCircle else Icons.Default.Warning, null, tint = if (ready) Color(0xFF45D483) else MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp))
-        Spacer(Modifier.width(9.dp))
-        Column(Modifier.weight(1f)) { Text(label, fontWeight = FontWeight.SemiBold); Text(requirement, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-        Text(if (ready) "READY" else "SETUP", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = if (ready) Color(0xFF45D483) else MaterialTheme.colorScheme.error)
-    }
-}
-
 
 @Composable
 private fun ActiveContactsStrip(users: List<User>, onSelect: (User) -> Unit) {

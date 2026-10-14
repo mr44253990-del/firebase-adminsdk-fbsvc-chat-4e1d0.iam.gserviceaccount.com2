@@ -89,7 +89,7 @@ data class PresenceMonitorUser(
 
 data class PresenceDashboard(
     val checking: Boolean = false,
-    val message: String = "No presence Worker configured",
+    val message: String = "No presence API configured",
     val totalUsers: Int = 0,
     val activeUsers: Int = 0,
     val foregroundUsers: Int = 0,
@@ -585,8 +585,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val cleanUrl = url.trim().trimEnd('/')
         val parsed = runCatching { Uri.parse(cleanUrl) }.getOrNull()
         if (!cleanUrl.startsWith("https://", ignoreCase = true) || parsed?.host.isNullOrBlank()) {
-            _presenceWorkerHealth.value = PresenceWorkerHealth(message = "Enter a valid HTTPS Worker URL")
-            onComplete(false, "Enter a valid HTTPS Worker URL")
+            _presenceWorkerHealth.value = PresenceWorkerHealth(message = "Enter a valid HTTPS presence API URL")
+            onComplete(false, "Enter a valid HTTPS presence API URL")
             return
         }
         getDatabaseInstance().getReference("config").child("app_settings")
@@ -594,12 +594,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             .addOnSuccessListener {
                 _presenceWorkerUrl.value = cleanUrl
                 sharedPrefs.edit().putString("presence_worker_url", cleanUrl).apply()
-                _presenceDashboard.value = PresenceDashboard(message = "Worker URL saved. Refresh the user list to load presence.")
-                onComplete(true, "Presence Worker URL saved")
+                _presenceDashboard.value = PresenceDashboard(message = "Presence API URL saved. Refresh the user list to load presence.")
+                onComplete(true, "Presence API URL saved")
                 testPresenceWorker(cleanUrl)
             }
             .addOnFailureListener { error ->
-                _presenceWorkerHealth.value = PresenceWorkerHealth(message = "Could not save Worker URL: ${error.localizedMessage}")
+                _presenceWorkerHealth.value = PresenceWorkerHealth(message = "Could not save presence API URL: ${error.localizedMessage}")
                 onComplete(false, error.localizedMessage ?: "Could not save Worker URL")
             }
     }
@@ -607,15 +607,15 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     fun testPresenceWorker(url: String = _presenceWorkerUrl.value) {
         val cleanUrl = url.trim().trimEnd('/')
         if (!cleanUrl.startsWith("https://", ignoreCase = true) || runCatching { Uri.parse(cleanUrl).host.isNullOrBlank() }.getOrDefault(true)) {
-            _presenceWorkerHealth.value = PresenceWorkerHealth(message = "Enter a valid HTTPS Worker URL")
+            _presenceWorkerHealth.value = PresenceWorkerHealth(message = "Enter a valid HTTPS presence API URL")
             return
         }
-        _presenceWorkerHealth.value = PresenceWorkerHealth(checking = true, message = "Checking presence Worker…")
+        _presenceWorkerHealth.value = PresenceWorkerHealth(checking = true, message = "Checking presence API…")
         val request = Request.Builder().url("$cleanUrl/health").get().build()
         OkHttpClient.Builder().callTimeout(12, TimeUnit.SECONDS).build()
             .newCall(request).enqueue(object : Callback {
                 override fun onFailure(call: Call, e: IOException) {
-                    _presenceWorkerHealth.value = PresenceWorkerHealth(message = "Presence Worker unreachable: ${e.localizedMessage}")
+                    _presenceWorkerHealth.value = PresenceWorkerHealth(message = "Presence API unreachable: ${e.localizedMessage}")
                 }
                 override fun onResponse(call: Call, response: Response) {
                     response.use {
@@ -623,7 +623,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         val ready = it.isSuccessful && json.optBoolean("ok", false)
                         _presenceWorkerHealth.value = PresenceWorkerHealth(
                             configured = ready,
-                            message = if (ready) "Presence Worker endpoint is ready · verify the five-minute Cloudflare Cron" else json.optString("error", "Worker is online but Firebase is not configured"),
+                            message = if (ready) "Presence API is ready · confirm that exactly one five-minute schedule is active" else json.optString("error", "Endpoint is online but Firebase is not configured"),
                             version = json.optString("version")
                         )
                     }
@@ -638,7 +638,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
         val baseUrl = _presenceWorkerUrl.value.trimEnd('/')
         if (baseUrl.isBlank()) {
-            _presenceDashboard.value = PresenceDashboard(message = "Save a Presence Worker URL first")
+            _presenceDashboard.value = PresenceDashboard(message = "Save a presence API URL first")
             return
         }
         val authUser = FirebaseAuth.getInstance().currentUser
@@ -1038,12 +1038,14 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val bucketIdPattern = Regex("^[a-z0-9][a-z0-9_-]{1,62}$")
         if (normalizedProvider == "supabase") {
             val projectUri = runCatching { Uri.parse(cleanSupabase) }.getOrNull()
-            if (projectUri?.scheme != "https" || projectUri.host.isNullOrBlank() || projectUri.path.orEmpty().trim('/').isNotEmpty() || !projectUri.query.isNullOrBlank() || !projectUri.fragment.isNullOrBlank() || cleanSupabase.substringAfter("://").contains('@')) {
-                return onComplete(false, "Enter the Supabase Project URL, e.g. https://your-project.supabase.co (no /storage/v1 path)")
+            val projectAuthority = cleanSupabase.substringAfter("://", "").substringBefore('/')
+            if (projectUri?.scheme != "https" || projectUri.host.isNullOrBlank() || !projectUri.query.isNullOrBlank() || !projectUri.fragment.isNullOrBlank() || projectAuthority.contains('@')) {
+                return onComplete(false, "Enter a valid HTTPS Supabase API base URL. Custom domains and path prefixes are allowed; omit query strings and fragments.")
             }
             val workerUri = runCatching { Uri.parse(cleanWorker) }.getOrNull()
-            if (workerUri?.scheme != "https" || workerUri.host.isNullOrBlank() || workerUri.path.orEmpty().trim('/').isNotEmpty() || !workerUri.query.isNullOrBlank() || !workerUri.fragment.isNullOrBlank()) {
-                return onComplete(false, "Enter the deployed Storage Worker origin, e.g. https://your-worker.workers.dev (no endpoint path)")
+            val workerAuthority = cleanWorker.substringAfter("://", "").substringBefore('/')
+            if (workerUri?.scheme != "https" || workerUri.host.isNullOrBlank() || !workerUri.query.isNullOrBlank() || !workerUri.fragment.isNullOrBlank() || workerAuthority.contains('@')) {
+                return onComplete(false, "Enter a valid HTTPS Storage Worker base URL. Custom domains and path prefixes are allowed.")
             }
             if (bucketNames.any { !bucketIdPattern.matches(it) }) {
                 return onComplete(false, "Bucket IDs must be 2–63 lowercase letters, digits, underscores, or hyphens, and start with a letter or digit")
@@ -1089,8 +1091,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
         val cleanWorker = workerUrl.trim().trimEnd('/')
         val workerUri = runCatching { Uri.parse(cleanWorker) }.getOrNull()
-        if (workerUri?.scheme != "https" || workerUri.host.isNullOrBlank() || workerUri.path.orEmpty().trim('/').isNotEmpty() || !workerUri.query.isNullOrBlank() || !workerUri.fragment.isNullOrBlank()) {
-            val message = "Enter the Storage Worker HTTPS origin only (no endpoint path)"
+        val workerAuthority = cleanWorker.substringAfter("://", "").substringBefore('/')
+        if (workerUri?.scheme != "https" || workerUri.host.isNullOrBlank() || !workerUri.query.isNullOrBlank() || !workerUri.fragment.isNullOrBlank() || workerAuthority.contains('@')) {
+            val message = "Enter a valid HTTPS Storage Worker base URL; custom domains and path prefixes are allowed"
             _storageSetupHealth.value = StorageSetupHealth(ok = false, message = message)
             onComplete?.invoke(false, message)
             return

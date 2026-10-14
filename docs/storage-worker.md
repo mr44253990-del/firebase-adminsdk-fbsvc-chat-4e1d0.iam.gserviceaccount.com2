@@ -28,8 +28,8 @@ Android sends a Firebase ID token to this Worker. The Supabase service-role key 
    firebase deploy --only firestore:rules
    ```
 
-5. Copy the deployed `https://…workers.dev` URL. In the app, sign in with the admin account and open **Admin control center → Unified app storage**.
-6. Enable **Use Supabase for all uploads**, enter the Supabase **Project URL** (origin only, such as `https://your-project.supabase.co`) and the deployed **Storage Worker HTTPS URL**, leave automatic bucket creation enabled, and tap **Save + test**.
+5. Copy the deployed Worker base URL. A `workers.dev` address is fine, but not required; a custom HTTPS domain and reverse-proxy path such as `https://app.example.com/w/superbase` are accepted.
+6. In the app, sign in with the admin account and open **Admin control center → Unified app storage**. Enable **Use Supabase for all uploads**, enter the Supabase API base URL and the Storage Worker base URL (each may include its own proxy path; leave off query strings, fragments, and the endpoint suffixes), leave automatic bucket creation enabled, and tap **Save + test**.
 
 The setup test checks the saved URL and server-side key, creates missing standard buckets when enabled, and performs a small upload/delete smoke test in every bucket. The Admin panel displays the specific failing bucket and the action to take.
 

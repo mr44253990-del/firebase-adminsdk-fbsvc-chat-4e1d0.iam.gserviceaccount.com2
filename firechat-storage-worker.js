@@ -96,7 +96,7 @@ export default {
           return jsonResponse({
             ok: false,
             error: "Invalid Supabase Project URL",
-            message: "The saved value must be an HTTPS project URL such as https://your-project.supabase.co, without /storage/v1.",
+            message: "The saved value must be an HTTPS Supabase API base such as https://your-project.supabase.co; custom proxy hosts and path prefixes are allowed, but do not append /storage/v1.",
             instructions: ["Correct the Project URL in Admin Settings and save again"]
           }, 400);
         }
@@ -572,8 +572,11 @@ function missingServiceKeyResponse() {
 function normalizeSupabaseBase(value) {
   try {
     const url = new URL(String(value || "").trim());
-    if (url.protocol !== "https:" || !url.hostname || url.username || url.password || url.search || url.hash || !["", "/"].includes(url.pathname)) return "";
-    return url.origin;
+    if (url.protocol !== "https:" || !url.hostname || url.username || url.password || url.search || url.hash) return "";
+    // A reverse proxy may mount Supabase under a path such as /w/superbase.
+    // Keep that prefix and append the normal /storage/v1 endpoints after it.
+    const prefix = url.pathname.replace(/\/+$/, "");
+    return `${url.origin}${prefix}`;
   } catch (_) { return ""; }
 }
 

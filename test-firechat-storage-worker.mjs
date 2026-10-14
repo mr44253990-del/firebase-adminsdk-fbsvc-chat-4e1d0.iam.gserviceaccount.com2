@@ -36,7 +36,7 @@ globalThis.fetch = async (input, init = {}) => {
     return Response.json({
       fields: {
         provider: { stringValue: "supabase" },
-        supabaseUrl: { stringValue: "https://demo-project.supabase.co" },
+        supabaseUrl: { stringValue: "https://demo-project.supabase.co/w/superbase" },
         storageWorkerUrl: { stringValue: "https://convo-storage.test.workers.dev" },
         bucketPosts: { stringValue: "feed_posts" },
         bucketUpdates: { stringValue: "apk_releases" },
@@ -45,14 +45,15 @@ globalThis.fetch = async (input, init = {}) => {
     });
   }
   if (url.hostname === "demo-project.supabase.co") {
-    if (url.pathname === "/storage/v1/bucket" && method === "GET") return Response.json([...bucketState.values()]);
-    if (url.pathname === "/storage/v1/bucket" && method === "POST") {
+    const apiPath = "/w/superbase";
+    if (url.pathname === `${apiPath}/storage/v1/bucket` && method === "GET") return Response.json([...bucketState.values()]);
+    if (url.pathname === `${apiPath}/storage/v1/bucket` && method === "POST") {
       const body = JSON.parse(init.body.toString());
       const bucket = { id: body.id, name: body.name, public: body.public === true };
       bucketState.set(bucket.id, bucket);
       return Response.json(bucket, { status: 200 });
     }
-    if (url.pathname.startsWith("/storage/v1/object/")) return new Response(null, { status: method === "DELETE" ? 200 : 201 });
+    if (url.pathname.startsWith(`${apiPath}/storage/v1/object/`)) return new Response(null, { status: method === "DELETE" ? 200 : 201 });
   }
   throw new Error(`Unexpected mocked fetch: ${method} ${url}`);
 };
@@ -125,7 +126,7 @@ try {
   assert.equal(uploadedBody.ok, true);
   assert.equal(JSON.stringify(uploadedBody).includes(serviceRoleKey), false, "upload responses must never disclose the Supabase secret");
   assert.match(uploadedBody.key, /^supabase:chat_images\/user-123\//);
-  assert.match(uploadedBody.publicUrl, /^https:\/\/demo-project\.supabase\.co\/storage\/v1\/object\/public\/chat_images\//);
+  assert.match(uploadedBody.publicUrl, /^https:\/\/demo-project\.supabase\.co\/w\/superbase\/storage\/v1\/object\/public\/chat_images\//, "custom reverse-proxy path prefixes are preserved");
   assert.ok(upstreamCalls.some(call => call.headers.get("Authorization") === `Bearer ${serviceRoleKey}`), "Worker uses its server-side service-role secret for Supabase");
 
   const postUpload = await storageWorker.fetch(request("/storage/upload?bucket=feed_posts&filename=post.jpg&kind=post", {

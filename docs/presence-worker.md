@@ -1,6 +1,8 @@
-# Separate Firebase presence monitor Worker
+# Presence monitor deployment options
 
-`firechat-presence-worker.js` is an independent Cloudflare Worker. It is not the FCM/media gateway and uses its own Worker URL and deployment settings. Run the dependency-free local route smoke tests with `node test-firechat-presence-worker.mjs` before deployment.
+The five-minute presence signal can run from either the original Cloudflare Worker or the new Firebase scheduled Functions implementation. Use only one scheduler at a time to avoid duplicate probes. The Firebase Functions setup and Bengali configuration are documented in [presence-worker-bn.md](presence-worker-bn.md).
+
+`firechat-presence-worker.js` remains the independent Cloudflare option. It is not the FCM/media gateway and uses its own Worker URL and deployment settings. Run the dependency-free local route smoke tests with `node test-firechat-presence-worker.mjs` before deployment.
 
 ## Cloudflare configuration
 
@@ -10,7 +12,7 @@
 4. Deploy with `npx wrangler deploy --config wrangler-presence.toml`. This independent config names the Worker `firechat-presence-worker` and provisions the five-minute Cron Trigger (`*/5 * * * *`); its scheduled handler sends one normal-priority, data-only FCM topic message.
 5. Confirm `GET https://<worker-host>/health` returns `ok: true`.
 6. Publish the updated Firebase rules (`firebase deploy --only database,firestore:rules`). The RTDB rule now restricts global Worker URLs to the admin, while Firestore permits each signed-in device to write only its own server-timestamped push acknowledgement.
-7. In the app's Admin Control Center, save this HTTPS Worker URL under **Presence monitoring Worker**. Use **Test** and **Refresh users** to verify the health check and admin-only user list.
+7. In the app's Admin dashboard → **Presence / 5-min probe**, save this HTTPS Worker base URL (or a compatible Firebase `presenceAdmin` Function URL). Use **Test** and **Refresh Firebase user list** to verify the health check and admin-only user list.
 
 The Android app subscribes signed-in installations to the `convo_presence_v1` FCM topic and unsubscribes on sign-out. Topic fan-out sends one message to all subscribed devices without making one HTTP request per user. A device that receives the data-only `presence_probe` writes its acknowledgement to its own Firestore `presence/{uid}` record. The admin endpoint lists app profiles in Firestore's `users` collection and combines them with those acknowledgements and presence leases. FCM tokens are never returned by the endpoint.
 
