@@ -165,6 +165,7 @@ fun CallScreen(
     BackHandler(enabled = true) { if (accepted) onMinimize() }
     var pendingAccept by remember { mutableStateOf(false) }
     var showMoreControls by remember { mutableStateOf(false) }
+    var showReactions by remember { mutableStateOf(false) }
     val screenShareLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode == Activity.RESULT_OK && result.data != null) {
             if (!CallEngine.startScreenShare(result.data!!)) android.widget.Toast.makeText(context, "Could not start screen sharing", android.widget.Toast.LENGTH_LONG).show()
@@ -219,7 +220,13 @@ fun CallScreen(
             onClick = onMinimize,
             modifier = Modifier.align(Alignment.TopStart).windowInsetsPadding(WindowInsets.statusBars).padding(12.dp).background(Color.Black.copy(.42f), CircleShape)
         ) { Icon(Icons.Default.KeyboardArrowDown, "Minimize call", tint = Color.White, modifier = Modifier.size(30.dp)) }
-        Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).padding(28.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        if (accepted) CallReactionsLayer(active = state.status == "connected" || state.status == "reconnecting")
+        if (accepted) CallQualityPill(
+            connected = state.status == "connected",
+            accent = callPalette.accent,
+            modifier = Modifier.align(Alignment.TopCenter).windowInsetsPadding(WindowInsets.statusBars).padding(top = 18.dp)
+        )
+        Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).padding(horizontal = 16.dp, vertical = 28.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             Spacer(Modifier.weight(if (effectiveVideo && accepted) .06f else .18f))
             AnimatedVisibility(visible = !effectiveVideo || !accepted) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -263,12 +270,28 @@ fun CallScreen(
                     }
                 }
             } else {
-                Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
-                        CallCircleButton(Color.White.copy(.15f), if (state.muted) Icons.Default.MicOff else Icons.Default.Mic, if (state.muted) "Unmute" else "Mute") { CallEngine.toggleMute() }
-                        CallCircleButton(Color(0xFFE53935), Icons.Default.CallEnd, "End") { onEndCall(); onClose() }
+                Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    AnimatedVisibility(visible = showReactions && state.status == "connected") {
+                        CallReactionBar(callPalette.accent, onPick = { token ->
+                            if (!CallEngine.sendReaction(token)) view.performHapticFeedback(android.view.HapticFeedbackConstants.REJECT)
+                        })
+                    }
+                    Row(
+                        Modifier.fillMaxWidth()
+                            .clip(RoundedCornerShape(36.dp))
+                            .background(Brush.verticalGradient(listOf(Color.White.copy(.16f), Color.Black.copy(.28f))))
+                            .border(1.dp, Brush.verticalGradient(listOf(Color.White.copy(.45f), callPalette.accent.copy(.25f))), RoundedCornerShape(36.dp))
+                            .padding(horizontal = 4.dp, vertical = 12.dp),
+                        horizontalArrangement = Arrangement.SpaceEvenly,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        GlassCallButton(if (state.muted) Icons.Default.MicOff else Icons.Default.Mic, if (state.muted) "Unmute" else "Mute", active = state.muted, accent = callPalette.accent) { CallEngine.toggleMute() }
+                        GlassCallButton(if (state.speaker) Icons.Default.VolumeUp else Icons.Default.Hearing, if (state.speaker) "Speaker" else "Earpiece", active = state.speaker, accent = callPalette.accent) { CallEngine.toggleSpeaker() }
+                        if (effectiveVideo) GlassCallButton(if (state.cameraOff) Icons.Default.VideocamOff else Icons.Default.Videocam, "Camera", active = state.cameraOff, accent = callPalette.accent) { CallEngine.toggleCamera() }
+                        GlassCallButton(Icons.Default.EmojiEmotions, "React", active = showReactions, accent = callPalette.accent) { showReactions = !showReactions }
+                        GlassCallButton(Icons.Default.CallEnd, "End", danger = true, size = 56) { onEndCall(); onClose() }
                         Box {
-                            CallCircleButton(Color.White.copy(.15f), Icons.Default.MoreVert, "More") { showMoreControls = true }
+                            GlassCallButton(Icons.Default.MoreVert, "More", accent = callPalette.accent) { showMoreControls = true }
                             DropdownMenu(
                                 expanded = showMoreControls,
                                 onDismissRequest = { showMoreControls = false }
@@ -313,8 +336,12 @@ fun CallScreen(
                     }
                 }
             }
-            Spacer(Modifier.height(30.dp))
-            Text("Secured with WebRTC • Cloudflare TURN", color = callPalette.accent.copy(.55f), style = MaterialTheme.typography.labelSmall)
+            Spacer(Modifier.height(18.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.Lock, null, tint = callPalette.accent.copy(.7f), modifier = Modifier.size(12.dp))
+                Spacer(Modifier.width(5.dp))
+                Text("Encrypted media (WebRTC DTLS-SRTP) • Cloudflare TURN", color = callPalette.accent.copy(.6f), style = MaterialTheme.typography.labelSmall)
+            }
         }
     }
 }

@@ -508,7 +508,54 @@ object CallEngine {
         audioTrack?.dispose(); audioTrack = null
         if (wasConnected) vibrateCallEnded()
         startedAsVideoCall = false
+        lastPacketsLost = 0L; lastPacketsReceived = 0L
         _state.value = _state.value.copy(status = finalStatus, video = false, cameraOff = false, screenSharing = false, remoteScreenSharing = false)
+    }
+
+    /** Live reactions travel through the existing calls/{callId} node, so no extra RTDB rules are needed. */
+    private var lastReactionAt = 0L
+    fun sendReaction(token: String): Boolean {
+        val uid = FirebaseAuth.getInstance().currentUser?.uid ?: return false
+        val now = System.currentTimeMillis()
+        if (now - lastReactionAt < 450L) return false
+        lastReactionAt = now
+        val ref = callRef ?: return false
+        ref.child("reactions").push().setValue(mapOf("from" to uid, "token" to token.take(40), "at" to ServerValue.TIMESTAMP))
+        return true
+    }
+
+    fun reactionsRef(): DatabaseReference? = callRef?.child("reactions")
+
+    private var lastPacketsLost = 0L
+    private var lastPacketsReceived = 0L
+    /** Samples WebRTC stats: round-trip time in ms and recent packet loss %. Values are null when unknown. */
+    fun sampleQuality(onResult: (Int?, Double?) -> Unit) {
+        val pc = peer ?: run { onResult(null, null); return }
+        runCatching {
+            pc.getStats(RTCStatsCollectorCallback { report ->
+                var rttSeconds: Double? = null
+                var lost = 0L
+                var received = 0L
+                report.statsMap.values.forEach { stat ->
+                    val members = stat.members
+                    when (stat.type) {
+                        "candidate-pair" -> if (members["state"] == "succeeded" && members["nominated"] != false) {
+                            (members["currentRoundTripTime"] as? Number)?.toDouble()?.let { rttSeconds = it }
+                        }
+                        "inbound-rtp" -> {
+                            (members["packetsLost"] as? Number)?.toLong()?.let { lost += it }
+                            (members["packetsReceived"] as? Number)?.toLong()?.let { received += it }
+                        }
+                    }
+                }
+                val deltaLost = (lost - lastPacketsLost).coerceAtLeast(0L)
+                val deltaReceived = (received - lastPacketsReceived).coerceAtLeast(0L)
+                lastPacketsLost = lost; lastPacketsReceived = received
+                val loss = if (deltaLost + deltaReceived > 0L) deltaLost * 100.0 / (deltaLost + deltaReceived) else null
+                val rttMs = rttSeconds?.let { (it * 1000).toInt() }
+                mainHandler.post { onResult(rttMs, loss) }
+            })
+        }.onFailure { onResult(null, null) }
     }
 
     fun reportFailure(message: String) = fail(message)
