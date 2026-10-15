@@ -137,7 +137,7 @@ fun UserProfileScreen(
         ) {
             item(key = "hero") {
                 Column {
-                    Box(Modifier.fillMaxWidth().height(250.dp)) {
+                    Box(Modifier.fillMaxWidth().height(210.dp)) {
                         if (liveUser.coverImageUrl.isNotBlank()) {
                             AsyncImage(liveUser.coverImageUrl, "Cover photo", contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize().graphicsLayer { scaleX = liveUser.coverScale.coerceIn(1f, 2f); scaleY = liveUser.coverScale.coerceIn(1f, 2f); translationY = liveUser.coverOffsetY.coerceIn(-1f, 1f) * 90f })
                         } else {
@@ -155,23 +155,26 @@ fun UserProfileScreen(
                         }
                         Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, MaterialTheme.colorScheme.background.copy(alpha = .18f), MaterialTheme.colorScheme.background.copy(alpha = .88f)))))
                         Box(
-                            modifier = Modifier.align(Alignment.BottomStart).padding(start = 20.dp).offset(y = 50.dp),
+                            modifier = Modifier.align(Alignment.BottomCenter).offset(y = 56.dp),
                             contentAlignment = Alignment.BottomEnd
                         ) {
                             AsyncImage(
                                 model = liveUser.profileImageUrl.ifBlank { null }, contentDescription = liveUser.name,
                                 error = painterResource(R.drawable.img_app_logo), contentScale = ContentScale.Crop,
-                                modifier = Modifier.size(122.dp).clip(CircleShape).border(5.dp, MaterialTheme.colorScheme.background, CircleShape)
+                                modifier = Modifier.size(118.dp).clip(CircleShape).border(5.dp, MaterialTheme.colorScheme.background, CircleShape)
                             )
                             Box(Modifier.size(24.dp).clip(CircleShape).background(MaterialTheme.colorScheme.background).padding(4.dp).clip(CircleShape).background(if (liveUser.isOnline) Color(0xFF45D483) else MaterialTheme.colorScheme.outline))
                         }
                     }
-                    Spacer(Modifier.height(58.dp))
-                    Column(Modifier.padding(horizontal = 20.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(liveUser.name, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold, modifier = Modifier.weight(1f))
+                    Spacer(Modifier.height(66.dp))
+                    Column(
+                        Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text(liveUser.name, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold, maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center, modifier = Modifier.weight(1f, fill = false))
                             if (liveUser.activeProfileType.equals("Creator", ignoreCase = true)) {
-                                Spacer(Modifier.width(6.dp))
                                 Surface(color = Color(0xFF6C4BFF), shape = CircleShape) {
                                     Row(Modifier.padding(horizontal = 8.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
                                         Icon(Icons.Outlined.AutoAwesome, null, Modifier.size(14.dp), tint = Color.White)
@@ -196,22 +199,21 @@ fun UserProfileScreen(
                                 }
                             }
                         }
-                        Text("@${liveUser.username}  •  ${if (liveUser.isOnline) "Active now" else "Offline"}", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("@${liveUser.username}  •  ${if (liveUser.isOnline) "Active now" else "Offline"}", color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
                         Surface(color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = .7f), shape = CircleShape) {
                             Text(liveUser.activeProfileType.ifBlank { "Personal" }, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold, fontSize = 11.sp, modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp))
                         }
                         if (liveUser.professionalTitle.isNotBlank() || liveUser.pronouns.isNotBlank()) {
-                            Spacer(Modifier.height(6.dp))
                             Text(
                                 listOf(liveUser.professionalTitle, liveUser.pronouns).filter { it.isNotBlank() }.joinToString(" • "),
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 fontSize = 13.sp,
-                                fontWeight = FontWeight.Medium
+                                fontWeight = FontWeight.Medium,
+                                textAlign = TextAlign.Center
                             )
                         }
                         if (liveUser.bio.isNotBlank()) {
-                            Spacer(Modifier.height(10.dp))
-                            Text(liveUser.bio, style = MaterialTheme.typography.bodyLarge, lineHeight = 23.sp, color = MaterialTheme.colorScheme.onSurface)
+                            Text(liveUser.bio, style = MaterialTheme.typography.bodyLarge, lineHeight = 23.sp, color = MaterialTheme.colorScheme.onSurface, textAlign = TextAlign.Center)
                         }
                     }
                 }

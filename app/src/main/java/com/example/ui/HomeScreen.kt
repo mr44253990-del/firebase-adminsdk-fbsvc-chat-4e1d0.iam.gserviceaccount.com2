@@ -410,12 +410,23 @@ fun HomeScreen(
                                 onDismissRequest = { showAccountMenu = false }
                             ) {
                                 DropdownMenuItem(
+                                    text = { Text("Messages") },
+                                    leadingIcon = { Icon(Icons.Outlined.ChatBubbleOutline, null) },
+                                    onClick = { showAccountMenu = false; viewModel.setCurrentTab(1) }
+                                )
+                                DropdownMenuItem(
                                     text = { Text("Groups") },
                                     leadingIcon = { Icon(Icons.Outlined.Groups, null) },
                                     onClick = { showAccountMenu = false; viewModel.setCurrentTab(2) }
                                 )
                                 DropdownMenuItem(
-                                    text = { Text("Profile & appearance") },
+                                    text = { Text("My profile") },
+                                    leadingIcon = { Icon(Icons.Outlined.AccountCircle, null) },
+                                    enabled = currentUser != null,
+                                    onClick = { showAccountMenu = false; currentUser?.let { onProfileSelected(it) } }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Profile & settings") },
                                     leadingIcon = { Icon(Icons.Outlined.Person, null) },
                                     onClick = {
                                         showAccountMenu = false
@@ -814,58 +825,224 @@ fun HomeScreen(
                     val notificationsSectionRequester = remember { BringIntoViewRequester() }
                     val devicesSectionRequester = remember { BringIntoViewRequester() }
                     val blockedSectionRequester = remember { BringIntoViewRequester() }
+                    var showSettingsNavigationMenu by remember { mutableStateOf(false) }
+                    var showSettingsMoreMenu by remember { mutableStateOf(false) }
                     val callSkinId by CallSkinPreferences.selectedId.collectAsState()
                     LaunchedEffect(Unit) { CallSkinPreferences.load(context); viewModel.refreshDeviceSessions() }
-                    // SETTINGS & PROFILE TAB: Theme selector + User details modification
+                    // Settings hub: account first, grouped controls, and clear shortcuts.
                     Column(
                         modifier = Modifier
                             .fillMaxSize()
-                            .padding(18.dp)
+                            .padding(horizontal = 18.dp, vertical = 10.dp)
                             .verticalScroll(rememberScrollState()),
-                        verticalArrangement = Arrangement.spacedBy(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(18.dp),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        Box(Modifier.fillMaxWidth().glassmorphic(isDark = MaterialTheme.colorScheme.background.luminance() < .5f, backgroundColor = MaterialTheme.colorScheme.surface.copy(.68f), borderColor = MaterialTheme.colorScheme.primary.copy(.38f), shape = RoundedCornerShape(28.dp)).padding(18.dp)) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Box(Modifier.size(48.dp).clip(CircleShape).background(Brush.linearGradient(listOf(Color(0xFF6C58FF), Color(0xFFFF46B8)))), contentAlignment = Alignment.Center) { Icon(Icons.Default.Tune, null, tint = Color.White) }
-                                Spacer(Modifier.width(12.dp)); Column { Text("User Settings dashboard", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface); Text("Account • appearance • privacy • calls • devices", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp) }
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Box {
+                                IconButton(onClick = { showSettingsNavigationMenu = true }) {
+                                    Icon(Icons.Default.Menu, contentDescription = "Open app menu")
+                                }
+                                DropdownMenu(
+                                    expanded = showSettingsNavigationMenu,
+                                    onDismissRequest = { showSettingsNavigationMenu = false }
+                                ) {
+                                    DropdownMenuItem(text = { Text("Home") }, leadingIcon = { Icon(Icons.Outlined.Home, null) }, onClick = { showSettingsNavigationMenu = false; viewModel.setCurrentTab(0) })
+                                    DropdownMenuItem(text = { Text("Messages") }, leadingIcon = { Icon(Icons.Outlined.ChatBubbleOutline, null) }, onClick = { showSettingsNavigationMenu = false; viewModel.setCurrentTab(1) })
+                                    DropdownMenuItem(text = { Text("Groups") }, leadingIcon = { Icon(Icons.Outlined.Groups, null) }, onClick = { showSettingsNavigationMenu = false; viewModel.setCurrentTab(2) })
+                                    DropdownMenuItem(text = { Text("Discover people") }, leadingIcon = { Icon(Icons.Outlined.Search, null) }, onClick = { showSettingsNavigationMenu = false; viewModel.setCurrentTab(5) })
+                                    if (isAdmin) DropdownMenuItem(text = { Text("Admin tools") }, leadingIcon = { Icon(Icons.Outlined.AdminPanelSettings, null) }, onClick = { showSettingsNavigationMenu = false; viewModel.setCurrentTab(3) })
+                                }
+                            }
+                            Column(Modifier.weight(1f)) {
+                                Text("Profile & settings", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold)
+                                Text("Your account, messages and preferences", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            Box {
+                                IconButton(onClick = { showSettingsMoreMenu = true }) {
+                                    Icon(Icons.Default.MoreHoriz, contentDescription = "More account options")
+                                }
+                                DropdownMenu(
+                                    expanded = showSettingsMoreMenu,
+                                    onDismissRequest = { showSettingsMoreMenu = false }
+                                ) {
+                                    DropdownMenuItem(
+                                        text = { Text("My profile") },
+                                        leadingIcon = { Icon(Icons.Outlined.AccountCircle, null) },
+                                        enabled = currentUser != null,
+                                        onClick = { showSettingsMoreMenu = false; currentUser?.let { onProfileSelected(it) } }
+                                    )
+                                    DropdownMenuItem(text = { Text("QR & contacts") }, leadingIcon = { Icon(Icons.Outlined.QrCode2, null) }, onClick = { showSettingsMoreMenu = false; onQrContacts() })
+                                    DropdownMenuItem(text = { Text("Convo Chat Premium") }, leadingIcon = { Icon(Icons.Outlined.WorkspacePremium, null, tint = Color(0xFFFFA000)) }, onClick = { showSettingsMoreMenu = false; onPremium() })
+                                    DropdownMenuItem(text = { Text("Report a problem") }, leadingIcon = { Icon(Icons.Outlined.ReportProblem, null) }, onClick = { showSettingsMoreMenu = false; showReportDialog = true })
+                                    DropdownMenuItem(
+                                        text = { Text("Sign out", color = MaterialTheme.colorScheme.error) },
+                                        leadingIcon = { Icon(Icons.Outlined.Logout, null, tint = MaterialTheme.colorScheme.error) },
+                                        onClick = { showSettingsMoreMenu = false; viewModel.logout { onSignOut() } }
+                                    )
+                                }
                             }
                         }
 
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            Card(onClick = { currentUser?.let(onProfileSelected) }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(22.dp)) {
-                                Column(Modifier.padding(14.dp), horizontalAlignment = Alignment.CenterHorizontally) { Icon(Icons.Outlined.AccountCircle, null, tint = MaterialTheme.colorScheme.primary); Spacer(Modifier.height(5.dp)); Text("View my profile", fontWeight = FontWeight.Bold, fontSize = 12.sp) }
-                            }
-                            Card(onClick = onQrContacts, modifier = Modifier.weight(1f), shape = RoundedCornerShape(22.dp)) {
-                                Column(Modifier.padding(14.dp), horizontalAlignment = Alignment.CenterHorizontally) { Icon(Icons.Outlined.QrCode2, null, tint = MaterialTheme.colorScheme.primary); Spacer(Modifier.height(5.dp)); Text("QR & Contact", fontWeight = FontWeight.Bold, fontSize = 12.sp) }
-                            }
-                            Card(onClick = { viewModel.setCurrentTab(2) }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(22.dp)) {
-                                Column(Modifier.padding(14.dp), horizontalAlignment = Alignment.CenterHorizontally) { Icon(Icons.Outlined.Groups, null, tint = MaterialTheme.colorScheme.primary); Spacer(Modifier.height(5.dp)); Text("Groups", fontWeight = FontWeight.Bold, fontSize = 12.sp) }
-                            }
-                        }
-
-                        Text("Jump to a section", modifier = Modifier.align(Alignment.Start), fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                        Row(
-                            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        val activePremium = currentUser?.isPremium == true &&
+                            (currentUser?.premiumPlan == "lifetime" || (currentUser?.premiumUntil ?: 0L) > System.currentTimeMillis())
+                        Surface(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(30.dp),
+                            color = MaterialTheme.colorScheme.surface,
+                            tonalElevation = 1.dp
                         ) {
-                            AssistChip(onClick = { uiScope.launch { themeSectionRequester.bringIntoView() } }, label = { Text("App theme") }, leadingIcon = { Icon(Icons.Default.Palette, null) })
-                            AssistChip(onClick = { uiScope.launch { callSkinSectionRequester.bringIntoView() } }, label = { Text("Call skin") }, leadingIcon = { Icon(Icons.Default.Call, null) })
-                            AssistChip(enabled = currentUser != null, onClick = { uiScope.launch { profileSectionRequester.bringIntoView() } }, label = { Text("Profile") }, leadingIcon = { Icon(Icons.Default.Person, null) })
-                            AssistChip(onClick = { uiScope.launch { privacySectionRequester.bringIntoView() } }, label = { Text("Privacy") }, leadingIcon = { Icon(Icons.Default.Security, null) })
-                            AssistChip(onClick = { uiScope.launch { notificationsSectionRequester.bringIntoView() } }, label = { Text("Notifications") }, leadingIcon = { Icon(Icons.Default.Notifications, null) })
-                            AssistChip(onClick = { uiScope.launch { devicesSectionRequester.bringIntoView() } }, label = { Text("Devices") }, leadingIcon = { Icon(Icons.Default.Devices, null) })
-                            AssistChip(enabled = currentUser != null, onClick = { uiScope.launch { blockedSectionRequester.bringIntoView() } }, label = { Text("Blocked") }, leadingIcon = { Icon(Icons.Default.Block, null) })
-                        }
-
-                        Card(onClick = onPremium, shape = RoundedCornerShape(24.dp), modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
-                            Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Default.WorkspacePremium, null, tint = Color(0xFFFFA000), modifier = Modifier.size(34.dp))
-                                Spacer(Modifier.width(12.dp)); Column(Modifier.weight(1f)) { Text("Convo Chat Premium", fontWeight = FontWeight.ExtraBold); Text("Plans, verified badge and exclusive tools", fontSize = 11.sp) }
-                                Icon(Icons.Default.ChevronRight, null)
+                            Column(
+                                Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 20.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(7.dp)
+                            ) {
+                                Box(Modifier.size(94.dp).clip(CircleShape).background(Brush.linearGradient(listOf(Color(0xFF637BFF), Color(0xFF8B5CF6), Color(0xFFE755B6)))).padding(4.dp)) {
+                                    if (!currentUser?.profileImageUrl.isNullOrBlank()) {
+                                        AsyncImage(
+                                            model = currentUser?.profileImageUrl,
+                                            contentDescription = currentUser?.name ?: "Your profile",
+                                            error = painterResource(R.drawable.img_app_logo),
+                                            contentScale = ContentScale.Crop,
+                                            modifier = Modifier.fillMaxSize().clip(CircleShape)
+                                        )
+                                    } else {
+                                        Box(Modifier.fillMaxSize().clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer), contentAlignment = Alignment.Center) {
+                                            Icon(Icons.Default.Person, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(40.dp))
+                                        }
+                                    }
+                                }
+                                Text(currentUser?.name?.ifBlank { "Your Convo account" } ?: "Your Convo account", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(
+                                    currentUser?.username?.takeIf { it.isNotBlank() }?.let { "@$it" } ?: "Your profile, privacy and chats in one place",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Surface(
+                                    color = if (activePremium) Color(0xFFFFE6A8) else MaterialTheme.colorScheme.primaryContainer,
+                                    shape = CircleShape
+                                ) {
+                                    Row(Modifier.padding(horizontal = 12.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(if (activePremium) Icons.Outlined.WorkspacePremium else Icons.Outlined.VerifiedUser, null, tint = if (activePremium) Color(0xFF8A5A00) else MaterialTheme.colorScheme.primary, modifier = Modifier.size(15.dp))
+                                        Spacer(Modifier.width(6.dp))
+                                        Text(if (activePremium) "Convo Premium" else "Convo account", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = if (activePremium) Color(0xFF8A5A00) else MaterialTheme.colorScheme.primary)
+                                    }
+                                }
+                                OutlinedButton(
+                                    onClick = { currentUser?.let { onProfileSelected(it) } },
+                                    enabled = currentUser != null,
+                                    shape = RoundedCornerShape(16.dp),
+                                    contentPadding = PaddingValues(horizontal = 18.dp, vertical = 8.dp)
+                                ) {
+                                    Text("Manage account", fontWeight = FontWeight.Bold)
+                                    Spacer(Modifier.width(6.dp))
+                                    Icon(Icons.Default.ChevronRight, null, modifier = Modifier.size(18.dp))
+                                }
                             }
                         }
 
+                        SettingsHubGroup("Account & messages") {
+                            SettingsHubRow(
+                                icon = Icons.Outlined.Person,
+                                title = "Profile details",
+                                subtitle = "Edit your photo, bio and account information",
+                                accent = Color(0xFF5B6FE8),
+                                onClick = { uiScope.launch { profileSectionRequester.bringIntoView() } }
+                            )
+                            SettingsHubDivider()
+                            SettingsHubRow(
+                                icon = Icons.Outlined.ChatBubbleOutline,
+                                title = "Messages",
+                                subtitle = "Open conversations and message requests",
+                                trailingValue = "Chats",
+                                accent = Color(0xFF2789E8),
+                                onClick = { viewModel.setCurrentTab(1) }
+                            )
+                            SettingsHubDivider()
+                            SettingsHubRow(
+                                icon = Icons.Outlined.QrCode2,
+                                title = "QR & contacts",
+                                subtitle = "Share your profile or connect with friends",
+                                accent = Color(0xFF32A68B),
+                                onClick = onQrContacts
+                            )
+                        }
+
+                        SettingsHubGroup("Personalization") {
+                            SettingsHubRow(
+                                icon = Icons.Outlined.Palette,
+                                title = "App theme",
+                                subtitle = "Choose the look of Convo Chat",
+                                trailingValue = currentTheme,
+                                accent = Color(0xFF765BFF),
+                                onClick = { uiScope.launch { themeSectionRequester.bringIntoView() } }
+                            )
+                            SettingsHubDivider()
+                            SettingsHubRow(
+                                icon = Icons.Outlined.Call,
+                                title = "Call appearance",
+                                subtitle = "Pick a style for audio and video calls",
+                                trailingValue = CallSkinPreferences.palette(callSkinId).label,
+                                accent = Color(0xFF13A6B7),
+                                onClick = { uiScope.launch { callSkinSectionRequester.bringIntoView() } }
+                            )
+                            SettingsHubDivider()
+                            SettingsHubRow(
+                                icon = Icons.Outlined.Chat,
+                                title = "Chat backgrounds",
+                                subtitle = "Themes are selected separately in each conversation",
+                                accent = Color(0xFF8B62D9),
+                                onClick = { viewModel.setCurrentTab(1) }
+                            )
+                        }
+
+                        SettingsHubGroup("Privacy & permissions") {
+                            SettingsHubRow(
+                                icon = Icons.Outlined.Security,
+                                title = "Privacy controls",
+                                subtitle = "Presence, receipts, AI and screen protection",
+                                accent = Color(0xFF3287D5),
+                                onClick = { uiScope.launch { privacySectionRequester.bringIntoView() } }
+                            )
+                            SettingsHubDivider()
+                            SettingsHubRow(
+                                icon = Icons.Outlined.NotificationsActive,
+                                title = "Notifications & calls",
+                                subtitle = "Sounds, alerts and incoming-call access",
+                                accent = Color(0xFFE79024),
+                                onClick = { uiScope.launch { notificationsSectionRequester.bringIntoView() } }
+                            )
+                        }
+
+                        SettingsHubGroup("More") {
+                            SettingsHubRow(
+                                icon = Icons.Outlined.Devices,
+                                title = "Devices & sessions",
+                                subtitle = "Review recent sign-ins and account sessions",
+                                accent = Color(0xFF397BCC),
+                                onClick = { uiScope.launch { devicesSectionRequester.bringIntoView() } }
+                            )
+                            SettingsHubDivider()
+                            SettingsHubRow(
+                                icon = Icons.Outlined.Block,
+                                title = "Blocked accounts",
+                                subtitle = "Manage who can contact you",
+                                accent = Color(0xFF718096),
+                                onClick = { uiScope.launch { blockedSectionRequester.bringIntoView() } }
+                            )
+                            SettingsHubDivider()
+                            SettingsHubRow(
+                                icon = Icons.Outlined.WorkspacePremium,
+                                title = "Convo Chat Premium",
+                                subtitle = "Plans and exclusive features",
+                                accent = Color(0xFFD18B12),
+                                onClick = onPremium
+                            )
+                        }
+
+                        // Account details and controls continue below; the groups above are quick routes.
                         // 1. Theme selection block
                         Card(
                             shape = RoundedCornerShape(28.dp),
@@ -4139,3 +4316,86 @@ private fun ActiveContactsStrip(users: List<User>, onSelect: (User) -> Unit) {
     }
 }
 
+
+@Composable
+private fun SettingsHubGroup(
+    title: String,
+    content: @Composable ColumnScope.() -> Unit
+) {
+    Column(Modifier.fillMaxWidth()) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.padding(start = 6.dp, bottom = 8.dp)
+        )
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(25.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+        ) {
+            Column(content = content)
+        }
+    }
+}
+
+@Composable
+private fun SettingsHubRow(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    title: String,
+    subtitle: String,
+    accent: Color,
+    onClick: () -> Unit,
+    trailingValue: String? = null,
+    enabled: Boolean = true
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(20.dp))
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 11.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .size(42.dp)
+                .clip(RoundedCornerShape(14.dp))
+                .background(Brush.linearGradient(listOf(accent, accent.copy(alpha = .76f)))),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(icon, contentDescription = null, tint = Color.White, modifier = Modifier.size(21.dp))
+        }
+        Column(
+            modifier = Modifier.weight(1f).padding(start = 12.dp, end = 7.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp)
+        ) {
+            Text(title, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        if (!trailingValue.isNullOrBlank()) {
+            Text(
+                trailingValue,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.widthIn(max = 82.dp).padding(end = 3.dp)
+            )
+        }
+        Icon(Icons.Default.ChevronRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = .7f), modifier = Modifier.size(21.dp))
+    }
+}
+
+@Composable
+private fun SettingsHubDivider() {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 68.dp)
+            .height(1.dp)
+            .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = .42f))
+    )
+}

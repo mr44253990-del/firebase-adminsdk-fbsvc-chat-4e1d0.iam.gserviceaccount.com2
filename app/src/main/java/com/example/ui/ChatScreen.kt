@@ -621,39 +621,87 @@ fun ChatScreen(
         val isBlocked = currentUser?.blockedUsers?.contains(recipient.uid) == true
         AlertDialog(
             onDismissRequest = { showChatSettings = false },
-            title = { Text("Chat settings", fontWeight = FontWeight.Bold) },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    ListItem(
-                        headlineContent = { Text("View profile") },
-                        leadingContent = { Icon(Icons.Default.Person, null) },
-                        modifier = Modifier.clip(RoundedCornerShape(18.dp)).clickable { showChatSettings = false; onProfile() }
-                    )
-                    ListItem(
-                        headlineContent = { Text("Conversation theme") },
-                        supportingContent = { Text(chatTheme) },
-                        leadingContent = { Icon(Icons.Default.Palette, null) },
-                        modifier = Modifier.clip(RoundedCornerShape(18.dp)).clickable { showChatSettings = false; showThemePicker = true }
-                    )
-                    ListItem(
-                        headlineContent = { Text("Typing sounds") },
-                        leadingContent = { Icon(Icons.Default.Keyboard, null) },
-                        trailingContent = {
-                            Switch(typingSounds, { viewModel.updateSoundPreferences(notificationSounds, it) })
-                        }
-                    )
-                    ListItem(
-                        headlineContent = { Text(if (isBlocked) "Unblock user" else "Block user") },
-                        leadingContent = { Icon(if (isBlocked) Icons.Default.LockOpen else Icons.Default.Block, null, tint = MaterialTheme.colorScheme.error) },
-                        modifier = Modifier.clip(RoundedCornerShape(18.dp)).clickable {
-                            if (isBlocked) viewModel.unblockUser(recipient.uid) { Toast.makeText(context, "User unblocked", Toast.LENGTH_SHORT).show() }
-                            else viewModel.blockUser(recipient.uid) { Toast.makeText(context, "User blocked", Toast.LENGTH_SHORT).show(); onBack() }
-                            showChatSettings = false
-                        }
-                    )
+            icon = {
+                Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = CircleShape) {
+                    Icon(Icons.Default.Forum, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(11.dp).size(22.dp))
                 }
             },
-            confirmButton = { TextButton(onClick = { showChatSettings = false }) { Text("Done") } }
+            title = {
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text("Conversation settings", fontWeight = FontWeight.ExtraBold)
+                    Text("Personalize your chat with ${updatedRecipient.name}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Surface(
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .52f),
+                        shape = RoundedCornerShape(20.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).clickable { showChatSettings = false; onProfile() }.padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(Modifier.size(48.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer), contentAlignment = Alignment.Center) {
+                                if (updatedRecipient.profileImageUrl.isNotBlank()) {
+                                    AsyncImage(updatedRecipient.profileImageUrl, updatedRecipient.name, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize().clip(CircleShape))
+                                } else {
+                                    Text(updatedRecipient.name.take(1).uppercase(), color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                            Column(Modifier.weight(1f).padding(start = 11.dp)) {
+                                Text(updatedRecipient.name, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(
+                                    if (updatedRecipient.isOnline) "Active now" else "@${updatedRecipient.username}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = if (updatedRecipient.isOnline) Color(0xFF2E9B60) else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            Icon(Icons.Default.ChevronRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+
+                    Text("PERSONALIZE", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 4.dp))
+                    Surface(color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .34f), shape = RoundedCornerShape(20.dp), modifier = Modifier.fillMaxWidth()) {
+                        Column {
+                            ListItem(
+                                headlineContent = { Text("Chat background", fontWeight = FontWeight.SemiBold) },
+                                supportingContent = { Text(chatTheme, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                leadingContent = { Icon(Icons.Default.Palette, null, tint = MaterialTheme.colorScheme.primary) },
+                                trailingContent = { Icon(Icons.Default.ChevronRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
+                                modifier = Modifier.clip(RoundedCornerShape(20.dp)).clickable { showChatSettings = false; showThemePicker = true }
+                            )
+                            HorizontalDivider(modifier = Modifier.padding(start = 56.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = .42f))
+                            ListItem(
+                                headlineContent = { Text("Typing sounds", fontWeight = FontWeight.SemiBold) },
+                                supportingContent = { Text("Play a soft sound while you type") },
+                                leadingContent = { Icon(Icons.Default.Keyboard, null, tint = MaterialTheme.colorScheme.primary) },
+                                trailingContent = { Switch(typingSounds, { viewModel.updateSoundPreferences(notificationSounds, it) }) }
+                            )
+                        }
+                    }
+
+                    Text("SAFETY", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 4.dp))
+                    Surface(color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .34f), shape = RoundedCornerShape(20.dp), modifier = Modifier.fillMaxWidth()) {
+                        ListItem(
+                            headlineContent = { Text(if (isBlocked) "Unblock account" else "Block account", fontWeight = FontWeight.SemiBold) },
+                            supportingContent = { Text(if (isBlocked) "Allow this person to contact you again" else "Stop messages and interactions from this person") },
+                            leadingContent = { Icon(if (isBlocked) Icons.Default.LockOpen else Icons.Default.Block, null, tint = MaterialTheme.colorScheme.error) },
+                            modifier = Modifier.clip(RoundedCornerShape(20.dp)).clickable {
+                                if (isBlocked) viewModel.unblockUser(recipient.uid) { Toast.makeText(context, "User unblocked", Toast.LENGTH_SHORT).show() }
+                                else viewModel.blockUser(recipient.uid) { Toast.makeText(context, "User blocked", Toast.LENGTH_SHORT).show(); onBack() }
+                                showChatSettings = false
+                            }
+                        )
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { showChatSettings = false }) { Text("Done") } },
+            shape = RoundedCornerShape(30.dp),
+            containerColor = MaterialTheme.colorScheme.surface
         )
     }
 
