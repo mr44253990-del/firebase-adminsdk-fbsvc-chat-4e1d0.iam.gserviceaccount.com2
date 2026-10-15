@@ -78,6 +78,7 @@ fun GroupChatScreen(
     onOpenUserProfile: (com.example.data.User) -> Unit = {}
 ) {
     val context = LocalContext.current
+    com.example.service.TrackOpenChat(peerUid = null, groupId = group.id)
     val currentUserId = FirebaseAuth.getInstance().currentUser?.uid ?: ""
     val messages by viewModel.groupMessagesState.collectAsState()
     val allUsers by viewModel.usersState.collectAsState()

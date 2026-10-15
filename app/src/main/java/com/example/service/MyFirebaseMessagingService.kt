@@ -47,6 +47,9 @@ private data class NotificationStyle(
     val category: String
 )
 
+/** Shared presence lease: five-minute probe cycle plus one minute of delivery jitter. */
+const val PRESENCE_LEASE_MS = 6 * 60_000L
+
 class MyFirebaseMessagingService : FirebaseMessagingService() {
 
     override fun onNewToken(token: String) {
@@ -103,6 +106,10 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         }
         val muted = getSharedPreferences("firechat_prefs", Context.MODE_PRIVATE).getStringSet("muted_users", emptySet())?.contains(senderId) == true
         if (muted && notificationType == "message") return
+        // The user is looking at this exact conversation right now: the message is already
+        // on screen, so skip the system notification. Other senders still notify.
+        if (notificationType == "message" && ActiveChatState.isViewingPeer(senderId)) return
+        if (notificationType == "group_message" && ActiveChatState.isViewingGroup(targetId)) return
         val senderProfileUrl = remoteMessage.data["senderProfileUrl"] ?: ""
         val senderName = if (hideContent) "Convo Chat user" else plainNotificationText(remoteMessage.data["senderName"] ?: title).ifBlank { title }
 
@@ -138,37 +145,36 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         val uid = FirebaseAuth.getInstance().currentUser?.uid ?: return
         val receivedAt = System.currentTimeMillis()
         val statusRef = FirebaseDatabase.getInstance().getReference("status").child(uid)
-        statusRef.updateChildren(
+        // A device that answers a push is connected to the internet, so it is shown as
+        // Active for the next lease window (5 min probe interval + 1 min delivery jitter),
+        // whether the app is open, in the background, or closed. No onDisconnect here:
+        // the background FCM process exits within seconds and its socket closing must not
+        // flip the user to offline. The lease expiring is what makes a user offline.
+        val write = statusRef.updateChildren(
             mapOf(
                 "isOnline" to true,
                 "lastActive" to receivedAt,
                 "lastPushReceivedAt" to receivedAt,
-                "onlineUntil" to receivedAt + 5 * 60_000L,
-                "onlineSource" to "push"
-            )
-        )
-        statusRef.onDisconnect().updateChildren(
-            mapOf(
-                "isOnline" to false,
-                "lastActive" to ServerValue.TIMESTAMP,
-                "onlineSource" to "disconnected"
+                "onlineUntil" to receivedAt + PRESENCE_LEASE_MS,
+                "offlineSince" to 0L,
+                "onlineSource" to if (notificationType == "presence_probe") "probe" else "push"
             )
         )
 
-        // Write only acknowledgement fields to Firestore. The Worker owns lease state,
-        // and a device must not be able to extend its own server-side online lease.
+        // Write only acknowledgement fields to Firestore for the admin dashboard.
         val presenceUpdate = mutableMapOf<String, Any>("lastPushReceivedAt" to FieldValue.serverTimestamp())
         if (notificationType == "presence_probe") {
             presenceUpdate["lastProbeReceivedAt"] = FieldValue.serverTimestamp()
             if (!probeId.isNullOrBlank()) presenceUpdate["lastProbeId"] = probeId.take(128)
         }
-        FirebaseFirestore.getInstance().collection("presence").document(uid)
+        val ack = FirebaseFirestore.getInstance().collection("presence").document(uid)
             .set(presenceUpdate, SetOptions.merge())
             .addOnFailureListener { error -> Log.w("FCM_SERVICE", "Presence acknowledgement failed: ${error.message}") }
 
-        // The five-minute onlineUntil lease and RTDB presence listeners decide
-        // expiry. Do not schedule a delayed write here: FCM/network jitter must
-        // not be overwritten by an older callback that assumes it was latest.
+        // onMessageReceived runs on a worker thread with a ~20 s budget. Wait briefly so the
+        // writes actually leave the device before Android freezes the background process.
+        runCatching { com.google.android.gms.tasks.Tasks.await(com.google.android.gms.tasks.Tasks.whenAll(write, ack), 12, java.util.concurrent.TimeUnit.SECONDS) }
+            .onFailure { Log.w("FCM_SERVICE", "Presence write not confirmed in time: ${it.message}") }
     }
 
     private fun sendIncomingCallNotification(callId: String, callerId: String, callerName: String, callerImage: String, videoCall: Boolean) {
@@ -223,6 +229,55 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         builder.setFullScreenIntent(fullScreen, true)
         manager.notify(callId.hashCode(), builder.build())
         CallRingtoneController.start(this, callId)
+        launchCallUiFromBackground(
+            Intent(this, IncomingCallActivity::class.java).apply {
+                action = "com.ebchat.SHOW_CALL"
+                putExtra("callId", callId); putExtra("callerId", callerId)
+                putExtra("callerName", callerName); putExtra("callerImage", callerImage); putExtra("videoCall", videoCall)
+            },
+            fullScreenAllowed = Build.VERSION.SDK_INT < 34 || manager.canUseFullScreenIntent()
+        )
+    }
+
+    /**
+     * Android only turns a full-screen intent into a full-screen activity when the screen is
+     * off or locked; on an unlocked phone it shows a heads-up card. With "Display over other
+     * apps" granted, open the incoming-call screen directly so the call is full-screen even
+     * while another app is in use. Android 15+ only allows this while the app has a visible
+     * overlay window, so a 1 px transparent overlay is attached for the moment of the launch.
+     * Best effort: OEM restrictions can still block background activity starts.
+     */
+    private fun launchCallUiFromBackground(intent: Intent, fullScreenAllowed: Boolean) {
+        if (ActiveChatState.appVisible) {
+            // The app is on screen: show the full incoming-call screen instead of a small banner.
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                runCatching { startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)) }
+            }
+            return
+        }
+        val power = getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+        val keyguard = getSystemService(Context.KEYGUARD_SERVICE) as android.app.KeyguardManager
+        val lockedOrDark = !power.isInteractive || keyguard.isKeyguardLocked
+        if (lockedOrDark && fullScreenAllowed) return // the system full-screen intent handles it
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !android.provider.Settings.canDrawOverlays(this)) return
+        val main = android.os.Handler(android.os.Looper.getMainLooper())
+        main.post {
+            val windowManager = getSystemService(Context.WINDOW_SERVICE) as android.view.WindowManager
+            val anchor = android.view.View(applicationContext)
+            val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) android.view.WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+                else @Suppress("DEPRECATION") android.view.WindowManager.LayoutParams.TYPE_PHONE
+            val params = android.view.WindowManager.LayoutParams(
+                1, 1, type,
+                android.view.WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or android.view.WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
+                android.graphics.PixelFormat.TRANSLUCENT
+            )
+            val attached = runCatching { windowManager.addView(anchor, params) }.isSuccess
+            main.postDelayed({
+                runCatching { startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)) }
+                    .onFailure { Log.w("FCM_SERVICE", "Direct call screen launch blocked: ${it.message}") }
+                if (attached) main.postDelayed({ runCatching { windowManager.removeView(anchor) } }, 2500)
+            }, 120)
+        }
     }
 
     private fun sendIncomingGroupCallNotification(

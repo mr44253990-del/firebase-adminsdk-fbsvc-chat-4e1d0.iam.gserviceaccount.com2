@@ -87,6 +87,9 @@ data class CachedUser(
     }
 }
 
+/** Receipt flags only ever move forward (sent → delivered → seen). */
+data class ReceiptRow(val messageId: String, val deliveredToRecipient: Boolean, val seenByRecipient: Boolean)
+
 @Entity(tableName = "cached_messages")
 data class CachedMessage(
     @PrimaryKey val messageId: String,
@@ -459,6 +462,9 @@ interface CacheDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertMessages(msgs: List<CachedMessage>)
+
+    @Query("SELECT messageId, deliveredToRecipient, seenByRecipient FROM cached_messages WHERE messageId IN (:ids) AND (deliveredToRecipient = 1 OR seenByRecipient = 1)")
+    suspend fun getReceiptRows(ids: List<String>): List<ReceiptRow>
 
     @Query("UPDATE cached_messages SET deliveredToRecipient = 1 WHERE messageId = :messageId")
     suspend fun markMessageDelivered(messageId: String)

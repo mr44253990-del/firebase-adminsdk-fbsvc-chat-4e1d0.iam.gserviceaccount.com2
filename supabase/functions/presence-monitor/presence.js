@@ -17,7 +17,9 @@
 export const VERSION = "3.0.0-supabase";
 const ADMIN_EMAIL = "mr4425390@gmail.com";
 const AUTH_SCOPE = "https://www.googleapis.com/auth/datastore https://www.googleapis.com/auth/firebase.messaging";
-const ACTIVE_GRACE_MS = 12 * 60 * 1000;
+// A device that acknowledged a probe/push is shown as Active for one probe cycle
+// (5 min) plus 1 min of FCM delivery jitter. Same window as the Android lease.
+const ACTIVE_GRACE_MS = 6 * 60 * 1000;
 const ONLINE_LEASE_MS = 5 * 60 * 1000;
 const FCM_SEND_CONCURRENCY = 8;
 export const PROBE_LOCK_MS = 4 * 60 * 1000;

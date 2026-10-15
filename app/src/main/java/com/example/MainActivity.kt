@@ -80,6 +80,35 @@ import kotlinx.coroutines.flow.MutableStateFlow
 @androidx.media3.common.util.UnstableApi
 class MainActivity : FragmentActivity() {
 
+    private fun callIsActive(): Boolean =
+        CallEngine.state.value.status !in listOf("idle", "ended", "declined", "missed", "failed")
+
+    /** Locking the phone during a 1:1 call brings the full call screen above the lock screen. */
+    private val screenOffReceiver = object : android.content.BroadcastReceiver() {
+        override fun onReceive(context: android.content.Context, intent: Intent) {
+            if (intent.action == Intent.ACTION_SCREEN_OFF && callIsActive() && !com.example.call.IncomingCallActivity.alive && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+                setShowWhenLocked(true)
+                setTurnScreenOn(true)
+                pendingOpenCall.value = true
+            }
+        }
+    }
+
+    /** Leaving the call screen while the keyguard is up must not expose the app over the lock screen. */
+    private fun leaveCallScreen(navigateBack: () -> Unit) {
+        val keyguard = getSystemService(KEYGUARD_SERVICE) as? android.app.KeyguardManager
+        if (keyguard?.isKeyguardLocked == true && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            keyguard.requestDismissKeyguard(this, object : android.app.KeyguardManager.KeyguardDismissCallback() {
+                override fun onDismissSucceeded() { navigateBack() }
+            })
+        } else navigateBack()
+    }
+
+    override fun onDestroy() {
+        runCatching { unregisterReceiver(screenOffReceiver) }
+        super.onDestroy()
+    }
+
     private fun minimizeActiveCall() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             runCatching {
@@ -109,6 +138,7 @@ class MainActivity : FragmentActivity() {
     private val incomingShare = MutableStateFlow<IncomingSharePayload?>(null)
     private val pendingProfileUid = MutableStateFlow<String?>(null)
     private val pendingGroupRoomId = MutableStateFlow<String?>(null)
+    private val pendingOpenCall = MutableStateFlow(false)
     private val pendingGroupId = MutableStateFlow<String?>(null)
     private val pendingGroupName = MutableStateFlow<String?>(null)
     private val pendingGroupMembers = MutableStateFlow<List<String>>(emptyList())
@@ -129,8 +159,8 @@ class MainActivity : FragmentActivity() {
             mapOf(
                 "isOnline" to active,
                 "lastActive" to now,
-                "onlineUntil" to if (active) now + 5 * 60 * 1000L else 0L,
-                "offlineSince" to if (active) null else now,
+                "onlineUntil" to if (active) now + com.example.service.PRESENCE_LEASE_MS else 0L,
+                "offlineSince" to if (active) 0L else now,
                 "foreground" to foreground,
                 "onlineSource" to if (active) "heartbeat" else "background"
             )
@@ -163,6 +193,7 @@ class MainActivity : FragmentActivity() {
     }
 
     private fun captureActiveGroupCall(intent: Intent?) {
+        if (intent?.action == "com.ebchat.OPEN_ACTIVE_CALL") { pendingOpenCall.value = true; return }
         if (intent?.action != "com.ebchat.OPEN_ACTIVE_GROUP_CALL") return
         pendingGroupRoomId.value = intent.getStringExtra("roomId")?.takeIf { it.isNotBlank() }
         pendingGroupId.value = intent.getStringExtra("groupId").orEmpty()
@@ -185,10 +216,12 @@ class MainActivity : FragmentActivity() {
 
     override fun onStart() {
         super.onStart()
+        com.example.service.ActiveChatState.appVisible = true
         startPresenceHeartbeat()
     }
 
     override fun onStop() {
+        com.example.service.ActiveChatState.appVisible = false
         stopPresenceHeartbeat()
         // Keep the uninstall-surviving encrypted text mirror current whenever the
         // activity leaves the foreground. Media payloads are excluded by the manager.
@@ -205,6 +238,7 @@ class MainActivity : FragmentActivity() {
         captureDeepLink(intent); captureActiveGroupCall(intent); captureSharedContent(intent)
         AppLockManager.initialize(this)
         PrivacyPreferences.initialize(this)
+        androidx.core.content.ContextCompat.registerReceiver(this, screenOffReceiver, android.content.IntentFilter(Intent.ACTION_SCREEN_OFF), androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED)
         enableEdgeToEdge()
 
         // Configure standard Coil cache so images (like profile pics) are cached aggressively offline
@@ -236,6 +270,7 @@ class MainActivity : FragmentActivity() {
                     AppLockScreen(this@MainActivity)
                 } else {
                 val navController = rememberNavController()
+                val openCallRequest by pendingOpenCall.collectAsState()
                 val pendingSenderId by pendingChatSenderId.collectAsState()
                 val linkedPostId by pendingPostId.collectAsState()
                 val sharedContent by incomingShare.collectAsState()
@@ -497,7 +532,9 @@ class MainActivity : FragmentActivity() {
                                 onEndCall = {
                                     activeRecipient?.let { viewModel.endCall(it, callState.callId) } ?: CallEngine.end()
                                 },
-                                onMinimize = { minimizeActiveCall() },
+                                // Back keeps the user inside Convo Chat: the call keeps running in the
+                                // floating mini bubble. Home/recents still switches to Picture-in-Picture.
+                                onMinimize = { leaveCallScreen { if (!navController.popBackStack()) navController.navigate("home") { launchSingleTop = true } } },
                                 onClose = { navController.popBackStack() },
                                 onAddParticipant = { showCallParticipantPicker = true }
                             )
@@ -615,6 +652,12 @@ class MainActivity : FragmentActivity() {
                         )
                     }
                     if(FirebaseAuth.getInstance().currentUser!=null) sharedContent?.let { payload -> IncomingShareHub(payload,viewModel,onCreatePost={navController.navigate("compose_post")},onDismiss={incomingShare.value=null}) }
+                    LaunchedEffect(openCallRequest, callState.status) {
+                        if (openCallRequest && callState.status !in listOf("idle", "ended", "declined", "missed", "failed")) {
+                            pendingOpenCall.value = false
+                            navController.navigate("call") { launchSingleTop = true }
+                        } else if (openCallRequest && callState.status in listOf("ended", "declined", "missed", "failed")) pendingOpenCall.value = false
+                    }
                     if (currentRoute != "call" && callState.status !in listOf("idle", "ended", "declined", "missed", "failed")) {
                         Box(Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(12.dp)) {
                             CallMiniOverlay(

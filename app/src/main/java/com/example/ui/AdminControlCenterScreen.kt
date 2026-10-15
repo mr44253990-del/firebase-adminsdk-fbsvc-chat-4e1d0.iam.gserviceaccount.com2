@@ -654,8 +654,8 @@ fun AdminControlCenterScreen(
                             }
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 PresenceMetric("Profiles", presenceDashboard.totalUsers.toString(), Modifier.weight(1f))
-                                PresenceMetric("Online", presenceDashboard.foregroundUsers.toString(), Modifier.weight(1f))
-                                PresenceMetric("Reachable", presenceDashboard.reachableUsers.toString(), Modifier.weight(1f))
+                                PresenceMetric("Active", (presenceDashboard.foregroundUsers + presenceDashboard.reachableUsers).toString(), Modifier.weight(1f))
+                                PresenceMetric("In app", presenceDashboard.foregroundUsers.toString(), Modifier.weight(1f))
                             }
                             Text("${presenceDashboard.activeUsers} active/recent • ${presenceDashboard.registeredDevices} registered devices • last probe sent: ${if (presenceDashboard.lastProbeAt > 0L) SimpleDateFormat("MMM d, HH:mm", Locale.getDefault()).format(Date(presenceDashboard.lastProbeAt)) else "not sent yet"}", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             OutlinedTextField(presenceQuery, { presenceQuery = it.take(100) }, label = { Text("Search name, username, or UID") }, singleLine = true, modifier = Modifier.fillMaxWidth())
@@ -667,7 +667,7 @@ fun AdminControlCenterScreen(
                             presenceDashboard.users.forEach { person ->
                                 val statusColor = when (person.status) {
                                     "online" -> Color(0xFF2CBF79)
-                                    "reachable" -> Color(0xFFFFB74D)
+                                    "reachable" -> Color(0xFF42D392)
                                     else -> MaterialTheme.colorScheme.outline
                                 }
                                 val seenText = if (person.lastActive > 0L) SimpleDateFormat("MMM d, HH:mm", Locale.getDefault()).format(Date(person.lastActive)) else "No recent signal"
@@ -681,7 +681,7 @@ fun AdminControlCenterScreen(
                                             Text("${if (person.username.isNotBlank()) "@${person.username} · " else ""}last seen $seenText", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                             Text("$probeText · ${if (person.hasFcmToken) "FCM ready" else "no FCM token"}", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                         }
-                                        Text(person.status.uppercase(), fontSize = 9.sp, fontWeight = FontWeight.Bold, color = statusColor)
+                                        Text(when (person.status) { "online" -> "ACTIVE · IN APP"; "reachable" -> "ACTIVE"; else -> "OFFLINE" }, fontSize = 9.sp, fontWeight = FontWeight.Bold, color = statusColor)
                                     }
                                 }
                             }

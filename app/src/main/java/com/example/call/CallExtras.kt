@@ -4,6 +4,7 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -61,7 +62,7 @@ fun CallQualityPill(connected: Boolean, accent: Color, modifier: Modifier = Modi
         (loss ?: 0.0) > 3.0 || (rtt ?: 0) > 220 -> 2
         else -> 3
     }
-    val label = when (level) { 3 -> "Excellent"; 2 -> if (rtt == null) "Measuring" else "Good"; else -> "Weak network" }
+    val label = when (level) { 3 -> "Excellent"; 2 -> if (rtt == null) "Measuring" else "Good"; else -> "Low signal" }
     val color = when (level) { 3 -> Color(0xFF42E695); 2 -> Color(0xFFFFD166); else -> Color(0xFFFF6B6B) }
     Row(
         modifier.clip(CircleShape).background(Color.Black.copy(alpha = .38f)).border(1.dp, Color.White.copy(alpha = .16f), CircleShape).padding(horizontal = 12.dp, vertical = 6.dp),
@@ -179,5 +180,22 @@ fun GlassCallButton(icon: ImageVector, label: String, active: Boolean = false, d
         }
         Spacer(Modifier.height(6.dp))
         Text(label, color = Color.White.copy(alpha = .9f), style = MaterialTheme.typography.labelSmall, maxLines = 1)
+    }
+}
+
+/** Slowly drifting aurora blobs behind the call UI. */
+@Composable
+fun CallAuroraBackground(accent: Color, modifier: Modifier = Modifier) {
+    val motion = androidx.compose.animation.core.rememberInfiniteTransition(label = "call_aurora")
+    val t by motion.animateFloat(0f, 1f, androidx.compose.animation.core.infiniteRepeatable(tween(14000, easing = LinearEasing)), label = "aurora_t")
+    androidx.compose.foundation.Canvas(modifier.fillMaxSize()) {
+        val w = size.width; val h = size.height
+        val angle = t * 6.2832f
+        fun blob(cx: Float, cy: Float, radius: Float, color: Color) {
+            drawCircle(Brush.radialGradient(listOf(color, Color.Transparent), center = androidx.compose.ui.geometry.Offset(cx, cy), radius = radius), radius, androidx.compose.ui.geometry.Offset(cx, cy))
+        }
+        blob(w * (.25f + .18f * kotlin.math.cos(angle)), h * (.22f + .08f * kotlin.math.sin(angle)), w * .75f, accent.copy(alpha = .32f))
+        blob(w * (.78f + .14f * kotlin.math.sin(angle * 1.3f)), h * (.55f + .1f * kotlin.math.cos(angle)), w * .65f, Color(0xFFFF6AD5).copy(alpha = .18f))
+        blob(w * (.4f + .2f * kotlin.math.sin(angle * .7f)), h * (.88f + .05f * kotlin.math.cos(angle * 1.6f)), w * .7f, Color(0xFF4DD0FF).copy(alpha = .2f))
     }
 }

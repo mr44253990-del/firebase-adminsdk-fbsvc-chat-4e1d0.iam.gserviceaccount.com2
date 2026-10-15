@@ -231,7 +231,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                             if (messages.isNotEmpty()) {
                                 viewModelScope.launch(Dispatchers.IO) {
                                     runCatching {
-                                        cacheDao.insertMessages(messages.map { CachedMessage.fromMessage(it, chatId) })
+                                        cacheMessagesPreservingReceipts(messages, chatId)
                                     }.onFailure { error ->
                                         Log.w("TEXT_RESTORE", "Failed to cache $chatId", error)
                                     }
@@ -323,8 +323,36 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private val _filteredUsersState = MutableStateFlow<List<User>>(emptyList())
     val filteredUsersState: StateFlow<List<User>> = _filteredUsersState.asStateFlow()
 
+    /**
+     * Receipt flags are monotonic: once a message is delivered/seen it never falls back to one
+     * tick, even when a stale RTDB snapshot or cache write (with the original false flags)
+     * arrives later, e.g. after the recipient goes offline.
+     */
+    private val receiptLedger = java.util.concurrent.ConcurrentHashMap<String, Int>()
+    private fun recordReceipt(messageId: String, level: Int) {
+        if (messageId.isBlank() || level <= 0) return
+        receiptLedger.merge(messageId, level) { old, new -> maxOf(old, new) }
+    }
+    private fun applyReceipts(message: Message): Message {
+        val known = receiptLedger[message.messageId] ?: 0
+        val own = (if (message.seenByRecipient) 2 else if (message.deliveredToRecipient) 1 else 0)
+        if (own > known) recordReceipt(message.messageId, own)
+        val level = maxOf(own, known)
+        return if (level == own) message else message.copy(deliveredToRecipient = level >= 1, seenByRecipient = level >= 2)
+    }
+    private suspend fun cacheMessagesPreservingReceipts(messages: List<Message>, chatId: String) {
+        if (messages.isEmpty()) return
+        messages.map { it.messageId }.filter { it.isNotBlank() }.chunked(400).forEach { ids ->
+            runCatching { cacheDao.getReceiptRows(ids) }.getOrDefault(emptyList()).forEach { row ->
+                recordReceipt(row.messageId, if (row.seenByRecipient) 2 else if (row.deliveredToRecipient) 1 else 0)
+            }
+        }
+        cacheDao.insertMessages(messages.map { CachedMessage.fromMessage(applyReceipts(it), chatId) })
+    }
     private val _chatMessagesState = MutableStateFlow<List<Message>>(emptyList())
-    val chatMessagesState: StateFlow<List<Message>> = _chatMessagesState.asStateFlow()
+    val chatMessagesState: StateFlow<List<Message>> = _chatMessagesState
+        .map { list -> list.map(::applyReceipts) }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     /** Local-only delivery state for optimistic sends; server message schema remains unchanged. */
     private val _messageDeliveryStates = MutableStateFlow<Map<String, String>>(emptyMap())
@@ -1659,7 +1687,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             if (uid != null) {
                 // Instantly set offline status in RTDB status node before signing out
                 getDatabaseInstance().getReference("status").child(uid)
-                    .setValue(mapOf("isOnline" to false, "lastActive" to System.currentTimeMillis()))
+                    .setValue(mapOf("isOnline" to false, "lastActive" to System.currentTimeMillis(), "onlineUntil" to 0L, "offlineSince" to System.currentTimeMillis(), "connected" to false))
             }
             if (uid != null) syncPresenceToWorker(active = false, foreground = false)
             FirebaseAuth.getInstance().signOut()
@@ -1903,8 +1931,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 val connected = snapshot.getValue(Boolean::class.java) ?: false
                 if (connected) {
                     val now = System.currentTimeMillis()
-                    statusRef.setValue(mapOf("isOnline" to true, "lastActive" to now, "onlineUntil" to now + 5 * 60 * 1000L, "offlineSince" to 0L))
-                    statusRef.onDisconnect().setValue(mapOf("isOnline" to false, "lastActive" to now, "onlineUntil" to 0L, "offlineSince" to now))
+                    statusRef.updateChildren(mapOf("isOnline" to true, "lastActive" to now, "onlineUntil" to now + com.example.service.PRESENCE_LEASE_MS, "offlineSince" to 0L, "connected" to true))
+                    // Losing the socket (Doze, app swiped away, network switch) must not hide an
+                    // internet-connected user. Only record the disconnect; the lease decides.
+                    statusRef.onDisconnect().updateChildren(mapOf("connected" to false, "lastDisconnectAt" to ServerValue.TIMESTAMP))
                     syncPresenceToWorker(active = true, foreground = true)
                 }
             }
@@ -1912,52 +1942,78 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         })
     }
 
+    private data class RawPresence(val explicitOnline: Boolean, val lastActive: Long, val onlineUntil: Long, val recordedOffline: Long)
+    @Volatile private var rawPresence: Map<String, RawPresence> = emptyMap()
+    private var presenceTicker: kotlinx.coroutines.Job? = null
+
     private fun listenToAllPresences() {
         val statusRef = getDatabaseInstance().getReference("status")
         presenceListener = statusRef.addValueEventListener(object : ValueEventListener {
             override fun onDataChange(snapshot: DataSnapshot) {
-                data class PresenceSnapshot(val online: Boolean, val lastActive: Long, val onlineUntil: Long, val offlineSince: Long)
-                val statusMap = mutableMapOf<String, PresenceSnapshot>()
-                val now = System.currentTimeMillis()
-                val leaseMs = 5 * 60 * 1000L
-                for (child in snapshot.children) {
-                    val uid = child.key ?: continue
+                val leaseMs = com.example.service.PRESENCE_LEASE_MS
+                rawPresence = snapshot.children.mapNotNull { child ->
+                    val uid = child.key ?: return@mapNotNull null
                     val lastActive = child.child("lastActive").getValue(Long::class.java) ?: 0L
-                    val onlineUntil = child.child("onlineUntil").getValue(Long::class.java) ?: (lastActive + leaseMs)
-                    val explicitOnline = child.child("isOnline").getValue(Boolean::class.java) ?: false
-                    val online = explicitOnline && lastActive > 0L && now <= onlineUntil
-                    val recordedOffline = child.child("offlineSince").getValue(Long::class.java) ?: 0L
-                    statusMap[uid] = PresenceSnapshot(online, lastActive, onlineUntil, if (online) 0L else (recordedOffline.takeIf { it > 0L } ?: lastActive))
-                }
-
-                val updatedUsers = _usersState.value.map { user ->
-                    val status = statusMap[user.uid]
-                    if (status != null) {
-                        user.copy(isOnline = status.online, lastActive = status.lastActive, onlineUntil = status.onlineUntil, offlineSince = status.offlineSince)
-                    } else {
-                        user.copy(isOnline = false, lastActive = 0L, onlineUntil = 0L, offlineSince = now)
-                    }
-                }
-
-                // Active contacts rise to the top; stale leases remain visible but are sorted below.
-                val sortedUsers = updatedUsers.sortedWith(
-                    compareByDescending<User> { it.role == "moderator" }
-                        .thenByDescending { it.isPremium && (it.premiumPlan == "lifetime" || it.premiumUntil > now) }
-                        .thenByDescending { it.isOnline }
-                        .thenByDescending { it.lastActive }
-                )
-                _usersState.value = sortedUsers
-
-                val currentUid = FirebaseAuth.getInstance().currentUser?.uid ?: ""
-                val myBlocked = _currentUserState.value?.blockedUsers ?: emptyList()
-                val filteredList = sortedUsers.filter { user ->
-                    !myBlocked.contains(user.uid) && !user.blockedUsers.contains(currentUid)
-                }
-                _filteredUsersState.value = filteredList
+                    uid to RawPresence(
+                        explicitOnline = child.child("isOnline").getValue(Boolean::class.java) ?: false,
+                        lastActive = lastActive,
+                        onlineUntil = child.child("onlineUntil").getValue(Long::class.java) ?: (lastActive + leaseMs),
+                        recordedOffline = child.child("offlineSince").getValue(Long::class.java) ?: 0L
+                    )
+                }.toMap()
+                applyPresence()
             }
-
             override fun onCancelled(error: DatabaseError) {}
         })
+        // Leases expire without any new RTDB event, so re-evaluate on a timer. This is what
+        // turns a user offline exactly when their 5-minute reachability lease runs out.
+        presenceTicker?.cancel()
+        presenceTicker = viewModelScope.launch {
+            while (true) {
+                kotlinx.coroutines.delay(20_000L)
+                if (rawPresence.isNotEmpty()) applyPresence()
+            }
+        }
+    }
+
+    private fun applyPresence() {
+        val now = System.currentTimeMillis()
+        val statusMap = rawPresence
+        var changed = false
+        val updatedUsers = _usersState.value.map { user ->
+            val raw = statusMap[user.uid]
+            val updated = if (raw != null) {
+                // Active = the user's own heartbeat or a push/probe acknowledgement renewed the
+                // lease, i.e. the phone is connected to the internet (foreground or background).
+                val online = raw.explicitOnline && raw.lastActive > 0L && now <= raw.onlineUntil
+                val offlineSince = if (online) 0L else when {
+                    raw.recordedOffline > 0L -> raw.recordedOffline
+                    raw.explicitOnline && raw.onlineUntil > 0L -> raw.onlineUntil
+                    else -> raw.lastActive
+                }
+                user.copy(isOnline = online, lastActive = raw.lastActive, onlineUntil = raw.onlineUntil, offlineSince = offlineSince)
+            } else {
+                user.copy(isOnline = false, lastActive = 0L, onlineUntil = 0L, offlineSince = user.offlineSince.takeIf { it > 0L } ?: now)
+            }
+            if (updated != user) changed = true
+            updated
+        }
+        if (!changed && _filteredUsersState.value.isNotEmpty()) return
+
+        // Active contacts rise to the top; stale leases remain visible but are sorted below.
+        val sortedUsers = updatedUsers.sortedWith(
+            compareByDescending<User> { it.role == "moderator" }
+                .thenByDescending { it.isPremium && (it.premiumPlan == "lifetime" || it.premiumUntil > now) }
+                .thenByDescending { it.isOnline }
+                .thenByDescending { it.lastActive }
+        )
+        _usersState.value = sortedUsers
+
+        val currentUid = FirebaseAuth.getInstance().currentUser?.uid ?: ""
+        val myBlocked = _currentUserState.value?.blockedUsers ?: emptyList()
+        _filteredUsersState.value = sortedUsers.filter { user ->
+            !myBlocked.contains(user.uid) && !user.blockedUsers.contains(currentUid)
+        }
     }
 
     private fun localizeIncomingMedia(message: Message, chatId: String): Message {
@@ -2140,7 +2196,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                             if (remote.senderId != currentUid) localizeIncomingMedia(remote, chatId)
                             else _chatMessagesState.value.find { it.messageId == remote.messageId } ?: remote
                         }
-                        cacheDao.insertMessages(localized.map { CachedMessage.fromMessage(it, chatId) })
+                        cacheMessagesPreservingReceipts(localized, chatId)
                         _chatMessagesState.value = (_chatMessagesState.value + localized)
                             .associateBy { it.messageId }.values.sortedBy { it.timestamp }
                         localized.filter { it.senderId != currentUid }.forEach { incoming ->
@@ -2177,6 +2233,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     val messageId = receipt.key ?: return@forEach
                     val seen = receipt.child("seen").getValue(Boolean::class.java) == true
                     val delivered = seen || receipt.child("delivered").getValue(Boolean::class.java) == true
+                    recordReceipt(messageId, if (seen) 2 else if (delivered) 1 else 0)
                     viewModelScope.launch(Dispatchers.IO) {
                         if (seen) cacheDao.markMessageSeen(messageId) else if (delivered) cacheDao.markMessageDelivered(messageId)
                     }

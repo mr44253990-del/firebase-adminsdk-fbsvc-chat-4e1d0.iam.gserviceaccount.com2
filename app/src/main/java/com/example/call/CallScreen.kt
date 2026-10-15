@@ -49,8 +49,16 @@ import com.example.service.CallRingtoneController
 import org.webrtc.SurfaceViewRenderer
 
 class IncomingCallActivity : ComponentActivity() {
+    companion object { @Volatile var alive: Boolean = false }
+
+    override fun onDestroy() {
+        alive = false
+        super.onDestroy()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        alive = true
         window.addFlags(WindowManager.LayoutParams.FLAG_SECURE or WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
             setShowWhenLocked(true)
@@ -85,11 +93,34 @@ class IncomingCallActivity : ComponentActivity() {
                     callId = callId, remoteUid = callerId, remoteName = callerName,
                     remoteImage = callerImage, incoming = true, video = videoCall,
                     initiallyAccepted = intent.action == "com.ebchat.ACCEPT_CALL" && canUseMedia,
-                    onMinimize = { minimizeCallToPip() },
+                    // Back = stay inside Convo Chat with the floating call bubble.
+                    onMinimize = { returnToAppWithCallBubble() },
                     onClose = { finish() }
                 )
             }
         }
+    }
+
+    private fun returnToAppWithCallBubble() {
+        val active = CallEngine.state.value.status !in listOf("idle", "ended", "declined", "missed", "failed")
+        if (!active) { finish(); return }
+        val keyguard = getSystemService(KEYGUARD_SERVICE) as? android.app.KeyguardManager
+        if (keyguard?.isKeyguardLocked == true && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            keyguard.requestDismissKeyguard(this, object : android.app.KeyguardManager.KeyguardDismissCallback() {
+                override fun onDismissSucceeded() { openMainAndFinish() }
+            })
+            return
+        }
+        openMainAndFinish()
+    }
+
+    private fun openMainAndFinish() {
+        runCatching {
+            startActivity(Intent(this, com.example.MainActivity::class.java).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+            })
+        }
+        finish()
     }
 
     private fun minimizeCallToPip() {
@@ -148,6 +179,19 @@ fun CallScreen(
         if (effectiveVideo) window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         else window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
     }
+    val activeForLock = state.status !in listOf("idle", "ended", "declined", "missed", "failed")
+    DisposableEffect(activeForLock) {
+        val activity = view.context as? Activity
+        // Locking the phone during a call keeps the full call screen on top of the lock screen.
+        if (activeForLock && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+            activity?.setShowWhenLocked(true); activity?.setTurnScreenOn(true)
+        }
+        onDispose {
+            if (activity != null && activity !is IncomingCallActivity && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+                activity.setShowWhenLocked(false); activity.setTurnScreenOn(false)
+            }
+        }
+    }
     DisposableEffect(Unit) {
         val window = (view.context as? Activity)?.window
         onDispose {
@@ -189,6 +233,7 @@ fun CallScreen(
             AsyncImage(remoteImage, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize().blur(70.dp))
             Box(Modifier.fillMaxSize().background(Brush.verticalGradient(callPalette.background.map { it.copy(alpha = .72f) })))
         }
+        if (!effectiveVideo || !accepted) CallAuroraBackground(callPalette.accent)
         if (effectiveVideo && accepted) {
             if (state.remoteCameraOff) {
                 Box(Modifier.fillMaxSize().background(Brush.verticalGradient(callPalette.background)), contentAlignment = Alignment.Center) {

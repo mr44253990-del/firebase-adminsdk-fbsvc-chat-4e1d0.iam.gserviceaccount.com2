@@ -311,6 +311,7 @@ fun ChatScreen(
         }
     }
 
+    com.example.service.TrackOpenChat(peerUid = recipient.uid)
     DisposableEffect(recipient.uid) {
         onDispose {
             viewModel.setTypingState(false)

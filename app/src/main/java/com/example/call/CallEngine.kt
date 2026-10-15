@@ -204,19 +204,45 @@ object CallEngine {
         callRef?.child(if (_state.value.direction == "outgoing") "callerCameraOff" else "calleeCameraOff")?.setValue(off)
     }
 
+    /**
+     * Starts screen sharing. Android 14+ requires the mediaProjection foreground service to be
+     * running *before* the projection is created, and startForegroundService() is asynchronous,
+     * so capture begins once the service reports it is in the foreground (max ~4 s).
+     */
     fun startScreenShare(permissionData: Intent): Boolean {
         val context = appContext ?: return false
+        if (videoSource == null || surfaceTextureHelper == null) return false
+        val requestedAt = System.currentTimeMillis()
+        runCatching { CallForegroundService.start(context, _state.value.callId, _state.value.remoteName, true, screenShare = true) }
+            .onFailure { Log.e("CALL_ENGINE", "Could not start projection service", it); return false }
+        fun attempt(triesLeft: Int) {
+            val ready = Build.VERSION.SDK_INT < 34 || CallForegroundService.projectionForegroundAt >= requestedAt
+            if (!ready && triesLeft > 0) { mainHandler.postDelayed({ attempt(triesLeft - 1) }, 100); return }
+            if (!beginScreenCapture(context, permissionData)) {
+                notice("Screen sharing could not start on this phone")
+                CallForegroundService.start(context, _state.value.callId, _state.value.remoteName, _state.value.video, screenShare = false)
+            }
+        }
+        mainHandler.postDelayed({ attempt(40) }, 120)
+        return true
+    }
+
+    private fun beginScreenCapture(context: Context, permissionData: Intent): Boolean {
         val source = videoSource ?: return false
         return runCatching {
             runCatching { videoCapturer?.stopCapture() }
             videoCapturer?.dispose()
-            CallForegroundService.start(context, _state.value.callId, _state.value.remoteName, true, screenShare = true)
+            videoCapturer = null
             val screenCapturer = ScreenCapturerAndroid(permissionData, object : MediaProjection.Callback() {
                 override fun onStop() { mainHandler.post { stopScreenShare() } }
             })
             val metrics = context.resources.displayMetrics
+            // Keep the encoder light: ~720p on the long edge-aware short side.
+            val scale = (720f / metrics.widthPixels.coerceAtLeast(1)).coerceAtMost(1f)
+            val width = (metrics.widthPixels * scale).toInt().coerceAtLeast(360) / 2 * 2
+            val height = (metrics.heightPixels * scale).toInt().coerceAtLeast(640) / 2 * 2
             screenCapturer.initialize(surfaceTextureHelper, context, source.capturerObserver)
-            screenCapturer.startCapture(metrics.widthPixels.coerceAtLeast(720), metrics.heightPixels.coerceAtLeast(1280), 15)
+            screenCapturer.startCapture(width, height, 15)
             videoCapturer = screenCapturer
             localVideoTrack?.setEnabled(true)
             _state.value = _state.value.copy(video = true, screenSharing = true, cameraOff = false)
@@ -224,6 +250,32 @@ object CallEngine {
             callRef?.child(if (_state.value.direction == "outgoing") "callerScreenSharing" else "calleeScreenSharing")?.setValue(true)
             true
         }.onFailure { Log.e("CALL_ENGINE", "Screen share failed", it) }.getOrDefault(false)
+    }
+
+    private fun notice(message: String) {
+        val context = appContext ?: return
+        mainHandler.post { android.widget.Toast.makeText(context, message, android.widget.Toast.LENGTH_LONG).show() }
+    }
+
+    /** Wired/Bluetooth headsets win over the loudspeaker. */
+    private fun headsetConnected(manager: AudioManager): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return false
+        return manager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).any {
+            it.type in setOf(
+                android.media.AudioDeviceInfo.TYPE_WIRED_HEADSET, android.media.AudioDeviceInfo.TYPE_WIRED_HEADPHONES,
+                android.media.AudioDeviceInfo.TYPE_BLUETOOTH_SCO, android.media.AudioDeviceInfo.TYPE_BLUETOOTH_A2DP,
+                android.media.AudioDeviceInfo.TYPE_USB_HEADSET
+            )
+        }
+    }
+
+    /** Video calls start on the loudspeaker (like Messenger/WhatsApp) unless a headset is in use. */
+    private fun autoSpeakerForVideo() {
+        val context = appContext ?: return
+        if (!_state.value.video || _state.value.speaker) return
+        val manager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        if (headsetConnected(manager)) return
+        toggleSpeaker()
     }
 
     fun stopScreenShare(): Boolean {
@@ -374,6 +426,7 @@ object CallEngine {
                 )
                 if (status == "connected") {
                     activateCallRuntime()
+                    if (previous != "connected") autoSpeakerForVideo()
                     updateProximityLock()
                 }
                 if (status in listOf("declined", "ended", "missed")) cleanup(status)
