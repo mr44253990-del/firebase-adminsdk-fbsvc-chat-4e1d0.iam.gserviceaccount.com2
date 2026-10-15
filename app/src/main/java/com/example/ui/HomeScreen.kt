@@ -906,17 +906,18 @@ fun HomeScreen(
                         val activePremium = currentUser?.isPremium == true &&
                             (currentUser?.premiumPlan == "lifetime" || (currentUser?.premiumUntil ?: 0L) > System.currentTimeMillis())
                         Surface(
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier.fillMaxWidth()
+                                .liquidCard(shape = RoundedCornerShape(30.dp))
+                                .background(Brush.verticalGradient(listOf(MaterialTheme.colorScheme.primary.copy(alpha = .28f), MaterialTheme.colorScheme.tertiary.copy(alpha = .10f), Color.Transparent))),
                             shape = RoundedCornerShape(30.dp),
-                            color = MaterialTheme.colorScheme.surface,
-                            tonalElevation = 1.dp
+                            color = Color.Transparent
                         ) {
                             Column(
                                 Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 20.dp),
                                 horizontalAlignment = Alignment.CenterHorizontally,
                                 verticalArrangement = Arrangement.spacedBy(7.dp)
                             ) {
-                                Box(Modifier.size(94.dp).clip(CircleShape).background(Brush.linearGradient(listOf(Color(0xFF637BFF), Color(0xFF8B5CF6), Color(0xFFE755B6)))).padding(4.dp)) {
+                                Box(Modifier.size(98.dp).clip(CircleShape).background(ProfileRingBrush).padding(4.dp)) {
                                     if (!currentUser?.profileImageUrl.isNullOrBlank()) {
                                         AsyncImage(
                                             model = currentUser?.profileImageUrl,
@@ -1025,6 +1026,15 @@ fun HomeScreen(
                             )
                             SettingsHubDivider()
                             SettingsHubRow(
+                                icon = Icons.Outlined.ChatBubbleOutline,
+                                title = "Bubbles & spacing",
+                                subtitle = "Liquid, neon, outline or no border · side space · 24h time",
+                                trailingValue = ChatAppearance.label(ChatPreferences.appearance.collectAsState().value.bubbleStyle),
+                                accent = Color(0xFFA66BFF),
+                                onClick = { settingsPage = "bubbles" }
+                            )
+                            SettingsHubDivider()
+                            SettingsHubRow(
                                 icon = Icons.Outlined.MusicNote,
                                 title = "Sounds",
                                 subtitle = "Your own notification and typing sounds",
@@ -1086,13 +1096,7 @@ fun HomeScreen(
                             )
                         }
                         } else {
-                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                                IconButton(onClick = { settingsPage = "" }) { Icon(Icons.Default.ArrowBack, contentDescription = "Back to settings") }
-                                Column(Modifier.weight(1f)) {
-                                    Text(settingsPageTitle(settingsPage), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold)
-                                    Text(settingsPageSubtitle(settingsPage), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                }
-                            }
+                            SettingsPageHero(settingsPage, settingsPageTitle(settingsPage), settingsPageSubtitle(settingsPage)) { settingsPage = "" }
                         }
 
                         if (settingsPage == "theme") {
@@ -1264,7 +1268,22 @@ fun HomeScreen(
                                         if (customReaction.isNotBlank()) { ChatPreferences.setQuickReaction(context, customReaction); customReaction = "" }
                                     }, enabled = customReaction.isNotBlank()) { Text("Use") }
                                 }
-                                Text("Current: $quickReaction", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                                Text("Convo animated stickers", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                ConvoStickers.all.chunked(5).forEach { rowStickers ->
+                                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        rowStickers.forEach { sticker ->
+                                            val selected = quickReaction == sticker.token
+                                            Box(
+                                                Modifier.weight(1f).height(56.dp).clip(RoundedCornerShape(16.dp))
+                                                    .background(if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .5f))
+                                                    .border(if (selected) 2.dp else 0.dp, if (selected) MaterialTheme.colorScheme.primary else Color.Transparent, RoundedCornerShape(16.dp))
+                                                    .clickable { ChatPreferences.setQuickReaction(context, sticker.token) },
+                                                contentAlignment = Alignment.Center
+                                            ) { ConvoStickerView(sticker.token, 44.dp) }
+                                        }
+                                    }
+                                }
+                                Text("Current: ${convoStickerPreview(quickReaction)}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                             }
                         }
                         SettingsHubGroup("Reading & typing") {
@@ -1300,6 +1319,15 @@ fun HomeScreen(
                             SettingsHubDivider()
                             SettingsHubRow(icon = Icons.Outlined.MusicNote, title = "Notification & typing sounds", subtitle = "Use your own MP3 sounds", accent = Color(0xFFE5674B), onClick = { settingsPage = "sounds" })
                         }
+                        }
+
+                        if (settingsPage == "bubbles") {
+                            SettingsHubGroup("Live preview & style") {
+                                ChatAppearanceEditor(
+                                    spec = ChatThemeCatalog.find(ChatPreferences.defaultChatTheme.collectAsState().value)?.takeIf { !it.adaptive },
+                                    modifier = Modifier.fillMaxWidth().padding(14.dp)
+                                )
+                            }
                         }
 
                         if (settingsPage == "sounds") {
@@ -1553,26 +1581,36 @@ fun HomeScreen(
 
                             Card(
                                 shape = RoundedCornerShape(28.dp),
+                                colors = CardDefaults.cardColors(containerColor = Color.Transparent),
                                 modifier = Modifier.fillMaxWidth().bringIntoViewRequester(profileSectionRequester)
+                                    .liquidCard(shape = RoundedCornerShape(28.dp))
+                                    .background(Brush.verticalGradient(listOf(Color(0xFF637BFF).copy(alpha = .22f), Color(0xFFE755B6).copy(alpha = .10f), Color.Transparent), endY = 700f))
                             ) {
                                 Column(
                                     modifier = Modifier.padding(16.dp),
                                     horizontalAlignment = Alignment.CenterHorizontally
                                 ) {
                                     Text(
-                                        text = "Modify User Details",
-                                        style = MaterialTheme.typography.titleSmall,
-                                        fontWeight = FontWeight.Bold,
+                                        text = "Edit your profile",
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = FontWeight.ExtraBold,
                                         color = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.align(Alignment.Start)
+                                    )
+                                    Text(
+                                        text = "Tap the photo to change it. Changes show on your profile after you save.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         modifier = Modifier.align(Alignment.Start)
                                     )
                                     Spacer(modifier = Modifier.height(12.dp))
 
                                     Box(
                                         modifier = Modifier
-                                            .size(90.dp)
+                                            .size(96.dp)
+                                            .clip(CircleShape)
                                             .clickable { galleryLauncher.launch("image/*") }
-                                            .border(2.dp, MaterialTheme.colorScheme.primary, CircleShape),
+                                            .border(3.dp, ProfileRingBrush, CircleShape),
                                         contentAlignment = Alignment.Center
                                     ) {
                                         if (inputProfileUrl.isNotBlank()) {
@@ -4678,21 +4716,17 @@ private fun SettingsHubGroup(
     content: @Composable ColumnScope.() -> Unit
 ) {
     Column(Modifier.fillMaxWidth()) {
-        Text(
-            text = title,
-            style = MaterialTheme.typography.titleSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            fontWeight = FontWeight.SemiBold,
-            modifier = Modifier.padding(start = 6.dp, bottom = 8.dp)
-        )
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(25.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
-        ) {
-            Column(content = content)
+        Row(Modifier.padding(start = 6.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(width = 14.dp, height = 4.dp).clip(CircleShape).background(Brush.horizontalGradient(listOf(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.tertiary))))
+            Spacer(Modifier.width(7.dp))
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontWeight = FontWeight.Bold
+            )
         }
+        Column(Modifier.fillMaxWidth().liquidCard(shape = RoundedCornerShape(25.dp)), content = content)
     }
 }
 
@@ -4718,7 +4752,8 @@ private fun SettingsHubRow(
             modifier = Modifier
                 .size(42.dp)
                 .clip(RoundedCornerShape(14.dp))
-                .background(Brush.linearGradient(listOf(accent, accent.copy(alpha = .76f)))),
+                .background(Brush.linearGradient(listOf(lerp(accent, Color.White, .22f), accent, lerp(accent, Color.Black, .12f))))
+                .border(1.dp, Color.White.copy(alpha = .35f), RoundedCornerShape(14.dp)),
             contentAlignment = Alignment.Center
         ) {
             Icon(icon, contentDescription = null, tint = Color.White, modifier = Modifier.size(21.dp))
@@ -4760,6 +4795,7 @@ private fun settingsPageTitle(page: String): String = when (page) {
     "theme" -> "App theme"
     "call" -> "Call appearance"
     "chat" -> "Chat settings"
+    "bubbles" -> "Bubbles & spacing"
     "sounds" -> "Sounds"
     "backgrounds" -> "Chat backgrounds"
     "privacy" -> "Privacy controls"
@@ -4775,6 +4811,7 @@ private fun settingsPageSubtitle(page: String): String = when (page) {
     "theme" -> "Light, dark and premium looks for the whole app"
     "call" -> "Skins and textures for audio and video calls"
     "chat" -> "How messages look and send"
+    "bubbles" -> "Make chat bubbles yours: style, border, padding and time"
     "sounds" -> "Custom MP3 sounds saved on this phone"
     "backgrounds" -> "Themes and photo backgrounds for chats"
     "privacy" -> "App lock, presence, receipts and AI"

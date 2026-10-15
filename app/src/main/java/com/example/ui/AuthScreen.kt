@@ -33,6 +33,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
@@ -175,13 +176,23 @@ fun AuthScreen(
         label = "color3"
     )
 
-    val backgroundBrush = Brush.verticalGradient(
-        colors = listOf(
-            Color(0xFF050A1D),
-            Color(0xFF071A35),
-            Color(0xFF160B2C),
-            Color(0xFF050817)
-        )
+    val loginPrefs = remember { context.getSharedPreferences("convo_login", android.content.Context.MODE_PRIVATE) }
+    var milkLook by remember { mutableStateOf(loginPrefs.getBoolean("milk_look", false)) }
+    val lp = remember(milkLook) { loginPalette(milkLook) }
+    val deviceTilt by rememberDeviceTilt()
+    val backgroundBrush = lp.background
+    val authFieldColors = OutlinedTextFieldDefaults.colors(
+        focusedBorderColor = color1,
+        unfocusedBorderColor = lp.text.copy(alpha = .18f),
+        focusedLabelColor = color1,
+        unfocusedLabelColor = lp.textSoft,
+        cursorColor = color1,
+        focusedTextColor = lp.text,
+        unfocusedTextColor = lp.text,
+        focusedPlaceholderColor = lp.textSoft,
+        unfocusedPlaceholderColor = lp.textSoft,
+        focusedContainerColor = lp.text.copy(alpha = .035f),
+        unfocusedContainerColor = lp.text.copy(alpha = .025f)
     )
     val orbTransition = rememberInfiniteTransition(label = "auth_orbs")
     val orbDrift by orbTransition.animateFloat(
@@ -203,33 +214,8 @@ fun AuthScreen(
             .background(backgroundBrush)
             .windowInsetsPadding(WindowInsets.safeDrawing)
     ) {
-        // Lightweight ambient motion matching the supplied neon reference.
-        Box(
-            modifier = Modifier
-                .size(132.dp)
-                .offset(x = (-34).dp, y = (42 + orbDrift).dp)
-                .alpha(orbPulse)
-                .clip(CircleShape)
-                .background(Brush.radialGradient(listOf(Color(0xFF00C8FF), Color(0xFF193D9B), Color.Transparent)))
-        )
-        Box(
-            modifier = Modifier
-                .size(176.dp)
-                .align(Alignment.TopEnd)
-                .offset(x = 54.dp, y = (210 - orbDrift).dp)
-                .alpha(orbPulse * 0.72f)
-                .clip(CircleShape)
-                .background(Brush.radialGradient(listOf(Color(0xFFFF4CCB), Color(0xFF52208B), Color.Transparent)))
-        )
-        Box(
-            modifier = Modifier
-                .size(78.dp)
-                .align(Alignment.CenterEnd)
-                .offset(x = 26.dp, y = 110.dp)
-                .alpha(orbPulse)
-                .clip(CircleShape)
-                .background(Brush.radialGradient(listOf(Color(0xFFFF70E8), Color.Transparent)))
-        )
+        // Parallax orbs move with the phone tilt for depth.
+        LoginParallaxOrbs(lp, deviceTilt, orbDrift, orbPulse)
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -237,48 +223,17 @@ fun AuthScreen(
                 .padding(horizontal = 18.dp, vertical = 14.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Hero Illustration Container
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(142.dp)
-                    .clip(RoundedCornerShape(32.dp))
-                    .background(Brush.linearGradient(listOf(Color(0xFF12142A), Color(0xFF27164C), Color(0xFF071D2B))))
-                    .border(1.dp, MaterialTheme.colorScheme.primary.copy(.35f), RoundedCornerShape(32.dp))
-            ) {
-                Image(
-                    painter = painterResource(id = R.drawable.img_app_logo),
-                    contentDescription = "Convo Chat",
-                    contentScale = ContentScale.Fit,
-                    modifier = Modifier.fillMaxSize()
-                )
-                // Ambient gradient overlay over the hero
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(
-                            Brush.verticalGradient(
-                                colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.5f))
-                            )
-                        )
-                )
-                // Brand tag over image
-                Surface(
-                    color = MaterialTheme.colorScheme.primaryContainer,
-                    shape = RoundedCornerShape(18.dp),
-                    modifier = Modifier
-                        .align(Alignment.BottomStart)
-                        .padding(16.dp)
-                ) {
-                    Text(
-                        text = "🔒 Secure Chat",
-                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                        color = MaterialTheme.colorScheme.onPrimaryContainer,
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
-                    )
-                }
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text("Convo", color = lp.text, fontWeight = FontWeight.ExtraBold, fontSize = 22.sp, letterSpacing = (-0.5).sp)
+                Spacer(Modifier.weight(1f))
+                LoginLookToggle(lp, onToggle = {
+                    milkLook = !milkLook
+                    loginPrefs.edit().putBoolean("milk_look", milkLook).apply()
+                })
             }
-
+            Spacer(Modifier.height(8.dp))
+            // 3D hero: tilt the phone or drag the card
+            Login3DHero(lp, deviceTilt)
             Spacer(modifier = Modifier.height(12.dp))
 
             Text(
@@ -287,13 +242,13 @@ fun AuthScreen(
                     fontWeight = FontWeight.ExtraBold,
                     letterSpacing = (-0.5).sp
                 ),
-                color = Color.White
+                color = lp.text
             )
 
             Text(
                 text = if (isLoginMode) "Sign in to continue your secure conversations" else "Join us to start chatting with verified profiles securely",
                 style = MaterialTheme.typography.bodyMedium,
-                color = Color(0xFFD7D6E9),
+                color = lp.textSoft,
                 textAlign = TextAlign.Center,
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
             )
@@ -341,8 +296,8 @@ fun AuthScreen(
                     .fillMaxWidth()
                     .height(54.dp)
                     .clip(RoundedCornerShape(20.dp))
-                    .background(Color.White.copy(alpha = 0.07f))
-                    .border(1.dp, Color.White.copy(alpha = 0.14f), RoundedCornerShape(20.dp))
+                    .background(lp.text.copy(alpha = 0.07f))
+                    .border(1.dp, lp.text.copy(alpha = 0.14f), RoundedCornerShape(20.dp))
                     .padding(4.dp)
             ) {
                 val tabWidth = maxWidth / 2
@@ -368,7 +323,7 @@ fun AuthScreen(
                             .testTag("login_tab"),
                         contentAlignment = Alignment.Center
                     ) {
-                        Text("Log In", color = Color.White, fontWeight = if (isLoginMode) FontWeight.ExtraBold else FontWeight.Medium, fontSize = 15.sp)
+                        Text("Log In", color = lp.text, fontWeight = if (isLoginMode) FontWeight.ExtraBold else FontWeight.Medium, fontSize = 15.sp)
                     }
                     Box(
                         modifier = Modifier
@@ -378,7 +333,7 @@ fun AuthScreen(
                             .testTag("signup_tab"),
                         contentAlignment = Alignment.Center
                     ) {
-                        Text("Sign Up", color = Color.White.copy(alpha = if (isLoginMode) .64f else 1f), fontWeight = if (!isLoginMode) FontWeight.ExtraBold else FontWeight.Medium, fontSize = 15.sp)
+                        Text("Sign Up", color = lp.text.copy(alpha = if (isLoginMode) .64f else 1f), fontWeight = if (!isLoginMode) FontWeight.ExtraBold else FontWeight.Medium, fontSize = 15.sp)
                     }
                 }
             }
@@ -388,16 +343,21 @@ fun AuthScreen(
             ElevatedCard(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .graphicsLayer {
+                        rotationY = deviceTilt.x * 3f
+                        rotationX = -deviceTilt.y * 2.5f
+                        cameraDistance = 18f * density
+                    }
                     .border(
                         width = 2.dp,
                         brush = Brush.linearGradient(
-                            colors = listOf(color1, color2, color3)
+                            colors = if (lp.milk) lp.cardBorder else listOf(color1, color2, color3)
                         ),
                         shape = RoundedCornerShape(24.dp)
                     ),
                 shape = RoundedCornerShape(24.dp),
                 colors = CardDefaults.elevatedCardColors(
-                    containerColor = Color(0xFF11162E).copy(alpha = 0.92f)
+                    containerColor = lp.card
                 ),
                 elevation = CardDefaults.elevatedCardElevation(defaultElevation = 8.dp)
             ) {
@@ -492,7 +452,8 @@ fun AuthScreen(
                                 shape = RoundedCornerShape(22.dp),
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .testTag("signup_name_input")
+                                    .testTag("signup_name_input"),
+                                colors = authFieldColors
                             )
 
                             // Birth date button picker
@@ -512,7 +473,8 @@ fun AuthScreen(
                                 shape = RoundedCornerShape(22.dp),
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .testTag("signup_dob_input")
+                                    .testTag("signup_dob_input"),
+                                colors = authFieldColors
                             )
                         }
                     }
@@ -531,14 +493,14 @@ fun AuthScreen(
                             .testTag("email_input"),
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedBorderColor = color1,
-                            unfocusedBorderColor = Color.White.copy(alpha = .18f),
+                            unfocusedBorderColor = lp.text.copy(alpha = .18f),
                             focusedLabelColor = color1,
-                            unfocusedLabelColor = Color(0xFFB9BAD0),
+                            unfocusedLabelColor = lp.textSoft,
                             cursorColor = color1,
-                            focusedTextColor = Color.White,
-                            unfocusedTextColor = Color.White,
-                            focusedContainerColor = Color.White.copy(alpha = .035f),
-                            unfocusedContainerColor = Color.White.copy(alpha = .025f)
+                            focusedTextColor = lp.text,
+                            unfocusedTextColor = lp.text,
+                            focusedContainerColor = lp.text.copy(alpha = .035f),
+                            unfocusedContainerColor = lp.text.copy(alpha = .025f)
                         )
                     )
 
@@ -565,14 +527,14 @@ fun AuthScreen(
                             .testTag("password_input"),
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedBorderColor = color2,
-                            unfocusedBorderColor = Color.White.copy(alpha = .18f),
+                            unfocusedBorderColor = lp.text.copy(alpha = .18f),
                             focusedLabelColor = color2,
-                            unfocusedLabelColor = Color(0xFFB9BAD0),
+                            unfocusedLabelColor = lp.textSoft,
                             cursorColor = color2,
-                            focusedTextColor = Color.White,
-                            unfocusedTextColor = Color.White,
-                            focusedContainerColor = Color.White.copy(alpha = .035f),
-                            unfocusedContainerColor = Color.White.copy(alpha = .025f)
+                            focusedTextColor = lp.text,
+                            unfocusedTextColor = lp.text,
+                            focusedContainerColor = lp.text.copy(alpha = .035f),
+                            unfocusedContainerColor = lp.text.copy(alpha = .025f)
                         )
                     )
 
@@ -717,11 +679,11 @@ fun AuthScreen(
                 onClick = { isLoginMode = !isLoginMode },
                 modifier = Modifier.testTag("switch_mode_button")
             ) {
-                Text(text = if (isLoginMode) "Don't have an account? Sign Up" else "Already have an account? Log In", color = Color(0xFF9D8CFF), fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                Text(text = if (isLoginMode) "Don't have an account? Sign Up" else "Already have an account? Log In", color = lp.link, fontWeight = FontWeight.Bold, fontSize = 15.sp)
             }
 
             Surface(
-                color = Color.White.copy(alpha = .065f),
+                color = lp.text.copy(alpha = .065f),
                 shape = RoundedCornerShape(18.dp),
                 modifier = Modifier.padding(top = 2.dp, bottom = 4.dp)
             ) {
@@ -732,21 +694,21 @@ fun AuthScreen(
                     Icon(
                         imageVector = Icons.Default.Shield,
                         contentDescription = "Encrypted",
-                        tint = Color(0xFF63E6FF).copy(alpha = orbPulse),
+                        tint = lp.highlight.copy(alpha = orbPulse),
                         modifier = Modifier.size(17.dp)
                     )
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("End-to-end encrypted", color = Color(0xFFD7D6E9), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    Text("End-to-end encrypted", color = lp.textSoft, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                 }
             }
 
             if (rememberedAccounts.isNotEmpty()) {
                 Spacer(Modifier.height(8.dp))
-                Text("Previous accounts", fontWeight = FontWeight.ExtraBold, modifier = Modifier.fillMaxWidth())
+                Text("Previous accounts", color = lp.text, fontWeight = FontWeight.ExtraBold, modifier = Modifier.fillMaxWidth())
                 Text(
                     "Tap a saved account to continue. Secure credentials stay with Android and are never written to app files.",
                     fontSize = 10.sp,
-                    color = Color(0xFFB8B7CB),
+                    color = lp.textSoft,
                     modifier = Modifier.fillMaxWidth()
                 )
                 Column(
@@ -783,7 +745,7 @@ fun AuthScreen(
                                 }
                             },
                             shape = RoundedCornerShape(18.dp),
-                            color = Color.White.copy(alpha = 0.065f)
+                            color = lp.text.copy(alpha = 0.065f)
                         ) {
                             Row(
                                 modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 9.dp),
@@ -799,11 +761,11 @@ fun AuthScreen(
                                 Spacer(Modifier.width(10.dp))
                                 Column(Modifier.weight(1f)) {
                                     Text(account.name.ifBlank { account.email }, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                    Text(account.email, fontSize = 11.sp, color = Color(0xFFB8B7CB), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text(account.email, fontSize = 11.sp, color = lp.textSoft, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 }
-                                Text(account.provider.replaceFirstChar { it.uppercase() }, fontSize = 10.sp, color = Color(0xFF63E6FF))
+                                Text(account.provider.replaceFirstChar { it.uppercase() }, fontSize = 10.sp, color = lp.highlight)
                                 IconButton(onClick = { viewModel.forgetRememberedAccount(account.uid) }) {
-                                    Icon(Icons.Default.Close, contentDescription = "Remove account", tint = Color(0xFFB8B7CB), modifier = Modifier.size(18.dp))
+                                    Icon(Icons.Default.Close, contentDescription = "Remove account", tint = lp.textSoft, modifier = Modifier.size(18.dp))
                                 }
                             }
                         }
