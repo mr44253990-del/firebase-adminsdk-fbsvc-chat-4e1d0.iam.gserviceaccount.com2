@@ -637,7 +637,14 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         val ready = it.isSuccessful && json.optBoolean("ok", false)
                         _presenceWorkerHealth.value = PresenceWorkerHealth(
                             configured = ready,
-                            message = if (ready) "Presence Worker is ready · confirm that exactly one five-minute Cron is active" else json.optString("error", "Worker is reachable but its service-account secret is not configured"),
+                            message = when {
+                                ready && json.optString("platform") == "supabase-edge-function" && !json.optBoolean("cronSecretConfigured", true) ->
+                                    "Edge Function is ready, but PRESENCE_CRON_SECRET is missing · the five-minute Supabase Cron cannot call it yet"
+                                ready && json.optString("platform") == "supabase-edge-function" ->
+                                    "Supabase Edge Function is ready · keep exactly one five-minute Supabase Cron active"
+                                ready -> "Presence API is ready · confirm that exactly one five-minute Cron is active"
+                                else -> json.optString("error", "Presence API is reachable but its service-account secret is not configured")
+                            },
                             version = json.optString("version")
                         )
                     }

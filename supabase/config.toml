@@ -1,0 +1,8 @@
+# Supabase CLI config for Convo Chat Edge Functions.
+# `supabase link --project-ref <your-ref>` connects this folder to your project.
+project_id = "convo-chat"
+
+[functions.presence-monitor]
+# The app authenticates with Firebase ID tokens and Supabase Cron uses x-cron-secret,
+# so the platform JWT check must be off. Every route checks its own credential.
+verify_jwt = false

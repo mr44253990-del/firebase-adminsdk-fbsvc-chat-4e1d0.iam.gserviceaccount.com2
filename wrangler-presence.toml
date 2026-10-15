@@ -1,7 +1,11 @@
+# LEGACY: presence now runs on the Supabase Edge Function `presence-monitor`
+# (see docs/presence-edge-function-bn.md). The Cloudflare cron is disabled so that
+# exactly one five-minute scheduler is active. Re-deploying this file removes the
+# old Cloudflare trigger.
 name = "firechat-presence-worker"
 main = "firechat-presence-worker.js"
 compatibility_date = "2026-10-10"
 workers_dev = true
 
 [triggers]
-crons = ["*/5 * * * *"]
+crons = []

@@ -193,7 +193,7 @@ fun AdminControlCenterScreen(
         AdminMenuEntry("feature_requests", "Feature requests", "Review community suggestions", Icons.Outlined.Lightbulb, Color(0xFF2F9A89), featureRequests.size.takeIf { it > 0 }?.toString().orEmpty()),
         AdminMenuEntry("premium_requests", "Payment approvals", "Approve or reject Premium requests", Icons.Outlined.Payments, Color(0xFFBD8B24), premiumRequests.size.takeIf { it > 0 }?.toString().orEmpty()),
         AdminMenuEntry("premium_access", "Gifts & access", "Grant Premium or revoke access", Icons.Outlined.CardGiftcard, Color(0xFFCB5C90)),
-        AdminMenuEntry("presence", "Presence / 5-min probe", "Cloudflare Worker + Cron", Icons.Outlined.Groups, Color(0xFF358B9A)),
+        AdminMenuEntry("presence", "Presence / 5-min probe", "Supabase Edge Function + Cron", Icons.Outlined.Groups, Color(0xFF358B9A)),
         AdminMenuEntry("chat_media", "Chat backgrounds & sounds", "Photo backgrounds and default app sounds", Icons.Outlined.Wallpaper, Color(0xFF8B62D9), chatBackgroundImages.size.takeIf { it > 0 }?.toString().orEmpty()),
         AdminMenuEntry("reels", "Reels & TikTok", "Choose the Reels experience", Icons.Outlined.SmartDisplay, Color(0xFF1B9A8B)),
         AdminMenuEntry("storage", "Storage routing", "Supabase buckets and upload tests", Icons.Outlined.CloudUpload, Color(0xFF5386CA)),
@@ -610,19 +610,27 @@ fun AdminControlCenterScreen(
                         }
                     }
                     "presence" -> {
-                        AdminPanelCard("Five-minute presence probe", "Cloudflare Worker sends silent, per-device probes on its five-minute Cron", Icons.Outlined.Groups) {
+                        AdminPanelCard("Five-minute presence probe", "Supabase Edge Function sends silent, per-device probes on a five-minute Supabase Cron", Icons.Outlined.Groups) {
                             Text(
-                                "বাংলা কনফিগারেশন: এই silent data-only probe সাধারণ notification banner বা শব্দ দেখায় না। Cloudflare Worker-এ Firebase service-account JSON শুধু encrypted secret হিসেবে দিন; এরপর wrangler-presence.toml দিয়ে Worker deploy করে Cloudflare-এ পাঁচ মিনিটের Cron Trigger enabled আছে নিশ্চিত করুন। অ্যাপে Worker-এর HTTPS base URL দিন। URL save করলেই Cron চালু হয় না—একটিই presence schedule সক্রিয় রাখুন। FCM acceptance receipt-এর প্রমাণ নয়; device acknowledgement-ই reachability।",
+                                "বাংলা কনফিগারেশন: এই silent data-only probe কোনো notification banner বা শব্দ দেখায় না। Supabase-এ presence-monitor Edge Function deploy করুন (--no-verify-jwt), Firebase service-account JSON শুধু Edge Function secret হিসেবে দিন, তারপর supabase/sql/presence_cron.sql চালিয়ে পাঁচ মিনিটের Supabase Cron চালু করুন। পুরোনো Cloudflare Cron বন্ধ রাখুন—একটিই schedule সক্রিয় থাকবে। FCM acceptance receipt-এর প্রমাণ নয়; device acknowledgement-ই reachability।",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
-                            AdminInlineInfo("Service-account JSON/key শুধু Cloudflare Worker secret-এ রাখুন—Android, Firestore, Git বা public log-এ নয়। সেটআপ: docs/presence-worker-bn.md")
+                            AdminInlineInfo("Service-account JSON/key শুধু Supabase Edge Function secret-এ রাখুন—Android, Firestore, Git বা public log-এ নয়। সেটআপ: docs/presence-edge-function-bn.md")
+                            val supabaseFunctionUrl = storageConfig.supabaseUrl.trim().trimEnd('/').takeIf { it.startsWith("https://") }?.let { "$it/functions/v1/presence-monitor" }
+                            if (supabaseFunctionUrl != null && adminPresenceUrlInput != supabaseFunctionUrl) {
+                                AssistChip(
+                                    onClick = { adminPresenceUrlInput = supabaseFunctionUrl },
+                                    label = { Text("Use my Supabase project URL", fontSize = 12.sp) },
+                                    leadingIcon = { Icon(Icons.Outlined.AutoAwesome, null, Modifier.size(16.dp)) }
+                                )
+                            }
                             OutlinedTextField(
                                 value = adminPresenceUrlInput,
                                 onValueChange = { adminPresenceUrlInput = it.trim() },
                                 label = { Text("Presence API base URL") },
-                                placeholder = { Text("https://presence.example.com/api") },
-                                supportingText = { Text("Cloudflare Worker HTTPS base URL; omit /health. Configure its Cron Trigger separately.") },
+                                placeholder = { Text("https://<ref>.supabase.co/functions/v1/presence-monitor") },
+                                supportingText = { Text("Supabase Edge Function base URL; omit /health. Supabase Cron is set up once with presence_cron_secret SQL.") },
                                 modifier = Modifier.fillMaxWidth(), singleLine = true
                             )
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -864,7 +872,7 @@ fun AdminControlCenterScreen(
                     "infrastructure" -> {
                         AdminPanelCard("Service health & tools", "Check key services and run safe diagnostics", Icons.Outlined.HealthAndSafety) {
                             AdminStatusRow("Firebase / FCM gateway", gatewayHealth.configured, "Server-side FCM service account")
-                            AdminStatusRow("Presence Worker endpoint", presenceHealth.configured, "Cloudflare Worker secret and one five-minute Cron")
+                            AdminStatusRow("Presence Edge Function", presenceHealth.configured, "Supabase Edge Function secret and one five-minute Supabase Cron")
                             AdminStatusRow("Cloudflare R2", gatewayHealth.r2Configured, "Media bucket and public base URL")
                             AdminStatusRow("TURN calling", gatewayHealth.turnConfigured, "TURN token ID and API token")
                             AdminStatusRow("Realtime SFU", gatewayHealth.sfuConfigured, "Calls application ID and token")
