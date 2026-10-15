@@ -27,6 +27,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.compositeOver
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.layout.ContentScale
@@ -59,7 +60,9 @@ data class ChatAppearance(
     val use24h: Boolean = false,
     val backgroundDim: Float = 0f,
     val glow: Boolean = true,
-    val animateReactions: Boolean = true
+    val animateReactions: Boolean = true,
+    /** Entrance animation for new messages: none, fade, slide, pop, bounce, swing. */
+    val messageAnimation: String = "pop"
 ) {
     fun sanitized() = copy(
         bubbleStyle = bubbleStyle.takeIf { it in STYLES } ?: "auto",
@@ -69,7 +72,8 @@ data class ChatAppearance(
         sidePadding = sidePadding.coerceIn(0f, 24f),
         innerPadding = innerPadding.coerceIn(4f, 16f),
         messageSpacing = messageSpacing.coerceIn(1f, 16f),
-        backgroundDim = backgroundDim.coerceIn(0f, .7f)
+        backgroundDim = backgroundDim.coerceIn(0f, .7f),
+        messageAnimation = messageAnimation.takeIf { it in ANIMATIONS } ?: "pop"
     )
 
     fun resolvedStyle(spec: ChatThemeSpec?): String =
@@ -79,8 +83,21 @@ data class ChatAppearance(
         SimpleDateFormat(if (use24h) "HH:mm" else "hh:mm a", Locale.getDefault()).format(Date(timestamp))
 
     companion object {
-        val STYLES = listOf("auto", "liquid", "neon", "outline", "solid", "minimal")
+        val STYLES = listOf("auto", "liquid", "neon", "gradient", "frosted", "depth", "outline", "solid", "minimal")
+        val ANIMATIONS = listOf("none", "fade", "slide", "pop", "bounce", "swing")
+        fun animationLabel(id: String) = when (id) {
+            "none" -> "Off"
+            "fade" -> "Fade"
+            "slide" -> "Slide in"
+            "pop" -> "Pop"
+            "bounce" -> "Bounce up"
+            "swing" -> "Swing"
+            else -> id
+        }
         fun label(style: String) = when (style) {
+            "gradient" -> "Gradient"
+            "frosted" -> "Frosted glass"
+            "depth" -> "3D depth"
             "auto" -> "Auto"
             "liquid" -> "Liquid glass"
             "neon" -> "Neon glow"
@@ -140,6 +157,14 @@ fun rememberBubblePalette(isSent: Boolean, spec: ChatThemeSpec?, bubbleAccent: C
                 border = Color.Transparent
             }
             "neon" -> border = accent.copy(alpha = if (isSent) 1f else .75f)
+            "gradient", "depth" -> {
+                fill = fill.copy(alpha = 1f).compositeOver(baseBackground)
+                border = Color.Transparent
+            }
+            "frosted" -> {
+                fill = fill.copy(alpha = (fill.alpha * .55f).coerceIn(.18f, .6f))
+                border = Color.White.copy(alpha = if (isDark) .22f else .55f)
+            }
             else -> Unit
         }
         val effective = fill.compositeOver(baseBackground)
@@ -205,6 +230,20 @@ fun Modifier.chatBubble(style: String, shape: Shape, palette: BubblePalette, app
                     cornerRadius = CornerRadius(radius.toPx())
                 )
             }
+        "gradient" -> m.background(
+            Brush.linearGradient(listOf(lerpColor(palette.fill, palette.accent, .15f), palette.fill, lerpColor(palette.fill, Color(0xFFFF4FA3), .35f)))
+        )
+        "depth" -> m.background(Brush.verticalGradient(listOf(palette.fillTop, palette.fill, lerpColor(palette.fill, Color.Black, .22f))))
+            .drawBehind {
+                drawRoundRect(
+                    color = Color.White.copy(alpha = .18f),
+                    topLeft = Offset(size.width * .06f, 1.dp.toPx()),
+                    size = Size(size.width * .88f, 2.dp.toPx()),
+                    cornerRadius = CornerRadius(2.dp.toPx())
+                )
+            }
+        "frosted" -> m.background(palette.fill)
+            .background(Brush.verticalGradient(listOf(Color.White.copy(alpha = .16f), Color.Transparent, Color.White.copy(alpha = .05f))))
         else -> m.background(palette.fill)
     }
     if (borderWidth > 0.dp && palette.border.alpha > 0f) {
@@ -251,6 +290,19 @@ fun ChatAppearanceEditor(spec: ChatThemeSpec? = null, modifier: Modifier = Modif
                     onClick = { update { it.copy(bubbleStyle = style) } },
                     label = { Text(ChatAppearance.label(style)) },
                     leadingIcon = if (appearance.bubbleStyle == style) {
+                        { Icon(Icons.Default.Check, null, Modifier.size(16.dp)) }
+                    } else null
+                )
+            }
+        }
+        Text("Message animation", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            ChatAppearance.ANIMATIONS.forEach { id ->
+                FilterChip(
+                    selected = appearance.messageAnimation == id,
+                    onClick = { update { it.copy(messageAnimation = id) } },
+                    label = { Text(ChatAppearance.animationLabel(id)) },
+                    leadingIcon = if (appearance.messageAnimation == id) {
                         { Icon(Icons.Default.Check, null, Modifier.size(16.dp)) }
                     } else null
                 )
@@ -359,4 +411,37 @@ fun GlassCircle(size: Dp, colors: ChatBarColors, modifier: Modifier = Modifier, 
         contentAlignment = Alignment.Center,
         content = content
     )
+}
+
+
+/**
+ * Entrance animation for a newly arrived/sent message bubble ([ChatAppearance.messageAnimation]).
+ * [animate] should be true only once per message (new messages, not history or scroll-back).
+ */
+@Composable
+fun Modifier.messageEntrance(style: String, animate: Boolean, fromEnd: Boolean): Modifier {
+    if (!animate || style == "none") return this
+    val progress = remember { androidx.compose.animation.core.Animatable(0f) }
+    LaunchedEffect(Unit) {
+        progress.animateTo(
+            1f,
+            when (style) {
+                "bounce" -> androidx.compose.animation.core.spring(dampingRatio = .45f, stiffness = 380f)
+                "pop", "swing" -> androidx.compose.animation.core.spring(dampingRatio = .58f, stiffness = 520f)
+                else -> androidx.compose.animation.core.tween(320, easing = androidx.compose.animation.core.FastOutSlowInEasing)
+            }
+        )
+    }
+    return this.graphicsLayer {
+        val p = progress.value
+        val pivot = androidx.compose.ui.graphics.TransformOrigin(if (fromEnd) 1f else 0f, 1f)
+        alpha = p.coerceIn(0f, 1f)
+        when (style) {
+            "slide" -> translationX = (1f - p) * 90f * (if (fromEnd) 1f else -1f)
+            "pop" -> { val sc = .55f + .45f * p; scaleX = sc; scaleY = sc; transformOrigin = pivot }
+            "bounce" -> translationY = (1f - p) * 70f
+            "swing" -> { rotationZ = (1f - p) * (if (fromEnd) 9f else -9f); transformOrigin = pivot }
+            else -> Unit
+        }
+    }
 }

@@ -180,6 +180,9 @@ fun ChatScreen(
     val quickReaction by ChatPreferences.quickReaction.collectAsState()
     val chatTextScale by ChatPreferences.textScale.collectAsState()
     val chatAppearance by ChatPreferences.appearance.collectAsState()
+    // New messages animate in once; history and scroll-back stay still.
+    val chatOpenedAt = remember { System.currentTimeMillis() }
+    val enteredMessageIds = remember { HashSet<String>() }
     val mentionUsers by viewModel.usersState.collectAsState()
     val chatBackgroundImages by viewModel.chatBackgroundImages.collectAsState()
     val openMention: (String) -> Unit = { handle ->
@@ -899,6 +902,8 @@ fun ChatScreen(
                     reverseLayout = true
                 ) {
                     items(visibleMessages.reversed(), key = { it.messageId }) { msg ->
+                        val entranceAnimate = remember(msg.messageId) { msg.timestamp > chatOpenedAt - 1500L && enteredMessageIds.add(msg.messageId) }
+                        Box(Modifier.fillMaxWidth().messageEntrance(chatAppearance.messageAnimation, entranceAnimate, msg.senderId == currentUserId)) {
                         val isSentByMe = msg.senderId == currentUserId
                         MessageBubbleItem(
                             message = msg,
@@ -941,6 +946,7 @@ fun ChatScreen(
                                 }
                             }
                         )
+                        }
                     }
                 }
             }

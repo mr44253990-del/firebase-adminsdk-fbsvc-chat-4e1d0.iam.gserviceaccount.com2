@@ -1375,6 +1375,19 @@ fun HomeScreen(
                             }
                         }
                         Text("Pick an MP3 (or any audio up to 15 seconds and 2 MB). It is saved on this phone and replaces the built-in sound. If Convo publishes a default sound, it downloads quietly in the background.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.fillMaxWidth())
+                        var likeSoundOn by remember { mutableStateOf(LikeSound.isEnabled(context)) }
+                        Row(
+                            Modifier.fillMaxWidth().liquidCard(shape = RoundedCornerShape(22.dp)).clickable { likeSoundOn = !likeSoundOn; LikeSound.setEnabled(context, likeSoundOn) }.padding(14.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Outlined.FavoriteBorder, null, tint = MaterialTheme.colorScheme.primary)
+                            Spacer(Modifier.width(12.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text("Like sound", fontWeight = FontWeight.Bold)
+                                Text("Play a soft pop when you like or react to a message", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            Switch(likeSoundOn, { likeSoundOn = it; LikeSound.setEnabled(context, it) })
+                        }
                         listOf(
                             Triple(AppSoundStore.NOTIFICATION, "Message notification", Icons.Outlined.NotificationsActive),
                             Triple(AppSoundStore.TYPING, "Typing indicator", Icons.Outlined.Keyboard),
@@ -1394,7 +1407,7 @@ fun HomeScreen(
                                             Text(if (hasLocal) "Your sound" else "Default", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         }
                                         IconButton(onClick = {
-                                            if (kind == AppSoundStore.LIKE) LikeSound.play(context)
+                                            if (kind == AppSoundStore.LIKE) LikeSound.play(context, force = true)
                                             else if (!AppSoundStore.playCustom(context, kind)) Toast.makeText(context, "Using the built-in sound", Toast.LENGTH_SHORT).show()
                                         }) { Icon(Icons.Default.PlayArrow, "Preview sound") }
                                     }
@@ -1792,12 +1805,15 @@ fun HomeScreen(
                                     Spacer(modifier = Modifier.height(10.dp))
                                     Text("Cover photo", fontWeight = FontWeight.Bold, modifier = Modifier.align(Alignment.Start))
                                     Box(Modifier.fillMaxWidth().height(150.dp).clip(RoundedCornerShape(20.dp)).background(Brush.linearGradient(listOf(MaterialTheme.colorScheme.primaryContainer, MaterialTheme.colorScheme.secondaryContainer))), contentAlignment = Alignment.Center) {
-                                        if (inputCoverUrl.isNotBlank()) AsyncImage(inputCoverUrl, "Cover preview", contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize().graphicsLayer { scaleX = coverScale; scaleY = coverScale; translationY = coverOffsetY * 70f })
+                                        ProfileCoverArt(inputCoverUrl, user.uid, Modifier.fillMaxSize(), coverScale, coverOffsetY)
                                         if (isUploadingCover) CircularProgressIndicator()
                                     }
                                     OutlinedButton(onClick = { coverLauncher.launch("image/*") }, enabled = !isUploadingCover, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Outlined.UploadFile, null); Spacer(Modifier.width(6.dp)); Text(if (inputCoverUrl.isBlank()) "Upload cover photo" else "Replace cover photo") }
-                                    Text("Zoom", fontSize = 11.sp); Slider(coverScale, { coverScale = it }, valueRange = 1f..2f)
-                                    Text("Vertical position", fontSize = 11.sp); Slider(coverOffsetY, { coverOffsetY = it }, valueRange = -1f..1f)
+                                    CoverPresetPicker(selectedUrl = inputCoverUrl, onSelect = { inputCoverUrl = it; coverScale = 1f; coverOffsetY = 0f })
+                                    if (inputCoverUrl.isNotBlank() && !inputCoverUrl.startsWith("preset:")) {
+                                        Text("Zoom", fontSize = 11.sp); Slider(coverScale, { coverScale = it }, valueRange = 1f..2f)
+                                        Text("Vertical position", fontSize = 11.sp); Slider(coverOffsetY, { coverOffsetY = it }, valueRange = -1f..1f)
+                                    }
                                     Spacer(modifier = Modifier.height(14.dp))
 
                                     Button(
@@ -2555,20 +2571,24 @@ fun SmartSearchDialog(
     var searchFilter by remember { mutableStateOf("All") }
     var fullScreenVideo by remember { mutableStateOf<String?>(null) }
     val normalized = query.trim()
-    val matchedUsers = if (normalized.isBlank() || (searchFilter != "All" && searchFilter != "People")) emptyList() else users.filter {
-        it.name.contains(normalized, true) || it.username.contains(normalized, true) || it.bio.contains(normalized, true)
+    val searchContext = LocalContext.current
+    var recentSearches by remember { mutableStateOf(SmartSearch.recent(searchContext)) }
+    val trendingTags = remember(posts) { SmartSearch.trendingTags(posts) }
+    val parsedQuery = remember(normalized) { SmartSearch.parse(normalized) }
+    fun rememberQuery() { SmartSearch.remember(searchContext, normalized); recentSearches = SmartSearch.recent(searchContext) }
+    val matchedUsers = remember(parsedQuery, users, searchFilter) {
+        if (normalized.isBlank() || (searchFilter != "All" && searchFilter != "People")) emptyList() else SmartSearch.rankUsers(parsedQuery, users).take(30)
     }
-    val matchedPosts = if (normalized.isBlank() || searchFilter == "People") emptyList() else posts.filter { post ->
-        if (post.isAdminReel && !post.postEverywhere) return@filter false
-        val textMatch = post.title.contains(normalized, true) || post.text.contains(normalized, true) ||
-            post.feeling.contains(normalized, true) || post.tags.any { it.contains(normalized.removePrefix("#"), true) }
-        val mediaMatch = when (searchFilter) {
-            "Photos" -> post.imageUrl.isNotBlank() || post.imageUrls.isNotEmpty()
-            "Videos" -> post.videoUrl.isNotBlank() || post.isReel
-            "Audio" -> post.audioUrl.isNotBlank()
-            else -> true
-        }
-        textMatch && mediaMatch
+    val matchedPosts = remember(parsedQuery, posts, searchFilter) {
+        if (normalized.isBlank() || searchFilter == "People") emptyList() else SmartSearch.rankPosts(parsedQuery, posts.filter { post ->
+            if (post.isAdminReel && !post.postEverywhere) return@filter false
+            when (searchFilter) {
+                "Photos" -> post.imageUrl.isNotBlank() || post.imageUrls.isNotEmpty()
+                "Videos" -> post.videoUrl.isNotBlank() || post.isReel
+                "Audio" -> post.audioUrl.isNotBlank()
+                else -> true
+            }
+        }).take(60)
     }
     fullScreenVideo?.let { FullScreenVideoPlayer(it) { fullScreenVideo = null } }
 
@@ -2580,7 +2600,9 @@ fun SmartSearchDialog(
                         value = query,
                         onValueChange = { query = it },
                         modifier = Modifier.weight(1f),
-                        placeholder = { Text("Search people, posts, videos and photos") },
+                        placeholder = { Text("Search • @people • #tags") },
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = androidx.compose.ui.text.input.ImeAction.Search),
+                        keyboardActions = androidx.compose.foundation.text.KeyboardActions(onSearch = { rememberQuery() }),
                         leadingIcon = { Icon(Icons.Default.Search, null) },
                         trailingIcon = {
                             if (query.isNotEmpty()) IconButton(onClick = { query = "" }) { Icon(Icons.Default.Close, "Clear") }
@@ -2603,10 +2625,60 @@ fun SmartSearchDialog(
                     }
                 }
                 if (normalized.isBlank()) {
-                    Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-                        Icon(Icons.Outlined.ManageSearch, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(68.dp))
-                        Text("Search everything", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                        Text("People • Posts • Videos • Photos", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                        if (recentSearches.isNotEmpty()) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("Recent", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                                TextButton(onClick = { SmartSearch.clear(searchContext); recentSearches = emptyList() }) { Text("Clear all") }
+                            }
+                            recentSearches.forEach { recent ->
+                                Row(
+                                    Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).clickable { query = recent }.padding(horizontal = 6.dp, vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(Icons.Default.History, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Spacer(Modifier.width(10.dp))
+                                    Text(recent, Modifier.weight(1f))
+                                    IconButton(onClick = { SmartSearch.forget(searchContext, recent); recentSearches = SmartSearch.recent(searchContext) }, modifier = Modifier.size(28.dp)) {
+                                        Icon(Icons.Default.Close, "Remove", modifier = Modifier.size(16.dp))
+                                    }
+                                }
+                            }
+                        }
+                        if (trendingTags.isNotEmpty()) {
+                            Text("Trending this week", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                trendingTags.forEach { tag ->
+                                    AssistChip(onClick = { query = "#$tag" }, label = { Text("#$tag") }, leadingIcon = { Icon(Icons.Default.TrendingUp, null, Modifier.size(16.dp)) })
+                                }
+                            }
+                        }
+                        val onlinePeople = remember(users) { users.filter { it.isOnline && (it.onlineUntil <= 0L || it.onlineUntil > System.currentTimeMillis()) }.take(12) }
+                        if (onlinePeople.isNotEmpty()) {
+                            Text("Active now", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                onlinePeople.forEach { person ->
+                                    Column(Modifier.width(64.dp).clickable { onProfileSelected(person) }, horizontalAlignment = Alignment.CenterHorizontally) {
+                                        Box {
+                                            AsyncImage(person.profileImageUrl.ifBlank { null }, person.name, error = painterResource(R.drawable.img_app_logo), contentScale = ContentScale.Crop, modifier = Modifier.size(54.dp).clip(CircleShape))
+                                            Box(Modifier.align(Alignment.BottomEnd).size(14.dp).clip(CircleShape).background(MaterialTheme.colorScheme.background).padding(2.dp).clip(CircleShape).background(Color(0xFF22C55E)))
+                                        }
+                                        Text(person.name.substringBefore(' '), fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    }
+                                }
+                            }
+                        }
+                        Column(Modifier.fillMaxWidth().padding(top = 18.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                            Icon(Icons.Outlined.ManageSearch, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(56.dp))
+                            Text("Search everything", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                            Text("Type @name for people, #tag for hashtags. Small typos are OK.", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp, textAlign = TextAlign.Center)
+                        }
+                    }
+                } else if (matchedUsers.isEmpty() && matchedPosts.isEmpty()) {
+                    Column(Modifier.fillMaxSize().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                        Icon(Icons.Default.SearchOff, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(56.dp))
+                        Text("No results for “$normalized”", fontWeight = FontWeight.Bold)
+                        Text("Try fewer words, another spelling, or a different filter.", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp, textAlign = TextAlign.Center)
                     }
                 } else {
                     LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -2614,7 +2686,7 @@ fun SmartSearchDialog(
                             item { Text("People", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary) }
                             items(matchedUsers, key = { "search_user_${it.uid}" }) { user ->
                                 Row(
-                                    Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).clickable { onProfileSelected(user) }
+                                    Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).clickable { rememberQuery(); onProfileSelected(user) }
                                         .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .45f)).padding(10.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
@@ -2628,7 +2700,7 @@ fun SmartSearchDialog(
                             item { Text("Posts & media", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary) }
                             items(matchedPosts, key = { "search_post_${it.id}" }) { post ->
                                 Card(
-                                    onClick = { if (post.videoUrl.isNotBlank()) fullScreenVideo = post.videoUrl },
+                                    onClick = { rememberQuery(); if (post.videoUrl.isNotBlank()) fullScreenVideo = post.videoUrl },
                                     shape = RoundedCornerShape(22.dp)
                                 ) {
                                     Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -3720,9 +3792,9 @@ private fun animatedPostScale(postId: String, animation: String): Float {
 }
 
 @Composable
-fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (User) -> Unit = {}, autoPlayVideo: Boolean = false, allowInlineVideo: Boolean = false) {
+fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (User) -> Unit = {}, autoPlayVideo: Boolean = false, allowInlineVideo: Boolean = false, startWithComments: Boolean = false) {
     val context = LocalContext.current
-    var isCommentsExpanded by remember { mutableStateOf(false) }
+    var isCommentsExpanded by remember { mutableStateOf(startWithComments) }
     var commentInputText by remember { mutableStateOf("") }
     var replyingFeedComment by remember(post.id) { mutableStateOf<PostComment?>(null) }
     var commentLimit by remember(post.id) { mutableIntStateOf(12) }
@@ -3865,6 +3937,7 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
                 val mediaKey = imagePager.currentPage.toString()
                 val imageLikes = post.mediaReactions[mediaKey].orEmpty()
                 val imageLiked = imageLikes.containsKey(currentUserId)
+                var heartBurst by remember(post.id) { mutableIntStateOf(0) }
                 Box(
                     Modifier.fillMaxWidth().then(if (mediaImages.size == 1) Modifier.heightIn(min = 180.dp, max = 540.dp) else Modifier.height(320.dp)).clip(RoundedCornerShape(24.dp))
                         .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(24.dp))
@@ -3872,16 +3945,17 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
                     if (mediaImages.size == 1) {
                         AsyncImage(
                             model = mediaImages.first(), contentDescription = "Post image", contentScale = ContentScale.Fit,
-                            modifier = Modifier.fillMaxWidth().wrapContentHeight().align(Alignment.Center).pointerInput(post.id) { detectTapGestures(onDoubleTap = { viewModel.reactToPostMedia(post.id, "0", "❤️") }) }
+                            modifier = Modifier.fillMaxWidth().wrapContentHeight().align(Alignment.Center).pointerInput(post.id) { detectTapGestures(onDoubleTap = { if (!imageLiked) viewModel.reactToPostMedia(post.id, "0", "❤️"); heartBurst++ }) }
                         )
                     } else HorizontalPager(state = imagePager, modifier = Modifier.fillMaxSize()) { page ->
                         AsyncImage(
                             model = mediaImages[page], contentDescription = "Post image ${page + 1}", contentScale = ContentScale.Fit,
                             modifier = Modifier.fillMaxSize().pointerInput(post.id, page) {
-                                detectTapGestures(onDoubleTap = { viewModel.reactToPostMedia(post.id, page.toString(), "❤️") })
+                                detectTapGestures(onDoubleTap = { if (!imageLiked) viewModel.reactToPostMedia(post.id, page.toString(), "❤️"); heartBurst++ })
                             }
                         )
                     }
+                    HeartBurstOverlay(heartBurst, Modifier.align(Alignment.Center))
                     if (mediaImages.size > 1) {
                         Surface(
                             color = Color.Black.copy(.58f), shape = CircleShape,
@@ -4960,4 +5034,28 @@ fun MaintenanceCountdownCard(title: String, message: String, endsAt: Long, start
             }
         }
     }
+}
+
+
+/** Instagram-style heart that pops on double-tap. [trigger] increments for every double-tap. */
+@Composable
+fun HeartBurstOverlay(trigger: Int, modifier: Modifier = Modifier) {
+    if (trigger == 0) return
+    val scale = remember { Animatable(0f) }
+    val alpha = remember { Animatable(0f) }
+    LaunchedEffect(trigger) {
+        alpha.snapTo(1f); scale.snapTo(.2f)
+        scale.animateTo(1.15f, spring(dampingRatio = .45f, stiffness = 420f))
+        scale.animateTo(1f, tween(120))
+        kotlinx.coroutines.delay(380)
+        alpha.animateTo(0f, tween(260))
+    }
+    Icon(
+        Icons.Default.Favorite, null,
+        tint = Color.White,
+        modifier = modifier.size(96.dp).graphicsLayer {
+            scaleX = scale.value; scaleY = scale.value; this.alpha = alpha.value
+            shadowElevation = 18f
+        }
+    )
 }

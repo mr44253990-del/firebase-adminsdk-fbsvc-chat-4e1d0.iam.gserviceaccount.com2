@@ -63,7 +63,8 @@ object ChatPreferences {
             use24h = prefs.getBoolean("time_24h", false),
             backgroundDim = prefs.getFloat("background_dim", 0f),
             glow = prefs.getBoolean("bubble_glow", true),
-            animateReactions = prefs.getBoolean("animate_reactions", true)
+            animateReactions = prefs.getBoolean("animate_reactions", true),
+            messageAnimation = prefs.getString("message_animation", "pop") ?: "pop"
         ).sanitized()
         loaded = true
     }
@@ -108,6 +109,7 @@ object ChatPreferences {
             .putFloat("background_dim", next.backgroundDim)
             .putBoolean("bubble_glow", next.glow)
             .putBoolean("animate_reactions", next.animateReactions)
+            .putString("message_animation", next.messageAnimation)
             .apply()
     }
 
@@ -272,11 +274,15 @@ object AppSoundStore {
  * custom MP3 (app_config/sounds.likeUrl) and users can pick their own in Settings → Sounds.
  */
 object LikeSound {
-    @Volatile private var enabled = true
-    fun setEnabled(value: Boolean) { enabled = value }
+    private const val KEY = "like_sound_enabled"
+    fun isEnabled(context: Context): Boolean =
+        context.applicationContext.getSharedPreferences("convo_chat_prefs", Context.MODE_PRIVATE).getBoolean(KEY, true)
+    fun setEnabled(context: Context, value: Boolean) {
+        context.applicationContext.getSharedPreferences("convo_chat_prefs", Context.MODE_PRIVATE).edit().putBoolean(KEY, value).apply()
+    }
 
-    fun play(context: Context) {
-        if (!enabled) return
+    fun play(context: Context, force: Boolean = false) {
+        if (!force && !isEnabled(context)) return
         if (AppSoundStore.playCustom(context, AppSoundStore.LIKE, .8f)) return
         Thread {
             runCatching {

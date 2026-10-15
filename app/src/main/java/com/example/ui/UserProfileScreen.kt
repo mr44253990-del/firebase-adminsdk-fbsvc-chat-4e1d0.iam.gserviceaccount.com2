@@ -145,21 +145,7 @@ fun UserProfileScreen(
             item(key = "hero") {
                 Column {
                     Box(Modifier.fillMaxWidth().height(210.dp)) {
-                        if (liveUser.coverImageUrl.isNotBlank()) {
-                            AsyncImage(liveUser.coverImageUrl, "Cover photo", contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize().graphicsLayer { scaleX = liveUser.coverScale.coerceIn(1f, 2f); scaleY = liveUser.coverScale.coerceIn(1f, 2f); translationY = liveUser.coverOffsetY.coerceIn(-1f, 1f) * 90f })
-                        } else {
-                            Box(
-                                Modifier.fillMaxSize().background(
-                                    Brush.linearGradient(
-                                        listOf(
-                                            MaterialTheme.colorScheme.primary.copy(alpha = .96f),
-                                            MaterialTheme.colorScheme.secondary.copy(alpha = .82f),
-                                            MaterialTheme.colorScheme.tertiary.copy(alpha = .78f)
-                                        )
-                                    )
-                                )
-                            )
-                        }
+                        ProfileCoverArt(liveUser.coverImageUrl, liveUser.uid, Modifier.fillMaxSize(), liveUser.coverScale, liveUser.coverOffsetY)
                         Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, MaterialTheme.colorScheme.background.copy(alpha = .18f), MaterialTheme.colorScheme.background.copy(alpha = .88f)))))
                         Box(
                             modifier = Modifier.align(Alignment.BottomCenter).offset(y = 56.dp),

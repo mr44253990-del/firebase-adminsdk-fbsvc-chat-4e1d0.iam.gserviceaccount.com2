@@ -143,6 +143,9 @@ fun GroupChatScreen(
     val quickReaction by ChatPreferences.quickReaction.collectAsState()
     val chatTextScale by ChatPreferences.textScale.collectAsState()
     val chatAppearance by ChatPreferences.appearance.collectAsState()
+    // New messages animate in once; history and scroll-back stay still.
+    val chatOpenedAt = remember { System.currentTimeMillis() }
+    val enteredMessageIds = remember { HashSet<String>() }
     val defaultChatTheme by ChatPreferences.defaultChatTheme.collectAsState()
     val groupThemeSpec = remember(defaultChatTheme) { ChatThemeCatalog.find(defaultChatTheme)?.takeIf { !it.adaptive } }
     val groupMemberUsers = remember(allUsers, group.members) { allUsers.filter { it.uid in group.members } }
@@ -557,6 +560,8 @@ fun GroupChatScreen(
                     reverseLayout = true
                 ) {
                     items(visibleGroupMessages.reversed(), key = { it.messageId }) { msg ->
+                        val entranceAnimate = remember(msg.messageId) { msg.timestamp > chatOpenedAt - 1500L && enteredMessageIds.add(msg.messageId) }
+                        Box(Modifier.fillMaxWidth().messageEntrance(chatAppearance.messageAnimation, entranceAnimate, msg.senderId == currentUserId)) {
                         if (msg.senderId == "system") {
                             // System Log message
                             Box(
@@ -607,6 +612,7 @@ fun GroupChatScreen(
                                     }
                                 }
                             )
+                        }
                         }
                     }
                 }

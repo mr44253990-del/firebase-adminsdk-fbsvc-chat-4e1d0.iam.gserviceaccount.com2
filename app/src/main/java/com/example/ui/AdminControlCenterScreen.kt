@@ -249,6 +249,37 @@ fun AdminControlCenterScreen(
                     }
                 }
 
+                val dashboardPosts by viewModel.postsState.collectAsState()
+                var confirmQuickMaintenance by remember { mutableStateOf<Boolean?>(null) }
+                AdminLivePulse(
+                    users = users,
+                    posts = dashboardPosts,
+                    config = flagshipConfig,
+                    onToggleMaintenance = { confirmQuickMaintenance = it },
+                    onToggleReels = { on ->
+                        viewModel.updateFlagshipFields(mapOf("reelsEnabled" to on)) { ok ->
+                            Toast.makeText(context, if (!ok) "Save failed" else if (on) "Reels visible to users" else "Reels hidden from users", Toast.LENGTH_SHORT).show()
+                        }
+                    },
+                    onOpenSection = { selectedPage = it }
+                )
+                confirmQuickMaintenance?.let { turnOn ->
+                    AlertDialog(
+                        onDismissRequest = { confirmQuickMaintenance = null },
+                        title = { Text(if (turnOn) "Start maintenance?" else "End maintenance?") },
+                        text = { Text(if (turnOn) "Users will be blocked by the maintenance screen (no timer). Use Maintenance & notice to add a countdown." else "Users can use the app again immediately.") },
+                        confirmButton = {
+                            TextButton(onClick = {
+                                confirmQuickMaintenance = null
+                                viewModel.updateFlagshipFields(mapOf("maintenanceMode" to turnOn, "maintenanceEndsAt" to 0L)) { ok ->
+                                    Toast.makeText(context, if (ok) "Maintenance ${if (turnOn) "started" else "ended"}" else "Save failed", Toast.LENGTH_SHORT).show()
+                                }
+                            }) { Text(if (turnOn) "Start" else "End") }
+                        },
+                        dismissButton = { TextButton(onClick = { confirmQuickMaintenance = null }) { Text("Cancel") } }
+                    )
+                }
+
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     DashboardStatCard("Profiles", users.size.toString(), Icons.Default.People, MaterialTheme.colorScheme.primary, Modifier.weight(1f))
                     DashboardStatCard("Open reports", reports.size.toString(), Icons.Default.Security, MaterialTheme.colorScheme.error, Modifier.weight(1f))
@@ -265,7 +296,17 @@ fun AdminControlCenterScreen(
                     }
                     Text("${menuItems.size} sections", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                menuItems.chunked(2).forEach { rowItems ->
+                var toolSearch by rememberSaveable { mutableStateOf("") }
+                OutlinedTextField(
+                    toolSearch, { toolSearch = it.take(40) },
+                    placeholder = { Text("Search admin tools…") },
+                    leadingIcon = { Icon(Icons.Default.Search, null) },
+                    trailingIcon = { if (toolSearch.isNotBlank()) IconButton(onClick = { toolSearch = "" }) { Icon(Icons.Default.Close, "Clear") } },
+                    singleLine = true, shape = RoundedCornerShape(18.dp), modifier = Modifier.fillMaxWidth()
+                )
+                val shownMenuItems = menuItems.filter { toolSearch.isBlank() || it.title.contains(toolSearch, true) || it.description.contains(toolSearch, true) }
+                if (shownMenuItems.isEmpty()) Text("No tool matches “$toolSearch”", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+                shownMenuItems.chunked(2).forEach { rowItems ->
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         rowItems.forEach { entry ->
                             AdminMenuTile(entry, Modifier.weight(1f)) {

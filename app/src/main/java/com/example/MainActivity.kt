@@ -667,6 +667,9 @@ class MainActivity : FragmentActivity() {
                             )
                         }
                     }
+                    com.example.ui.CallReadinessDialog(
+                        enabled = splashFinished && currentUser != null && currentRoute !in listOf("call", "auth", "onboarding", "splash") && !showOverlayPermissionPrompt
+                    )
                     if (showOverlayPermissionPrompt) {
                         AlertDialog(
                             onDismissRequest = { showOverlayPermissionPrompt = false },
