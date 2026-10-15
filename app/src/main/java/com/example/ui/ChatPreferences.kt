@@ -38,6 +38,10 @@ object ChatPreferences {
     /** Increments whenever a custom/global sound file changes so the UI can refresh labels. */
     val soundsVersion: StateFlow<Int> = _soundsVersion.asStateFlow()
 
+    private val _appearance = MutableStateFlow(ChatAppearance())
+    /** Bubble style, spacing and time format used by one-to-one and group chats. */
+    val appearance: StateFlow<ChatAppearance> = _appearance.asStateFlow()
+
     @Volatile private var loaded = false
 
     fun load(context: Context) {
@@ -47,6 +51,20 @@ object ChatPreferences {
         _textScale.value = prefs.getFloat("chat_text_size", 1f).coerceIn(0.85f, 1.3f)
         _defaultChatTheme.value = prefs.getString("default_chat_theme", "Aurora") ?: "Aurora"
         _enterToSend.value = prefs.getBoolean("enter_to_send", false)
+        _appearance.value = ChatAppearance(
+            bubbleStyle = prefs.getString("bubble_style", "auto")?.takeIf { it in ChatAppearance.STYLES } ?: "auto",
+            borderWidth = prefs.getFloat("bubble_border", 1f),
+            cornerRadius = prefs.getFloat("bubble_corner", 20f),
+            tail = prefs.getBoolean("bubble_tail", true),
+            maxWidthFraction = prefs.getFloat("bubble_max_width", .80f),
+            sidePadding = prefs.getFloat("bubble_side_padding", 8f),
+            innerPadding = prefs.getFloat("bubble_inner_padding", 10f),
+            messageSpacing = prefs.getFloat("bubble_spacing", 6f),
+            use24h = prefs.getBoolean("time_24h", false),
+            backgroundDim = prefs.getFloat("background_dim", 0f),
+            glow = prefs.getBoolean("bubble_glow", true),
+            animateReactions = prefs.getBoolean("animate_reactions", true)
+        ).sanitized()
         loaded = true
     }
 
@@ -73,6 +91,27 @@ object ChatPreferences {
         _enterToSend.value = enabled
         prefs(context).edit().putBoolean("enter_to_send", enabled).apply()
     }
+
+    fun setAppearance(context: Context, value: ChatAppearance) {
+        val next = value.sanitized()
+        _appearance.value = next
+        prefs(context).edit()
+            .putString("bubble_style", next.bubbleStyle)
+            .putFloat("bubble_border", next.borderWidth)
+            .putFloat("bubble_corner", next.cornerRadius)
+            .putBoolean("bubble_tail", next.tail)
+            .putFloat("bubble_max_width", next.maxWidthFraction)
+            .putFloat("bubble_side_padding", next.sidePadding)
+            .putFloat("bubble_inner_padding", next.innerPadding)
+            .putFloat("bubble_spacing", next.messageSpacing)
+            .putBoolean("time_24h", next.use24h)
+            .putFloat("background_dim", next.backgroundDim)
+            .putBoolean("bubble_glow", next.glow)
+            .putBoolean("animate_reactions", next.animateReactions)
+            .apply()
+    }
+
+    fun resetAppearance(context: Context) = setAppearance(context, ChatAppearance())
 
     internal fun bumpSounds() { _soundsVersion.value = _soundsVersion.value + 1 }
 }

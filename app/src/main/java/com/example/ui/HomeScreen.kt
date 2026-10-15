@@ -1098,6 +1098,13 @@ fun HomeScreen(
                         if (settingsPage == "theme") {
                         val themeUnlocked = flagshipConfig.advancedThemesEnabled && viewModel.hasActivePremiumEntitlement()
                         val themeGroups = listOf(
+                            Triple("Liquid glass", "Milky glass, neon and scene-matched looks (pair them with the Scenes chat themes)", listOf(
+                                AppThemePreview("Milk Liquid Glass", Color(0xFFFBF8F3), Color.White, Color(0xFF6F78F0)),
+                                AppThemePreview("Neon Glass", Color(0xFF0A0718), Color(0xFF181332), Color(0xFFB794FF)),
+                                AppThemePreview("Matrix", Color(0xFF000502), Color(0xFF07140C), Color(0xFF39FF88)),
+                                AppThemePreview("Dream Pink", Color(0xFFFFF4F9), Color.White, Color(0xFFE94B9A)),
+                                AppThemePreview("Ocean Glass", Color(0xFF031523), Color(0xFF0A2840), Color(0xFF66C2FF))
+                            )),
                             Triple("Light", "Bright, clean and easy on the eyes in daylight", listOf(
                                 AppThemePreview("Aurora Light", Color(0xFFF7F5FF), Color.White, Color(0xFF765BFF)),
                                 AppThemePreview("Light", Color(0xFFF0F2FA), Color.White, Color(0xFF5B6FE8)),
@@ -1820,8 +1827,13 @@ fun HomeScreen(
                                 PrivacyToggleRow("Hide notification content", privacySettings.hideNotificationContent) {
                                     PrivacyPreferences.update(context) { it.copy(hideNotificationContent = !it.hideNotificationContent) }
                                 }
-                                PrivacyToggleRow("Protect sensitive screens from screenshots", privacySettings.preventScreenshotOnSensitiveScreens) {
-                                    PrivacyPreferences.update(context) { it.copy(preventScreenshotOnSensitiveScreens = !it.preventScreenshotOnSensitiveScreens) }
+                                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Icons.Outlined.Shield, null, tint = MaterialTheme.colorScheme.primary)
+                                    Column(Modifier.weight(1f).padding(start = 12.dp)) {
+                                        Text("Screenshot protection", fontWeight = FontWeight.SemiBold)
+                                        Text("Always on inside chats and calls. Screenshots are allowed everywhere else.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    Icon(Icons.Default.Lock, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
                                 }
                                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                                     Icon(Icons.Outlined.Timer, null, tint = MaterialTheme.colorScheme.primary)
@@ -4422,7 +4434,7 @@ fun ChatConversationUserItem(
                     val m = lastMessageState!!
                     if (!m.imageUrl.isNullOrBlank()) "📷 [Photo Attachment]" 
                     else if (!m.voiceUrl.isNullOrBlank()) "🎙️ [Voice Note]"
-                    else m.text
+                    else convoStickerPreview(m.text)
                 } else {
                     "No messages yet. Say Hello!"
                 }
@@ -4522,7 +4534,7 @@ fun GroupItemCard(group: Group, onClick: () -> Unit) {
                     color = MaterialTheme.colorScheme.onBackground
                 )
                 Text(
-                    text = if (group.lastMessage.isNotBlank()) group.lastMessage else "No messages in group yet",
+                    text = if (group.lastMessage.isNotBlank()) convoStickerPreview(group.lastMessage) else "No messages in group yet",
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,

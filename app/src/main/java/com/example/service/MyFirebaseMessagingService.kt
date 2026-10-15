@@ -75,7 +75,8 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
 
         // Extract title and body
         val rawTitle = remoteMessage.notification?.title ?: remoteMessage.data["title"] ?: "New Message"
-        val rawBody = remoteMessage.notification?.body ?: remoteMessage.data["body"] ?: "You received a new message"
+        val rawBody = (remoteMessage.notification?.body ?: remoteMessage.data["body"] ?: "You received a new message")
+            .let { body -> com.example.ui.convoStickerPreview(body.trim()).takeIf { com.example.ui.ConvoStickers.isSticker(body) } ?: body }
         val privacy = PrivacyPreferences.load(this)
         val hideContent = AppLockManager.isEnabled(this) || privacy.hideNotificationContent
         val title = if (hideContent) "Convo Chat" else plainNotificationText(rawTitle).ifBlank { "Convo Chat" }

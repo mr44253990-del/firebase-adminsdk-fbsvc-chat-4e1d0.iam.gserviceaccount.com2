@@ -15,7 +15,10 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material3.*
+import androidx.annotation.DrawableRes
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.res.painterResource
+import com.example.R
 import androidx.compose.runtime.Immutable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -46,8 +49,18 @@ data class ChatThemeSpec(
     val category: String = "Classic",
     /** Adaptive themes follow the current app theme instead of fixed colors. */
     val adaptive: Boolean = false,
-    val textureTint: Color = if (light) Color(0xFF3B3355) else Color.White
+    val textureTint: Color = if (light) Color(0xFF3B3355) else Color.White,
+    /** Full-scene artwork bundled in res/drawable-nodpi (0 = gradient only). */
+    @DrawableRes val backgroundRes: Int = 0,
+    /** Glass fills for scene themes; null falls back to the classic accent bubbles. */
+    val incomingFill: Color? = null,
+    val outgoingFill: Color? = null,
+    /** Bubble style used when the user leaves "Auto" selected. */
+    val defaultBubbleStyle: String = "liquid",
+    /** Draw the top bar and composer as frosted glass over the scene. */
+    val glassBars: Boolean = false
 ) {
+    val isScene: Boolean get() = backgroundRes != 0
     val brush: Brush
         get() = when (style) {
             ThemeBrushStyle.Vertical -> Brush.verticalGradient(colors)
@@ -75,6 +88,37 @@ data class ChatBackgroundImage(
 
 object ChatThemeCatalog {
     val all: List<ChatThemeSpec> = listOf(
+        // Scenes: full-screen artwork with glass bubbles (reference designs)
+        ChatThemeSpec(
+            "Neon Glass", listOf(Color(0xFF0B0820), Color(0xFF2A1A5E), Color(0xFF5B3CC4).copy(.5f)),
+            accent = Color(0xFFA66BFF), category = "Scenes", backgroundRes = R.drawable.chat_bg_neon_glass,
+            incomingFill = Color(0xFF1A1640).copy(alpha = .58f), outgoingFill = Color(0xFF6A3FD9).copy(alpha = .62f),
+            defaultBubbleStyle = "neon", glassBars = true
+        ),
+        ChatThemeSpec(
+            "Matrix Code", listOf(Color.Black, Color(0xFF021A0C), Color(0xFF00C853).copy(.2f)),
+            accent = Color(0xFF00FF7A), category = "Scenes", backgroundRes = R.drawable.chat_bg_matrix,
+            incomingFill = Color(0xFF020B05).copy(alpha = .72f), outgoingFill = Color(0xFF003D1C).copy(alpha = .78f),
+            defaultBubbleStyle = "neon", glassBars = true, textureTint = Color(0xFF69F0AE)
+        ),
+        ChatThemeSpec(
+            "Dream Pink", listOf(Color(0xFFFFF1F7), Color(0xFFFFD3E6), Color(0xFFE9C6FF)),
+            accent = Color(0xFFFF4FA3), light = true, category = "Scenes", backgroundRes = R.drawable.chat_bg_dream_pink,
+            incomingFill = Color.White.copy(alpha = .70f), outgoingFill = Color(0xFFFF8CC6).copy(alpha = .78f),
+            defaultBubbleStyle = "liquid", glassBars = true
+        ),
+        ChatThemeSpec(
+            "Ocean Glass", listOf(Color(0xFF0B3A5C), Color(0xFF2F7DB5), Color(0xFFFFC27A).copy(.5f)),
+            accent = Color(0xFF2E9BFF), category = "Scenes", backgroundRes = R.drawable.chat_bg_ocean_glass,
+            incomingFill = Color(0xFF0B2A44).copy(alpha = .55f), outgoingFill = Color(0xFF1C7BD8).copy(alpha = .70f),
+            defaultBubbleStyle = "liquid", glassBars = true
+        ),
+        ChatThemeSpec(
+            "Milk Liquid Glass", listOf(Color(0xFFFFFDF8), Color(0xFFF2F0FF), Color(0xFFFFEFE4)),
+            accent = Color(0xFF7D86FF), light = true, category = "Scenes", backgroundRes = R.drawable.chat_bg_milk_glass,
+            incomingFill = Color.White.copy(alpha = .74f), outgoingFill = Color(0xFFDCDDFF).copy(alpha = .86f),
+            defaultBubbleStyle = "liquid", glassBars = true
+        ),
         // Classic
         // "Aurora" is the default and follows the app theme colors (see [ChatThemeSpec.adaptive]).
         ChatThemeSpec("Aurora", listOf(Color(0xFF0E1230), Color(0xFF3B2A7A), Color(0xFF6C63FF).copy(.45f)), accent = Color(0xFF7C6CFF), adaptive = true),
@@ -169,23 +213,34 @@ fun ChatThemePreviewTile(
                     RoundedCornerShape(18.dp)
                 )
         ) {
+            if (spec.backgroundRes != 0) {
+                androidx.compose.foundation.Image(
+                    painter = painterResource(spec.backgroundRes),
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.matchParentSize()
+                )
+            }
             ThemeTextureLayer(spec.texture, spec.textureTint)
             // Mini conversation preview
             Column(
                 Modifier.fillMaxSize().padding(8.dp),
                 verticalArrangement = Arrangement.spacedBy(5.dp, Alignment.Bottom)
             ) {
+                val incoming = spec.incomingFill ?: if (tileLight) Color.White.copy(.85f) else Color.White.copy(.18f)
+                val outgoing = spec.outgoingFill ?: tileAccent
+                val edge = if (spec.isScene) spec.accent.copy(alpha = .9f) else Color.Transparent
                 Box(
                     Modifier.fillMaxWidth(.62f).height(14.dp).clip(RoundedCornerShape(8.dp))
-                        .background(if (tileLight) Color.White.copy(.85f) else Color.White.copy(.18f))
+                        .background(incoming).border(if (spec.isScene) 1.dp else 0.dp, edge.copy(alpha = .55f), RoundedCornerShape(8.dp))
                 )
                 Box(
                     Modifier.align(Alignment.End).fillMaxWidth(.7f).height(14.dp).clip(RoundedCornerShape(8.dp))
-                        .background(tileAccent)
+                        .background(outgoing).border(if (spec.isScene) 1.dp else 0.dp, edge, RoundedCornerShape(8.dp))
                 )
                 Box(
                     Modifier.fillMaxWidth(.45f).height(14.dp).clip(RoundedCornerShape(8.dp))
-                        .background(if (tileLight) Color.White.copy(.85f) else Color.White.copy(.18f))
+                        .background(incoming).border(if (spec.isScene) 1.dp else 0.dp, edge.copy(alpha = .55f), RoundedCornerShape(8.dp))
                 )
             }
             if (selected || locked) {
@@ -267,6 +322,7 @@ fun ChatThemeGallery(
         ChatThemeCatalog.categories().forEach { category ->
             item(span = { GridItemSpan(maxLineSpan) }) {
                 GallerySectionTitle(category, when (category) {
+                    "Scenes" -> "Full-screen artwork with liquid glass and neon bubbles"
                     "Classic" -> "Smooth gradients"
                     "Glass & texture" -> "Soft glass effects and patterns"
                     "Fresh & bright" -> "Light and airy"

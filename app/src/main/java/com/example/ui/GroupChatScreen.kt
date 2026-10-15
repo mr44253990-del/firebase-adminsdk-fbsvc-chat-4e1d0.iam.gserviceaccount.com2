@@ -141,6 +141,9 @@ fun GroupChatScreen(
     LaunchedEffect(Unit) { ChatPreferences.load(context) }
     val quickReaction by ChatPreferences.quickReaction.collectAsState()
     val chatTextScale by ChatPreferences.textScale.collectAsState()
+    val chatAppearance by ChatPreferences.appearance.collectAsState()
+    val defaultChatTheme by ChatPreferences.defaultChatTheme.collectAsState()
+    val groupThemeSpec = remember(defaultChatTheme) { ChatThemeCatalog.find(defaultChatTheme)?.takeIf { !it.adaptive } }
     val groupMemberUsers = remember(allUsers, group.members) { allUsers.filter { it.uid in group.members } }
     val openMention: (String) -> Unit = { handle ->
         val target = Mentions.findUser(handle, allUsers)
@@ -311,6 +314,9 @@ fun GroupChatScreen(
         colors = listOf(bgStart, bgEnd)
     )
 
+    val barColors = chatBarColors(groupThemeSpec, false)
+    Box(Modifier.fillMaxSize()) {
+    ChatBackdrop(groupThemeSpec, null, chatGradientBg, chatAppearance.backgroundDim)
     Scaffold(
         containerColor = Color.Transparent,
         contentWindowInsets = androidx.compose.foundation.layout.WindowInsets(0, 0, 0, 0),
@@ -352,12 +358,14 @@ fun GroupChatScreen(
                             Text(
                                 text = group.name,
                                 style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                                color = MaterialTheme.colorScheme.onSurface
+                                color = barColors?.content ?: MaterialTheme.colorScheme.onSurface,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                             Text(
                                 text = "${group.members.size} Members",
                                 style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
+                                color = barColors?.content?.copy(alpha = .75f) ?: MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
                             )
                         }
                     }
@@ -386,7 +394,7 @@ fun GroupChatScreen(
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f)
+                    containerColor = barColors?.container ?: MaterialTheme.colorScheme.surface.copy(alpha = 0.85f)
                 ),
                 modifier = Modifier.border(0.dp, Color.Transparent) // clean glass look
             )
@@ -396,7 +404,6 @@ fun GroupChatScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .background(chatGradientBg)
                 .padding(innerPadding)
         ) {
             AnimatedVisibility(
@@ -543,9 +550,9 @@ fun GroupChatScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f)
-                        .padding(horizontal = 14.dp),
+                        .padding(horizontal = chatAppearance.sidePadding.dp),
                     contentPadding = PaddingValues(vertical = 12.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp, Alignment.Bottom),
+                    verticalArrangement = Arrangement.spacedBy(chatAppearance.messageSpacing.dp, Alignment.Bottom),
                     reverseLayout = true
                 ) {
                     items(visibleGroupMessages.reversed(), key = { it.messageId }) { msg ->
@@ -578,6 +585,8 @@ fun GroupChatScreen(
                                 isSentByMe = isSentByMe,
                                 textScale = chatTextScale,
                                 onMentionClick = openMention,
+                                appearance = chatAppearance,
+                                themeSpec = groupThemeSpec,
                                 onDeleteSelect = {
                                     viewModel.deleteGroupMessage(group.id, msg.messageId)
                                 },
@@ -747,13 +756,17 @@ fun GroupChatScreen(
                                     }
                                     .testTag("group_quick_reaction_button"),
                                 contentAlignment = Alignment.Center
-                            ) { Text(quickReaction, fontSize = 27.sp) }
+                            ) {
+                                if (ConvoStickers.isSticker(quickReaction)) ConvoStickerView(quickReaction, 40.dp, animate = chatAppearance.animateReactions)
+                                else Text(quickReaction, fontSize = 27.sp)
+                            }
                         }
                     }
                 }
                 }
             }
         }
+    }
     }
 
     if (showMembers) {
@@ -868,35 +881,28 @@ fun GroupMessageBubbleItem(
     onReplySelect: (GroupMessage) -> Unit = {},
     onTranslate: (GroupMessage) -> Unit = {},
     textScale: Float = 1f,
-    onMentionClick: (String) -> Unit = {}
+    onMentionClick: (String) -> Unit = {},
+    appearance: ChatAppearance = ChatAppearance(),
+    themeSpec: ChatThemeSpec? = null
 ) {
     var showMenu by remember { mutableStateOf(false) }
     var dragOffset by remember(msg.messageId) { mutableFloatStateOf(0f) }
     val context = LocalContext.current
     val isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
     
-    val bubbleBg = if (isSentByMe) {
-        MaterialTheme.colorScheme.primary.copy(alpha = if (isDark) 0.3f else 0.85f)
-    } else {
-        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = if (isDark) 0.45f else 0.9f)
-    }
-    
-    val bubbleBorder = if (isSentByMe) {
-        MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)
-    } else {
-        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)
-    }
-
+    val bubbleStyle = appearance.resolvedStyle(themeSpec)
+    val palette = rememberBubblePalette(isSentByMe, themeSpec, themeSpec?.accent, bubbleStyle)
+    val bubbleShape = chatBubbleShape(appearance, isSentByMe)
     val alignment = if (isSentByMe) Alignment.CenterEnd else Alignment.CenterStart
-    val textColor = if (isSentByMe && !isDark) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
-    
-    val timeString = try {
-        val sdf = SimpleDateFormat("hh:mm a", Locale.getDefault()).apply {
-            timeZone = TimeZone.getTimeZone("Asia/Dhaka")
-        }
-        sdf.format(Date(msg.timestamp))
-    } catch (e: Exception) {
-        ""
+    val textColor = palette.text
+    val maxBubbleWidth = (androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp * appearance.maxWidthFraction).dp
+    val isStickerOnly = ConvoStickers.isSticker(msg.text) && msg.imageUrl.isNullOrBlank() && msg.voiceUrl.isNullOrBlank()
+    val timeString = remember(msg.timestamp, appearance.use24h) {
+        runCatching {
+            SimpleDateFormat(if (appearance.use24h) "HH:mm" else "hh:mm a", Locale.getDefault()).apply {
+                timeZone = TimeZone.getTimeZone("Asia/Dhaka")
+            }.format(Date(msg.timestamp))
+        }.getOrDefault("")
     }
 
     Box(
@@ -904,7 +910,7 @@ fun GroupMessageBubbleItem(
         contentAlignment = alignment
     ) {
         Column(
-            modifier = Modifier.widthIn(max = 280.dp),
+            modifier = Modifier.widthIn(max = maxBubbleWidth),
             horizontalAlignment = if (isSentByMe) Alignment.End else Alignment.Start
         ) {
             // Sender display name (small)
@@ -913,31 +919,23 @@ fun GroupMessageBubbleItem(
                     text = msg.senderName,
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary,
+                    color = if (themeSpec?.isScene == true && !themeSpec.light) palette.accent else MaterialTheme.colorScheme.primary,
                     modifier = Modifier.padding(start = 6.dp, bottom = 2.dp)
                 )
             }
 
+            if (isStickerOnly) {
+                ConvoStickerView(
+                    msg.text, 88.dp, animate = appearance.animateReactions,
+                    modifier = Modifier.combinedClickable(onClick = { showMenu = true }, onLongClick = { showMenu = true })
+                )
+                Text(timeString, fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = .75f), modifier = Modifier.padding(horizontal = 6.dp))
+            } else
             Surface(
                 color = Color.Transparent,
-                shape = RoundedCornerShape(
-                    topStart = 16.dp,
-                    topEnd = 16.dp,
-                    bottomStart = if (isSentByMe) 16.dp else 2.dp,
-                    bottomEnd = if (isSentByMe) 2.dp else 16.dp
-                ),
+                shape = bubbleShape,
                 modifier = Modifier
-                    .glassmorphic(
-                        isDark = isDark,
-                        backgroundColor = bubbleBg,
-                        borderColor = bubbleBorder,
-                        shape = RoundedCornerShape(
-                            topStart = 16.dp,
-                            topEnd = 16.dp,
-                            bottomStart = if (isSentByMe) 16.dp else 2.dp,
-                            bottomEnd = if (isSentByMe) 2.dp else 16.dp
-                        )
-                    )
+                    .chatBubble(bubbleStyle, bubbleShape, palette, appearance)
                     .offset { IntOffset(dragOffset.roundToInt(), 0) }
                     .pointerInput(msg.messageId) {
                         detectHorizontalDragGestures(
@@ -963,7 +961,7 @@ fun GroupMessageBubbleItem(
                         }
                     )
             ) {
-                Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                Column(modifier = Modifier.padding(horizontal = appearance.innerPadding.dp, vertical = (appearance.innerPadding * .62f).dp)) {
                     if (!msg.replyToId.isNullOrBlank()) {
                         Surface(
                             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f),
@@ -1005,7 +1003,7 @@ fun GroupMessageBubbleItem(
                     }
 
                     if (!msg.voiceUrl.isNullOrBlank()) {
-                        GroupAudioPlayerItem(voiceUrl = msg.voiceUrl, durationSec = msg.voiceDurationSec ?: 0)
+                        VoicePlayerBubble(voiceUrl = msg.voiceUrl, durationSec = msg.voiceDurationSec ?: 0, accent = if (isSentByMe) palette.text else palette.accent, contentColor = palette.text)
                         Spacer(modifier = Modifier.height(4.dp))
                     }
 
@@ -1017,7 +1015,8 @@ fun GroupMessageBubbleItem(
                                 text = msg.text,
                                 color = textColor,
                                 onMentionClick = onMentionClick,
-                                style = MaterialTheme.typography.bodyMedium.copy(fontSize = (14 * textScale).sp, lineHeight = (20 * textScale).sp)
+                                style = MaterialTheme.typography.bodyMedium.copy(fontSize = (14 * textScale).sp, lineHeight = (20 * textScale).sp),
+                                mentionColor = if (isSentByMe) textColor else palette.accent
                             )
                         }
                     }
@@ -1030,7 +1029,7 @@ fun GroupMessageBubbleItem(
                         Text(
                             text = timeString,
                             fontSize = 9.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                            color = palette.meta
                         )
                     }
                 }

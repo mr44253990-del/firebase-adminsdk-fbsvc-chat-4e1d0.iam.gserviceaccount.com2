@@ -229,15 +229,6 @@ class MainActivity : FragmentActivity() {
 
         setContent {
             val currentTheme by viewModel.themeState.collectAsState()
-            val privacySettings by PrivacyPreferences.settings.collectAsState()
-
-            LaunchedEffect(privacySettings.preventScreenshotOnSensitiveScreens) {
-                if (privacySettings.preventScreenshotOnSensitiveScreens) {
-                    window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
-                } else {
-                    window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
-                }
-            }
 
             MyApplicationTheme(themeType = currentTheme) {
                 val appLocked by AppLockManager.locked.collectAsState()
@@ -341,6 +332,14 @@ class MainActivity : FragmentActivity() {
 
                 PremiumBackground {
                     val currentRoute = navController.currentBackStackEntryAsState().value?.destination?.route
+                    // Screenshots/recording are blocked only while a chat or call is on screen.
+                    LaunchedEffect(currentRoute) {
+                        if (currentRoute?.substringBefore('/')?.substringBefore('?') in setOf("chat", "group_chat", "call", "group_call")) {
+                            window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+                        } else {
+                            window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+                        }
+                    }
                     Box(Modifier.fillMaxSize()) {
                     NavHost(
                         navController = navController,
