@@ -54,6 +54,9 @@ object VideoPlayerManager {
             val uri = if (url.startsWith("/")) Uri.fromFile(File(url)) else Uri.parse(url)
             exo.setMediaItem(MediaItem.fromUri(uri))
             exo.prepare()
+        } else if (exo.playerError != null || exo.playbackState == Player.STATE_IDLE) {
+            // A previous network error leaves the player idle; retry instead of staying blank.
+            exo.prepare()
         }
         exo.volume = if (sound) 1f else 0f
         exo.playWhenReady = play

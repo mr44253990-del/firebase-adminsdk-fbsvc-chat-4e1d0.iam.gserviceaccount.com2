@@ -498,7 +498,7 @@ fun HomeScreen(
                     },
                     label = null
                 )
-                NavigationBarItem(
+                if (flagshipConfig.reelsEnabled || isAdmin) NavigationBarItem(
                     selected = currentTab == 6,
                     onClick = { viewModel.openReel() },
                     icon = { Icon(Icons.Default.SmartDisplay, contentDescription = "Reels") },
@@ -536,7 +536,7 @@ fun HomeScreen(
             when (currentTab) {
                 0 -> {
                     val feedState = rememberLazyListState()
-                    val regularFeedPosts = remember(posts) { posts.filter { !it.isAdminReel || it.postEverywhere } }
+                    val regularFeedPosts = remember(posts, flagshipConfig.reelsEnabled) { posts.filter { (!it.isAdminReel || it.postEverywhere) && (flagshipConfig.reelsEnabled || isAdmin || !it.isReel) } }
                     val visibleFeedPosts = remember(regularFeedPosts, feedFilter, currentUser?.friends, currentUser?.following, savedPostIds) {
                         when (feedFilter) {
                             "Friends" -> regularFeedPosts.filter { it.senderId in currentUser?.friends.orEmpty() }
@@ -843,7 +843,19 @@ fun HomeScreen(
                     var settingsPage by rememberSaveable { mutableStateOf("") }
                     val settingsScroll = rememberScrollState()
                     BackHandler(enabled = settingsPage.isNotEmpty()) { settingsPage = "" }
-                    LaunchedEffect(settingsPage) { settingsScroll.scrollTo(0) }
+                    // Remember where the hub list was, so Back from a page returns to the same spot
+                    // instead of jumping to the top. Pages themselves always open at the top.
+                    var hubScrollPosition by rememberSaveable { mutableIntStateOf(0) }
+                    LaunchedEffect(settingsPage) {
+                        if (settingsPage.isEmpty()) {
+                            val target = hubScrollPosition
+                            var tries = 0
+                            withFrameNanos { }
+                            while (tries < 8 && settingsScroll.maxValue < target) { withFrameNanos { }; tries++ }
+                            settingsScroll.scrollTo(target.coerceAtMost(settingsScroll.maxValue))
+                            snapshotFlow { settingsScroll.value }.collect { hubScrollPosition = it }
+                        } else settingsScroll.scrollTo(0)
+                    }
                     LaunchedEffect(Unit) { ChatPreferences.load(context); currentUser?.uid?.let { ProfileViewerStore.load(context, it) } }
                     val callSkinId by CallSkinPreferences.selectedId.collectAsState()
                     LaunchedEffect(Unit) { CallSkinPreferences.load(context); viewModel.refreshDeviceSessions() }
@@ -1358,7 +1370,8 @@ fun HomeScreen(
                         Text("Pick an MP3 (or any audio up to 15 seconds and 2 MB). It is saved on this phone and replaces the built-in sound. If Convo publishes a default sound, it downloads quietly in the background.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.fillMaxWidth())
                         listOf(
                             Triple(AppSoundStore.NOTIFICATION, "Message notification", Icons.Outlined.NotificationsActive),
-                            Triple(AppSoundStore.TYPING, "Typing indicator", Icons.Outlined.Keyboard)
+                            Triple(AppSoundStore.TYPING, "Typing indicator", Icons.Outlined.Keyboard),
+                            Triple(AppSoundStore.LIKE, "Like / reaction", Icons.Outlined.FavoriteBorder)
                         ).forEach { (kind, label, icon) ->
                             val description = remember(soundsVersion, globalSoundUrls) { AppSoundStore.describe(context, kind) }
                             val hasLocal = remember(soundsVersion) { AppSoundStore.hasLocal(context, kind) }
@@ -1374,7 +1387,8 @@ fun HomeScreen(
                                             Text(if (hasLocal) "Your sound" else "Default", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         }
                                         IconButton(onClick = {
-                                            if (!AppSoundStore.playCustom(context, kind)) Toast.makeText(context, "Using the built-in sound", Toast.LENGTH_SHORT).show()
+                                            if (kind == AppSoundStore.LIKE) LikeSound.play(context)
+                                            else if (!AppSoundStore.playCustom(context, kind)) Toast.makeText(context, "Using the built-in sound", Toast.LENGTH_SHORT).show()
                                         }) { Icon(Icons.Default.PlayArrow, "Preview sound") }
                                     }
                                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -2125,7 +2139,9 @@ fun HomeScreen(
                     }
                 }
                 6 -> {
-                    if (flagshipConfig.tiktokModeEnabled) {
+                    if (!flagshipConfig.reelsEnabled && !isAdmin) {
+                        LaunchedEffect(Unit) { viewModel.setCurrentTab(0) }
+                    } else if (flagshipConfig.tiktokModeEnabled) {
                         TikTokBrowserScreen(onClose = { viewModel.setCurrentTab(0) })
                     } else {
                         ReelsFeedScreen(
@@ -2241,17 +2257,26 @@ fun HomeScreen(
 
     // A valid published update has the highest priority. The dialog is truly
     // blocking for every non-admin user until PackageManager confirms install.
+    // A maintenance timer ends maintenance automatically for users when it reaches zero.
+    var maintenanceExpired by remember(flagshipConfig.maintenanceEndsAt) { mutableStateOf(false) }
+    LaunchedEffect(flagshipConfig.maintenanceEndsAt) {
+        val end = flagshipConfig.maintenanceEndsAt
+        if (end > 0L) {
+            val wait = end - System.currentTimeMillis()
+            if (wait > 0L) kotlinx.coroutines.delay(wait)
+            maintenanceExpired = true
+        }
+    }
     if (updateRequired) {
         FlagshipUpdateDialog(flagshipConfig, mandatory = true, onLater = {})
-    } else if (!isAdmin && flagshipConfig.maintenanceMode) {
-        Dialog(onDismissRequest = {}, properties = DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false)) {
-            Surface(shape = RoundedCornerShape(30.dp)) {
-                Column(Modifier.padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(Icons.Outlined.Construction, null, Modifier.size(54.dp), tint = MaterialTheme.colorScheme.primary)
-                    Spacer(Modifier.height(12.dp)); Text("Convo Chat maintenance", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                    Text(flagshipConfig.noticeBody.ifBlank { "We are preparing a better Convo Chat experience. Please try again later." }, textAlign = TextAlign.Center)
-                }
-            }
+    } else if (!isAdmin && flagshipConfig.maintenanceMode && !maintenanceExpired) {
+        Dialog(onDismissRequest = {}, properties = DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false, usePlatformDefaultWidth = false)) {
+            MaintenanceCountdownCard(
+                title = flagshipConfig.maintenanceTitle.ifBlank { "Convo Chat maintenance" },
+                message = flagshipConfig.noticeBody.ifBlank { "We are preparing a better Convo Chat experience. Please try again later." },
+                endsAt = flagshipConfig.maintenanceEndsAt,
+                startedAt = flagshipConfig.updatedAt
+            )
         }
     } else if (flagshipConfig.noticeEnabled && !dismissNotice && flagshipConfig.noticeTitle.isNotBlank()) {
         AnimatedGlobalNotice(
@@ -3040,7 +3065,7 @@ fun ReelsFeedScreen(
             val source = reels[page % reels.size]
             ImmersiveVideoPage(
                 post = source, owner = users.find { it.uid == source.senderId },
-                isActive = pager.currentPage == page, viewModel = viewModel,
+                isActive = pager.currentPage == page, viewModel = viewModel, pageKey = page,
                 onProfileSelected = { user -> VideoPlayerManager.pause(); onProfileSelected(user) }
             )
         }
@@ -3101,7 +3126,8 @@ private fun ImmersiveVideoPage(
     owner: User?,
     isActive: Boolean,
     viewModel: ChatViewModel,
-    onProfileSelected: (User) -> Unit
+    onProfileSelected: (User) -> Unit,
+    pageKey: Int = 0
 ) {
     val context = LocalContext.current
     var isPaused by remember(post.id) { mutableStateOf(false) }
@@ -3127,7 +3153,7 @@ private fun ImmersiveVideoPage(
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         when {
             post.videoUrl.isNotBlank() -> SharedCachedVideo(
-                ownerId = "reel_${post.id}", videoUrl = post.videoUrl,
+                ownerId = "reel_${post.id}_$pageKey", videoUrl = post.videoUrl,
                 thumbnailUrl = post.thumbnailUrl.ifBlank { post.imageUrl }, active = isActive,
                 playWhenReady = isActive && !isPaused, sound = true, modifier = Modifier.fillMaxSize()
             )
@@ -4859,5 +4885,72 @@ private fun AppThemeTile(preview: AppThemePreview, selected: Boolean, locked: Bo
         }
         Spacer(Modifier.height(5.dp))
         Text(preview.name, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 11.sp, fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.Medium)
+    }
+}
+
+
+/** Full-screen maintenance card with a live countdown when the admin set a timer. */
+@Composable
+fun MaintenanceCountdownCard(title: String, message: String, endsAt: Long, startedAt: Long) {
+    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(endsAt) {
+        while (true) { now = System.currentTimeMillis(); kotlinx.coroutines.delay(1000) }
+    }
+    val remaining = (endsAt - now).coerceAtLeast(0L)
+    val total = (endsAt - startedAt).coerceAtLeast(1L)
+    val motion = rememberInfiniteTransition(label = "maintenance")
+    val spin by motion.animateFloat(0f, 360f, infiniteRepeatable(tween(6000, easing = LinearEasing)), label = "gear")
+    val glow by motion.animateFloat(.6f, 1f, infiniteRepeatable(tween(1400), RepeatMode.Reverse), label = "glow")
+    Box(
+        Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF0E0B2A), Color(0xFF2A1458), Color(0xFF0B1E3A)))),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            Modifier.padding(26.dp).clip(RoundedCornerShape(34.dp))
+                .background(Color.White.copy(alpha = .08f))
+                .border(1.dp, Brush.verticalGradient(listOf(Color.White.copy(.35f), Color.White.copy(.05f))), RoundedCornerShape(34.dp))
+                .padding(26.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Box(Modifier.size(110.dp).graphicsLayer { alpha = glow }.clip(CircleShape).background(Brush.radialGradient(listOf(Color(0xFF8B7CFF).copy(.55f), Color.Transparent))))
+                Icon(Icons.Outlined.Settings, null, tint = Color.White, modifier = Modifier.size(58.dp).graphicsLayer { rotationZ = spin })
+            }
+            Spacer(Modifier.height(14.dp))
+            Text(title, color = Color.White, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold, textAlign = TextAlign.Center)
+            Spacer(Modifier.height(8.dp))
+            Text(message, color = Color.White.copy(.78f), textAlign = TextAlign.Center)
+            if (endsAt > 0L) {
+                Spacer(Modifier.height(22.dp))
+                if (remaining > 0L) {
+                    val hours = remaining / 3_600_000L
+                    val minutes = (remaining / 60_000L) % 60
+                    val seconds = (remaining / 1000L) % 60
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        listOf(hours to "HRS", minutes to "MIN", seconds to "SEC").forEach { (value, unit) ->
+                            Column(
+                                Modifier.width(72.dp).clip(RoundedCornerShape(18.dp)).background(Color.White.copy(.12f)).padding(vertical = 10.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Text("%02d".format(value), color = Color.White, fontSize = 30.sp, fontWeight = FontWeight.Black)
+                                Text(unit, color = Color.White.copy(.6f), fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(16.dp))
+                    LinearProgressIndicator(
+                        progress = { (1f - remaining.toFloat() / total).coerceIn(0f, 1f) },
+                        modifier = Modifier.fillMaxWidth().height(6.dp).clip(CircleShape),
+                        color = Color(0xFF8B7CFF), trackColor = Color.White.copy(.15f)
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text("Back at ${java.text.SimpleDateFormat("h:mm a", java.util.Locale.getDefault()).format(java.util.Date(endsAt))}", color = Color.White.copy(.6f), fontSize = 12.sp)
+                } else {
+                    CircularProgressIndicator(color = Color.White)
+                    Spacer(Modifier.height(10.dp))
+                    Text("Almost done — finishing up…", color = Color.White, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
     }
 }

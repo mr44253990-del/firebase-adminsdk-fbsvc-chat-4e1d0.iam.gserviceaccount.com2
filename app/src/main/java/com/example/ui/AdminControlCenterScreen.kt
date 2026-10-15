@@ -98,6 +98,12 @@ fun AdminControlCenterScreen(
     var noticeTitle by remember(flagshipConfig) { mutableStateOf(flagshipConfig.noticeTitle) }
     var noticeBody by remember(flagshipConfig) { mutableStateOf(flagshipConfig.noticeBody) }
     var maintenanceEnabled by remember(flagshipConfig) { mutableStateOf(flagshipConfig.maintenanceMode) }
+    var maintenanceTitle by remember(flagshipConfig) { mutableStateOf(flagshipConfig.maintenanceTitle) }
+    // Minutes left on the countdown; 0 = no timer. Pre-filled from the running timer.
+    var maintenanceMinutes by remember(flagshipConfig) {
+        mutableStateOf(((flagshipConfig.maintenanceEndsAt - System.currentTimeMillis()) / 60_000L).coerceAtLeast(0L).toString().takeIf { flagshipConfig.maintenanceEndsAt > System.currentTimeMillis() } ?: "0")
+    }
+    var reelsEnabled by remember(flagshipConfig) { mutableStateOf(flagshipConfig.reelsEnabled) }
     var assistantEnabled by remember(flagshipConfig) { mutableStateOf(flagshipConfig.assistantEnabled) }
     var aiModel by remember(flagshipConfig) { mutableStateOf(flagshipConfig.aiModel) }
     var aiName by remember(flagshipConfig) { mutableStateOf(flagshipConfig.aiDisplayName) }
@@ -425,6 +431,20 @@ fun AdminControlCenterScreen(
                     "maintenance" -> {
                         AdminPanelCard("Maintenance & global notice", "Control service availability and app-wide announcements", Icons.Outlined.Build) {
                             AdminSwitchRow("Maintenance mode", "Temporarily pause the app for users while you work.", maintenanceEnabled, { maintenanceEnabled = it })
+                            if (maintenanceEnabled) {
+                                OutlinedTextField(maintenanceTitle, { maintenanceTitle = it.take(80) }, label = { Text("Maintenance title (optional)") }, placeholder = { Text("We're upgrading Convo Chat") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                                Text("Countdown timer shown to users", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    listOf("0" to "No timer", "15" to "15 min", "30" to "30 min", "60" to "1 hour", "120" to "2 hours", "360" to "6 hours", "1440" to "1 day").forEach { (minutes, label) ->
+                                        FilterChip(selected = maintenanceMinutes == minutes, onClick = { maintenanceMinutes = minutes }, label = { Text(label) })
+                                    }
+                                }
+                                OutlinedTextField(
+                                    maintenanceMinutes, { maintenanceMinutes = it.filter(Char::isDigit).take(5) },
+                                    label = { Text("Custom minutes") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+                                    supportingText = { Text(if ((maintenanceMinutes.toLongOrNull() ?: 0L) > 0L) "Users see a live countdown; the app unlocks automatically at ${SimpleDateFormat("MMM d, HH:mm", Locale.getDefault()).format(Date(System.currentTimeMillis() + (maintenanceMinutes.toLongOrNull() ?: 0L) * 60_000L))}" else "No countdown; users just see the maintenance message.") }
+                                )
+                            }
                             HorizontalDivider()
                             AdminSwitchRow("Show global notice", "Display a notice dialog to users.", noticeEnabled, { noticeEnabled = it })
                             OutlinedTextField(noticeTitle, { noticeTitle = it.take(100) }, label = { Text("Notice title") }, singleLine = true, modifier = Modifier.fillMaxWidth())
@@ -432,6 +452,8 @@ fun AdminControlCenterScreen(
                             Button(onClick = {
                                 viewModel.updateFlagshipFields(mapOf(
                                     "maintenanceMode" to maintenanceEnabled,
+                                    "maintenanceTitle" to maintenanceTitle.trim(),
+                                    "maintenanceEndsAt" to if (maintenanceEnabled && (maintenanceMinutes.toLongOrNull() ?: 0L) > 0L) System.currentTimeMillis() + (maintenanceMinutes.toLongOrNull() ?: 0L) * 60_000L else 0L,
                                     "noticeEnabled" to noticeEnabled,
                                     "noticeTitle" to noticeTitle,
                                     "noticeBody" to noticeBody
@@ -765,7 +787,7 @@ fun AdminControlCenterScreen(
                             }
                         }
                         AdminPanelCard("Default app sounds", "Phones download the new sound quietly in the background. Users can still pick their own sound in Settings.", Icons.Outlined.MusicNote) {
-                            listOf(AppSoundStore.NOTIFICATION to "Message notification", AppSoundStore.TYPING to "Typing indicator").forEach { (kind, label) ->
+                            listOf(AppSoundStore.NOTIFICATION to "Message notification", AppSoundStore.TYPING to "Typing indicator", AppSoundStore.LIKE to "Like / reaction pop").forEach { (kind, label) ->
                                 val url = globalSoundUrls[kind].orEmpty()
                                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                                     Column(Modifier.weight(1f)) {
@@ -797,11 +819,13 @@ fun AdminControlCenterScreen(
                         }
                     }
                     "reels" -> {
-                        AdminPanelCard("Reels experience", "Enable TikTok.com inside the Reels tab", Icons.Outlined.SmartDisplay) {
+                        AdminPanelCard("Reels experience", "Turn Reels on/off for everyone, or open TikTok.com inside the Reels tab", Icons.Outlined.SmartDisplay) {
+                            AdminSwitchRow("Show Reels to users", "Off hides the Reels tab, the Reel option in Create and reel posts in the feed for every user (admins still see them).", reelsEnabled, { reelsEnabled = it })
+                            HorizontalDivider()
                             AdminSwitchRow("TikTok browser mode", "When on, the Reels tab opens TikTok in an embedded browser; Convo's reel description, like, comment, share and action controls are not shown.", tiktokModeEnabled, { tiktokModeEnabled = it })
                             AdminInlineInfo("External-app and intent links are blocked. The browser best-effort chooses TikTok's exact ‘Not now’ option if the app-open prompt appears; TikTok can change or block WebView behavior.")
                             Button(onClick = {
-                                viewModel.updateFlagshipFields(mapOf("tiktokModeEnabled" to tiktokModeEnabled)) { ok ->
+                                viewModel.updateFlagshipFields(mapOf("tiktokModeEnabled" to tiktokModeEnabled, "reelsEnabled" to reelsEnabled)) { ok ->
                                     Toast.makeText(context, if (ok) "Reels experience saved" else "Could not save Reels experience", Toast.LENGTH_LONG).show()
                                 }
                             }, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Default.Save, null); Spacer(Modifier.width(7.dp)); Text("Save Reels experience") }

@@ -3152,8 +3152,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         messageRef.removeValue()
     }
 
+    fun playLikeSound() = LikeSound.play(getApplication())
+
     fun addReaction(recipientUid: String, messageId: String, reaction: String) {
         val currentUid = FirebaseAuth.getInstance().currentUser?.uid ?: return
+        playLikeSound()
         val sortedUids = listOf(currentUid, recipientUid).sorted()
         val chatId = "${sortedUids[0]}_${sortedUids[1]}"
 
@@ -4747,10 +4750,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 if (error != null) return@addSnapshotListener
                 val notificationUrl = doc?.getString("notificationUrl").orEmpty()
                 val typingUrl = doc?.getString("typingUrl").orEmpty()
-                _globalSoundUrls.value = mapOf(AppSoundStore.NOTIFICATION to notificationUrl, AppSoundStore.TYPING to typingUrl)
+                val likeUrl = doc?.getString("likeUrl").orEmpty()
+                _globalSoundUrls.value = mapOf(AppSoundStore.NOTIFICATION to notificationUrl, AppSoundStore.TYPING to typingUrl, AppSoundStore.LIKE to likeUrl)
                 viewModelScope.launch {
                     AppSoundStore.syncGlobal(getApplication(), AppSoundStore.NOTIFICATION, notificationUrl)
                     AppSoundStore.syncGlobal(getApplication(), AppSoundStore.TYPING, typingUrl)
+                    AppSoundStore.syncGlobal(getApplication(), AppSoundStore.LIKE, likeUrl)
                 }
             }
     }
@@ -4764,7 +4769,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             fileBytes = bytes,
             contentType = mimeType.ifBlank { "audio/mpeg" },
             onSuccess = { url ->
-                val field = if (kind == AppSoundStore.TYPING) "typingUrl" else "notificationUrl"
+                val field = AppSoundStore.configField(kind)
                 val previous = _globalSoundUrls.value[kind].orEmpty()
                 FirebaseFirestore.getInstance().collection("app_config").document("sounds")
                     .set(mapOf(field to url, "updatedAt" to System.currentTimeMillis()), SetOptions.merge())
@@ -4780,7 +4785,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     fun clearGlobalSound(kind: String, onResult: (Boolean, String) -> Unit) {
         if (!isAdminAccount()) return onResult(false, "Only the admin can change the default sound")
-        val field = if (kind == AppSoundStore.TYPING) "typingUrl" else "notificationUrl"
+        val field = AppSoundStore.configField(kind)
         val previous = _globalSoundUrls.value[kind].orEmpty()
         FirebaseFirestore.getInstance().collection("app_config").document("sounds")
             .set(mapOf(field to "", "updatedAt" to System.currentTimeMillis()), SetOptions.merge())

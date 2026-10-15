@@ -183,7 +183,19 @@ fun TikTokBrowserScreen(onClose: () -> Unit) {
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
                             CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
                         }
+                        // Videos rendered white/blank on some phones: force GPU compositing,
+                        // give <video> a transparent poster and allow encrypted media (EME).
+                        setLayerType(View.LAYER_TYPE_HARDWARE, null)
+                        setBackgroundColor(android.graphics.Color.BLACK)
                         webChromeClient = object : WebChromeClient() {
+                            override fun getDefaultVideoPoster(): android.graphics.Bitmap? =
+                                android.graphics.Bitmap.createBitmap(1, 1, android.graphics.Bitmap.Config.ARGB_8888)
+
+                            override fun onPermissionRequest(request: android.webkit.PermissionRequest?) {
+                                val allowed = request?.resources?.filter { it == android.webkit.PermissionRequest.RESOURCE_PROTECTED_MEDIA_ID }.orEmpty()
+                                if (request != null && allowed.isNotEmpty()) request.grant(allowed.toTypedArray()) else request?.deny()
+                            }
+
                             override fun onProgressChanged(view: WebView?, newProgress: Int) {
                                 progress = newProgress
                                 if (newProgress >= 100) syncNavigation(view)

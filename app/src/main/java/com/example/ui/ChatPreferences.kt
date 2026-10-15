@@ -126,6 +126,14 @@ object ChatPreferences {
 object AppSoundStore {
     const val NOTIFICATION = "notification"
     const val TYPING = "typing"
+    const val LIKE = "like"
+
+    /** Firestore field in app_config/sounds for each sound kind. */
+    fun configField(kind: String): String = when (kind) {
+        TYPING -> "typingUrl"
+        LIKE -> "likeUrl"
+        else -> "notificationUrl"
+    }
     private const val PREFS = "convo_chat_prefs"
     private const val MAX_BYTES = 2L * 1024 * 1024
     private const val MAX_DURATION_MS = 15_000L
@@ -255,5 +263,46 @@ object AppSoundStore {
             Log.w("AppSoundStore", "Custom $kind sound failed: ${e.message}")
             false
         }
+    }
+}
+
+/**
+ * Built-in "like" sound: a short synthesized bubble pop (rising sine chirp with a soft
+ * envelope), so no audio asset is needed. The admin can replace it for everyone with a
+ * custom MP3 (app_config/sounds.likeUrl) and users can pick their own in Settings → Sounds.
+ */
+object LikeSound {
+    @Volatile private var enabled = true
+    fun setEnabled(value: Boolean) { enabled = value }
+
+    fun play(context: Context) {
+        if (!enabled) return
+        if (AppSoundStore.playCustom(context, AppSoundStore.LIKE, .8f)) return
+        Thread {
+            runCatching {
+                val rate = 44100
+                val samples = (rate * 0.16).toInt()
+                val pcm = ShortArray(samples)
+                var phase = 0.0
+                for (i in 0 until samples) {
+                    val t = i.toDouble() / samples
+                    val freq = 520.0 + 900.0 * t * t
+                    phase += 2 * Math.PI * freq / rate
+                    val envelope = kotlin.math.min(1.0, t * 18) * kotlin.math.exp(-5.5 * t)
+                    val tone = kotlin.math.sin(phase) * 0.8 + kotlin.math.sin(phase * 2) * 0.2
+                    pcm[i] = (tone * envelope * 0.55 * Short.MAX_VALUE).toInt().toShort()
+                }
+                val track = android.media.AudioTrack.Builder()
+                    .setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION).setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build())
+                    .setAudioFormat(android.media.AudioFormat.Builder().setEncoding(android.media.AudioFormat.ENCODING_PCM_16BIT).setSampleRate(rate).setChannelMask(android.media.AudioFormat.CHANNEL_OUT_MONO).build())
+                    .setTransferMode(android.media.AudioTrack.MODE_STATIC)
+                    .setBufferSizeInBytes(samples * 2)
+                    .build()
+                track.write(pcm, 0, samples)
+                track.play()
+                Thread.sleep(260)
+                track.release()
+            }
+        }.start()
     }
 }

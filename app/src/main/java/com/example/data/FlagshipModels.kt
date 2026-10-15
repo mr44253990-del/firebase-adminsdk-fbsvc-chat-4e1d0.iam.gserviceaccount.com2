@@ -65,6 +65,11 @@ data class FlagshipConfig(
     val noticeTitle: String = "",
     val noticeBody: String = "",
     val maintenanceMode: Boolean = false,
+    /** Epoch millis when maintenance is expected to end; 0 = no timer shown. */
+    val maintenanceEndsAt: Long = 0L,
+    val maintenanceTitle: String = "",
+    /** Admin switch: when false, users no longer see the Reels tab or reel posts. */
+    val reelsEnabled: Boolean = true,
     val assistantEnabled: Boolean = true,
     val aiModel: String = "mistral-small-latest",
     val aiDisplayName: String = "Convo Chat Assistant",

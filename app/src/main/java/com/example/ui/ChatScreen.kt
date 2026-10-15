@@ -1105,7 +1105,7 @@ fun ChatScreen(
                         }
                     }
 
-                    // Hold to record, release to send, slide up/down to cancel.
+                    // Hold to record; release or slide up to send, slide down to cancel.
                     AnimatedVisibility(visible = !hasText || isRecording) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             HoldToRecordButton(
@@ -1121,7 +1121,7 @@ fun ChatScreen(
                                 },
                                 onSend = { if (latestIsRecording.value) latestStopAndSendVoice.value() },
                                 onCancel = { if (latestIsRecording.value) latestCancelRecording.value() },
-                                onHint = { Toast.makeText(context, "Hold to record, release to send", Toast.LENGTH_SHORT).show() },
+                                onHint = { Toast.makeText(context, "Hold to record • slide up to send, down to cancel", Toast.LENGTH_SHORT).show() },
                                 onDragChange = { _, armed -> voiceCancelArmed = armed },
                                 accent = composerAccent
                             )
@@ -1208,6 +1208,7 @@ fun ChatScreen(
                                         .combinedClickable(
                                             enabled = !composerLocked,
                                             onClick = {
+                                                viewModel.playLikeSound()
                                                 viewModel.sendMessage(
                                                     recipientUser = recipient,
                                                     text = quickReaction,
@@ -1649,7 +1650,10 @@ fun MessageBubbleItem(
                         )
                         if (isSentByMe) {
                             Spacer(Modifier.width(4.dp))
-                            when (deliveryState) {
+                            // Receipts only move forward: once the peer confirmed delivery/seen,
+                            // a stale local "pending"/"failed" state can never hide those ticks.
+                            val effectiveDeliveryState = if (message.deliveredToRecipient || message.seenByRecipient) "sent" else deliveryState
+                            when (effectiveDeliveryState) {
                                 "pending" -> CircularProgressIndicator(
                                     modifier = Modifier.size(13.dp),
                                     strokeWidth = 1.5.dp,

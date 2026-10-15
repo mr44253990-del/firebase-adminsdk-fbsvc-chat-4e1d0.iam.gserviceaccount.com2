@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
@@ -43,9 +44,22 @@ import kotlin.math.abs
 private class EarlyRelease(val change: PointerInputChange?)
 
 /**
+ * Live gesture state shared between the mic button and the recording pill, so the pill can
+ * animate "slide up to send / slide down to cancel" without every caller wiring extra state.
+ * [fraction] is -1 (fully up = send) .. 0 (resting) .. 1 (fully down = cancel).
+ */
+object VoiceGesture {
+    var fraction by mutableFloatStateOf(0f)
+    var sendArmed by mutableStateOf(false)
+    var cancelArmed by mutableStateOf(false)
+    fun reset() { fraction = 0f; sendArmed = false; cancelArmed = false }
+}
+
+/**
  * Messenger-style voice button:
  *  - press and hold to record, release to send;
- *  - slide up or down past the threshold, then release, to cancel;
+ *  - slide UP past the threshold to send right away;
+ *  - slide DOWN past the threshold and release (or drag all the way) to cancel;
  *  - a quick tap only shows a hint, so voice notes are never sent by accident.
  * Recording state lives in the caller; this component only reports gestures.
  */
@@ -78,11 +92,13 @@ fun HoldToRecordButton(
 
     var dragY by remember { mutableFloatStateOf(0f) }
     var armed by remember { mutableStateOf(false) }
+    var sendArmed by remember { mutableStateOf(false) }
     val scale by animateFloatAsState(if (isRecording) 1.45f else 1f, spring(dampingRatio = .55f, stiffness = Spring.StiffnessMediumLow), label = "mic_scale")
     val animatedY by animateFloatAsState(if (isRecording) dragY else 0f, spring(stiffness = Spring.StiffnessHigh), label = "mic_drag")
 
     val bg = when {
         isRecording && armed -> Brush.linearGradient(listOf(Color(0xFF6B7280), Color(0xFF374151)))
+        isRecording && sendArmed -> Brush.linearGradient(listOf(Color(0xFF34D399), Color(0xFF059669)))
         isRecording -> Brush.linearGradient(listOf(Color(0xFFFF5A5F), Color(0xFFE53935)))
         else -> Brush.linearGradient(listOf(accent.copy(alpha = .18f), accent.copy(alpha = .10f)))
     }
@@ -92,7 +108,7 @@ fun HoldToRecordButton(
     Box(
         modifier = modifier
             .size(size)
-            .semantics { contentDescription = if (isRecording) "Release to send, slide up or down to cancel" else "Hold to record a voice message" }
+            .semantics { contentDescription = if (isRecording) "Release or slide up to send, slide down to cancel" else "Hold to record a voice message" }
             .testTag("voice_record_button")
             .pointerInput(Unit) {
                 awaitEachGesture {
@@ -112,6 +128,8 @@ fun HoldToRecordButton(
                     val startedAt = System.currentTimeMillis()
                     dragY = 0f
                     armed = false
+                    sendArmed = false
+                    VoiceGesture.reset()
                     latestDrag.value(0f, false)
                     latestStart.value()
                     var finished = false
@@ -132,13 +150,36 @@ fun HoldToRecordButton(
                             }
                             val dy = (change.position.y - down.position.y).coerceIn(-maxTravelPx, maxTravelPx)
                             dragY = dy
-                            val nowArmed = abs(dy) > cancelThresholdPx
+                            VoiceGesture.fraction = (dy / maxTravelPx).coerceIn(-1f, 1f)
+                            // Down = cancel (armed, committed on release or at full travel).
+                            val nowArmed = dy > cancelThresholdPx
                             if (nowArmed != armed) {
                                 armed = nowArmed
+                                VoiceGesture.cancelArmed = nowArmed
                                 haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            }
+                            // Up = send immediately once the finger crosses the threshold.
+                            val nowSend = dy < -cancelThresholdPx
+                            if (nowSend != sendArmed) {
+                                sendArmed = nowSend
+                                VoiceGesture.sendArmed = nowSend
                             }
                             latestDrag.value(dy, armed)
                             change.consume()
+                            if (nowSend) {
+                                finished = true
+                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                if (System.currentTimeMillis() - startedAt < 700L) { latestCancel.value(); latestHint.value() } else latestSend.value()
+                                waitForUpOrCancellation()
+                                break
+                            }
+                            if (dy >= maxTravelPx * .98f) {
+                                finished = true
+                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                latestCancel.value()
+                                waitForUpOrCancellation()
+                                break
+                            }
                         }
                     } catch (e: CancellationException) {
                         if (!finished) latestCancel.value()
@@ -146,6 +187,8 @@ fun HoldToRecordButton(
                     } finally {
                         dragY = 0f
                         armed = false
+                        sendArmed = false
+                        VoiceGesture.reset()
                         latestDrag.value(0f, false)
                     }
                 }
@@ -166,7 +209,11 @@ fun HoldToRecordButton(
             contentAlignment = Alignment.Center
         ) {
             Icon(
-                imageVector = if (isRecording && armed) Icons.Default.Delete else Icons.Default.Mic,
+                imageVector = when {
+                    isRecording && armed -> Icons.Default.Delete
+                    isRecording && sendArmed -> Icons.AutoMirrored.Filled.Send
+                    else -> Icons.Default.Mic
+                },
                 contentDescription = null,
                 tint = if (isRecording) Color.White else accent,
                 modifier = Modifier.size(if (isRecording) 20.dp else 23.dp)
@@ -193,35 +240,59 @@ fun VoiceRecordingPill(
     val dotAlpha by pulse.animateFloat(1f, .25f, infiniteRepeatable(tween(650), RepeatMode.Reverse), label = "rec_dot")
     val arrowShift by pulse.animateFloat(-3f, 3f, infiniteRepeatable(tween(700), RepeatMode.Reverse), label = "rec_arrow")
     val seconds = elapsed / 1000
-    val container = if (cancelArmed) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .92f)
+    val cancel = cancelArmed || VoiceGesture.cancelArmed
+    val send = VoiceGesture.sendArmed
+    val fraction by animateFloatAsState(VoiceGesture.fraction, spring(stiffness = Spring.StiffnessMediumLow), label = "rec_fraction")
+    val upTint = Color(0xFF10B981)
+    val downTint = Color(0xFFE53935)
+    val base = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .94f)
+    val container = when {
+        cancel -> MaterialTheme.colorScheme.errorContainer
+        send -> upTint.copy(alpha = .22f)
+        fraction > 0f -> androidx.compose.ui.graphics.lerp(base, MaterialTheme.colorScheme.errorContainer, fraction.coerceIn(0f, 1f))
+        fraction < 0f -> androidx.compose.ui.graphics.lerp(base, upTint.copy(alpha = .22f), (-fraction).coerceIn(0f, 1f))
+        else -> base
+    }
+    val onContainer = if (cancel) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSurface
     Row(
         modifier = modifier
             .heightIn(min = 52.dp)
+            .graphicsLayer { scaleX = 1f - abs(fraction) * .03f; scaleY = 1f - abs(fraction) * .03f }
             .clip(RoundedCornerShape(28.dp))
             .background(container)
+            .border(1.dp, Brush.horizontalGradient(listOf(downTint.copy(.35f + .4f * fraction.coerceAtLeast(0f)), upTint.copy(.25f + .5f * (-fraction).coerceAtLeast(0f)))), RoundedCornerShape(28.dp))
             .padding(horizontal = 14.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Box(Modifier.size(10.dp).clip(CircleShape).background(Color(0xFFE53935).copy(alpha = if (cancelArmed) 1f else dotAlpha)))
+        Box(Modifier.size(10.dp).clip(CircleShape).background(downTint.copy(alpha = if (cancel) 1f else dotAlpha)))
         Spacer(Modifier.width(8.dp))
-        Text(
-            "%d:%02d".format(seconds / 60, seconds % 60),
-            fontWeight = FontWeight.Bold,
-            fontSize = 15.sp,
-            color = if (cancelArmed) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSurface
-        )
+        Text("%d:%02d".format(seconds / 60, seconds % 60), fontWeight = FontWeight.Bold, fontSize = 15.sp, color = onContainer)
         Spacer(Modifier.width(10.dp))
-        VoiceLevelBars(active = !cancelArmed, modifier = Modifier.weight(1f).height(22.dp))
+        VoiceLevelBars(active = !cancel, modifier = Modifier.weight(1f).height(22.dp))
         Spacer(Modifier.width(8.dp))
-        if (cancelArmed) {
-            Text("Release to cancel", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onErrorContainer)
-        } else {
-            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.graphicsLayer { translationY = arrowShift }) {
-                Icon(Icons.Default.KeyboardArrowUp, null, modifier = Modifier.size(12.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                Icon(Icons.Default.KeyboardArrowDown, null, modifier = Modifier.size(12.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        when {
+            cancel -> {
+                Icon(Icons.Default.Delete, null, tint = downTint, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(4.dp))
+                Text("Release to cancel", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = onContainer)
             }
-            Spacer(Modifier.width(4.dp))
-            Text("Slide to cancel", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            send -> {
+                Icon(Icons.AutoMirrored.Filled.Send, null, tint = upTint, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(4.dp))
+                Text("Sending…", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = upTint)
+            }
+            else -> {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.graphicsLayer { translationY = -arrowShift.coerceAtLeast(0f) }) {
+                        Icon(Icons.Default.KeyboardArrowUp, null, modifier = Modifier.size(13.dp), tint = upTint)
+                        Text("Send", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = upTint)
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.graphicsLayer { translationY = arrowShift.coerceAtLeast(0f) }) {
+                        Icon(Icons.Default.KeyboardArrowDown, null, modifier = Modifier.size(13.dp), tint = downTint)
+                        Text("Cancel", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = downTint)
+                    }
+                }
+            }
         }
     }
 }

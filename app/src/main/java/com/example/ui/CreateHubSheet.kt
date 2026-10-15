@@ -58,7 +58,9 @@ fun CreateHubSheet(viewModel: ChatViewModel, onDismiss: () -> Unit, onCreatePost
                 CreateHubAction(Icons.Default.EditNote, "Text post", "Write, background, feelings, tags and polls") { viewModel.prepareComposer("post"); onDismiss(); onCreatePost() }
                 CreateHubAction(Icons.Default.AddPhotoAlternate, "Photo post", "Upload up to five photos and add details") { viewModel.prepareComposer("photo"); onDismiss(); onCreatePost() }
                 CreateHubAction(Icons.Default.VideoLibrary, "Video post", "Upload a video, title, caption and thumbnail") { viewModel.prepareComposer("video"); onDismiss(); onCreatePost() }
-                CreateHubAction(Icons.Default.SmartDisplay, "Create Reel", "Upload directly as a vertical Reel") { viewModel.prepareComposer("reel"); onDismiss(); onCreatePost() }
+                val hubConfig by viewModel.flagshipConfig.collectAsState()
+                val hubAdmin = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.email?.lowercase()?.trim() == "mr4425390@gmail.com"
+                if (hubConfig.reelsEnabled || hubAdmin) CreateHubAction(Icons.Default.SmartDisplay, "Create Reel", "Upload directly as a vertical Reel") { viewModel.prepareComposer("reel"); onDismiss(); onCreatePost() }
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     OutlinedButton(onClick = { photoStory.launch("image/*") }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(18.dp)) { Icon(Icons.Default.AutoStories, null); Spacer(Modifier.width(6.dp)); Text("Photo story") }
                     OutlinedButton(onClick = { videoStory.launch("video/*") }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(18.dp)) { Icon(Icons.Default.Movie, null); Spacer(Modifier.width(6.dp)); Text("Video story") }

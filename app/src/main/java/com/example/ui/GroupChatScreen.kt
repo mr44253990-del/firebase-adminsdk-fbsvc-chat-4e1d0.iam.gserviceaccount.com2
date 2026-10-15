@@ -692,7 +692,7 @@ fun GroupChatScreen(
                                 onStart = { if (!latestIsRecording.value) latestStartRecording.value() },
                                 onSend = { if (latestIsRecording.value) latestStopAndSendVoice.value() },
                                 onCancel = { if (latestIsRecording.value) latestCancelRecording.value() },
-                                onHint = { Toast.makeText(context, "Hold to record, release to send", Toast.LENGTH_SHORT).show() },
+                                onHint = { Toast.makeText(context, "Hold to record • slide up to send, down to cancel", Toast.LENGTH_SHORT).show() },
                                 onDragChange = { _, armed -> voiceCancelArmed = armed }
                             )
                             Spacer(Modifier.width(6.dp))
@@ -748,6 +748,7 @@ fun GroupChatScreen(
                                     .graphicsLayer { scaleX = reactionScale.value; scaleY = reactionScale.value }
                                     .clip(CircleShape)
                                     .clickable {
+                                        viewModel.playLikeSound()
                                         viewModel.sendGroupMessage(groupId = group.id, text = quickReaction, replyTo = replyingToGroupMessage)
                                         replyingToGroupMessage = null
                                         groupUiScope.launch {
