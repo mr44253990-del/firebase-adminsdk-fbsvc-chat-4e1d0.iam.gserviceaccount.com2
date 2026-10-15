@@ -336,6 +336,19 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private val _conversationUserIds = MutableStateFlow<Set<String>>(emptySet())
     val conversationUserIds: StateFlow<Set<String>> = _conversationUserIds.asStateFlow()
 
+    /** Conversation partners ordered by latest message, newest first (chat list ordering). */
+    private val _conversationOrder = MutableStateFlow<List<String>>(emptyList())
+    val conversationOrder: StateFlow<List<String>> = _conversationOrder.asStateFlow()
+
+    private val _chatBackgroundImages = MutableStateFlow<List<ChatBackgroundImage>>(emptyList())
+    val chatBackgroundImages: StateFlow<List<ChatBackgroundImage>> = _chatBackgroundImages.asStateFlow()
+    private var chatBackgroundsListener: ListenerRegistration? = null
+    private var soundConfigListener: ListenerRegistration? = null
+    private val _globalSoundUrls = MutableStateFlow<Map<String, String>>(emptyMap())
+    val globalSoundUrls: StateFlow<Map<String, String>> = _globalSoundUrls.asStateFlow()
+    private var profileViewsListener: com.google.firebase.database.ChildEventListener? = null
+    private var profileViewsRef: com.google.firebase.database.DatabaseReference? = null
+
     private val _isRecipientTyping = MutableStateFlow(false)
     val isRecipientTyping: StateFlow<Boolean> = _isRecipientTyping.asStateFlow()
     private val _isRecipientVoiceRecording = MutableStateFlow(false)
@@ -531,6 +544,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     init {
+        ChatPreferences.load(getApplication())
         checkFirebaseConfiguration()
         listenFlagshipControl()
         listenStorageRoutingConfig()
@@ -808,7 +822,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             val chatId = listOf(caller.uid, recipient.uid).sorted().joinToString("_")
             val historyMessage = Message(
                 messageId = "call_$callId", senderId = caller.uid, senderName = caller.name,
-                senderUsername = caller.username, text = if (video) "📹 Convo Chat video call" else "📞 Convo Chat audio call",
+                senderUsername = caller.username, text = if (video) "Convo Chat video call" else "Convo Chat audio call",
                 timestamp = System.currentTimeMillis(), deliveredToRecipient = false
             )
             getDatabaseInstance().getReference("chats").child(chatId).child("messages")
@@ -1298,7 +1312,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         if (admin.email?.lowercase()?.trim()?.trimEnd('.') != "mr4425390@gmail.com" || days !in 1..365 || userIds.isEmpty()) return onComplete(false)
         val now = System.currentTimeMillis(); val firestore = FirebaseFirestore.getInstance(); val batch = firestore.batch()
         userIds.distinct().take(100).forEach { uid -> batch.update(firestore.collection("users").document(uid), mapOf("isPremium" to true, "premiumPlan" to "gift", "premiumUntil" to now + days * 86_400_000L, "premiumApprovedAt" to now, "premiumSource" to "admin_gift")) }
-        batch.commit().addOnSuccessListener { userIds.distinct().take(100).forEach { createActivityNotification(it, "premium_gift", "gift_$now", "ADMIN RAKIB gifted you $days days of Convo Chat Premium 🎉") }; onComplete(true) }.addOnFailureListener { onComplete(false) }
+        batch.commit().addOnSuccessListener { userIds.distinct().take(100).forEach { createActivityNotification(it, "premium_gift", "gift_$now", "ADMIN RAKIB gifted you $days days of Convo Chat Premium") }; onComplete(true) }.addOnFailureListener { onComplete(false) }
     }
 
     fun revokePremium(uid: String, onComplete: (Boolean) -> Unit = {}) {
@@ -1684,9 +1698,14 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         conversationIdsJob?.cancel()
         conversationIdsJob = viewModelScope.launch {
             cacheDao.getConversationChatIds().collect { chatIds ->
-                _conversationUserIds.value = chatIds.flatMap { it.split("_") }.filter { it != uid }.toSet()
+                val ordered = chatIds.flatMap { it.split("_") }.filter { it.isNotBlank() && it != uid }.distinct()
+                _conversationOrder.value = ordered
+                _conversationUserIds.value = ordered.toSet()
             }
         }
+        listenChatBackgrounds()
+        listenGlobalSounds()
+        listenProfileViews(uid)
         val profileRef = FirebaseFirestore.getInstance().collection("users").document(uid)
         currentUserProfileListener?.remove()
         currentUserProfileListener = profileRef.addSnapshotListener { document, error ->
@@ -2396,9 +2415,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val ref = getDatabaseInstance().getReference("chat_settings").child(chatId).child("theme")
         activeChatThemeListener = ref.addValueEventListener(object : ValueEventListener {
             override fun onDataChange(snapshot: DataSnapshot) {
-                _chatTheme.value = snapshot.getValue(String::class.java) ?: "Aurora"
+                _chatTheme.value = snapshot.getValue(String::class.java)?.takeIf { it.isNotBlank() }
+                    ?: ChatPreferences.defaultChatTheme.value
             }
-            override fun onCancelled(error: DatabaseError) { _chatTheme.value = "Aurora" }
+            override fun onCancelled(error: DatabaseError) { _chatTheme.value = ChatPreferences.defaultChatTheme.value }
         })
     }
 
@@ -2417,6 +2437,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     fun playNotificationSound() {
         if (!_notificationSoundsEnabled.value) return
+        if (AppSoundStore.playCustom(getApplication(), AppSoundStore.NOTIFICATION)) return
         try {
             val toneG = ToneGenerator(AudioManager.STREAM_NOTIFICATION, 80)
             toneG.startTone(ToneGenerator.TONE_PROP_BEEP, 120)
@@ -2433,6 +2454,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     fun playTypingSound() {
         if (!_typingSoundsEnabled.value) return
+        if (AppSoundStore.playCustom(getApplication(), AppSoundStore.TYPING, .45f)) return
         try {
             android.media.MediaPlayer.create(getApplication(), R.raw.typing_soft)?.apply {
                 setVolume(.35f, .35f)
@@ -2593,6 +2615,18 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 Log.e("FCM_GATEWAY", "Could not load recipient token: ${it.message}")
                 _gatewayHealth.value = GatewayHealth(message = "Could not load recipient notification token")
             }
+    }
+
+
+    /** Sends an activity notification to everyone tagged with @username (max 10 per message). */
+    fun notifyMentionedUsers(text: String, targetId: String, where: String, allowedUids: List<String>? = null) {
+        val handles = Mentions.mentionedUsernames(text)
+        if (handles.isEmpty()) return
+        val me = getCurrentUserOrFallback() ?: return
+        _usersState.value
+            .filter { it.username.lowercase() in handles && it.uid != me.uid && (allowedUids == null || it.uid in allowedUids) }
+            .take(10)
+            .forEach { createActivityNotification(it.uid, "mention", targetId, "${me.name} mentioned you $where") }
     }
 
     private fun createActivityNotification(ownerId: String, type: String, targetId: String, text: String) {
@@ -2807,9 +2841,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         if (!isEstablishedConversation) {
             val preview = when {
                 text.isNotBlank() -> text.trim()
-                imageUrl != null -> "📷 Photo request"
-                voiceUrl != null -> "🎙️ Voice request"
-                fileUrl != null -> "📎 File request"
+                imageUrl != null -> "Photo request"
+                voiceUrl != null -> "Voice message request"
+                fileUrl != null -> "File request"
                 else -> "Message request"
             }
             val requestId = "${currentUser.uid}_${recipientUser.uid}"
@@ -2876,7 +2910,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     .setValue(mapOf(
                         "senderId" to currentUser.uid,
                         "senderName" to currentUser.name,
-                        "text" to if (fileUrl != null) "📎 ${fileName ?: "File"}" else if (voiceUrl != null) "🎙️ Voice message" else if (imageUrl != null) "📷 Image attachment" else text,
+                        "text" to if (fileUrl != null) "File: ${fileName ?: "attachment"}" else if (voiceUrl != null) "Voice message" else if (imageUrl != null) "Photo" else text,
                         "timestamp" to System.currentTimeMillis()
                     ))
 
@@ -2887,7 +2921,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         gatewayUrl = _webhookUrl.value,
                         targetToken = recipientToken,
                         senderName = currentUser.name,
-                        messageBody = if (fileUrl != null) "📎 ${fileName ?: "File"}" else if (voiceUrl != null) "🎙️ Voice message" else if (imageUrl != null) "📷 Image attachment" else text,
+                        messageBody = if (fileUrl != null) "File: ${fileName ?: "attachment"}" else if (voiceUrl != null) "Voice message" else if (imageUrl != null) "Photo" else text,
                         senderId = currentUser.uid,
                         senderProfileUrl = currentUser.profileImageUrl,
                         notificationType = "message",
@@ -2951,8 +2985,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val forwardVoice = (original.remoteVoiceUrl ?: original.voiceUrl)?.takeIf { it.startsWith("http") }
         val text = when {
             original.text.isNotBlank() -> original.text
-            forwardImage != null -> "📷 Forwarded photo"
-            forwardVoice != null -> "🎙️ Forwarded voice note"
+            forwardImage != null -> "Forwarded photo"
+            forwardVoice != null -> "Forwarded voice message"
             else -> "Forwarded attachment is only available on the original device"
         }
         val message = Message(
@@ -2996,7 +3030,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val ref = getDatabaseInstance().getReference("chats").child(chatId).child("messages")
         val id = ref.push().key ?: UUID.randomUUID().toString()
         val link = "https://solitary-hill-dcdc.mr44253990.workers.dev/post/${post.id}"
-        val message = Message(messageId=id,senderId=me.uid,senderName=me.name,senderUsername=me.username,text="📌 ${post.title.ifBlank { "Shared a post" }}\n${post.text.take(220)}\n$link",timestamp=System.currentTimeMillis(),imageUrl=post.imageUrl.takeIf{it.isNotBlank()},deliveredToRecipient=false,expiresAt=outgoingExpiryAt())
+        val message = Message(messageId=id,senderId=me.uid,senderName=me.name,senderUsername=me.username,text="Shared post: ${post.title.ifBlank { "Shared a post" }}\n${post.text.take(220)}\n$link",timestamp=System.currentTimeMillis(),imageUrl=post.imageUrl.takeIf{it.isNotBlank()},deliveredToRecipient=false,expiresAt=outgoingExpiryAt())
         ref.child(id).setValue(message).addOnSuccessListener { withUserFcmToken(target.uid,target.fcmToken){token->triggerFcmGatewayNotification(_webhookUrl.value,token,me.name,"Shared a Convo post",me.uid,me.profileImageUrl,"message",id)};onComplete(true) }.addOnFailureListener{onComplete(false)}
     }
 
@@ -3568,7 +3602,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun updateTheme(themeName: String): Boolean {
-        val premiumTheme = themeName in setOf("Royal Gold", "Cyber Lime", "Rose Quartz", "Liquid Aurora", "Glass Ocean", "Glass Rose", "Obsidian Neon", "Neon Pulse")
+        val premiumTheme = themeName in PREMIUM_APP_THEMES
         if (premiumTheme && (!_flagshipConfig.value.advancedThemesEnabled || !hasActivePremiumEntitlement())) return false
         _themeState.value = themeName
         sharedPrefs.edit().putString("app_theme", themeName).apply()
@@ -4322,7 +4356,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     groupId = groupId,
                     senderId = "system",
                     senderName = "SYSTEM",
-                    text = "🔊 ${user.name} created the group \"$name\"",
+                    text = "${user.name} created the group \"$name\"",
                     timestamp = System.currentTimeMillis()
                 )
                 FirebaseFirestore.getInstance().collection("groups").document(groupId)
@@ -4543,6 +4577,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val user = getCurrentUserOrFallback() ?: return
         val messageId = UUID.randomUUID().toString()
         val sentAt = System.currentTimeMillis()
+        notifyMentionedUsers(text, groupId, _activeGroup.value?.takeIf { it.id == groupId }?.let { g -> "in ${g.name}" } ?: "in a group", _activeGroup.value?.members)
         val msg = GroupMessage(
             messageId = messageId,
             groupId = groupId,
@@ -4563,7 +4598,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val groupRef = FirebaseFirestore.getInstance().collection("groups").document(groupId)
         groupRef.collection("messages").document(messageId).set(msg)
             .addOnSuccessListener {
-                val lastMsgText = if (voiceUrl != null) "🎙️ Voice message" else if (imageUrl != null) "📷 Image attachment" else text
+                val lastMsgText = if (voiceUrl != null) "Voice message" else if (imageUrl != null) "Photo" else text
                 groupRef.update("lastMessage", "${user.name}: $lastMsgText")
                 groupRef.get().addOnSuccessListener { groupDoc ->
                     val members = (groupDoc.get("members") as? List<*>)?.mapNotNull { it as? String }.orEmpty()
@@ -4577,6 +4612,173 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     fun deleteGroupMessage(groupId: String, messageId: String) {
         val groupRef = FirebaseFirestore.getInstance().collection("groups").document(groupId)
         groupRef.collection("messages").document(messageId).delete()
+    }
+
+
+    // ---------------------------------------------------------------------------------------
+    // Admin chat background gallery (Firestore `chatBackgrounds`, images in storage)
+    // ---------------------------------------------------------------------------------------
+    private fun listenChatBackgrounds() {
+        chatBackgroundsListener?.remove()
+        chatBackgroundsListener = FirebaseFirestore.getInstance().collection("chatBackgrounds")
+            .addSnapshotListener { snapshot, error ->
+                if (error != null || snapshot == null) return@addSnapshotListener
+                _chatBackgroundImages.value = snapshot.documents.mapNotNull { doc ->
+                    val url = doc.getString("url").orEmpty()
+                    if (!url.startsWith("https://")) null else ChatBackgroundImage(
+                        id = doc.id,
+                        name = doc.getString("name").orEmpty(),
+                        url = url,
+                        premium = doc.getBoolean("premium") == true,
+                        createdAt = doc.getLong("createdAt") ?: 0L
+                    )
+                }.sortedByDescending { it.createdAt }
+            }
+    }
+
+    private fun isAdminAccount(): Boolean =
+        FirebaseAuth.getInstance().currentUser?.email?.lowercase()?.trim()?.trimEnd('.') == "mr4425390@gmail.com"
+
+    fun addChatBackground(bytes: ByteArray, mimeType: String, name: String, premium: Boolean, onResult: (Boolean, String) -> Unit) {
+        if (!isAdminAccount()) return onResult(false, "Only the admin can add backgrounds")
+        val ext = when { mimeType.contains("png") -> "png"; mimeType.contains("webp") -> "webp"; else -> "jpg" }
+        uploadFileToSupabase(
+            bucket = "chat_images",
+            fileName = "chat_background_${System.currentTimeMillis()}.$ext",
+            fileBytes = bytes,
+            contentType = mimeType.ifBlank { "image/jpeg" },
+            onSuccess = { url ->
+                FirebaseFirestore.getInstance().collection("chatBackgrounds").add(
+                    mapOf(
+                        "name" to name.trim().take(60).ifBlank { "Background" },
+                        "url" to url,
+                        "premium" to premium,
+                        "createdAt" to System.currentTimeMillis(),
+                        "createdBy" to FirebaseAuth.getInstance().currentUser?.uid.orEmpty()
+                    )
+                ).addOnSuccessListener { onResult(true, "Background added") }
+                    .addOnFailureListener { onResult(false, it.localizedMessage ?: "Could not save background") }
+            },
+            onFailure = { onResult(false, it) }
+        )
+    }
+
+    fun deleteChatBackground(image: ChatBackgroundImage, onResult: (Boolean, String) -> Unit) {
+        if (!isAdminAccount()) return onResult(false, "Only the admin can delete backgrounds")
+        FirebaseFirestore.getInstance().collection("chatBackgrounds").document(image.id).delete()
+            .addOnSuccessListener {
+                viewModelScope.launch(Dispatchers.IO) { runCatching { deleteSupabaseObject(image.url) } }
+                onResult(true, "Background deleted")
+            }
+            .addOnFailureListener { onResult(false, it.localizedMessage ?: "Could not delete background") }
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // Custom sounds: admin default in `app_config/sounds`, downloaded quietly on each phone.
+    // ---------------------------------------------------------------------------------------
+    private fun listenGlobalSounds() {
+        soundConfigListener?.remove()
+        soundConfigListener = FirebaseFirestore.getInstance().collection("app_config").document("sounds")
+            .addSnapshotListener { doc, error ->
+                if (error != null) return@addSnapshotListener
+                val notificationUrl = doc?.getString("notificationUrl").orEmpty()
+                val typingUrl = doc?.getString("typingUrl").orEmpty()
+                _globalSoundUrls.value = mapOf(AppSoundStore.NOTIFICATION to notificationUrl, AppSoundStore.TYPING to typingUrl)
+                viewModelScope.launch {
+                    AppSoundStore.syncGlobal(getApplication(), AppSoundStore.NOTIFICATION, notificationUrl)
+                    AppSoundStore.syncGlobal(getApplication(), AppSoundStore.TYPING, typingUrl)
+                }
+            }
+    }
+
+    fun publishGlobalSound(kind: String, bytes: ByteArray, mimeType: String, onResult: (Boolean, String) -> Unit) {
+        if (!isAdminAccount()) return onResult(false, "Only the admin can change the default sound")
+        if (bytes.size > 2 * 1024 * 1024) return onResult(false, "Please use a sound smaller than 2 MB")
+        uploadFileToSupabase(
+            bucket = "chat_images",
+            fileName = "app_sound_${kind}_${System.currentTimeMillis()}.mp3",
+            fileBytes = bytes,
+            contentType = mimeType.ifBlank { "audio/mpeg" },
+            onSuccess = { url ->
+                val field = if (kind == AppSoundStore.TYPING) "typingUrl" else "notificationUrl"
+                val previous = _globalSoundUrls.value[kind].orEmpty()
+                FirebaseFirestore.getInstance().collection("app_config").document("sounds")
+                    .set(mapOf(field to url, "updatedAt" to System.currentTimeMillis()), SetOptions.merge())
+                    .addOnSuccessListener {
+                        if (previous.isNotBlank() && previous != url) viewModelScope.launch(Dispatchers.IO) { runCatching { deleteSupabaseObject(previous) } }
+                        onResult(true, "Default sound published. Phones update it in the background.")
+                    }
+                    .addOnFailureListener { onResult(false, it.localizedMessage ?: "Could not publish sound") }
+            },
+            onFailure = { onResult(false, it) }
+        )
+    }
+
+    fun clearGlobalSound(kind: String, onResult: (Boolean, String) -> Unit) {
+        if (!isAdminAccount()) return onResult(false, "Only the admin can change the default sound")
+        val field = if (kind == AppSoundStore.TYPING) "typingUrl" else "notificationUrl"
+        val previous = _globalSoundUrls.value[kind].orEmpty()
+        FirebaseFirestore.getInstance().collection("app_config").document("sounds")
+            .set(mapOf(field to "", "updatedAt" to System.currentTimeMillis()), SetOptions.merge())
+            .addOnSuccessListener {
+                if (previous.isNotBlank()) viewModelScope.launch(Dispatchers.IO) { runCatching { deleteSupabaseObject(previous) } }
+                onResult(true, "Built-in sound restored for everyone")
+            }
+            .addOnFailureListener { onResult(false, it.localizedMessage ?: "Could not reset sound") }
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // Profile viewers: short-lived RTDB inbox, saved on the owner's phone, then deleted.
+    // ---------------------------------------------------------------------------------------
+    fun recordProfileView(target: User) {
+        val me = FirebaseAuth.getInstance().currentUser?.uid ?: return
+        if (target.uid.isBlank() || target.uid == me) return
+        val app = getApplication<Application>()
+        ProfileViewerStore.load(app, me)
+        if (!ProfileViewerStore.shareVisits.value) return
+        if (!ProfileViewerStore.shouldRecordVisit(app, target.uid)) return
+        val profile = _currentUserState.value
+        val payload = mutableMapOf<String, Any>(
+            "viewerId" to me,
+            "timestamp" to ServerValue.TIMESTAMP
+        )
+        profile?.name?.takeIf { it.isNotBlank() }?.let { payload["viewerName"] = it.take(80) }
+        profile?.username?.takeIf { it.isNotBlank() }?.let { payload["viewerUsername"] = it.take(40) }
+        profile?.profileImageUrl?.takeIf { it.isNotBlank() && it.length <= 600 }?.let { payload["viewerImage"] = it }
+        runCatching {
+            getDatabaseInstance().getReference("profileViews").child(target.uid).child(me).setValue(payload)
+        }
+    }
+
+    private fun listenProfileViews(uid: String) {
+        val app = getApplication<Application>()
+        ProfileViewerStore.load(app, uid)
+        profileViewsListener?.let { listener -> profileViewsRef?.removeEventListener(listener) }
+        val ref = runCatching { getDatabaseInstance().getReference("profileViews").child(uid) }.getOrNull() ?: return
+        profileViewsRef = ref
+        profileViewsListener = ref.addChildEventListener(object : com.google.firebase.database.ChildEventListener {
+            override fun onChildAdded(snapshot: DataSnapshot, previousChildName: String?) = consume(snapshot)
+            override fun onChildChanged(snapshot: DataSnapshot, previousChildName: String?) = consume(snapshot)
+            override fun onChildRemoved(snapshot: DataSnapshot) {}
+            override fun onChildMoved(snapshot: DataSnapshot, previousChildName: String?) {}
+            override fun onCancelled(error: DatabaseError) {}
+            private fun consume(snapshot: DataSnapshot) {
+                val viewerId = snapshot.child("viewerId").getValue(String::class.java) ?: snapshot.key.orEmpty()
+                if (viewerId.isBlank() || viewerId == uid) { snapshot.ref.removeValue(); return }
+                val known = _usersState.value.firstOrNull { it.uid == viewerId }
+                ProfileViewerStore.merge(
+                    app, uid, ProfileViewer(
+                        viewerId = viewerId,
+                        name = snapshot.child("viewerName").getValue(String::class.java).orEmpty().ifBlank { known?.name.orEmpty() },
+                        username = snapshot.child("viewerUsername").getValue(String::class.java).orEmpty().ifBlank { known?.username.orEmpty() },
+                        imageUrl = snapshot.child("viewerImage").getValue(String::class.java).orEmpty().ifBlank { known?.profileImageUrl.orEmpty() },
+                        lastViewedAt = snapshot.child("timestamp").getValue(Long::class.java) ?: System.currentTimeMillis()
+                    )
+                )
+                // Saved locally; remove the server copy so the database keeps no history.
+                snapshot.ref.removeValue()
+            }
+        })
     }
 
     override fun onCleared() {
@@ -4597,6 +4799,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         activityNotificationListener?.remove()
         currentUserProfileListener?.remove()
         flagshipListener?.remove()
+        chatBackgroundsListener?.remove()
+        soundConfigListener?.remove()
+        profileViewsListener?.let { listener -> profileViewsRef?.removeEventListener(listener) }
         featureRequestListener?.remove()
         premiumRequestListener?.remove()
         friendRequestListener?.remove()
@@ -4635,3 +4840,9 @@ private fun isNetworkAvailable(context: Context): Boolean {
         true
     }
 }
+
+/** App themes that require Convo Premium plus the advanced-themes flag. */
+val PREMIUM_APP_THEMES = setOf(
+    "Royal Gold", "Cyber Lime", "Rose Quartz", "Liquid Aurora", "Glass Ocean", "Glass Rose",
+    "Obsidian Neon", "Neon Pulse", "Galaxy", "Diamond", "Sapphire"
+)

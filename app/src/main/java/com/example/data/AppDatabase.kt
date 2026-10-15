@@ -447,7 +447,8 @@ interface CacheDao {
     @Query("SELECT * FROM cached_messages WHERE chatId = :chatId ORDER BY timestamp ASC")
     fun getMessagesForChat(chatId: String): Flow<List<CachedMessage>>
 
-    @Query("SELECT DISTINCT chatId FROM cached_messages")
+    /** Conversation ids ordered by their most recent cached message (newest first). */
+    @Query("SELECT chatId FROM cached_messages GROUP BY chatId ORDER BY MAX(timestamp) DESC")
     fun getConversationChatIds(): Flow<List<String>>
 
     @Query("SELECT * FROM cached_messages ORDER BY timestamp ASC")

@@ -78,15 +78,16 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         val rawBody = remoteMessage.notification?.body ?: remoteMessage.data["body"] ?: "You received a new message"
         val privacy = PrivacyPreferences.load(this)
         val hideContent = AppLockManager.isEnabled(this) || privacy.hideNotificationContent
-        val title = if (hideContent) "Convo Chat" else rawTitle
+        val title = if (hideContent) "Convo Chat" else plainNotificationText(rawTitle).ifBlank { "Convo Chat" }
         val senderId = remoteMessage.data["senderId"] ?: ""
         // Presence probes are data-only and intentionally not user-visible. Both the
         // RTDB reachability lease and the Firestore dashboard acknowledgement update.
         if (notificationType == "presence_probe") return
-        val sentAt = remoteMessage.data["sentAt"]?.toLongOrNull() ?: System.currentTimeMillis()
-        val minutesLate = ((System.currentTimeMillis() - sentAt).coerceAtLeast(0L) / 60_000L)
-        val age = when { minutesLate < 1 -> "now"; minutesLate < 60 -> "$minutesLate min ago"; minutesLate < 1440 -> "${minutesLate / 60} hr ago"; else -> "${minutesLate / 1440} day ago" }
-        val body = if (hideContent) "New notification received — unlock Convo Chat to view" else if (notificationType == "message") "$rawBody • $age" else rawBody
+        val sentAt = (remoteMessage.data["sentAt"]?.toLongOrNull() ?: remoteMessage.sentTime.takeIf { it > 0L } ?: System.currentTimeMillis())
+            .coerceAtMost(System.currentTimeMillis())
+        // Text only: the timestamp is shown by Android via setWhen() and keeps updating
+        // ("now", "5m", "1h") instead of being frozen inside the message text.
+        val body = if (hideContent) "New notification. Unlock Convo Chat to view it." else plainNotificationText(rawBody).ifBlank { "New message" }
         val targetId = remoteMessage.data["targetId"] ?: ""
         if (notificationType == "message" && senderId.isNotBlank()) {
             FirebaseAuth.getInstance().currentUser?.uid?.let { receiverUid ->
@@ -102,7 +103,7 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         val muted = getSharedPreferences("firechat_prefs", Context.MODE_PRIVATE).getStringSet("muted_users", emptySet())?.contains(senderId) == true
         if (muted && notificationType == "message") return
         val senderProfileUrl = remoteMessage.data["senderProfileUrl"] ?: ""
-        val senderName = if (hideContent) "Convo Chat user" else remoteMessage.data["senderName"] ?: title
+        val senderName = if (hideContent) "Convo Chat user" else plainNotificationText(remoteMessage.data["senderName"] ?: title).ifBlank { title }
 
         if (notificationType == "call_cancelled") {
             if (targetId.isNotBlank()) {
@@ -128,7 +129,7 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
                 videoCall = remoteMessage.data["videoCall"].toBoolean()
             )
         } else {
-            sendNotification(title, body, senderId, notificationType, senderProfileUrl, targetId)
+            sendNotification(title, body, senderId, notificationType, senderProfileUrl, targetId, sentAt, senderName)
         }
     }
 
@@ -298,7 +299,9 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         senderId: String,
         notificationType: String,
         senderProfileUrl: String,
-        targetId: String
+        targetId: String,
+        sentAt: Long = System.currentTimeMillis(),
+        senderName: String = title
     ) {
         val intent = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
@@ -314,54 +317,96 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
+        // A user-picked (or admin default) MP3 is played by the app itself through a quiet
+        // channel, because Android channel sounds cannot be changed after creation.
+        val customSound = notificationType == "message" && com.example.ui.AppSoundStore.activeFile(this, com.example.ui.AppSoundStore.NOTIFICATION) != null
         val (channelId, channelName, pattern, category) = when (notificationType) {
-            "message" -> NotificationStyle("convo_messages_v1", "Messages", longArrayOf(0, 120, 70, 150), NotificationCompat.CATEGORY_MESSAGE)
+            "message" -> if (customSound) NotificationStyle("convo_messages_custom_v1", "Messages (custom sound)", longArrayOf(0, 120, 70, 150), NotificationCompat.CATEGORY_MESSAGE)
+                else NotificationStyle("convo_messages_v1", "Messages", longArrayOf(0, 120, 70, 150), NotificationCompat.CATEGORY_MESSAGE)
             "friend_request", "friend_accepted", "message_request", "message_accepted" ->
                 NotificationStyle("convo_requests_v1", "Requests", longArrayOf(0, 220, 100, 220), NotificationCompat.CATEGORY_SOCIAL)
             else -> NotificationStyle("convo_activity_v1", "Activity", longArrayOf(0, 100), NotificationCompat.CATEGORY_SOCIAL)
         }
 
-        val notificationId = System.currentTimeMillis().toInt()
+        val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val isMessage = notificationType == "message" && senderId.isNotBlank()
+        // One notification per conversation; new messages are appended to it.
+        val notificationId = if (isMessage) ("chat_" + senderId).hashCode() else System.currentTimeMillis().toInt()
         val messageSound = Uri.parse("android.resource://$packageName/${R.raw.mixkit_confirmation_tone_2867}")
+        val avatar = loadBitmap(senderProfileUrl)
+        val accent = 0xFF7C5CFC.toInt()
+
         val notificationBuilder = NotificationCompat.Builder(this, channelId)
             .setSmallIcon(android.R.drawable.stat_notify_chat)
-            .setContentTitle(title)
-            .setContentText(messageBody)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(messageBody))
+            .setColor(accent)
+            .setWhen(sentAt)
+            .setShowWhen(true)
             .setAutoCancel(true)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setCategory(category)
             .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
             .setVibrate(pattern)
-            .setNumber(1)
             .setContentIntent(pendingIntent)
-        if (notificationType == "message") notificationBuilder.setSound(messageSound)
-        else notificationBuilder.setDefaults(NotificationCompat.DEFAULT_SOUND)
+            .setOnlyAlertOnce(false)
 
-        if (notificationType == "message" && senderId.isNotBlank()) {
+        if (isMessage) {
+            val me = androidx.core.app.Person.Builder().setName("You").build()
+            val sender = androidx.core.app.Person.Builder()
+                .setName(senderName.ifBlank { title })
+                .setKey(senderId)
+                .apply { avatar?.let { setIcon(androidx.core.graphics.drawable.IconCompat.createWithBitmap(circleBitmap(it))) } }
+                .build()
+            val previous = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                notificationManager.activeNotifications.firstOrNull { it.id == notificationId }?.notification?.let {
+                    NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(it)
+                }
+            } else null
+            val style = NotificationCompat.MessagingStyle(me)
+            previous?.messages?.takeLast(6)?.forEach { style.addMessage(it) }
+            style.addMessage(NotificationCompat.MessagingStyle.Message(messageBody, sentAt, sender))
+            val count = style.messages.size
+            notificationBuilder
+                .setStyle(style)
+                .setContentTitle(title)
+                .setContentText(messageBody)
+                .setSubText(if (count > 1) "$count new messages" else null)
+                .setNumber(count)
+                .setGroup("convo_messages")
+        } else {
+            notificationBuilder
+                .setContentTitle(title)
+                .setContentText(messageBody)
+                .setStyle(NotificationCompat.BigTextStyle().bigText(messageBody))
+                .setNumber(1)
+        }
+        if (notificationType == "message") {
+            if (customSound) notificationBuilder.setSilent(false).setSound(null) else notificationBuilder.setSound(messageSound)
+        } else notificationBuilder.setDefaults(NotificationCompat.DEFAULT_SOUND)
+
+        if (isMessage) {
             val replyInput = RemoteInput.Builder(NotificationReplyReceiver.REPLY_KEY).setLabel("Reply to $title").build()
             val replyIntent = Intent(this, NotificationReplyReceiver::class.java).apply {
                 putExtra("senderId", senderId); putExtra("notificationId", notificationId)
             }
             val replyPending = PendingIntent.getBroadcast(this, notificationId, replyIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE)
-            notificationBuilder.addAction(NotificationCompat.Action.Builder(android.R.drawable.ic_menu_send, "Reply", replyPending).addRemoteInput(replyInput).setAllowGeneratedReplies(true).build())
+            notificationBuilder.addAction(NotificationCompat.Action.Builder(android.R.drawable.ic_menu_send, "Reply", replyPending).addRemoteInput(replyInput).setAllowGeneratedReplies(true).setSemanticAction(NotificationCompat.Action.SEMANTIC_ACTION_REPLY).build())
         }
 
-        loadBitmap(senderProfileUrl)?.let { notificationBuilder.setLargeIcon(it) }
-
-        val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        avatar?.let { notificationBuilder.setLargeIcon(circleBitmap(it)) }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(channelId, "Convo Chat • $channelName", NotificationManager.IMPORTANCE_HIGH).apply {
                 description = when (channelId) {
                     "convo_messages_v1" -> "Direct and group chat messages"
+                    "convo_messages_custom_v1" -> "Chat messages using your custom notification sound"
                     "convo_requests_v1" -> "Friend and message requests"
                     else -> "Reactions, comments, tags and story activity"
                 }
-                if (channelId == "convo_messages_v1") {
-                    setSound(messageSound, AudioAttributes.Builder()
+                when (channelId) {
+                    "convo_messages_v1" -> setSound(messageSound, AudioAttributes.Builder()
                         .setUsage(AudioAttributes.USAGE_NOTIFICATION)
                         .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build())
+                    "convo_messages_custom_v1" -> setSound(null, null)
                 }
                 enableVibration(true)
                 vibrationPattern = pattern
@@ -373,6 +418,20 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         }
 
         notificationManager.notify(notificationId, notificationBuilder.build())
+        if (customSound) com.example.ui.AppSoundStore.playCustom(this, com.example.ui.AppSoundStore.NOTIFICATION)
+    }
+
+    private fun circleBitmap(source: android.graphics.Bitmap): android.graphics.Bitmap {
+        val size = minOf(source.width, source.height).coerceAtLeast(1)
+        val output = android.graphics.Bitmap.createBitmap(size, size, android.graphics.Bitmap.Config.ARGB_8888)
+        val canvas = android.graphics.Canvas(output)
+        val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
+        canvas.drawCircle(size / 2f, size / 2f, size / 2f, paint)
+        paint.xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.SRC_IN)
+        val left = (source.width - size) / 2f
+        val top = (source.height - size) / 2f
+        canvas.drawBitmap(source, -left, -top, paint)
+        return output
     }
 
     private fun maybeSendAwayReply(receiverUid: String, senderUid: String, chatId: String) {
@@ -452,3 +511,9 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         }
     }
 }
+
+private val notificationEmojiRegex = Regex("[\\x{1F000}-\\x{1FAFF}\\x{2600}-\\x{27BF}\\x{2B00}-\\x{2BFF}\\x{FE0F}\\x{200D}\\x{20E3}\\x{E0020}-\\x{E007F}]")
+
+/** Notifications are text only: strips emoji and tidies whitespace. */
+internal fun plainNotificationText(value: String): String =
+    value.replace(notificationEmojiRegex, "").replace(Regex("[ \\t]{2,}"), " ").trim()

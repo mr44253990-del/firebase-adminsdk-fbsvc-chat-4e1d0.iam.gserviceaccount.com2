@@ -1,5 +1,9 @@
 package com.example.ui
 
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.layout.WindowInsets
 import android.net.Uri
 import android.os.Build
 import android.view.Gravity
@@ -98,7 +102,17 @@ fun TikTokBrowserScreen(onClose: () -> Unit) {
         }
     }
 
-    Column(Modifier.fillMaxSize()) {
+    // HomeScreen hides its bars on this tab and uses zero content insets, so this screen
+    // must keep TikTok's own bottom sheets ("Open app / Not now") above the system
+    // navigation bar. Full-screen video still uses the whole display.
+    val safeInsets = if (fullScreenVideoView == null) {
+        Modifier.windowInsetsPadding(WindowInsets.statusBars)
+    } else Modifier
+    val bottomInsets = if (fullScreenVideoView == null) {
+        Modifier.windowInsetsPadding(WindowInsets.navigationBars)
+    } else Modifier
+
+    Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface).then(safeInsets)) {
         if (fullScreenVideoView == null) Surface(color = MaterialTheme.colorScheme.surface, tonalElevation = 2.dp) {
             Column {
                 Row(
@@ -136,7 +150,7 @@ fun TikTokBrowserScreen(onClose: () -> Unit) {
             }
         }
 
-        Box(Modifier.weight(1f).fillMaxWidth()) {
+        Box(Modifier.weight(1f).fillMaxWidth().then(bottomInsets)) {
             AndroidView(
                 modifier = Modifier.fillMaxSize(),
                 factory = { ctx ->
@@ -157,6 +171,13 @@ fun TikTokBrowserScreen(onClose: () -> Unit) {
                         settings.setSupportMultipleWindows(false)
                         settings.useWideViewPort = true
                         settings.loadWithOverviewMode = true
+                        settings.textZoom = 100
+                        settings.setSupportZoom(false)
+                        // Present as mobile Chrome: TikTok shows extra "open the app" walls to
+                        // user agents carrying the WebView "; wv" marker.
+                        settings.userAgentString = settings.userAgentString
+                            .replace("; wv)", ")")
+                            .replace(Regex("""Version/\d+(\.\d+)*\s"""), "")
                         settings.cacheMode = WebSettings.LOAD_DEFAULT
                         CookieManager.getInstance().setAcceptCookie(true)
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
@@ -205,6 +226,13 @@ fun TikTokBrowserScreen(onClose: () -> Unit) {
                                 progress = 100
                                 syncNavigation(view)
                                 if (isTikTokHost(view?.url)) view?.evaluateJavascript(NOT_NOW_PROMPT_SCRIPT, null)
+                            }
+
+                            // TikTok is a single-page app: prompts also appear after in-app navigation.
+                            override fun doUpdateVisitedHistory(view: WebView?, url: String?, isReload: Boolean) {
+                                super.doUpdateVisitedHistory(view, url, isReload)
+                                syncNavigation(view)
+                                if (isTikTokHost(url)) view?.evaluateJavascript(NOT_NOW_PROMPT_SCRIPT, null)
                             }
 
                             @Suppress("DEPRECATION")
@@ -274,23 +302,50 @@ private fun isTikTokHost(url: String?): Boolean {
 
 private val NOT_NOW_PROMPT_SCRIPT = """
 (function(){
-  function clickNotNow(){
+  // Ensure a real mobile viewport so TikTok sheets fit the visible screen.
+  try {
+    var vp = document.querySelector('meta[name="viewport"]');
+    if (!vp) { vp = document.createElement('meta'); vp.name = 'viewport'; (document.head || document.documentElement).appendChild(vp); }
+    if ((vp.content || '').indexOf('width=device-width') < 0) vp.content = 'width=device-width, initial-scale=1, viewport-fit=cover';
+  } catch (_) {}
+  if (window.__convoNotNowInstalled) { window.__convoNotNowScan && window.__convoNotNowScan(); return; }
+  window.__convoNotNowInstalled = true;
+  var LABELS = ['not now', 'maybe later', 'not right now', 'continue in browser', 'stay on web', 'use the website'];
+  function norm(t){ return (t || '').replace(/\s+/g, ' ').trim().toLowerCase(); }
+  function visible(n){ try { var r = n.getBoundingClientRect(); return r.width > 0 && r.height > 0; } catch (_) { return false; } }
+  function clickable(n){
+    var c = n;
+    for (var i = 0; c && i < 5; i++, c = c.parentElement) {
+      var tag = (c.tagName || '').toLowerCase();
+      if (tag === 'button' || tag === 'a' || c.getAttribute('role') === 'button' || c.onclick || c.tabIndex >= 0) return c;
+    }
+    return n;
+  }
+  function scan(){
     try {
-      var candidates = Array.from(document.querySelectorAll('button,[role="button"],a'));
-      var target = candidates.find(function(node){
-        var text = (node.innerText || node.textContent || node.getAttribute('aria-label') || '')
-          .replace(/\s+/g, ' ').trim().toLowerCase();
-        return text === 'not now';
-      });
-      if (target && target.getClientRects().length) { target.click(); return true; }
+      var nodes = document.querySelectorAll('button,[role="button"],a,div,span,p');
+      for (var i = 0; i < nodes.length; i++) {
+        var n = nodes[i];
+        if (n.children.length > 2) continue;
+        var text = norm(n.innerText || n.textContent || n.getAttribute('aria-label'));
+        if (LABELS.indexOf(text) >= 0 && visible(n)) {
+          var target = clickable(n);
+          // Never click links that leave the site or launch the app.
+          var href = (target.getAttribute && target.getAttribute('href')) || '';
+          if (/^(intent|snssdk|tiktok|market):/i.test(href)) continue;
+          target.click();
+          return true;
+        }
+      }
     } catch (_) {}
     return false;
   }
+  window.__convoNotNowScan = scan;
+  var pending = null;
+  function schedule(){ if (pending) return; pending = setTimeout(function(){ pending = null; scan(); }, 250); }
+  try { new MutationObserver(schedule).observe(document.documentElement, { childList: true, subtree: true }); } catch (_) {}
   var tries = 0;
-  var timer = setInterval(function(){
-    tries++;
-    if (clickNotNow() || tries >= 24) clearInterval(timer);
-  }, 500);
+  var timer = setInterval(function(){ tries++; scan(); if (tries >= 40) clearInterval(timer); }, 500);
 })();
 """.trimIndent()
 

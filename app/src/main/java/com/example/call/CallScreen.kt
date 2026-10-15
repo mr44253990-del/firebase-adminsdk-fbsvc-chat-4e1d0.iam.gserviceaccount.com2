@@ -1,5 +1,6 @@
 package com.example.call
 
+import com.example.ui.ThemeTextureLayer
 import android.Manifest
 import android.app.Activity
 import android.content.Context
@@ -182,6 +183,7 @@ fun CallScreen(
         Modifier.fillMaxSize().background(Brush.verticalGradient(callPalette.background)),
         contentAlignment = Alignment.Center
     ) {
+        ThemeTextureLayer(callPalette.texture, callPalette.accent, 1.3f)
         if (remoteImage.isNotBlank() && !effectiveVideo) {
             AsyncImage(remoteImage, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize().blur(70.dp))
             Box(Modifier.fillMaxSize().background(Brush.verticalGradient(callPalette.background.map { it.copy(alpha = .72f) })))

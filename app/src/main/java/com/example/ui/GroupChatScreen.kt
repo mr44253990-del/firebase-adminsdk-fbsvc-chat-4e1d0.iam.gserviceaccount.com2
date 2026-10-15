@@ -40,6 +40,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.graphicsLayer
+import kotlinx.coroutines.launch
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
@@ -72,7 +74,8 @@ fun GroupChatScreen(
     pendingCallRoomId: String? = null,
     pendingCallVideo: Boolean = false,
     onJoinPendingCall: (String, Boolean) -> Unit = { _, _ -> },
-    onDismissPendingCall: () -> Unit = {}
+    onDismissPendingCall: () -> Unit = {},
+    onOpenUserProfile: (com.example.data.User) -> Unit = {}
 ) {
     val context = LocalContext.current
     val currentUserId = FirebaseAuth.getInstance().currentUser?.uid ?: ""
@@ -133,6 +136,17 @@ fun GroupChatScreen(
     var mediaRecorder by remember { mutableStateOf<MediaRecorder?>(null) }
     var voiceFile by remember { mutableStateOf<File?>(null) }
     var recordStartTime by remember { mutableStateOf(0L) }
+    var voiceCancelArmed by remember { mutableStateOf(false) }
+    val groupUiScope = rememberCoroutineScope()
+    LaunchedEffect(Unit) { ChatPreferences.load(context) }
+    val quickReaction by ChatPreferences.quickReaction.collectAsState()
+    val chatTextScale by ChatPreferences.textScale.collectAsState()
+    val groupMemberUsers = remember(allUsers, group.members) { allUsers.filter { it.uid in group.members } }
+    val openMention: (String) -> Unit = { handle ->
+        val target = Mentions.findUser(handle, allUsers)
+        if (target != null) onOpenUserProfile(target)
+        else Toast.makeText(context, "@$handle was not found", Toast.LENGTH_SHORT).show()
+    }
 
     var audioPermissionGranted by remember {
         mutableStateOf(
@@ -560,8 +574,10 @@ fun GroupChatScreen(
                         } else {
                             val isSentByMe = msg.senderId == currentUserId
                             GroupMessageBubbleItem(
-                                msg = msg, 
+                                msg = msg,
                                 isSentByMe = isSentByMe,
+                                textScale = chatTextScale,
+                                onMentionClick = openMention,
                                 onDeleteSelect = {
                                     viewModel.deleteGroupMessage(group.id, msg.messageId)
                                 },
@@ -592,9 +608,10 @@ fun GroupChatScreen(
                 tonalElevation = 8.dp,
                 modifier = Modifier
                     .fillMaxWidth()
-                    // Apply the IME inset only to the composer. Keeping the message column at its
-                    // stable height prevents the entire chat surface from jumping when the keyboard opens.
-                    .windowInsetsPadding(WindowInsets.ime.only(WindowInsetsSides.Bottom))
+                    // Keep the composer above the gesture/navigation bar. The keyboard is handled by
+                    // the window itself (same as direct chats); adding an extra IME inset here made
+                    // the box jump far above the keyboard while typing.
+                    .windowInsetsPadding(WindowInsets.navigationBars.only(WindowInsetsSides.Bottom))
                     .glassmorphic(
                         isDark = isDark,
                         shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
@@ -638,102 +655,102 @@ fun GroupChatScreen(
                     }
                 }
 
+                Column {
+                val mentionQuery = remember(messageText) { Mentions.activeQuery(messageText) }
+                val mentionSuggestions = remember(mentionQuery, groupMemberUsers) {
+                    mentionQuery?.let { Mentions.suggestions(it, groupMemberUsers, currentUserId) }.orEmpty()
+                }
+                MentionSuggestionBar(mentionSuggestions, onPick = { user -> messageText = Mentions.complete(messageText, user) })
+                val hasText = messageText.isNotBlank()
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                        .padding(horizontal = 8.dp, vertical = 9.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    IconButton(
-                        onClick = { photoPickerLauncher.launch("image/*") },
-                        modifier = Modifier
-                            .size(42.dp)
-                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f), CircleShape)
-                    ) {
-                        Icon(
-                            Icons.Default.AddPhotoAlternate,
-                            contentDescription = "Attach image",
-                            tint = MaterialTheme.colorScheme.primary
-                        )
+                    AnimatedVisibility(visible = !isRecording) {
+                        IconButton(onClick = { photoPickerLauncher.launch("image/*") }) {
+                            Icon(Icons.Default.AddPhotoAlternate, contentDescription = "Attach image", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(26.dp))
+                        }
                     }
-
-                    Spacer(modifier = Modifier.width(8.dp))
-
-                    OutlinedTextField(
-                        value = messageText,
-                        onValueChange = { messageText = it },
-                        placeholder = { Text("Write a message to group...", color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)) },
-                        modifier = Modifier
-                            .weight(1f)
-                            .testTag("group_message_input"),
-                        shape = RoundedCornerShape(28.dp),
-                        maxLines = 4,
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedTextColor = MaterialTheme.colorScheme.onSurface,
-                            unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
-                            focusedBorderColor = MaterialTheme.colorScheme.primary,
-                            unfocusedBorderColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f),
-                            focusedContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.5f),
-                            unfocusedContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.3f)
-                        )
-                    )
-
-                    Spacer(modifier = Modifier.width(8.dp))
-
-                    if (messageText.isBlank()) {
-                        // Hold to record, release to send. A canceled gesture discards the clip.
-                        Box(
-                            modifier = Modifier
-                                .size(44.dp)
-                                .clip(CircleShape)
-                                .background(
-                                    if (isRecording) MaterialTheme.colorScheme.error.copy(alpha = 0.18f)
-                                    else MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
-                                )
-                                .pointerInput(Unit) {
-                                    detectTapGestures(
-                                        onPress = {
-                                            val releasedNormally = runCatching { tryAwaitRelease() }.getOrDefault(false)
-                                            if (latestIsRecording.value) {
-                                                if (releasedNormally) latestStopAndSendVoice.value() else latestCancelRecording.value()
-                                            }
-                                        },
-                                        onLongPress = {
-                                            if (latestAudioPermissionGranted.value && !latestIsRecording.value) {
-                                                latestStartRecording.value()
-                                            }
-                                        }
-                                    )
-                                },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = if (isRecording) Icons.Default.FiberManualRecord else Icons.Default.Mic,
-                                contentDescription = if (isRecording) "Release to send voice message" else "Hold to record voice message",
-                                tint = if (isRecording) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+                    AnimatedVisibility(visible = !hasText || isRecording) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            HoldToRecordButton(
+                                isRecording = isRecording,
+                                permissionGranted = audioPermissionGranted,
+                                onRequestPermission = { permissionLauncher.launch(Manifest.permission.RECORD_AUDIO) },
+                                onStart = { if (!latestIsRecording.value) latestStartRecording.value() },
+                                onSend = { if (latestIsRecording.value) latestStopAndSendVoice.value() },
+                                onCancel = { if (latestIsRecording.value) latestCancelRecording.value() },
+                                onHint = { Toast.makeText(context, "Hold to record, release to send", Toast.LENGTH_SHORT).show() },
+                                onDragChange = { _, armed -> voiceCancelArmed = armed }
                             )
-                        }
-                    } else {
-                        // Send text message Button
-                        IconButton(
-                            onClick = {
-                                if (messageText.isNotBlank()) {
-                                    viewModel.sendGroupMessage(
-                                        groupId = group.id,
-                                        text = messageText,
-                                        replyTo = replyingToGroupMessage
-                                    )
-                                    replyingToGroupMessage = null
-                                    messageText = ""
-                                }
-                            },
-                            modifier = Modifier
-                                .size(44.dp)
-                                .background(MaterialTheme.colorScheme.primary, CircleShape)
-                        ) {
-                            Icon(Icons.Default.Send, contentDescription = "Send", tint = MaterialTheme.colorScheme.onPrimary)
+                            Spacer(Modifier.width(6.dp))
                         }
                     }
+
+                    if (isRecording) {
+                        VoiceRecordingPill(startedAtMillis = recordStartTime, cancelArmed = voiceCancelArmed, modifier = Modifier.weight(1f))
+                    } else {
+                        OutlinedTextField(
+                            value = messageText,
+                            onValueChange = { messageText = it },
+                            placeholder = { Text("Message the group", color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)) },
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("group_message_input"),
+                            shape = RoundedCornerShape(26.dp),
+                            maxLines = 5,
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                                unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+                                focusedBorderColor = MaterialTheme.colorScheme.primary,
+                                unfocusedBorderColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f),
+                                focusedContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.6f),
+                                unfocusedContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.42f)
+                            )
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        if (hasText) {
+                            IconButton(
+                                onClick = {
+                                    if (messageText.isNotBlank()) {
+                                        viewModel.sendGroupMessage(
+                                            groupId = group.id,
+                                            text = messageText,
+                                            replyTo = replyingToGroupMessage
+                                        )
+                                        replyingToGroupMessage = null
+                                        messageText = ""
+                                    }
+                                },
+                                modifier = Modifier
+                                    .size(46.dp)
+                                    .background(MaterialTheme.colorScheme.primary, CircleShape)
+                            ) {
+                                Icon(Icons.Default.Send, contentDescription = "Send", tint = MaterialTheme.colorScheme.onPrimary)
+                            }
+                        } else {
+                            val reactionScale = remember { androidx.compose.animation.core.Animatable(1f) }
+                            Box(
+                                Modifier
+                                    .size(46.dp)
+                                    .graphicsLayer { scaleX = reactionScale.value; scaleY = reactionScale.value }
+                                    .clip(CircleShape)
+                                    .clickable {
+                                        viewModel.sendGroupMessage(groupId = group.id, text = quickReaction, replyTo = replyingToGroupMessage)
+                                        replyingToGroupMessage = null
+                                        groupUiScope.launch {
+                                            reactionScale.animateTo(1.35f, androidx.compose.animation.core.tween(110))
+                                            reactionScale.animateTo(1f, androidx.compose.animation.core.spring(dampingRatio = .4f))
+                                        }
+                                    }
+                                    .testTag("group_quick_reaction_button"),
+                                contentAlignment = Alignment.Center
+                            ) { Text(quickReaction, fontSize = 27.sp) }
+                        }
+                    }
+                }
                 }
             }
         }
@@ -849,7 +866,9 @@ fun GroupMessageBubbleItem(
     isSentByMe: Boolean,
     onDeleteSelect: () -> Unit,
     onReplySelect: (GroupMessage) -> Unit = {},
-    onTranslate: (GroupMessage) -> Unit = {}
+    onTranslate: (GroupMessage) -> Unit = {},
+    textScale: Float = 1f,
+    onMentionClick: (String) -> Unit = {}
 ) {
     var showMenu by remember { mutableStateOf(false) }
     var dragOffset by remember(msg.messageId) { mutableFloatStateOf(0f) }
@@ -991,15 +1010,15 @@ fun GroupMessageBubbleItem(
                     }
 
                     if (msg.text.isNotBlank()) {
-                        Text(
-                            text = msg.text,
-                            color = textColor,
-                            fontSize = 14.sp
-                        )
-                        val urlRegex = remember { Regex("https?://[^\\s]+", RegexOption.IGNORE_CASE) }
-                        val detectedUrl = remember(msg.text) { urlRegex.find(msg.text)?.value?.trimEnd('.', ',', '!', '?', ')', ']') }
-                        if (!detectedUrl.isNullOrBlank()) {
-                            GroupLinkPreviewCard(url = detectedUrl, isSentByMe = isSentByMe)
+                        if (isEmojiOnlyMessage(msg.text)) {
+                            Text(msg.text, fontSize = (34 * textScale).sp, lineHeight = (40 * textScale).sp)
+                        } else {
+                            RichMessageText(
+                                text = msg.text,
+                                color = textColor,
+                                onMentionClick = onMentionClick,
+                                style = MaterialTheme.typography.bodyMedium.copy(fontSize = (14 * textScale).sp, lineHeight = (20 * textScale).sp)
+                            )
                         }
                     }
 
@@ -1103,7 +1122,7 @@ fun GroupAudioPlayerItem(voiceUrl: String, durationSec: Int) {
 
         Column {
             Text(
-                text = "🎙️ Voice Note",
+                text = "Voice message",
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onSurface

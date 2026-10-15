@@ -1,5 +1,6 @@
 package com.example.call
 
+import com.example.ui.drawThemeTexture
 import android.Manifest
 import android.app.Activity
 import android.content.Context
@@ -28,6 +29,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -274,7 +276,7 @@ fun GroupCallScreen(
             }
         }
     ) { padding ->
-        Column(Modifier.fillMaxSize().background(Brush.verticalGradient(callPalette.background)).padding(padding).padding(8.dp)) {
+        Column(Modifier.fillMaxSize().background(Brush.verticalGradient(callPalette.background)).drawBehind { drawThemeTexture(callPalette.texture, callPalette.accent, 1.2f) }.padding(padding).padding(8.dp)) {
             if (!joinRequested) {
                 Card(
                     modifier = Modifier.fillMaxWidth().padding(12.dp),

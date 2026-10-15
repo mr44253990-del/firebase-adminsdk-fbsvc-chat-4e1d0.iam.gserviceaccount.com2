@@ -67,7 +67,14 @@ fun UserProfileScreen(
     var showFeatureSuggestion by remember { mutableStateOf(false) }
     var showProfileMenu by remember { mutableStateOf(false) }
     val profileLink = remember(liveUser.uid) { "https://solitary-hill-dcdc.mr44253990.workers.dev/profile?uid=${Uri.encode(liveUser.uid)}" }
-    val profileQr = remember(profileLink) { runCatching { createQrBitmap(profileLink, 640) }.getOrNull() }
+    // The QR is created only after the owner taps "Generate QR".
+    var qrRequested by remember(liveUser.uid) { mutableStateOf(false) }
+    val profileQr = remember(profileLink, qrRequested) { if (qrRequested) runCatching { createQrBitmap(profileLink, 640) }.getOrNull() else null }
+    val profileViewers by ProfileViewerStore.viewers.collectAsState()
+    LaunchedEffect(liveUser.uid, currentUser?.uid) {
+        val me = currentUser?.uid
+        if (me != null && liveUser.uid != me) viewModel.recordProfileView(liveUser)
+    }
     val profileMotion = rememberInfiniteTransition(label = "profile_preview_motion")
     val previewFloat by profileMotion.animateFloat(
         initialValue = -3f,
@@ -244,7 +251,7 @@ fun UserProfileScreen(
                 }
             }
 
-            item(key = "profile_qr") {
+            if (isMe) item(key = "profile_qr") {
                 Card(Modifier.fillMaxWidth().padding(horizontal = 16.dp), shape = RoundedCornerShape(26.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .52f))) {
                     Column(Modifier.fillMaxWidth().padding(18.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -252,15 +259,30 @@ fun UserProfileScreen(
                             Spacer(Modifier.width(8.dp))
                             Column(Modifier.weight(1f)) {
                                 Text("Profile QR", fontWeight = FontWeight.ExtraBold)
-                                Text("Scan or share this profile", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(if (qrRequested) "Scan or share this profile" else "Hidden until you generate it", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
+                            if (qrRequested) TextButton(onClick = { qrRequested = false }) { Text("Hide") }
+                            else FilledTonalButton(onClick = { qrRequested = true }) { Text("Generate QR") }
                         }
-                        if (isMe) {
+                        if (qrRequested) {
                             profileQr?.let { bitmap ->
                                 Image(bitmap.asImageBitmap(), "${liveUser.name} profile QR code", Modifier.size(190.dp).clip(RoundedCornerShape(18.dp)).background(Color.White).padding(10.dp))
                             } ?: Text("QR preview unavailable", color = MaterialTheme.colorScheme.error)
-                        } else {
-                            Text("QR codes are available only for your own profile.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
+                        }
+                    }
+                }
+            }
+
+            if (isMe) item(key = "profile_viewers_summary") {
+                val weekAgo = remember { System.currentTimeMillis() - 7L * 24 * 60 * 60 * 1000 }
+                val weekCount = profileViewers.count { it.lastViewedAt >= weekAgo }
+                Card(Modifier.fillMaxWidth().padding(horizontal = 16.dp), shape = RoundedCornerShape(26.dp)) {
+                    Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Outlined.Visibility, null, tint = Color(0xFFD18B12))
+                        Spacer(Modifier.width(10.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("$weekCount profile ${if (weekCount == 1) "view" else "views"} this week", fontWeight = FontWeight.ExtraBold)
+                            Text("See who visited in Settings, Profile viewers (Premium)", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                 }

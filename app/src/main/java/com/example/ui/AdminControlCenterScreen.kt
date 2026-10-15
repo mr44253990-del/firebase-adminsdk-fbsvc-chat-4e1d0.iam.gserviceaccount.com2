@@ -77,6 +77,8 @@ fun AdminControlCenterScreen(
     val reports by viewModel.adminReports.collectAsState()
     val premiumRequests by viewModel.premiumRequests.collectAsState()
     val featureRequests by viewModel.featureRequests.collectAsState()
+    val chatBackgroundImages by viewModel.chatBackgroundImages.collectAsState()
+    val globalSoundUrls by viewModel.globalSoundUrls.collectAsState()
 
     var selectedPage by rememberSaveable { mutableStateOf("dashboard") }
     BackHandler(enabled = selectedPage != "dashboard") { selectedPage = "dashboard" }
@@ -192,6 +194,7 @@ fun AdminControlCenterScreen(
         AdminMenuEntry("premium_requests", "Payment approvals", "Approve or reject Premium requests", Icons.Outlined.Payments, Color(0xFFBD8B24), premiumRequests.size.takeIf { it > 0 }?.toString().orEmpty()),
         AdminMenuEntry("premium_access", "Gifts & access", "Grant Premium or revoke access", Icons.Outlined.CardGiftcard, Color(0xFFCB5C90)),
         AdminMenuEntry("presence", "Presence / 5-min probe", "Cloudflare Worker + Cron", Icons.Outlined.Groups, Color(0xFF358B9A)),
+        AdminMenuEntry("chat_media", "Chat backgrounds & sounds", "Photo backgrounds and default app sounds", Icons.Outlined.Wallpaper, Color(0xFF8B62D9), chatBackgroundImages.size.takeIf { it > 0 }?.toString().orEmpty()),
         AdminMenuEntry("reels", "Reels & TikTok", "Choose the Reels experience", Icons.Outlined.SmartDisplay, Color(0xFF1B9A8B)),
         AdminMenuEntry("storage", "Storage routing", "Supabase buckets and upload tests", Icons.Outlined.CloudUpload, Color(0xFF5386CA)),
         AdminMenuEntry("gateway", "Push / FCM gateway", "Chat, call and diagnostic push", Icons.Outlined.SendToMobile, Color(0xFF4E78B8)),
@@ -677,6 +680,112 @@ fun AdminControlCenterScreen(
                             presenceDashboard.nextCursor?.let { next ->
                                 OutlinedButton(onClick = { viewModel.loadPresenceUsers(presenceQuery, next) }, enabled = !presenceDashboard.checking, modifier = Modifier.fillMaxWidth()) { Text("Load more users") }
                             }
+                        }
+                    }
+                    "chat_media" -> {
+                        var newBackgroundName by remember { mutableStateOf("") }
+                        var newBackgroundPremium by remember { mutableStateOf(false) }
+                        var mediaBusy by remember { mutableStateOf(false) }
+                        var pendingDelete by remember { mutableStateOf<ChatBackgroundImage?>(null) }
+                        var pendingSoundKind by remember { mutableStateOf<String?>(null) }
+                        fun report(ok: Boolean, message: String) {
+                            scope.launch(Dispatchers.Main) {
+                                mediaBusy = false
+                                Toast.makeText(context, message, if (ok) Toast.LENGTH_SHORT else Toast.LENGTH_LONG).show()
+                            }
+                        }
+                        val backgroundPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+                            if (uri != null) {
+                                mediaBusy = true
+                                scope.launch {
+                                    val mime = context.contentResolver.getType(uri) ?: "image/jpeg"
+                                    val bytes = withContext(Dispatchers.IO) { runCatching { context.contentResolver.openInputStream(uri)?.use { it.readBytes() } }.getOrNull() }
+                                    when {
+                                        bytes == null -> report(false, "Could not read that image")
+                                        bytes.size > 8 * 1024 * 1024 -> report(false, "Please use an image under 8 MB")
+                                        else -> viewModel.addChatBackground(bytes, mime, newBackgroundName.ifBlank { "Background ${chatBackgroundImages.size + 1}" }, newBackgroundPremium) { ok, message ->
+                                            if (ok) newBackgroundName = ""
+                                            report(ok, message)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        val soundPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+                            val kind = pendingSoundKind
+                            pendingSoundKind = null
+                            if (uri != null && kind != null) {
+                                mediaBusy = true
+                                scope.launch {
+                                    val mime = context.contentResolver.getType(uri) ?: "audio/mpeg"
+                                    val bytes = withContext(Dispatchers.IO) { runCatching { context.contentResolver.openInputStream(uri)?.use { it.readBytes() } }.getOrNull() }
+                                    if (bytes == null) report(false, "Could not read that sound")
+                                    else viewModel.publishGlobalSound(kind, bytes, mime) { ok, message -> report(ok, message) }
+                                }
+                            }
+                        }
+                        AdminPanelCard("Chat photo backgrounds", "Images are stored in app storage and appear in every user's chat theme gallery", Icons.Outlined.Wallpaper) {
+                            OutlinedTextField(newBackgroundName, { newBackgroundName = it.take(60) }, Modifier.fillMaxWidth(), label = { Text("Name (optional)") }, singleLine = true)
+                            AdminSwitchRow("Premium only", "Only Convo Premium members can use this background", newBackgroundPremium, { newBackgroundPremium = it })
+                            Button(onClick = { backgroundPicker.launch("image/*") }, enabled = !mediaBusy, modifier = Modifier.fillMaxWidth()) {
+                                Icon(Icons.Outlined.AddPhotoAlternate, null); Spacer(Modifier.width(7.dp)); Text("Upload background image")
+                            }
+                            if (mediaBusy) LinearProgressIndicator(Modifier.fillMaxWidth())
+                            if (chatBackgroundImages.isEmpty()) {
+                                AdminInlineInfo("No photo backgrounds yet. Portrait images around 1080 x 1920 look best.")
+                            } else {
+                                chatBackgroundImages.chunked(3).forEach { rowImages ->
+                                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        rowImages.forEach { image ->
+                                            Column(Modifier.weight(1f)) {
+                                                Box(Modifier.fillMaxWidth().height(150.dp).clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surfaceVariant)) {
+                                                    AsyncImage(image.url, image.name, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                                                    if (image.premium) Surface(Modifier.align(Alignment.TopStart).padding(6.dp), shape = CircleShape, color = Color.Black.copy(alpha = .55f)) {
+                                                        Text("PREMIUM", color = Color(0xFFFFD166), fontSize = 8.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp))
+                                                    }
+                                                    IconButton(
+                                                        onClick = { pendingDelete = image },
+                                                        modifier = Modifier.align(Alignment.TopEnd).padding(2.dp).size(34.dp).background(Color.Black.copy(alpha = .5f), CircleShape)
+                                                    ) { Icon(Icons.Outlined.Delete, "Delete background", tint = Color.White, modifier = Modifier.size(18.dp)) }
+                                                }
+                                                Text(image.name, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                            }
+                                        }
+                                        repeat(3 - rowImages.size) { Spacer(Modifier.weight(1f)) }
+                                    }
+                                }
+                            }
+                        }
+                        AdminPanelCard("Default app sounds", "Phones download the new sound quietly in the background. Users can still pick their own sound in Settings.", Icons.Outlined.MusicNote) {
+                            listOf(AppSoundStore.NOTIFICATION to "Message notification", AppSoundStore.TYPING to "Typing indicator").forEach { (kind, label) ->
+                                val url = globalSoundUrls[kind].orEmpty()
+                                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                    Column(Modifier.weight(1f)) {
+                                        Text(label, fontWeight = FontWeight.Bold)
+                                        Text(if (url.isBlank()) "Built-in sound" else "Custom default published", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    TextButton(onClick = { pendingSoundKind = kind; soundPicker.launch("audio/*") }, enabled = !mediaBusy) { Text(if (url.isBlank()) "Upload MP3" else "Replace") }
+                                    if (url.isNotBlank()) TextButton(onClick = { mediaBusy = true; viewModel.clearGlobalSound(kind) { ok, message -> report(ok, message) } }, enabled = !mediaBusy) {
+                                        Text("Reset", color = MaterialTheme.colorScheme.error)
+                                    }
+                                }
+                            }
+                            AdminInlineInfo("Use short MP3 files: up to 2 MB and 15 seconds. Longer files are ignored on phones.")
+                        }
+                        pendingDelete?.let { image ->
+                            AlertDialog(
+                                onDismissRequest = { pendingDelete = null },
+                                title = { Text("Delete background?") },
+                                text = { Text("${image.name} will be removed for everyone. Chats using it fall back to their default theme.") },
+                                confirmButton = {
+                                    TextButton(onClick = {
+                                        pendingDelete = null
+                                        mediaBusy = true
+                                        viewModel.deleteChatBackground(image) { ok, message -> report(ok, message) }
+                                    }) { Text("Delete", color = MaterialTheme.colorScheme.error) }
+                                },
+                                dismissButton = { TextButton(onClick = { pendingDelete = null }) { Text("Cancel") } }
+                            )
                         }
                     }
                     "reels" -> {

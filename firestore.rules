@@ -87,6 +87,16 @@ service cloud.firestore {
       allow write: if signedIn() && request.auth.token.email == 'mr4425390@gmail.com';
     }
 
+    // Admin-managed chat background gallery. Images live in storage; this collection only
+    // holds public URLs and labels.
+    match /chatBackgrounds/{backgroundId} {
+      allow read: if signedIn();
+      allow create, update: if signedIn() && request.auth.token.email == 'mr4425390@gmail.com'
+        && request.resource.data.url is string && request.resource.data.url.matches('https://.*')
+        && request.resource.data.name is string && request.resource.data.name.size() <= 60;
+      allow delete: if signedIn() && request.auth.token.email == 'mr4425390@gmail.com';
+    }
+
     match /feature_requests/{requestId} {
       allow create: if signedIn() && request.resource.data.requesterId == request.auth.uid;
       allow read: if signedIn() && (resource.data.requesterId == request.auth.uid || request.auth.token.email == 'mr4425390@gmail.com');

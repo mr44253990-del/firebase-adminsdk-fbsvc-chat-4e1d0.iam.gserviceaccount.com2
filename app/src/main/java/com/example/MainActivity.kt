@@ -521,6 +521,10 @@ class MainActivity : FragmentActivity() {
                                     },
                                     onVideoCall = {
                                         viewModel.startVideoCall(recipient) { navController.navigate("call") }
+                                    },
+                                    onOpenUserProfile = { user ->
+                                        viewModel.selectProfile(user)
+                                        navController.navigate("profile")
                                     }
                                 )
                             }
@@ -530,6 +534,10 @@ class MainActivity : FragmentActivity() {
                                 GroupChatScreen(
                                     viewModel = viewModel,
                                     group = group,
+                                    onOpenUserProfile = { user ->
+                                        viewModel.selectProfile(user)
+                                        navController.navigate("profile")
+                                    },
                                     pendingCallRoomId = activeGroupRoomId,
                                     pendingCallVideo = activeGroupVideo,
                                     onBack = { navController.popBackStack() },

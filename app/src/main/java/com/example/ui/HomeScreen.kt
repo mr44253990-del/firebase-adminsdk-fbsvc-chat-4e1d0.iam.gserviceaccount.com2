@@ -88,6 +88,7 @@ import android.widget.VideoView
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import com.example.R
+import androidx.compose.ui.graphics.lerp
 import com.example.data.ActivityNotification
 import com.example.security.AppLockManager
 import com.example.security.PrivacyPreferences
@@ -690,11 +691,22 @@ fun HomeScreen(
                 1 -> {
                     val myUid = currentUser?.uid.orEmpty()
                     val sentRequestTargets = sentFriendRequests.mapNotNull { id -> id.removePrefix("${myUid}_").takeIf { it != id } }.toSet()
-                    val chatUsers = if (searchQuery.isNotBlank()) users else users.filter { user ->
+                    val conversationOrder by viewModel.conversationOrder.collectAsState()
+                    val recencyRank = remember(conversationOrder) { conversationOrder.withIndex().associate { it.value to it.index } }
+                    val filteredChatUsers = if (searchQuery.isNotBlank()) users else users.filter { user ->
                         currentUser?.friends?.contains(user.uid) == true ||
                             conversationUserIds.contains(user.uid) ||
                             unreadCounts.containsKey(user.uid) ||
                             sentRequestTargets.contains(user.uid)
+                    }
+                    // People you actually chat with stay on top: unread first, then the most
+                    // recent conversations, then friends you have not messaged yet.
+                    val chatUsers = remember(filteredChatUsers, recencyRank, unreadCounts) {
+                        filteredChatUsers.distinctBy { it.uid }.sortedWith(
+                            compareByDescending<User> { (unreadCounts[it.uid] ?: 0) > 0 }
+                                .thenBy { recencyRank[it.uid] ?: Int.MAX_VALUE }
+                                .thenBy { it.name.lowercase() }
+                        )
                     }
                     // Only friends, requests and real conversations appear until the user searches.
                     Column(
@@ -736,7 +748,7 @@ fun HomeScreen(
                                 verticalArrangement = Arrangement.spacedBy(10.dp),
                                 contentPadding = PaddingValues(bottom = 16.dp)
                             ) {
-                                items(chatUsers) { user ->
+                                items(chatUsers, key = { it.uid }) { user ->
                                     val hasActiveStory = stories.any { it.senderId == user.uid }
                                     ChatConversationUserItem(
                                         user = user,
@@ -827,6 +839,12 @@ fun HomeScreen(
                     val blockedSectionRequester = remember { BringIntoViewRequester() }
                     var showSettingsNavigationMenu by remember { mutableStateOf(false) }
                     var showSettingsMoreMenu by remember { mutableStateOf(false) }
+                    // Each hub row opens its own page; "" is the hub itself.
+                    var settingsPage by rememberSaveable { mutableStateOf("") }
+                    val settingsScroll = rememberScrollState()
+                    BackHandler(enabled = settingsPage.isNotEmpty()) { settingsPage = "" }
+                    LaunchedEffect(settingsPage) { settingsScroll.scrollTo(0) }
+                    LaunchedEffect(Unit) { ChatPreferences.load(context); currentUser?.uid?.let { ProfileViewerStore.load(context, it) } }
                     val callSkinId by CallSkinPreferences.selectedId.collectAsState()
                     LaunchedEffect(Unit) { CallSkinPreferences.load(context); viewModel.refreshDeviceSessions() }
                     // Settings hub: account first, grouped controls, and clear shortcuts.
@@ -834,10 +852,11 @@ fun HomeScreen(
                         modifier = Modifier
                             .fillMaxSize()
                             .padding(horizontal = 18.dp, vertical = 10.dp)
-                            .verticalScroll(rememberScrollState()),
+                            .verticalScroll(settingsScroll),
                         verticalArrangement = Arrangement.spacedBy(18.dp),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
+                        if (settingsPage.isEmpty()) {
                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                             Box {
                                 IconButton(onClick = { showSettingsNavigationMenu = true }) {
@@ -949,7 +968,7 @@ fun HomeScreen(
                                 title = "Profile details",
                                 subtitle = "Edit your photo, bio and account information",
                                 accent = Color(0xFF5B6FE8),
-                                onClick = { uiScope.launch { profileSectionRequester.bringIntoView() } }
+                                onClick = { settingsPage = "profile" }
                             )
                             SettingsHubDivider()
                             SettingsHubRow(
@@ -959,6 +978,14 @@ fun HomeScreen(
                                 trailingValue = "Chats",
                                 accent = Color(0xFF2789E8),
                                 onClick = { viewModel.setCurrentTab(1) }
+                            )
+                            SettingsHubDivider()
+                            SettingsHubRow(
+                                icon = Icons.Outlined.Forum,
+                                title = "Chat settings",
+                                subtitle = "Quick reaction, text size, Enter to send, link previews",
+                                accent = Color(0xFF0E9F75),
+                                onClick = { settingsPage = "chat" }
                             )
                             SettingsHubDivider()
                             SettingsHubRow(
@@ -977,7 +1004,7 @@ fun HomeScreen(
                                 subtitle = "Choose the look of Convo Chat",
                                 trailingValue = currentTheme,
                                 accent = Color(0xFF765BFF),
-                                onClick = { uiScope.launch { themeSectionRequester.bringIntoView() } }
+                                onClick = { settingsPage = "theme" }
                             )
                             SettingsHubDivider()
                             SettingsHubRow(
@@ -986,15 +1013,23 @@ fun HomeScreen(
                                 subtitle = "Pick a style for audio and video calls",
                                 trailingValue = CallSkinPreferences.palette(callSkinId).label,
                                 accent = Color(0xFF13A6B7),
-                                onClick = { uiScope.launch { callSkinSectionRequester.bringIntoView() } }
+                                onClick = { settingsPage = "call" }
                             )
                             SettingsHubDivider()
                             SettingsHubRow(
                                 icon = Icons.Outlined.Chat,
                                 title = "Chat backgrounds",
-                                subtitle = "Themes are selected separately in each conversation",
+                                subtitle = "Default background, photo backgrounds and themes",
                                 accent = Color(0xFF8B62D9),
-                                onClick = { viewModel.setCurrentTab(1) }
+                                onClick = { settingsPage = "backgrounds" }
+                            )
+                            SettingsHubDivider()
+                            SettingsHubRow(
+                                icon = Icons.Outlined.MusicNote,
+                                title = "Sounds",
+                                subtitle = "Your own notification and typing sounds",
+                                accent = Color(0xFFE5674B),
+                                onClick = { settingsPage = "sounds" }
                             )
                         }
 
@@ -1004,7 +1039,7 @@ fun HomeScreen(
                                 title = "Privacy controls",
                                 subtitle = "Presence, receipts, AI and screen protection",
                                 accent = Color(0xFF3287D5),
-                                onClick = { uiScope.launch { privacySectionRequester.bringIntoView() } }
+                                onClick = { settingsPage = "privacy" }
                             )
                             SettingsHubDivider()
                             SettingsHubRow(
@@ -1012,7 +1047,16 @@ fun HomeScreen(
                                 title = "Notifications & calls",
                                 subtitle = "Sounds, alerts and incoming-call access",
                                 accent = Color(0xFFE79024),
-                                onClick = { uiScope.launch { notificationsSectionRequester.bringIntoView() } }
+                                onClick = { settingsPage = "notifications" }
+                            )
+                            SettingsHubDivider()
+                            SettingsHubRow(
+                                icon = Icons.Outlined.Visibility,
+                                title = "Profile viewers",
+                                subtitle = "See who visited your profile",
+                                trailingValue = ProfileViewerStore.viewers.collectAsState().value.count { it.lastViewedAt >= System.currentTimeMillis() - 7L * 24 * 60 * 60 * 1000 }.let { if (it > 0) "$it this week" else null },
+                                accent = Color(0xFFD18B12),
+                                onClick = { settingsPage = "viewers" }
                             )
                         }
 
@@ -1022,7 +1066,7 @@ fun HomeScreen(
                                 title = "Devices & sessions",
                                 subtitle = "Review recent sign-ins and account sessions",
                                 accent = Color(0xFF397BCC),
-                                onClick = { uiScope.launch { devicesSectionRequester.bringIntoView() } }
+                                onClick = { settingsPage = "devices" }
                             )
                             SettingsHubDivider()
                             SettingsHubRow(
@@ -1030,7 +1074,7 @@ fun HomeScreen(
                                 title = "Blocked accounts",
                                 subtitle = "Manage who can contact you",
                                 accent = Color(0xFF718096),
-                                onClick = { uiScope.launch { blockedSectionRequester.bringIntoView() } }
+                                onClick = { settingsPage = "blocked" }
                             )
                             SettingsHubDivider()
                             SettingsHubRow(
@@ -1041,111 +1085,389 @@ fun HomeScreen(
                                 onClick = onPremium
                             )
                         }
+                        } else {
+                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                IconButton(onClick = { settingsPage = "" }) { Icon(Icons.Default.ArrowBack, contentDescription = "Back to settings") }
+                                Column(Modifier.weight(1f)) {
+                                    Text(settingsPageTitle(settingsPage), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold)
+                                    Text(settingsPageSubtitle(settingsPage), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            }
+                        }
 
-                        // Account details and controls continue below; the groups above are quick routes.
-                        // 1. Theme selection block
-                        Card(
-                            shape = RoundedCornerShape(28.dp),
-                            modifier = Modifier.fillMaxWidth().bringIntoViewRequester(themeSectionRequester)
-                        ) {
-                            Column(modifier = Modifier.padding(16.dp)) {
-                                Text(
-                                    text = "Choose Application Theme",
-                                    style = MaterialTheme.typography.titleSmall,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.primary
-                                )
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text(
-                                    text = "Personalize your layout with custom dynamic palettes.",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-
-                                Spacer(modifier = Modifier.height(14.dp))
-
-                                val themes = listOf(
-                                    "Dynamic" to Color(0xFF7C5CFC),
-                                    "Aurora Light" to Color(0xFF765BFF),
-                                    "Light" to Color(0xFFF0F2FA),
-                                    "Dark" to Color(0xFF171A24),
-                                    "AMOLED" to Color.Black,
-                                    "Chocolate" to Color(0xFF6D4C41),
-                                    "Ocean" to Color(0xFF0288D1),
-                                    "Ocean Calm" to Color(0xFF70D8C5),
-                                    "Forest" to Color(0xFF2E7D32),
-                                    "Midnight" to Color(0xFF4A148C),
-                                    "Liquid Aurora" to Color(0xFF8B72FF),
-                                    "Glass Ocean" to Color(0xFF00B8D4),
-                                    "Glass Rose" to Color(0xFFFF63B7),
-                                    "Obsidian Neon" to Color(0xFF00E5C3),
-                                    "Neon Pulse" to Color(0xFFFF4DA6),
-                                    "Frosted Light" to Color(0xFFD9D6FF),
-                                    "Royal Gold" to Color(0xFFFFC857),
-                                    "Cyber Lime" to Color(0xFFB7FF3C),
-                                    "Rose Quartz" to Color(0xFFF4A6C8)
-                                )
-
-                                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    items(themes, key = { it.first }) { (themeName, themeColor) ->
-                                        Surface(
-                                            color = if (currentTheme == themeName) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(.45f),
-                                            shape = RoundedCornerShape(16.dp),
-                                            modifier = Modifier.width(94.dp).clickable {
-                                                if (viewModel.updateTheme(themeName)) {
-                                                    Toast.makeText(context, "$themeName theme applied!", Toast.LENGTH_SHORT).show()
-                                                } else {
-                                                    Toast.makeText(context, "Premium entitlement and Advanced themes flag are required", Toast.LENGTH_LONG).show()
-                                                }
+                        if (settingsPage == "theme") {
+                        val themeUnlocked = flagshipConfig.advancedThemesEnabled && viewModel.hasActivePremiumEntitlement()
+                        val themeGroups = listOf(
+                            Triple("Light", "Bright, clean and easy on the eyes in daylight", listOf(
+                                AppThemePreview("Aurora Light", Color(0xFFF7F5FF), Color.White, Color(0xFF765BFF)),
+                                AppThemePreview("Light", Color(0xFFF0F2FA), Color.White, Color(0xFF5B6FE8)),
+                                AppThemePreview("Frosted Light", Color(0xFFF5F5FF), Color(0xFFFCFAFF), Color(0xFF6554D9)),
+                                AppThemePreview("Sky Light", Color(0xFFF3F9FF), Color.White, Color(0xFF1E88E5)),
+                                AppThemePreview("Mint Light", Color(0xFFF2FCF8), Color.White, Color(0xFF0E9F75)),
+                                AppThemePreview("Peach Light", Color(0xFFFFF6F2), Color.White, Color(0xFFE5674B)),
+                                AppThemePreview("Lavender Light", Color(0xFFFAF6FF), Color.White, Color(0xFF8E5CF7)),
+                                AppThemePreview("Sand Light", Color(0xFFFBF7F0), Color(0xFFFFFDF9), Color(0xFFA0672C))
+                            )),
+                            Triple("Dark", "Comfortable at night and kind to the battery", listOf(
+                                AppThemePreview("Dynamic", Color(0xFF1B1530), Color(0xFF2A2245), Color(0xFF7C5CFC)),
+                                AppThemePreview("Dark", Color(0xFF171A24), Color(0xFF222634), Color(0xFF8C9EFF)),
+                                AppThemePreview("AMOLED", Color.Black, Color(0xFF121212), Color(0xFF9E8BFF)),
+                                AppThemePreview("Midnight", Color(0xFF07030D), Color(0xFF190D28), Color(0xFFE3B9FF)),
+                                AppThemePreview("Ocean", Color(0xFF001017), Color(0xFF062532), Color(0xFF83E6F2)),
+                                AppThemePreview("Ocean Calm", Color(0xFF00151E), Color(0xFF07313D), Color(0xFF8CEBFF)),
+                                AppThemePreview("Forest", Color(0xFF050D08), Color(0xFF102319), Color(0xFFA7E3AE)),
+                                AppThemePreview("Chocolate", Color(0xFF100805), Color(0xFF21120D), Color(0xFFE8C7B5)),
+                                AppThemePreview("Coffee", Color(0xFF110B07), Color(0xFF23170F), Color(0xFFE2B98E)),
+                                AppThemePreview("Berry Night", Color(0xFF14060E), Color(0xFF2A0F20), Color(0xFFFF7AA8)),
+                                AppThemePreview("Lo-fi", Color(0xFF110A1C), Color(0xFF221634), Color(0xFFFFB38A)),
+                                AppThemePreview("Slate", Color(0xFF0D1117), Color(0xFF161B22), Color(0xFF9EC1FF)),
+                                AppThemePreview("Crimson", Color(0xFF120506), Color(0xFF250C0E), Color(0xFFFF6B6B)),
+                                AppThemePreview("Emerald", Color(0xFF02100A), Color(0xFF0A2218), Color(0xFF4EE3A2))
+                            )),
+                            Triple("Premium", if (themeUnlocked) "Unlocked with Convo Premium" else "Unlock with Convo Premium", listOf(
+                                AppThemePreview("Royal Gold", Color(0xFF120C02), Color(0xFF241806), Color(0xFFFFD166)),
+                                AppThemePreview("Galaxy", Color(0xFF05030F), Color(0xFF140C2A), Color(0xFFB69CFF)),
+                                AppThemePreview("Diamond", Color(0xFF070A1C), Color(0xFF131A3A), Color(0xFFE0E7FF)),
+                                AppThemePreview("Sapphire", Color(0xFF040A1C), Color(0xFF0D1836), Color(0xFF7FA8FF)),
+                                AppThemePreview("Liquid Aurora", Color(0xFF070817), Color(0xFF17152E), Color(0xFFC5B4FF)),
+                                AppThemePreview("Glass Ocean", Color(0xFF001018), Color(0xFF062A38), Color(0xFF79ECFF)),
+                                AppThemePreview("Glass Rose", Color(0xFF160711), Color(0xFF301327), Color(0xFFFFA9D6)),
+                                AppThemePreview("Obsidian Neon", Color.Black, Color(0xFF0A0B12), Color(0xFF00F0D0)),
+                                AppThemePreview("Neon Pulse", Color(0xFF0B0612), Color(0xFF1A0C27), Color(0xFFFF4DA6)),
+                                AppThemePreview("Cyber Lime", Color(0xFF071006), Color(0xFF102014), Color(0xFFC8FF4D)),
+                                AppThemePreview("Rose Quartz", Color(0xFF140810), Color(0xFF2A1423), Color(0xFFFFB3CF))
+                            ))
+                        )
+                        themeGroups.forEach { (groupTitle, groupSubtitle, groupThemes) ->
+                            SettingsHubGroup(groupTitle) {
+                                Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    Text(groupSubtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    groupThemes.chunked(3).forEach { rowThemes ->
+                                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                            rowThemes.forEach { preview ->
+                                                val locked = preview.name in PREMIUM_APP_THEMES && !themeUnlocked
+                                                AppThemeTile(
+                                                    preview = preview,
+                                                    selected = currentTheme.equals(preview.name, ignoreCase = true),
+                                                    locked = locked,
+                                                    modifier = Modifier.weight(1f),
+                                                    onClick = {
+                                                        if (viewModel.updateTheme(preview.name)) {
+                                                            Toast.makeText(context, "${preview.name} theme applied", Toast.LENGTH_SHORT).show()
+                                                        } else {
+                                                            Toast.makeText(context, "${preview.name} is a Convo Premium theme", Toast.LENGTH_LONG).show()
+                                                            onPremium()
+                                                        }
+                                                    }
+                                                )
                                             }
-                                        ) {
-                                            Column(Modifier.padding(vertical = 10.dp, horizontal = 5.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                                                Box(Modifier.size(27.dp).clip(CircleShape).background(themeColor).border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape))
-                                                Spacer(Modifier.height(5.dp))
-                                                Text(themeName, fontSize = 10.sp, maxLines = 1, fontWeight = if (currentTheme == themeName) FontWeight.ExtraBold else FontWeight.Medium)
-                                                if (currentTheme == themeName) Icon(Icons.Default.Check, "Active", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(14.dp))
-                                            }
+                                            repeat(3 - rowThemes.size) { Spacer(Modifier.weight(1f)) }
                                         }
                                     }
                                 }
                             }
                         }
+                        }
 
-                        Card(shape = RoundedCornerShape(28.dp), modifier = Modifier.fillMaxWidth().bringIntoViewRequester(callSkinSectionRequester)) {
-                            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
-                                Text("Call appearance", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                                Text("Choose a call-screen skin. This is stored on this device and can be changed anytime.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                Text("Chat backgrounds are per conversation: open a chat menu → Chat theme.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                LazyRow(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-                                    items(CallSkinPreferences.options, key = { it.id }) { option ->
-                                        val selected = callSkinId == option.id
-                                        Surface(
-                                            color = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(.45f),
-                                            shape = RoundedCornerShape(17.dp),
-                                            modifier = Modifier.width(112.dp).clickable {
-                                                CallSkinPreferences.select(context, option.id)
-                                                Toast.makeText(context, "${option.label} call skin applied", Toast.LENGTH_SHORT).show()
-                                            }
-                                        ) {
-                                            Column(Modifier.padding(8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                                                Box(
-                                                    Modifier.fillMaxWidth().height(54.dp).clip(RoundedCornerShape(11.dp))
-                                                        .background(Brush.verticalGradient(option.background))
-                                                        .border(2.dp, option.accent.copy(alpha = if (selected) .95f else .55f), RoundedCornerShape(11.dp)),
-                                                    contentAlignment = Alignment.Center
+                        if (settingsPage == "call") {
+                        Text(
+                            "Your call skin is saved on this phone and used for audio, video and group calls.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        CallSkinPreferences.options.map { it.category }.distinct().forEach { category ->
+                            SettingsHubGroup(category) {
+                                Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    CallSkinPreferences.options.filter { it.category == category }.chunked(3).forEach { rowSkins ->
+                                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                            rowSkins.forEach { option ->
+                                                val selected = callSkinId == option.id
+                                                Column(
+                                                    Modifier.weight(1f).clip(RoundedCornerShape(18.dp)).clickable {
+                                                        CallSkinPreferences.select(context, option.id)
+                                                        Toast.makeText(context, "${option.label} call skin applied", Toast.LENGTH_SHORT).show()
+                                                    },
+                                                    horizontalAlignment = Alignment.CenterHorizontally
                                                 ) {
-                                                    Icon(Icons.Default.Call, null, tint = Color.White, modifier = Modifier.size(23.dp))
+                                                    Box(
+                                                        Modifier.fillMaxWidth().height(118.dp).clip(RoundedCornerShape(18.dp))
+                                                            .background(Brush.verticalGradient(option.background))
+                                                            .border(if (selected) 3.dp else 1.dp, if (selected) option.accent else Color.White.copy(alpha = .16f), RoundedCornerShape(18.dp))
+                                                    ) {
+                                                        ThemeTextureLayer(option.texture, option.accent, .85f)
+                                                        Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
+                                                            Box(Modifier.size(34.dp).clip(CircleShape).background(option.accent.copy(alpha = .35f)).border(1.5.dp, option.accent, CircleShape), contentAlignment = Alignment.Center) {
+                                                                Icon(Icons.Default.Person, null, tint = Color.White, modifier = Modifier.size(20.dp))
+                                                            }
+                                                            Spacer(Modifier.height(8.dp))
+                                                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                                                Box(Modifier.size(18.dp).clip(CircleShape).background(Color(0xFFE53935)), contentAlignment = Alignment.Center) { Icon(Icons.Default.CallEnd, null, tint = Color.White, modifier = Modifier.size(11.dp)) }
+                                                                Box(Modifier.size(18.dp).clip(CircleShape).background(option.surface), contentAlignment = Alignment.Center) { Icon(Icons.Default.Call, null, tint = option.accent, modifier = Modifier.size(11.dp)) }
+                                                            }
+                                                        }
+                                                        if (selected) Box(Modifier.align(Alignment.TopEnd).padding(6.dp).size(20.dp).clip(CircleShape).background(option.accent), contentAlignment = Alignment.Center) {
+                                                            Icon(Icons.Default.Check, "Active", tint = Color.Black, modifier = Modifier.size(13.dp))
+                                                        }
+                                                    }
+                                                    Spacer(Modifier.height(5.dp))
+                                                    Text(option.label, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 11.sp, fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.Medium)
                                                 }
-                                                Spacer(Modifier.height(5.dp))
-                                                Text(option.label, maxLines = 1, fontSize = 10.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium)
-                                                if (selected) Text("ACTIVE", fontSize = 8.sp, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.ExtraBold)
                                             }
+                                            repeat(3 - rowSkins.size) { Spacer(Modifier.weight(1f)) }
                                         }
                                     }
                                 }
                             }
                         }
+                        }
 
+                        if (settingsPage == "chat") {
+                        val quickReaction by ChatPreferences.quickReaction.collectAsState()
+                        val chatTextScale by ChatPreferences.textScale.collectAsState()
+                        val enterToSend by ChatPreferences.enterToSend.collectAsState()
+                        var customReaction by remember { mutableStateOf("") }
+                        SettingsHubGroup("Quick reaction") {
+                            Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                Text("Shown in place of Send while the message box is empty. Tap it to send instantly.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                ChatPreferences.reactionChoices.chunked(6).forEach { rowEmojis ->
+                                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        rowEmojis.forEach { emoji ->
+                                            val selected = quickReaction == emoji
+                                            Box(
+                                                Modifier.weight(1f).height(48.dp).clip(RoundedCornerShape(14.dp))
+                                                    .background(if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .5f))
+                                                    .border(if (selected) 2.dp else 0.dp, if (selected) MaterialTheme.colorScheme.primary else Color.Transparent, RoundedCornerShape(14.dp))
+                                                    .clickable { ChatPreferences.setQuickReaction(context, emoji) },
+                                                contentAlignment = Alignment.Center
+                                            ) { Text(emoji, fontSize = 22.sp) }
+                                        }
+                                    }
+                                }
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    OutlinedTextField(
+                                        value = customReaction,
+                                        onValueChange = { customReaction = it.take(8) },
+                                        modifier = Modifier.weight(1f),
+                                        singleLine = true,
+                                        label = { Text("Any other emoji") }
+                                    )
+                                    Spacer(Modifier.width(8.dp))
+                                    FilledTonalButton(onClick = {
+                                        if (customReaction.isNotBlank()) { ChatPreferences.setQuickReaction(context, customReaction); customReaction = "" }
+                                    }, enabled = customReaction.isNotBlank()) { Text("Use") }
+                                }
+                                Text("Current: $quickReaction", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                            }
+                        }
+                        SettingsHubGroup("Reading & typing") {
+                            Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text("Message text size", fontWeight = FontWeight.Bold)
+                                Slider(
+                                    value = chatTextScale,
+                                    onValueChange = { ChatPreferences.setTextScale(context, it) },
+                                    valueRange = 0.85f..1.3f,
+                                    steps = 8
+                                )
+                                Surface(shape = RoundedCornerShape(20.dp, 20.dp, 6.dp, 20.dp), color = MaterialTheme.colorScheme.primary, modifier = Modifier.align(Alignment.End)) {
+                                    Text("This is how your messages look", color = MaterialTheme.colorScheme.onPrimary, fontSize = (14 * chatTextScale).sp, modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp))
+                                }
+                                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                    Column(Modifier.weight(1f)) {
+                                        Text("Enter key sends", fontWeight = FontWeight.Bold)
+                                        Text("Press Enter on the keyboard to send instead of adding a new line", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    Switch(checked = enterToSend, onCheckedChange = { ChatPreferences.setEnterToSend(context, it) })
+                                }
+                                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                    Column(Modifier.weight(1f)) {
+                                        Text("Link previews", fontWeight = FontWeight.Bold)
+                                        Text("Show a title, image and site icon for links in chats and posts", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    Switch(checked = privacySettings.allowLinkPreviewFetch, onCheckedChange = { enabled -> PrivacyPreferences.update(context) { it.copy(allowLinkPreviewFetch = enabled) } })
+                                }
+                            }
+                        }
+                        SettingsHubGroup("More for chats") {
+                            SettingsHubRow(icon = Icons.Outlined.Wallpaper, title = "Default chat background", subtitle = "Used in chats that do not have their own theme", trailingValue = ChatPreferences.defaultChatTheme.collectAsState().value.removePrefix(CHAT_IMAGE_THEME_PREFIX).let { if (it.startsWith("https://")) "Photo" else it }, accent = Color(0xFF8B62D9), onClick = { settingsPage = "backgrounds" })
+                            SettingsHubDivider()
+                            SettingsHubRow(icon = Icons.Outlined.MusicNote, title = "Notification & typing sounds", subtitle = "Use your own MP3 sounds", accent = Color(0xFFE5674B), onClick = { settingsPage = "sounds" })
+                        }
+                        }
+
+                        if (settingsPage == "sounds") {
+                        val soundsVersion by ChatPreferences.soundsVersion.collectAsState()
+                        val globalSoundUrls by viewModel.globalSoundUrls.collectAsState()
+                        var pendingSoundKind by remember { mutableStateOf<String?>(null) }
+                        var soundBusy by remember { mutableStateOf(false) }
+                        val soundPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+                            val kind = pendingSoundKind
+                            pendingSoundKind = null
+                            if (uri != null && kind != null) {
+                                val displayName = runCatching {
+                                    context.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+                                        if (c.moveToFirst()) c.getString(0) else null
+                                    }
+                                }.getOrNull() ?: "Custom sound"
+                                soundBusy = true
+                                uiScope.launch {
+                                    val error = AppSoundStore.importLocal(context, uri, kind, displayName)
+                                    soundBusy = false
+                                    if (error == null) {
+                                        AppSoundStore.playCustom(context, kind)
+                                        Toast.makeText(context, "Sound saved on this phone", Toast.LENGTH_SHORT).show()
+                                    } else Toast.makeText(context, error, Toast.LENGTH_LONG).show()
+                                }
+                            }
+                        }
+                        Text("Pick an MP3 (or any audio up to 15 seconds and 2 MB). It is saved on this phone and replaces the built-in sound. If Convo publishes a default sound, it downloads quietly in the background.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.fillMaxWidth())
+                        listOf(
+                            Triple(AppSoundStore.NOTIFICATION, "Message notification", Icons.Outlined.NotificationsActive),
+                            Triple(AppSoundStore.TYPING, "Typing indicator", Icons.Outlined.Keyboard)
+                        ).forEach { (kind, label, icon) ->
+                            val description = remember(soundsVersion, globalSoundUrls) { AppSoundStore.describe(context, kind) }
+                            val hasLocal = remember(soundsVersion) { AppSoundStore.hasLocal(context, kind) }
+                            SettingsHubGroup(label) {
+                                Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Box(Modifier.size(42.dp).clip(RoundedCornerShape(13.dp)).background(MaterialTheme.colorScheme.primaryContainer), contentAlignment = Alignment.Center) {
+                                            Icon(icon, null, tint = MaterialTheme.colorScheme.primary)
+                                        }
+                                        Spacer(Modifier.width(12.dp))
+                                        Column(Modifier.weight(1f)) {
+                                            Text(description, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                            Text(if (hasLocal) "Your sound" else "Default", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
+                                        IconButton(onClick = {
+                                            if (!AppSoundStore.playCustom(context, kind)) Toast.makeText(context, "Using the built-in sound", Toast.LENGTH_SHORT).show()
+                                        }) { Icon(Icons.Default.PlayArrow, "Preview sound") }
+                                    }
+                                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                        Button(onClick = { pendingSoundKind = kind; soundPicker.launch("audio/*") }, enabled = !soundBusy, modifier = Modifier.weight(1f)) {
+                                            Icon(Icons.Outlined.UploadFile, null); Spacer(Modifier.width(6.dp)); Text(if (hasLocal) "Change" else "Choose MP3")
+                                        }
+                                        if (hasLocal) OutlinedButton(onClick = { AppSoundStore.clearLocal(context, kind); Toast.makeText(context, "Back to the default sound", Toast.LENGTH_SHORT).show() }, modifier = Modifier.weight(1f)) { Text("Reset") }
+                                    }
+                                }
+                            }
+                        }
+                        if (soundBusy) LinearProgressIndicator(Modifier.fillMaxWidth())
+                        Text("Turn sounds on or off in Notifications & calls.", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+
+                        if (settingsPage == "backgrounds") {
+                        val defaultChatTheme by ChatPreferences.defaultChatTheme.collectAsState()
+                        val backgroundImages by viewModel.chatBackgroundImages.collectAsState()
+                        Text("Pick the default background for your chats. Any chat can still use its own theme from the chat menu, Chat theme.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.fillMaxWidth())
+                        ChatThemeGallery(
+                            selected = defaultChatTheme,
+                            premiumActive = viewModel.hasActivePremiumEntitlement(),
+                            images = backgroundImages,
+                            onSelect = { value ->
+                                ChatPreferences.setDefaultChatTheme(context, value)
+                                Toast.makeText(context, "Default chat background updated", Toast.LENGTH_SHORT).show()
+                            },
+                            onLocked = {
+                                Toast.makeText(context, "This background is part of Convo Premium", Toast.LENGTH_LONG).show()
+                                onPremium()
+                            },
+                            modifier = Modifier.fillMaxWidth().height(640.dp)
+                        )
+                        }
+
+                        if (settingsPage == "viewers") {
+                        val profileViewers by ProfileViewerStore.viewers.collectAsState()
+                        val shareVisits by ProfileViewerStore.shareVisits.collectAsState()
+                        val viewersUnlocked = viewModel.hasActivePremiumEntitlement()
+                        var confirmClearViewers by remember { mutableStateOf(false) }
+                        val nowMs = rememberTickingNow(60_000L)
+                        val dayAgo = nowMs - 24L * 60 * 60 * 1000
+                        val weekAgo = nowMs - 7L * 24 * 60 * 60 * 1000
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            listOf(
+                                "Today" to profileViewers.count { it.lastViewedAt >= dayAgo },
+                                "7 days" to profileViewers.count { it.lastViewedAt >= weekAgo },
+                                "All" to profileViewers.size
+                            ).forEach { (label, count) ->
+                                Surface(Modifier.weight(1f), shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = .6f)) {
+                                    Column(Modifier.padding(vertical = 14.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                                        Text(count.toString(), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.primary)
+                                        Text(label, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                }
+                            }
+                        }
+                        SettingsHubGroup(if (viewersUnlocked) "Recent visitors" else "Recent visitors (Premium)") {
+                            if (!viewersUnlocked) {
+                                Column(Modifier.fillMaxWidth().padding(18.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Icon(Icons.Outlined.Lock, null, tint = Color(0xFFD18B12), modifier = Modifier.size(34.dp))
+                                    Text("See exactly who viewed your profile", fontWeight = FontWeight.ExtraBold, textAlign = TextAlign.Center)
+                                    Text("Everyone sees the count. Names and times are part of Convo Premium.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
+                                    Button(onClick = onPremium) { Icon(Icons.Outlined.WorkspacePremium, null); Spacer(Modifier.width(6.dp)); Text("Get Premium") }
+                                }
+                            } else if (profileViewers.isEmpty()) {
+                                Text("No visits yet. New visits appear here as they happen.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(18.dp))
+                            } else {
+                                profileViewers.sortedByDescending { it.lastViewedAt }.take(100).forEachIndexed { index, viewer ->
+                                    if (index > 0) SettingsHubDivider()
+                                    val viewerUser = allUsers.firstOrNull { it.uid == viewer.viewerId }
+                                    Row(
+                                        Modifier.fillMaxWidth().clickable(enabled = viewerUser != null) { viewerUser?.let { onProfileSelected(it) } }.padding(horizontal = 14.dp, vertical = 10.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        val avatar = viewerUser?.profileImageUrl?.takeIf { it.isNotBlank() } ?: viewer.imageUrl
+                                        if (avatar.isNotBlank()) {
+                                            AsyncImage(model = avatar, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.size(42.dp).clip(CircleShape))
+                                        } else {
+                                            Box(Modifier.size(42.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer), contentAlignment = Alignment.Center) {
+                                                Text(viewer.name.take(1).uppercase().ifBlank { "?" }, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                                            }
+                                        }
+                                        Spacer(Modifier.width(12.dp))
+                                        Column(Modifier.weight(1f)) {
+                                            Text(viewerUser?.name?.takeIf { it.isNotBlank() } ?: viewer.name.ifBlank { "Convo user" }, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                            Text(
+                                                buildString {
+                                                    append(relativeTimeLabel(viewer.lastViewedAt, nowMs))
+                                                    if (viewer.visits > 1) append(" · ${viewer.visits} visits")
+                                                },
+                                                fontSize = 11.sp,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                        Icon(Icons.Default.ChevronRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                }
+                            }
+                        }
+                        SettingsHubGroup("Privacy") {
+                            Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Column(Modifier.weight(1f)) {
+                                    Text("Share my visits", fontWeight = FontWeight.Bold)
+                                    Text("When off, people are not told that you viewed their profile", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                                Switch(checked = shareVisits, onCheckedChange = { ProfileViewerStore.setShareVisits(context, it) })
+                            }
+                            SettingsHubDivider()
+                            SettingsHubRow(icon = Icons.Outlined.DeleteOutline, title = "Clear visitor history", subtitle = "History is stored only on this phone", accent = Color(0xFFE53935), onClick = { confirmClearViewers = true }, enabled = profileViewers.isNotEmpty())
+                        }
+                        if (confirmClearViewers) {
+                            AlertDialog(
+                                onDismissRequest = { confirmClearViewers = false },
+                                title = { Text("Clear visitor history?") },
+                                text = { Text("This removes the saved list from this phone. It cannot be undone.") },
+                                confirmButton = {
+                                    TextButton(onClick = {
+                                        confirmClearViewers = false
+                                        currentUser?.uid?.let { ProfileViewerStore.clear(context, it) }
+                                    }) { Text("Clear", color = MaterialTheme.colorScheme.error) }
+                                },
+                                dismissButton = { TextButton(onClick = { confirmClearViewers = false }) { Text("Cancel") } }
+                            )
+                        }
+                        }
+
+                        if (settingsPage == "profile") {
                         // 2. Profile Details Modification
                         currentUser?.let { user ->
                             var inputName by remember { mutableStateOf(user.name) }
@@ -1450,7 +1772,9 @@ fun HomeScreen(
                                 }
                             }
                         }
+                        }
 
+                        if (settingsPage == "privacy") {
                         Card(shape = RoundedCornerShape(28.dp), modifier = Modifier.fillMaxWidth()) {
                             Column(Modifier.padding(16.dp)) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1525,7 +1849,9 @@ fun HomeScreen(
                                 }
                             }
                         }
+                        }
 
+                        if (settingsPage == "notifications") {
                         Card(shape = RoundedCornerShape(28.dp), modifier = Modifier.fillMaxWidth().bringIntoViewRequester(notificationsSectionRequester)) {
                             Column(Modifier.padding(16.dp)) {
                                 Text("Sounds & activity", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
@@ -1600,7 +1926,9 @@ fun HomeScreen(
                                 }
                             }
                         }
+                        }
 
+                        if (settingsPage == "devices") {
                         Card(shape = RoundedCornerShape(28.dp), modifier = Modifier.fillMaxWidth().bringIntoViewRequester(devicesSectionRequester)) {
                             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                                 Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.Devices, null, tint = MaterialTheme.colorScheme.primary); Spacer(Modifier.width(9.dp)); Text("Devices & sessions", fontWeight = FontWeight.ExtraBold, modifier = Modifier.weight(1f)); IconButton(onClick = viewModel::refreshDeviceSessions) { Icon(Icons.Default.Refresh, "Refresh") } }
@@ -1625,6 +1953,7 @@ fun HomeScreen(
                                 OutlinedButton(onClick = { viewModel.logoutAllDevices { ok, message -> Toast.makeText(context, message, Toast.LENGTH_LONG).show(); if (ok) onSignOut() } }, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Default.Logout, null); Spacer(Modifier.width(7.dp)); Text("Log out all devices") }
                                 TextButton(onClick = { showReportDialog = true }, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Default.ReportProblem, null); Spacer(Modifier.width(7.dp)); Text("Report a problem to AI/Admin") }
                             }
+                        }
                         }
 
                         if (showAllDeviceSessions) {
@@ -1668,6 +1997,7 @@ fun HomeScreen(
                             )
                         }
 
+                        if (settingsPage == "blocked") {
                         // 3. Blocked Users Management
                         val allUsers by viewModel.usersState.collectAsState()
                         currentUser?.let { user ->
@@ -1740,6 +2070,7 @@ fun HomeScreen(
                                     }
                                 }
                             }
+                        }
                         }
                     }
                 }
@@ -1843,34 +2174,16 @@ fun HomeScreen(
                     .padding(16.dp)
             ) {
                 inAppNotification?.let { notif ->
-                    Card(
-                        shape = RoundedCornerShape(24.dp),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable {
-                                val target = users.find { it.uid == notif.senderId }
-                                if (target != null) {
-                                    onUserSelected(target)
-                                }
-                                viewModel.dismissInAppNotification()
-                            }
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(16.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(Icons.Default.Message, contentDescription = null, tint = MaterialTheme.colorScheme.onSecondaryContainer)
-                            Spacer(modifier = Modifier.width(12.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(notif.senderName, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSecondaryContainer)
-                                Text(notif.text, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSecondaryContainer)
-                            }
-                            IconButton(onClick = { viewModel.dismissInAppNotification() }) {
-                                Icon(Icons.Default.Close, contentDescription = "Dismiss")
-                            }
-                        }
-                    }
+                    val sender = users.find { it.uid == notif.senderId }
+                    InAppMessageBanner(
+                        data = notif,
+                        sender = sender,
+                        onOpen = {
+                            if (sender != null) onUserSelected(sender)
+                            viewModel.dismissInAppNotification()
+                        },
+                        onDismiss = { viewModel.dismissInAppNotification() }
+                    )
                 }
             }
         }
@@ -3452,6 +3765,8 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
                     text = post.text,
                     color = primaryPostText,
                     styled = styledPost,
+                    onMentionClick = { handle -> Mentions.findUser(handle, allUsers)?.let(onProfileSelected) },
+                    showLinkPreview = mediaImages.isEmpty() && post.videoUrl.isBlank(),
                     modifier = if (styledPost) Modifier.fillMaxWidth().padding(vertical = 18.dp) else Modifier
                 )
                 Spacer(modifier = Modifier.height(10.dp))
@@ -4223,34 +4538,50 @@ fun GroupItemCard(group: Group, onClick: () -> Unit) {
 }
 
 @Composable
-private fun LinkifiedPostText(text: String, color: Color, styled: Boolean, modifier: Modifier = Modifier) {
+private fun LinkifiedPostText(
+    text: String,
+    color: Color,
+    styled: Boolean,
+    modifier: Modifier = Modifier,
+    onMentionClick: (String) -> Unit = {},
+    showLinkPreview: Boolean = true
+) {
     val uriHandler = LocalUriHandler.current
-    val urlRegex = remember { Regex("https?://[^\\s]+", RegexOption.IGNORE_CASE) }
-    val annotated = remember(text, color) {
-        buildAnnotatedString {
-            var cursor = 0
-            urlRegex.findAll(text).forEach { match ->
-                append(text.substring(cursor, match.range.first))
-                pushStringAnnotation("URL", match.value)
-                pushStyle(SpanStyle(color = if (styled) Color(0xFFBDEBFF) else Color(0xFF3D8BFF), textDecoration = TextDecoration.Underline, fontWeight = FontWeight.SemiBold))
-                append(match.value)
-                pop(); pop()
-                cursor = match.range.last + 1
+    val annotated = remember(text, styled) {
+        Mentions.annotate(
+            text,
+            if (styled) Color(0xFFBDEBFF) else Color(0xFF3D8BFF),
+            if (styled) Color(0xFFFFE08A) else Color(0xFF7C5CFC)
+        )
+    }
+    val firstUrl = remember(text) { LinkPreviewRepository.firstUrl(text) }
+    Column(modifier) {
+        ClickableText(
+            text = annotated,
+            modifier = if (styled) Modifier.fillMaxWidth() else Modifier,
+            style = MaterialTheme.typography.bodyMedium.copy(
+                color = color,
+                lineHeight = if (styled) 26.sp else 20.sp,
+                fontSize = if (styled) 18.sp else 14.sp,
+                textAlign = if (styled) TextAlign.Center else TextAlign.Start
+            ),
+            onClick = { offset ->
+                annotated.getStringAnnotations("URL", offset, offset).firstOrNull()?.let {
+                    runCatching { uriHandler.openUri(it.item) }
+                    return@ClickableText
+                }
+                annotated.getStringAnnotations("MENTION", offset, offset).firstOrNull()?.let { onMentionClick(it.item) }
             }
-            append(text.substring(cursor))
+        )
+        if (showLinkPreview && !styled && !firstUrl.isNullOrBlank()) {
+            Spacer(Modifier.height(8.dp))
+            RichLinkPreviewCard(
+                url = firstUrl,
+                contentColor = MaterialTheme.colorScheme.onSurface,
+                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .55f)
+            )
         }
     }
-    ClickableText(
-        text = annotated,
-        modifier = modifier,
-        style = MaterialTheme.typography.bodyMedium.copy(
-            color = color,
-            lineHeight = if (styled) 26.sp else 20.sp,
-            fontSize = if (styled) 18.sp else 14.sp,
-            textAlign = if (styled) TextAlign.Center else TextAlign.Start
-        ),
-        onClick = { offset -> annotated.getStringAnnotations("URL", offset, offset).firstOrNull()?.let { runCatching { uriHandler.openUri(it.item) } } }
-    )
 }
 
 private fun postBackgroundColors(style: String): List<Color> = when (style) {
@@ -4261,6 +4592,18 @@ private fun postBackgroundColors(style: String): List<Color> = when (style) {
     "rose" -> listOf(Color(0xFF8E2DE2), Color(0xFFFF5F6D), Color(0xFF3A1C71))
     "midnight" -> listOf(Color(0xFF020024), Color(0xFF090979), Color(0xFF111827))
     "mono" -> listOf(Color(0xFF111111), Color(0xFF424242), Color(0xFF151515))
+    "candy" -> listOf(Color(0xFFFF9A9E), Color(0xFFF6A6C1), Color(0xFFA18CD1))
+    "peach" -> listOf(Color(0xFFFFB88C), Color(0xFFDE6262), Color(0xFF8E3B46))
+    "fire" -> listOf(Color(0xFFF12711), Color(0xFFF5AF19), Color(0xFF7A1F0A))
+    "gold" -> listOf(Color(0xFF8A6100), Color(0xFFE0A526), Color(0xFF4A3400))
+    "lime" -> listOf(Color(0xFF1E5631), Color(0xFF56AB2F), Color(0xFF0E3B1E))
+    "mint" -> listOf(Color(0xFF00B09B), Color(0xFF3FA36B), Color(0xFF0B5345))
+    "sky" -> listOf(Color(0xFF2193B0), Color(0xFF4FB3D9), Color(0xFF0F4C75))
+    "lavender" -> listOf(Color(0xFF8E6CC9), Color(0xFF7D93D6), Color(0xFF4B3B7A))
+    "berry" -> listOf(Color(0xFFC33764), Color(0xFF1D2671), Color(0xFF4A1942))
+    "galaxy" -> listOf(Color(0xFF0F0C29), Color(0xFF302B63), Color(0xFF24243E))
+    "coffee" -> listOf(Color(0xFF3E2723), Color(0xFF8D6E63), Color(0xFF1B0F0C))
+    "neon" -> listOf(Color(0xFF0B0612), Color(0xFFFF4DA6), Color(0xFF00B8D4))
     else -> listOf(Color(0xFF28233F), Color(0xFF6750A4), Color(0xFF15233A))
 }
 
@@ -4398,4 +4741,74 @@ private fun SettingsHubDivider() {
             .height(1.dp)
             .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = .42f))
     )
+}
+
+private fun settingsPageTitle(page: String): String = when (page) {
+    "profile" -> "Profile details"
+    "theme" -> "App theme"
+    "call" -> "Call appearance"
+    "chat" -> "Chat settings"
+    "sounds" -> "Sounds"
+    "backgrounds" -> "Chat backgrounds"
+    "privacy" -> "Privacy controls"
+    "notifications" -> "Notifications & calls"
+    "viewers" -> "Profile viewers"
+    "devices" -> "Devices & sessions"
+    "blocked" -> "Blocked accounts"
+    else -> "Settings"
+}
+
+private fun settingsPageSubtitle(page: String): String = when (page) {
+    "profile" -> "Photo, bio, links and account details"
+    "theme" -> "Light, dark and premium looks for the whole app"
+    "call" -> "Skins and textures for audio and video calls"
+    "chat" -> "How messages look and send"
+    "sounds" -> "Custom MP3 sounds saved on this phone"
+    "backgrounds" -> "Themes and photo backgrounds for chats"
+    "privacy" -> "App lock, presence, receipts and AI"
+    "notifications" -> "Alerts, sounds and incoming-call access"
+    "viewers" -> "Stored only on this phone"
+    "devices" -> "Recent sign-ins and sessions"
+    "blocked" -> "People who cannot contact you"
+    else -> ""
+}
+
+private data class AppThemePreview(val name: String, val background: Color, val surface: Color, val accent: Color)
+
+/** Miniature phone preview of an app theme: background, a card and two chat bubbles. */
+@Composable
+private fun AppThemeTile(preview: AppThemePreview, selected: Boolean, locked: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    val isLight = preview.background.luminance() > .5f
+    val textColor = if (isLight) Color(0xFF1B1B24) else Color.White
+    Column(modifier.clip(RoundedCornerShape(18.dp)).clickable(onClick = onClick), horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(
+            Modifier.fillMaxWidth().height(126.dp).clip(RoundedCornerShape(18.dp))
+                .background(Brush.verticalGradient(listOf(preview.background, lerp(preview.background, preview.accent, .16f))))
+                .border(if (selected) 3.dp else 1.dp, if (selected) preview.accent else textColor.copy(alpha = .12f), RoundedCornerShape(18.dp))
+                .padding(8.dp)
+        ) {
+            Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(14.dp).clip(CircleShape).background(preview.accent))
+                    Spacer(Modifier.width(4.dp))
+                    Box(Modifier.height(5.dp).fillMaxWidth(.6f).clip(CircleShape).background(textColor.copy(alpha = .55f)))
+                }
+                Box(Modifier.fillMaxWidth().height(26.dp).clip(RoundedCornerShape(8.dp)).background(preview.surface.copy(alpha = if (isLight) 1f else .9f)).border(1.dp, textColor.copy(alpha = .06f), RoundedCornerShape(8.dp)))
+                Box(Modifier.fillMaxWidth(.7f).height(14.dp).clip(RoundedCornerShape(7.dp)).background(preview.surface))
+                Box(Modifier.align(Alignment.End).fillMaxWidth(.62f).height(14.dp).clip(RoundedCornerShape(7.dp)).background(preview.accent))
+                Spacer(Modifier.weight(1f))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                    repeat(4) { i -> Box(Modifier.size(6.dp).clip(CircleShape).background(if (i == 0) preview.accent else textColor.copy(alpha = .3f))) }
+                }
+            }
+            if (selected) Box(Modifier.align(Alignment.TopEnd).size(20.dp).clip(CircleShape).background(preview.accent), contentAlignment = Alignment.Center) {
+                Icon(Icons.Default.Check, "Active", tint = if (preview.accent.luminance() > .5f) Color.Black else Color.White, modifier = Modifier.size(13.dp))
+            }
+            if (locked) Box(Modifier.align(Alignment.TopEnd).size(22.dp).clip(CircleShape).background(Color.Black.copy(alpha = .55f)), contentAlignment = Alignment.Center) {
+                Icon(Icons.Default.Lock, "Premium", tint = Color(0xFFFFD166), modifier = Modifier.size(13.dp))
+            }
+        }
+        Spacer(Modifier.height(5.dp))
+        Text(preview.name, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 11.sp, fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.Medium)
+    }
 }
