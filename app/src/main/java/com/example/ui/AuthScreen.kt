@@ -23,10 +23,17 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.credentials.Credential
 import androidx.credentials.CredentialManager
 import androidx.credentials.CustomCredential
 import androidx.credentials.GetCredentialRequest
+import androidx.credentials.CreatePasswordRequest
+import androidx.credentials.GetPasswordOption
+import androidx.credentials.PasswordCredential
+import androidx.compose.ui.autofill.ContentType
+import androidx.compose.ui.semantics.contentType
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -86,6 +93,20 @@ fun AuthScreen(
         ).build()
         return credentialManager.getCredential(context, hinted).credential
     }
+    // Google Password Manager: after a successful email/password login or sign-up, offer to
+    // save the credential; navigation waits for the system sheet so it is not cancelled.
+    fun savePasswordThen(savedEmail: String, savedPassword: String, then: () -> Unit) {
+        val activity = context.findActivityForCredentials()
+        if (activity == null || savedEmail.isBlank() || savedPassword.isBlank()) { then(); return }
+        scope.launch {
+            runCatching {
+                kotlinx.coroutines.withTimeoutOrNull(90_000L) {
+                    credentialManager.createCredential(activity, CreatePasswordRequest(id = savedEmail.trim(), password = savedPassword))
+                }
+            }.onFailure { android.util.Log.d("AUTH", "Password save skipped: ${it.javaClass.simpleName}") }
+            then()
+        }
+    }
     val authLoading by viewModel.authLoading.collectAsState()
     val authError by viewModel.authError.collectAsState()
     val isFirebaseConfigured by viewModel.isFirebaseConfigured.collectAsState()
@@ -94,6 +115,30 @@ fun AuthScreen(
     var isLoginMode by remember { mutableStateOf(true) }
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
+    var savedPasswordOffered by rememberSaveable { mutableStateOf(false) }
+    // Quick login: offer passwords already saved in Google Password Manager (no UI when none).
+    fun offerSavedPasswords(silentIfNone: Boolean) {
+        val activity = context.findActivityForCredentials() ?: return
+        scope.launch {
+            runCatching {
+                val request = GetCredentialRequest.Builder()
+                    .addCredentialOption(GetPasswordOption())
+                    .setPreferImmediatelyAvailableCredentials(silentIfNone)
+                    .build()
+                val credential = credentialManager.getCredential(activity, request).credential
+                if (credential is PasswordCredential) {
+                    email = credential.id
+                    password = credential.password
+                    viewModel.login(credential.id, credential.password, onAuthSuccess)
+                }
+            }.onFailure {
+                if (!silentIfNone) Toast.makeText(context, "No saved passwords for Convo Chat yet", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+    LaunchedEffect(Unit) {
+        if (!savedPasswordOffered) { savedPasswordOffered = true; offerSavedPasswords(silentIfNone = true) }
+    }
     var name by remember { mutableStateOf("") }
     var dob by remember { mutableStateOf("") }
     
@@ -490,6 +535,7 @@ fun AuthScreen(
                         shape = RoundedCornerShape(22.dp),
                         modifier = Modifier
                             .fillMaxWidth()
+                            .semantics { contentType = ContentType.EmailAddress + ContentType.Username }
                             .testTag("email_input"),
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedBorderColor = color1,
@@ -524,6 +570,7 @@ fun AuthScreen(
                         shape = RoundedCornerShape(22.dp),
                         modifier = Modifier
                             .fillMaxWidth()
+                            .semantics { contentType = if (isLoginMode) ContentType.Password else ContentType.NewPassword }
                             .testTag("password_input"),
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedBorderColor = color2,
@@ -544,6 +591,14 @@ fun AuthScreen(
                             modifier = Modifier.fillMaxWidth(),
                             contentAlignment = Alignment.CenterEnd
                         ) {
+                            TextButton(
+                                onClick = { offerSavedPasswords(silentIfNone = false) },
+                                modifier = Modifier.align(Alignment.CenterStart)
+                            ) {
+                                Icon(Icons.Default.Key, null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)
+                                Spacer(Modifier.width(5.dp))
+                                Text("Saved passwords", style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold), color = MaterialTheme.colorScheme.primary)
+                            }
                             TextButton(
                                 onClick = { showForgotPasswordDialog = true },
                                 modifier = Modifier.testTag("forgot_password_button")
@@ -600,12 +655,14 @@ fun AuthScreen(
                             .border(1.dp, Color.White.copy(alpha = ctaGlow), RoundedCornerShape(22.dp))
                             .clickable(enabled = !authLoading && !isUploadingPic) {
                                 if (isLoginMode) {
-                                    viewModel.login(email, password, onAuthSuccess)
+                                    val e = email; val pw = password
+                                    viewModel.login(e, pw) { savePasswordThen(e, pw, onAuthSuccess) }
                                 } else {
+                                    val e = email; val pw = password
                                     viewModel.signup(
                                         email, name, dob, password,
                                         if (signupProfilePicBytes == null) signupProfilePicUrl else "",
-                                        onAuthSuccess,
+                                        { savePasswordThen(e, pw, onAuthSuccess) },
                                         profileImageBytes = signupProfilePicBytes
                                     )
                                 }
@@ -887,4 +944,14 @@ fun AuthScreen(
             containerColor = MaterialTheme.colorScheme.surfaceColorAtElevation(6.dp)
         )
     }
+}
+
+
+private fun android.content.Context.findActivityForCredentials(): android.app.Activity? {
+    var current: android.content.Context? = this
+    while (current is android.content.ContextWrapper) {
+        if (current is android.app.Activity) return current
+        current = current.baseContext
+    }
+    return null
 }

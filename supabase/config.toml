@@ -6,3 +6,7 @@ project_id = "convo-chat"
 # The app authenticates with Firebase ID tokens and Supabase Cron uses x-cron-secret,
 # so the platform JWT check must be off. Every route checks its own credential.
 verify_jwt = false
+
+[functions.auto-ai-post]
+# Called only by Supabase Cron with the x-cron-secret header; the function checks it itself.
+verify_jwt = false

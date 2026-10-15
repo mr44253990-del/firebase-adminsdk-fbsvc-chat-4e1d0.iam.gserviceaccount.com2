@@ -588,6 +588,13 @@ fun HomeScreen(
                                 }
                             )
                         }
+                        item(key = "polls") {
+                            ActivePollsSection(
+                                userName = currentUser?.name.orEmpty(),
+                                userPhoto = currentUser?.profileImageUrl.orEmpty(),
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)
+                            )
+                        }
                         item(key = "composer") {
                             Card(
                                 onClick = onCreatePost,

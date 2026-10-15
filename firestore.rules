@@ -113,6 +113,27 @@ service cloud.firestore {
       allow update, delete: if signedIn() && request.auth.token.email == 'mr4425390@gmail.com';
     }
 
+    // Admin polls: everyone reads, only the admin creates/ends them. Voters may only bump the
+    // aggregate counters, and each vote document is readable by its voter and the admin.
+    match /polls/{pollId} {
+      allow read: if signedIn();
+      allow create, delete: if signedIn() && request.auth.token.email == 'mr4425390@gmail.com';
+      allow update: if signedIn() && (
+        request.auth.token.email == 'mr4425390@gmail.com'
+        || (resource.data.active == true
+            && resource.data.endsAt > request.time.toMillis()
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['counts', 'totalVotes']))
+      );
+      match /votes/{voterId} {
+        allow read: if signedIn() && (request.auth.uid == voterId || request.auth.token.email == 'mr4425390@gmail.com');
+        allow create, update: if owner(voterId)
+          && request.resource.data.optionIndex is int
+          && get(/databases/$(database)/documents/polls/$(pollId)).data.active == true
+          && get(/databases/$(database)/documents/polls/$(pollId)).data.endsAt > request.time.toMillis();
+        allow delete: if signedIn() && request.auth.token.email == 'mr4425390@gmail.com';
+      }
+    }
+
     match /posts/{postId} {
       allow read: if signedIn();
       allow create: if signedIn() && request.resource.data.senderId == request.auth.uid;

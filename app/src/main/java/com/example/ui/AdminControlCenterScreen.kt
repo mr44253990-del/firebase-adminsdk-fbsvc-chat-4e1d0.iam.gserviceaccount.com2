@@ -201,6 +201,8 @@ fun AdminControlCenterScreen(
         AdminMenuEntry("premium_access", "Gifts & access", "Grant Premium or revoke access", Icons.Outlined.CardGiftcard, Color(0xFFCB5C90)),
         AdminMenuEntry("presence", "Presence / 5-min probe", "Supabase Edge Function + Cron", Icons.Outlined.Groups, Color(0xFF358B9A)),
         AdminMenuEntry("chat_media", "Chat backgrounds & sounds", "Photo backgrounds and default app sounds", Icons.Outlined.Wallpaper, Color(0xFF8B62D9), chatBackgroundImages.size.takeIf { it > 0 }?.toString().orEmpty()),
+        AdminMenuEntry("polls", "Polls & votes", "Timed polls with live results and voters", Icons.Outlined.HowToVote, Color(0xFF7C4DFF)),
+        AdminMenuEntry("auto_post", "Auto AI posts", "Scheduled AI posts from the admin account", Icons.Outlined.AutoAwesome, Color(0xFFE0457B)),
         AdminMenuEntry("reels", "Reels & TikTok", "Choose the Reels experience", Icons.Outlined.SmartDisplay, Color(0xFF1B9A8B)),
         AdminMenuEntry("storage", "Storage routing", "Supabase buckets and upload tests", Icons.Outlined.CloudUpload, Color(0xFF5386CA)),
         AdminMenuEntry("gateway", "Push / FCM gateway", "Chat, call and diagnostic push", Icons.Outlined.SendToMobile, Color(0xFF4E78B8)),
@@ -816,6 +818,16 @@ fun AdminControlCenterScreen(
                                 },
                                 dismissButton = { TextButton(onClick = { pendingDelete = null }) { Text("Cancel") } }
                             )
+                        }
+                    }
+                    "polls" -> {
+                        AdminPanelCard("Polls & votes", "Timed polls for every user; expired polls disappear automatically", Icons.Outlined.HowToVote) {
+                            AdminPollsPanel()
+                        }
+                    }
+                    "auto_post" -> {
+                        AdminPanelCard("Auto AI posts", "The server posts from your account on a schedule, even when the app is closed", Icons.Outlined.AutoAwesome) {
+                            AdminAutoPostPanel()
                         }
                     }
                     "reels" -> {
