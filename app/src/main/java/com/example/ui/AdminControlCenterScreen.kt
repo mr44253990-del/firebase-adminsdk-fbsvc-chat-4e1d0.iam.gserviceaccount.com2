@@ -108,7 +108,8 @@ fun AdminControlCenterScreen(
     var reelsEnabled by remember(flagshipConfig) { mutableStateOf(flagshipConfig.reelsEnabled) }
     var assistantEnabled by remember(flagshipConfig) { mutableStateOf(flagshipConfig.assistantEnabled) }
     var locationSharingEnabled by remember(flagshipConfig) { mutableStateOf(flagshipConfig.locationSharingEnabled) }
-    var aiModel by remember(flagshipConfig) { mutableStateOf(flagshipConfig.aiModel) }
+    val aiPublic by AiPublicInfo.info.collectAsState()
+    val cloudDbOn by CloudMessageStore.enabled.collectAsState()
     var aiName by remember(flagshipConfig) { mutableStateOf(flagshipConfig.aiDisplayName) }
     var aiPrompt by remember(flagshipConfig) { mutableStateOf(flagshipConfig.aiSystemPrompt) }
     var premiumEnabled by remember(flagshipConfig) { mutableStateOf(flagshipConfig.premiumEnabled) }
@@ -196,6 +197,8 @@ fun AdminControlCenterScreen(
         AdminMenuEntry("maintenance", "Maintenance & notice", "Service status and announcements", Icons.Outlined.Build, Color(0xFFE28A22)),
         AdminMenuEntry("announce", "Announcements", "Banner for every user: notices, features, events", Icons.Outlined.Campaign, Color(0xFF2979FF)),
         AdminMenuEntry("audit", "Audit log", "Every admin change with time and account", Icons.Outlined.History, Color(0xFF546E7A)),
+        AdminMenuEntry("power", "Power tools", "Broadcast push, live switches, reminders, typing sound", Icons.Outlined.Bolt, Color(0xFFFF6D00)),
+        AdminMenuEntry("cloud_db", "Cloud backup", "Text messages in Cloudflare D1 · on/off · test", Icons.Outlined.Cloud, Color(0xFFF38020), if (cloudDbOn) "ON" else ""),
         AdminMenuEntry("ai_providers", "AI providers & keys", "Update keys, test models, custom providers, hide AI", Icons.Outlined.Key, Color(0xFF7A4FE0)),
         AdminMenuEntry("workers", "Multi-worker routing", "Spread services across 2nd/3rd worker URLs", Icons.Outlined.Hub, Color(0xFF2B7FD9)),
         AdminMenuEntry("ai", "AI & feature flags", "Assistant and staged capabilities", Icons.Outlined.AutoAwesome, Color(0xFF8E5CE6)),
@@ -521,6 +524,12 @@ fun AdminControlCenterScreen(
                             }
                         }
                     }
+                    "power" -> {
+                        AdminPanelCard("Power tools", "Act on every user at once and flip live switches", Icons.Outlined.Bolt) { AdminPowerToolsPanel(viewModel) }
+                    }
+                    "cloud_db" -> {
+                        AdminPanelCard("Cloud backup", "Store text & emoji message bodies in your Cloudflare D1 database", Icons.Outlined.Cloud) { AdminCloudStorePanel() }
+                    }
                     "announce" -> {
                         AdminPanelCard("Announcements", "Publish a banner to every signed-in user", Icons.Outlined.Campaign) { AdminAnnouncementPanel() }
                     }
@@ -536,9 +545,19 @@ fun AdminControlCenterScreen(
                         AdminPanelCard("AI assistant", "Edit the assistant presentation and safe system guidance", Icons.Outlined.AutoAwesome) {
                             AdminSwitchRow("Show assistant to all users", "Remote control for the in-app assistant.", assistantEnabled, { assistantEnabled = it })
                             OutlinedTextField(aiName, { aiName = it.take(60) }, label = { Text("Assistant name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                            OutlinedTextField(aiModel, { aiModel = it.filter { c -> c.isLetterOrDigit() || c in "-_." }.take(80) }, label = { Text("Mistral model") }, supportingText = { Text("Example: mistral-small-latest") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                            Surface(onClick = { selectedPage = "ai_providers" }, shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.primary.copy(alpha = .08f), modifier = Modifier.fillMaxWidth()) {
+                                Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Icons.Outlined.Key, null, tint = MaterialTheme.colorScheme.primary)
+                                    Spacer(Modifier.width(10.dp))
+                                    Column(Modifier.weight(1f)) {
+                                        Text("Model: ${aiPublic.model.ifBlank { "server default" }}", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                        Text("${aiPublic.providerName.ifBlank { "Mistral (server key)" }} · change provider/model on the AI providers page", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    Icon(Icons.Default.ChevronRight, null)
+                                }
+                            }
                             OutlinedTextField(aiPrompt, { aiPrompt = it.take(2000) }, label = { Text("Safe system instructions") }, minLines = 4, modifier = Modifier.fillMaxWidth())
-                            AdminInlineInfo("The Mistral API key stays on the server-side gateway. Never paste it into this app or Firebase config.")
+                            AdminInlineInfo("API keys and the model are managed only on the AI providers page and stay server-side.")
                             HorizontalDivider()
                             Text("Remote feature flags", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
                             Text("Stage-roll out app features without changing the APK.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -553,7 +572,6 @@ fun AdminControlCenterScreen(
                             Button(onClick = {
                                 viewModel.updateFlagshipFields(mapOf(
                                     "assistantEnabled" to assistantEnabled,
-                                    "aiModel" to aiModel,
                                     "aiDisplayName" to aiName,
                                     "aiSystemPrompt" to aiPrompt,
                                     "smartReplyEnabled" to smartReplyEnabled,
@@ -1033,6 +1051,8 @@ fun AdminControlCenterScreen(
                     if (premiumNow && !person.premiumPlan.equals("lifetime", true)) {
                         Text("Premium until: ${formatAdminTimestamp(person.premiumUntil)}", fontSize = 11.sp)
                     }
+                    HorizontalDivider()
+                    AdminUserPowerActions(person)
                     OutlinedButton(
                         onClick = {
                             val uid = person.uid

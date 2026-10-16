@@ -45,6 +45,7 @@ fun TrackOpenChat(peerUid: String?, groupId: String? = null) {
                 val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
                 peerUid?.let { manager.cancel(("chat_" + it).hashCode()) }
             }
+            peerUid?.let { MessageReminder.markChatOpened(context, it) }
         }
         fun close() {
             if (peerUid != null && ActiveChatState.openPeerUid == peerUid) ActiveChatState.setPeer(null)

@@ -317,4 +317,5 @@ object LikeSound {
 object AppFeatureFlags {
     val aiEnabled = kotlinx.coroutines.flow.MutableStateFlow(true)
     val locationSharingEnabled = kotlinx.coroutines.flow.MutableStateFlow(true)
+    val typingSoundEnabled = kotlinx.coroutines.flow.MutableStateFlow(true)
 }

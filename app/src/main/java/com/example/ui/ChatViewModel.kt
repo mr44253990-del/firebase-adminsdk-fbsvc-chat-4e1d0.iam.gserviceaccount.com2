@@ -217,6 +217,20 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     .orEmpty()
                 friendIds.forEach { peerId ->
                     val chatId = listOf(uid, peerId).sorted().joinToString("_")
+                    // Cloud backup ON: restore text history from Cloudflare D1 (fresh install / new phone).
+                    viewModelScope.launch(Dispatchers.IO) {
+                        val on = kotlinx.coroutines.withTimeoutOrNull(8_000L) { CloudMessageStore.enabled.first { it } } ?: false
+                        if (!on) return@launch
+                        val rows = CloudMessageStore.history(chatId, 0L, 300)
+                        if (rows.isEmpty()) return@launch
+                        val existing = rows.map { it.id }.chunked(400).flatMap { ids ->
+                            runCatching { cacheDao.getReceiptRows(ids) }.getOrDefault(emptyList()).map { it.messageId }
+                        }.toSet()
+                        val restored = rows.filter { it.id !in existing }.map { r ->
+                            Message(messageId = r.id, senderId = r.senderId, text = r.text, timestamp = r.ts, deliveredToRecipient = true, seenByRecipient = true)
+                        }
+                        if (restored.isNotEmpty()) runCatching { cacheMessagesPreservingReceipts(restored, chatId) }
+                    }
                     getDatabaseInstance().getReference("chats").child(chatId).child("messages")
                         .orderByChild("timestamp").limitToLast(300).get()
                         .addOnSuccessListener { snapshot ->
@@ -414,6 +428,13 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             _flagshipConfig.collect { cfg ->
                 AppFeatureFlags.aiEnabled.value = cfg.assistantEnabled
                 AppFeatureFlags.locationSharingEnabled.value = cfg.locationSharingEnabled
+                AppFeatureFlags.typingSoundEnabled.value = cfg.typingSoundEnabled
+                if (!cfg.typingSoundEnabled) stopTypingLoop()
+                // FirebaseMessagingService runs without the ViewModel: mirror reminder switches.
+                getApplication<Application>().getSharedPreferences("convo_remote_flags", Context.MODE_PRIVATE).edit()
+                    .putBoolean("reminder_on", cfg.messageReminderEnabled)
+                    .putInt("reminder_minutes", cfg.messageReminderMinutes.coerceIn(1, 240))
+                    .apply()
             }
         }
     }
@@ -426,6 +447,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     val deviceSessions: StateFlow<List<DeviceSession>> = _deviceSessions.asStateFlow()
     private val _adminReports = MutableStateFlow<List<UserReport>>(emptyList())
     val adminReports: StateFlow<List<UserReport>> = _adminReports.asStateFlow()
+    private val _forcedLogout = MutableStateFlow(false)
+    val forcedLogout: StateFlow<Boolean> = _forcedLogout.asStateFlow()
     private val _accountBanned = MutableStateFlow(false)
     val accountBanned: StateFlow<Boolean> = _accountBanned.asStateFlow()
     private val _rememberedAccounts = MutableStateFlow(loadRememberedAccounts())
@@ -669,7 +692,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 getDatabaseInstance().getReference("unread_counts")
                     .child(currentUid).child(user.uid).setValue(0)
             }
-            startListeningToChat(user.uid)
+            ensureChatListening(user.uid)
             startListeningToChatTheme()
         } else {
             stopListeningToChat()
@@ -947,7 +970,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 try {
                     val payload = JSONObject().apply {
                         put("message", prompt.take(4000))
-                        put("model", _flagshipConfig.value.aiModel)
+                        // No model here: the Worker always uses the model chosen on the admin AI providers page.
+                        put("aiv", AiPublicInfo.info.value.version)
                         put("systemPrompt", _flagshipConfig.value.aiSystemPrompt.take(2000))
                         put("memory", JSONArray(memory.takeLast(20)))
                     }
@@ -976,18 +1000,30 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             val token = tokenResult.token ?: return@addOnSuccessListener onDone("Could not authenticate")
             viewModelScope.launch(Dispatchers.IO) {
                 try {
-                    val payload = JSONObject().apply { put("message", prompt.take(4000)); put("model", _flagshipConfig.value.aiModel); put("systemPrompt", _flagshipConfig.value.aiSystemPrompt.take(2000)); put("memory", JSONArray(memory.takeLast(20))); put("stream", true) }
+                    val payload = JSONObject().apply { put("message", prompt.take(4000)); put("aiv", AiPublicInfo.info.value.version); put("systemPrompt", _flagshipConfig.value.aiSystemPrompt.take(2000)); put("memory", JSONArray(memory.takeLast(20))); put("stream", true) }
                     executeRouted("ai", OkHttpClient.Builder().callTimeout(2, TimeUnit.MINUTES).build()) { base ->
                         Request.Builder().url("$base/ai/chat").header("Authorization", "Bearer $token").post(payload.toString().toRequestBody("application/json".toMediaTypeOrNull())).build()
                     }.use { response ->
-                        if (!response.isSuccessful) return@use withContext(Dispatchers.Main) { onDone("Assistant unavailable (${response.code})") }
-                        response.body?.charStream()?.buffered()?.useLines { lines ->
-                            lines.forEach { line ->
-                                if (line.startsWith("data: ") && !line.endsWith("[DONE]")) {
-                                    val delta = runCatching { JSONObject(line.removePrefix("data: ")).optJSONArray("choices")?.optJSONObject(0)?.optJSONObject("delta")?.optString("content").orEmpty() }.getOrDefault("")
-                                    if (delta.isNotEmpty()) withContext(Dispatchers.Main) { onDelta(delta) }
-                                }
+                        if (!response.isSuccessful) {
+                            val err = runCatching { JSONObject(response.body?.string().orEmpty()).optString("error") }.getOrNull().orEmpty()
+                            return@use withContext(Dispatchers.Main) { onDone(err.ifBlank { "Assistant unavailable (${response.code})" }) }
+                        }
+                        var gotDelta = false
+                        val raw = StringBuilder()
+                        response.body?.charStream()?.buffered()?.useLines { seq ->
+                            for (line in seq) {
+                                if (line.startsWith("data:") && !line.endsWith("[DONE]")) {
+                                    val delta = runCatching { JSONObject(line.removePrefix("data:").trim()).optJSONArray("choices")?.optJSONObject(0)?.optJSONObject("delta")?.optString("content").orEmpty() }.getOrDefault("")
+                                    if (delta.isNotEmpty()) { gotDelta = true; withContext(Dispatchers.Main) { onDelta(delta) } }
+                                } else if (!gotDelta && raw.length < 20_000) raw.append(line)
                             }
+                        }
+                        // Some providers ignore stream=true and answer with one JSON body.
+                        if (!gotDelta) {
+                            val json = runCatching { JSONObject(raw.toString()) }.getOrNull()
+                            val reply = json?.optString("reply").orEmpty().ifBlank { json?.optJSONArray("choices")?.optJSONObject(0)?.optJSONObject("message")?.optString("content").orEmpty() }
+                            if (reply.isNotBlank()) withContext(Dispatchers.Main) { onDelta(reply) }
+                            else return@use withContext(Dispatchers.Main) { onDone(json?.optString("error")?.ifBlank { null } ?: "The AI provider returned an empty answer") }
                         }
                         withContext(Dispatchers.Main) { onDone(null) }
                     }
@@ -1314,6 +1350,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun listenFlagshipControl() {
+        CloudMessageStore.init(getApplication())
+        AiPublicInfo.listen()
         flagshipListener?.remove()
         flagshipListener = FirebaseFirestore.getInstance().collection("app_config").document("flagship")
             .addSnapshotListener { document, error ->
@@ -1770,6 +1808,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             activeChatId = null
             stopListeningToChat()
             stopListeningToTyping()
+            CloudMessageStore.stop()
+            AiPublicInfo.stop()
             onSuccess()
         } catch (e: Exception) {
             Log.e("Auth", "Logout failed: ${e.message}")
@@ -1819,6 +1859,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             } else if (document != null && document.exists()) {
                 _accountBanned.value = document.getBoolean("banned") == true
                 if (_accountBanned.value) return@addSnapshotListener
+                // Admin "Force logout": any session signed in before forceLogoutAt must sign out.
+                val forceAt = document.getLong("forceLogoutAt") ?: 0L
+                val signedInAt = FirebaseAuth.getInstance().currentUser?.metadata?.lastSignInTimestamp ?: 0L
+                _forcedLogout.value = forceAt > 0L && signedInAt in 1 until forceAt
                 runCatching { document.toObject(User::class.java) }.getOrNull()?.let { parsed ->
                     val liveUser = parsed.copy(
                         isPremium = document.getBoolean("isPremium") ?: parsed.isPremium,
@@ -2240,7 +2284,15 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         }
                     }
                     val localById = _chatMessagesState.value.associateBy { it.messageId }
-                    val merged = messages.map { remote ->
+                    // Cloud-backed bodies: fill from the on-device cache right away (no flicker).
+                    for (i in messages.indices) {
+                        val m = messages[i]
+                        if (m.cloudText && m.text.isBlank()) messages[i] = m.copy(
+                            text = CloudMessageStore.cached(m.messageId) ?: localById[m.messageId]?.text.orEmpty(),
+                            replyToText = m.replyToText ?: m.replyToId?.let { rid -> localById[rid]?.text }
+                        )
+                    }
+                    val merged = messages.filterNot { it.cloudText && it.text.isBlank() }.map { remote ->
                         val local = localById[remote.messageId]
                         if (local == null) remote else remote.copy(
                             // RTDB message nodes intentionally keep their original false
@@ -2262,7 +2314,14 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     // Persist before acknowledgement. Incoming RTDB payload is removed only after
                     // Room confirms the durable local copy; a tiny receipt remains for the sender.
                     viewModelScope.launch(Dispatchers.IO) {
-                        val localized = messages.map { remote ->
+                        // Resolve cloud bodies from D1 before persisting/acknowledging. Anything that
+                        // cannot be resolved yet stays in RTDB (not acked) and is retried next update.
+                        val pendingCloud = messages.filter { it.cloudText && it.text.isBlank() }.map { it.messageId }
+                        val fetchedCloud = if (pendingCloud.isNotEmpty()) CloudMessageStore.fetch(chatId, pendingCloud) else emptyMap()
+                        val resolvedMessages = messages.mapNotNull { m ->
+                            if (m.cloudText && m.text.isBlank()) fetchedCloud[m.messageId]?.let { m.copy(text = it) } else m
+                        }
+                        val localized = resolvedMessages.map { remote ->
                             if (remote.senderId != currentUid) localizeIncomingMedia(remote, chatId)
                             else _chatMessagesState.value.find { it.messageId == remote.messageId } ?: remote
                         }
@@ -2330,6 +2389,36 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             }
             override fun onCancelled(error: DatabaseError) {}
         })
+    }
+
+    // Chat screens attach/detach with a reference count. Navigation can compose the new chat
+    // screen BEFORE the old one is disposed (notification tap, profile → message, transitions);
+    // the old screen's dispose used to stop the listener the new screen had just started, so new
+    // incoming messages stopped appearing until the chat was reopened.
+    private val chatScreenRefs = HashMap<String, Int>()
+    private fun chatIdWith(recipientUid: String): String? {
+        val uid = FirebaseAuth.getInstance().currentUser?.uid ?: return null
+        return listOf(uid, recipientUid).sorted().joinToString("_")
+    }
+
+    fun attachChatScreen(recipientUid: String) {
+        if (recipientUid.isBlank()) return
+        chatScreenRefs[recipientUid] = (chatScreenRefs[recipientUid] ?: 0) + 1
+        ensureChatListening(recipientUid)
+    }
+
+    /** Re-attaches the live listener if it is missing (e.g. after resume). Idempotent. */
+    fun ensureChatListening(recipientUid: String) {
+        val chatId = chatIdWith(recipientUid) ?: return
+        if (activeChatId != chatId || activeChatListener == null) startListeningToChat(recipientUid)
+        else if (activeTypingListener == null && PrivacyPreferences.settings.value.showTypingStatus) startListeningToTyping(recipientUid)
+    }
+
+    fun detachChatScreen(recipientUid: String) {
+        val left = (chatScreenRefs[recipientUid] ?: 1) - 1
+        if (left <= 0) chatScreenRefs.remove(recipientUid) else chatScreenRefs[recipientUid] = left
+        if (left > 0) return
+        if (activeChatId == chatIdWith(recipientUid)) stopListeningToChat()
     }
 
     fun stopListeningToChat() {
@@ -2435,8 +2524,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     (snapshot.value as? Boolean) ?: run {
                         val active = snapshot.child("active").value as? Boolean ?: false
                         val updatedAt = (snapshot.child("updatedAt").value as? Number)?.toLong()
-                        active && updatedAt != null &&
-                            (System.currentTimeMillis() - updatedAt).coerceAtLeast(0L) < 15_000L
+                        // The sender refreshes this lease every 8 s while text sits in the composer;
+                        // 45 s tolerates clock skew while still dropping a crashed peer.
+                        active && (updatedAt == null || kotlin.math.abs(System.currentTimeMillis() - updatedAt) < 45_000L)
                     }
                 }.getOrDefault(false)
                 val wasTyping = _isRecipientTyping.value
@@ -2526,7 +2616,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     @Volatile private var lastTypingSignalAt = 0L
 
     private fun startTypingLoop() {
-        if (!_typingSoundsEnabled.value || typingLoopPlayer != null) return
+        if (!_typingSoundsEnabled.value || !AppFeatureFlags.typingSoundEnabled.value || typingLoopPlayer != null) return
         val app = getApplication<Application>()
         typingLoopPlayer = runCatching {
             val custom = AppSoundStore.activeFile(app, AppSoundStore.TYPING)
@@ -2539,8 +2629,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         typingWatchdog = viewModelScope.launch {
             while (typingLoopPlayer != null) {
                 kotlinx.coroutines.delay(2_000)
-                // A peer that crashed mid-typing never clears the flag: stop after 16 s of silence.
-                if (System.currentTimeMillis() - lastTypingSignalAt > 16_000L) {
+                // A peer that crashed mid-typing never clears the flag: stop after 25 s without a lease refresh.
+                if (System.currentTimeMillis() - lastTypingSignalAt > 25_000L) {
                     _isRecipientTyping.value = false
                     stopTypingLoop()
                 }
@@ -3076,7 +3166,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
         _chatMessagesState.value = (_chatMessagesState.value.filterNot { it.messageId == messageId } + localMessage).sortedBy { it.timestamp }
 
-        chatRef.child(messageId).setValue(message)
+        fun relay(payload: Message) = chatRef.child(messageId).setValue(payload)
             .addOnSuccessListener {
                 _messageDeliveryStates.update { it + (messageId to "sent") }
                 // Update unread count for recipient
@@ -3092,7 +3182,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     .setValue(mapOf(
                         "senderId" to currentUser.uid,
                         "senderName" to currentUser.name,
-                        "text" to if (fileUrl != null) "File: ${fileName ?: "attachment"}" else if (voiceUrl != null) "Voice message" else if (imageUrl != null) "Photo" else if (com.example.location.LocationShare.parse(text) != null) (if (com.example.location.LocationShare.parse(text)!!.isLive) "Shared a live location" else "Shared a location") else text,
+                        "text" to if (payload.cloudText) "💬 New message" else if (fileUrl != null) "File: ${fileName ?: "attachment"}" else if (voiceUrl != null) "Voice message" else if (imageUrl != null) "Photo" else if (com.example.location.LocationShare.parse(text) != null) (if (com.example.location.LocationShare.parse(text)!!.isLive) "Shared a live location" else "Shared a location") else text,
                         "timestamp" to System.currentTimeMillis()
                     ))
 
@@ -3115,6 +3205,15 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 _messageDeliveryStates.update { it + (messageId to "failed") }
                 Log.w("ChatViewModel", "Message send failed: $messageId", error)
             }
+
+        // Cloud backup ON: plain text/emoji bodies go to Cloudflare D1 first; the RTDB relay then
+        // carries only metadata. Any cloud failure falls back to the classic RTDB payload.
+        val cloudEligible = CloudMessageStore.enabled.value && text.isNotBlank() && imageUrl == null && voiceUrl == null && fileUrl == null
+        if (!cloudEligible) relay(message)
+        else viewModelScope.launch {
+            val stored = CloudMessageStore.put(chatId, messageId, text, sentAt)
+            relay(if (stored) message.copy(text = "", cloudText = true, replyToText = null) else message)
+        }
     }
 
     fun scheduleMessage(
@@ -3228,6 +3327,19 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
         val cleanedText = newText.trim().take(10000)
         if (cleanedText.isBlank()) return
+        // Optimistic local update so the edit shows immediately even after the relay node is gone.
+        _chatMessagesState.value = _chatMessagesState.value.map { if (it.messageId == messageId) it.copy(text = cleanedText, edited = true) else it }
+        viewModelScope.launch(Dispatchers.IO) { runCatching { cacheDao.getMessagesForChat(chatId).firstOrNull()?.firstOrNull { it.messageId == messageId }?.let { row -> cacheDao.insertMessage(CachedMessage.fromMessage(row.toMessage().copy(text = cleanedText, edited = true), chatId)) } } }
+        if (CloudMessageStore.enabled.value) {
+            viewModelScope.launch {
+                if (CloudMessageStore.put(chatId, messageId, cleanedText, System.currentTimeMillis())) {
+                    messageRef.get().addOnSuccessListener { snap ->
+                        if (snap.exists()) messageRef.updateChildren(mapOf("text" to "", "cloudText" to true, "edited" to true))
+                    }
+                }
+            }
+            return
+        }
         messageRef.get().addOnSuccessListener { snapshot ->
             val previousText = snapshot.child("text").getValue(String::class.java).orEmpty()
             val existingHistory = snapshot.child("editHistory").children.mapNotNull { item ->
@@ -3268,6 +3380,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             .child(messageId)
         
         messageRef.removeValue()
+        if (CloudMessageStore.enabled.value) viewModelScope.launch { CloudMessageStore.delete(chatId, listOf(messageId)) }
     }
 
     fun playLikeSound() = LikeSound.play(getApplication())

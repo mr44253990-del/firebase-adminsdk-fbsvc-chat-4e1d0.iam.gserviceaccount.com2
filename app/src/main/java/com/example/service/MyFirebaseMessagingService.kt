@@ -50,6 +50,8 @@ private data class NotificationStyle(
 /** Shared presence lease: five-minute probe cycle plus one minute of delivery jitter. */
 const val PRESENCE_LEASE_MS = 6 * 60_000L
 
+private const val SUMMARY_ID = 0x0C0FFEE
+
 class MyFirebaseMessagingService : FirebaseMessagingService() {
 
     override fun onNewToken(token: String) {
@@ -383,6 +385,7 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
                 else NotificationStyle("convo_messages_v1", "Messages", longArrayOf(0, 120, 70, 150), NotificationCompat.CATEGORY_MESSAGE)
             "friend_request", "friend_accepted", "message_request", "message_accepted" ->
                 NotificationStyle("convo_requests_v1", "Requests", longArrayOf(0, 220, 100, 220), NotificationCompat.CATEGORY_SOCIAL)
+            "admin_broadcast" -> NotificationStyle("convo_announcements_v1", "Announcements", longArrayOf(0, 80, 60, 80), NotificationCompat.CATEGORY_RECOMMENDATION)
             else -> NotificationStyle("convo_activity_v1", "Activity", longArrayOf(0, 100), NotificationCompat.CATEGORY_SOCIAL)
         }
 
@@ -392,7 +395,8 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         val notificationId = if (isMessage) ("chat_" + senderId).hashCode() else System.currentTimeMillis().toInt()
         val messageSound = Uri.parse("android.resource://$packageName/${R.raw.mixkit_confirmation_tone_2867}")
         val avatar = loadBitmap(senderProfileUrl)
-        val accent = 0xFF7C5CFC.toInt()
+        val accent = if (isMessage) ConvoNotificationArt.accentFor(senderId) else 0xFF7C5CFC.toInt()
+        val avatarBitmap = avatar?.let { circleBitmap(it) } ?: if (isMessage) ConvoNotificationArt.initialsAvatar(senderName.ifBlank { title }, senderId) else null
 
         val notificationBuilder = NotificationCompat.Builder(this, channelId)
             .setSmallIcon(android.R.drawable.stat_notify_chat)
@@ -412,8 +416,11 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
             val sender = androidx.core.app.Person.Builder()
                 .setName(senderName.ifBlank { title })
                 .setKey(senderId)
-                .apply { avatar?.let { setIcon(androidx.core.graphics.drawable.IconCompat.createWithBitmap(circleBitmap(it))) } }
+                .setImportant(true)
+                .apply { avatarBitmap?.let { setIcon(androidx.core.graphics.drawable.IconCompat.createWithBitmap(it)) } }
                 .build()
+            // Conversation shortcut: Android 11+ lists this chat under "Conversations" with the avatar.
+            ConvoNotificationArt.pushConversationShortcut(this, senderId, senderName.ifBlank { title }, avatarBitmap)
             val previous = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 notificationManager.activeNotifications.firstOrNull { it.id == notificationId }?.notification?.let {
                     NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(it)
@@ -430,6 +437,18 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
                 .setSubText(if (count > 1) "$count new messages" else null)
                 .setNumber(count)
                 .setGroup("convo_messages")
+                .setShortcutId(ConvoNotificationArt.shortcutId(senderId))
+                .setLocusId(androidx.core.content.LocusIdCompat(ConvoNotificationArt.shortcutId(senderId)))
+            val markRead = PendingIntent.getBroadcast(
+                this, ("read_" + senderId).hashCode(),
+                Intent(this, NotificationActionReceiver::class.java).putExtra("senderId", senderId),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            notificationBuilder.addAction(
+                NotificationCompat.Action.Builder(android.R.drawable.checkbox_on_background, "Mark as read", markRead)
+                    .setSemanticAction(NotificationCompat.Action.SEMANTIC_ACTION_MARK_AS_READ)
+                    .setShowsUserInterface(false).build()
+            )
         } else {
             notificationBuilder
                 .setContentTitle(title)
@@ -450,7 +469,7 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
             notificationBuilder.addAction(NotificationCompat.Action.Builder(android.R.drawable.ic_menu_send, "Reply", replyPending).addRemoteInput(replyInput).setAllowGeneratedReplies(true).setSemanticAction(NotificationCompat.Action.SEMANTIC_ACTION_REPLY).build())
         }
 
-        avatar?.let { notificationBuilder.setLargeIcon(circleBitmap(it)) }
+        avatarBitmap?.let { notificationBuilder.setLargeIcon(it) }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(channelId, "Convo Chat • $channelName", NotificationManager.IMPORTANCE_HIGH).apply {
@@ -458,6 +477,7 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
                     "convo_messages_v1" -> "Direct and group chat messages"
                     "convo_messages_custom_v1" -> "Chat messages using your custom notification sound"
                     "convo_requests_v1" -> "Friend and message requests"
+                    "convo_announcements_v1" -> "News and announcements from the Convo Chat team"
                     else -> "Reactions, comments, tags and story activity"
                 }
                 when (channelId) {
@@ -476,6 +496,23 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         }
 
         notificationManager.notify(notificationId, notificationBuilder.build())
+        if (isMessage) {
+            // Several chats waiting: a compact group summary keeps the shade tidy.
+            val waiting = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) notificationManager.activeNotifications.count { it.notification.group == "convo_messages" && it.id != SUMMARY_ID } else 0
+            if (waiting >= 2) {
+                notificationManager.notify(SUMMARY_ID, NotificationCompat.Builder(this, channelId)
+                    .setSmallIcon(android.R.drawable.stat_notify_chat)
+                    .setColor(0xFF7C5CFC.toInt())
+                    .setContentTitle("Convo Chat")
+                    .setContentText("$waiting conversations waiting")
+                    .setStyle(NotificationCompat.InboxStyle().setSummaryText("$waiting chats"))
+                    .setGroup("convo_messages").setGroupSummary(true)
+                    .setGroupAlertBehavior(NotificationCompat.GROUP_ALERT_CHILDREN)
+                    .setAutoCancel(true).build())
+            }
+            // One reminder later if this conversation is still not opened.
+            MessageReminder.schedule(this, senderId, senderName.ifBlank { title }, messageBody, sentAt)
+        }
         if (customSound) com.example.ui.AppSoundStore.playCustom(this, com.example.ui.AppSoundStore.NOTIFICATION)
     }
 

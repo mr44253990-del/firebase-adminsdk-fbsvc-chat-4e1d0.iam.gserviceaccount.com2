@@ -103,7 +103,7 @@ fun PremiumScreen(viewModel: ChatViewModel, onBack: () -> Unit, onChatAdmin: (Us
     LaunchedEffect(methods) { if (methods.none { it.first == method }) method = methods.firstOrNull()?.first.orEmpty() }
     LaunchedEffect(plans) { if (plans.none { it.first == plan }) plan = plans.firstOrNull()?.first.orEmpty() }
 
-    Scaffold(topBar = { TopAppBar(title = { Text("Convo Chat Premium", fontWeight = FontWeight.ExtraBold) }, navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } }) }) { padding ->
+    Scaffold(modifier = Modifier.modernBackdrop(), containerColor = Color.Transparent, topBar = { TopAppBar(colors = modernTopBarColors(), title = { ModernTitle("Convo Chat Premium", if (activePremium) "Active ✨" else "Unlock every feature") }, navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } }) }) { padding ->
         LazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             item {
                 Card(shape = RoundedCornerShape(30.dp), colors = CardDefaults.cardColors(containerColor = Color.Transparent)) {

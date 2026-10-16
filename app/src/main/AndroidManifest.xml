@@ -123,6 +123,12 @@
         <receiver
             android:name=".service.ScheduledMessageReceiver"
             android:exported="false" />
+        <receiver
+            android:name=".service.MessageReminderReceiver"
+            android:exported="false" />
+        <receiver
+            android:name=".service.NotificationActionReceiver"
+            android:exported="false" />
 
         <service
             android:name=".service.CallForegroundService"

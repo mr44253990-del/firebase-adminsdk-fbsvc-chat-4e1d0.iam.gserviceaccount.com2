@@ -90,7 +90,8 @@ fun UserProfileScreen(
     )
 
     Scaffold(
-        containerColor = MaterialTheme.colorScheme.background,
+        modifier = Modifier.modernBackdrop(),
+        containerColor = Color.Transparent,
         topBar = {
             TopAppBar(
                 title = {

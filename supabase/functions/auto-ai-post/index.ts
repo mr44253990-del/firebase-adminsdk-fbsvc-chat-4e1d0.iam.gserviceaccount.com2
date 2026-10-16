@@ -143,13 +143,15 @@ async function activeProvider(projectId: string, token: string): Promise<Json | 
   const cfg: Json = (await firestoreGet(projectId, "admin_secrets/ai", token).catch(() => null)) ?? {};
   const p = cfg.providers && cfg.activeProviderId ? cfg.providers[cfg.activeProviderId] : null;
   if (!p || p.enabled === false || String(p.apiKey || "").length < 8 || !/^https:\/\//i.test(String(p.baseUrl || ""))) return null;
-  return { name: String(p.name || cfg.activeProviderId), baseUrl: String(p.baseUrl).replace(/\/+$/, ""), apiKey: String(p.apiKey), model: String(p.model || "") };
+  // The model chosen on the admin "AI providers" page is the single source of truth.
+  const defaults: Record<string, string> = { mistral: "mistral-small-latest", openai: "gpt-4o-mini", gemini: "gemini-2.0-flash", groq: "llama-3.1-8b-instant", openrouter: "openrouter/auto", deepseek: "deepseek-chat", together: "meta-llama/Llama-3.3-70B-Instruct-Turbo" };
+  return { name: String(p.name || cfg.activeProviderId), baseUrl: String(p.baseUrl).replace(/\/+$/, ""), apiKey: String(p.apiKey), model: String(p.model || defaults[String(cfg.activeProviderId)] || "") };
 }
 
 async function generatePost(config: Json, type: string, localTime: string, provider: Json | null = null): Promise<Json> {
   const apiKey = provider ? String(provider.apiKey) : env("MISTRAL_API_KEY");
   if (!apiKey) throw new Error("No AI provider: set one in the admin panel or the MISTRAL_API_KEY secret");
-  const model = provider ? String(provider.model || config.model || "") : String(config.model || "mistral-small-latest");
+  const model = provider ? String(provider.model) : "mistral-small-latest";
   const endpoint = provider ? `${provider.baseUrl}/chat/completions` : "https://api.mistral.ai/v1/chat/completions";
   const language = String(config.language || "Bengali");
   const useEmoji = config.useEmoji !== false;

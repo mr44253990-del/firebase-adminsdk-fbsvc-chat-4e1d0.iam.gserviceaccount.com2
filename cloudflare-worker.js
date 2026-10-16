@@ -96,12 +96,13 @@ export default {
       return new Response(JSON.stringify({
         ok: serviceAccountConfigured,
         service: "Convo Chat Direct FCM Gateway",
-        version: "4.4.0",
+        version: "4.5.0",
         projectId,
         serviceAccountConfigured,
         turnConfigured: Boolean(env.TURN_TOKEN_ID && env.TURN_API_TOKEN),
         sfuConfigured: Boolean(env.CALLS_APP_ID && env.CALLS_APP_TOKEN),
         aiConfigured: Boolean(env.MISTRAL_API_KEY),
+        cloudDbSupported: true,
         r2Configured: Boolean(env.MEDIA_BUCKET && typeof env.MEDIA_BUCKET.put === "function" && typeof env.MEDIA_BUCKET.list === "function" && env.R2_PUBLIC_BASE_URL),
         mediaRetentionDays: 10,
         authenticatedCallsRequired: true,
@@ -165,13 +166,111 @@ export default {
       if(path==="/admin/reports/list") { if(caller.email!=="mr4425390@gmail.com")return jsonResponse({error:"Admin only"},403); return jsonResponse({success:true,reports:await firestoreList(env,"user_reports")}); }
       if(path==="/admin/user/ban"||path==="/admin/user/unban") { if(caller.email!=="mr4425390@gmail.com")return jsonResponse({error:"Admin only"},403); const uid=String(payload.uid||""); if(!uid)return jsonResponse({error:"uid required"},400); const disabled=path.endsWith("/ban"); const auth=await updateFirebaseAccount(env,uid,{disabled}); await firestoreMerge(env,`users/${uid}`,{banned:disabled,banReason:String(payload.reason||"").slice(0,500),bannedAt:disabled?Date.now():0}); return jsonResponse({success:auth.ok,disabled,upstreamStatus:auth.status},auth.ok?200:502); }
 
+      // ---- Admin power tools (v4.3.3) -------------------------------------------------
+      const isAdminCaller = String(caller.email || "").toLowerCase() === String(env.ADMIN_EMAIL || "mr4425390@gmail.com").toLowerCase();
+      if (path === "/admin/user/revoke") {
+        if (!isAdminCaller) return jsonResponse({ error: "Admin only" }, 403);
+        const uid = String(payload.uid || ""); if (!uid) return jsonResponse({ error: "uid required" }, 400);
+        const auth = await updateFirebaseAccount(env, uid, { validSince: String(Math.floor(Date.now() / 1000)) });
+        const sessions = await firestoreList(env, `user_sessions/${uid}/devices`).catch(() => []);
+        await Promise.all(sessions.map(x => firestoreSet(env, `user_sessions/${uid}/devices/${x.sessionId}`, { ...x, active: false, revokedAt: Date.now() })));
+        await firestoreMerge(env, `users/${uid}`, { forceLogoutAt: Date.now() }).catch(() => null);
+        return jsonResponse({ success: auth.ok, sessions: sessions.length }, auth.ok ? 200 : 502);
+      }
+      if (path === "/admin/push") {
+        if (!isAdminCaller) return jsonResponse({ error: "Admin only" }, 403);
+        const tokens = [...new Set((Array.isArray(payload.tokens) ? payload.tokens : []).map(String).filter(t => t.length > 20))].slice(0, 500);
+        const pushTitle = String(payload.title || "Convo Chat").slice(0, 120);
+        const pushBody = String(payload.body || "").slice(0, 500);
+        if (!tokens.length || !pushBody) return jsonResponse({ error: "tokens and body required" }, 400);
+        const accessToken = await getGoogleAccessToken(clientEmail, privateKeyPem);
+        let accepted = 0;
+        for (let i = 0; i < tokens.length; i += 25) {
+          const results = await Promise.all(tokens.slice(i, i + 25).map(t => fetch(`https://fcm.googleapis.com/v1/projects/${projectId}/messages:send`, {
+            method: "POST", headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ message: { token: t, data: { title: pushTitle, body: pushBody, senderId: caller.sub, senderName: pushTitle, senderProfileUrl: "", notificationType: "admin_broadcast", targetId: String(payload.link || ""), sentAt: String(Date.now()) }, android: { priority: "high" } } })
+          }).then(r => r.ok).catch(() => false)));
+          accepted += results.filter(Boolean).length;
+        }
+        return jsonResponse({ success: true, targeted: tokens.length, acceptedByFcm: accepted });
+      }
+
+      // ---- Cloud message store: Cloudflare D1 via REST (text/emoji bodies only) ----------
+      if (path.startsWith("/clouddb/")) {
+        const chatId = String(payload.chatId || "");
+        const member = chatId && (chatId.startsWith(`${caller.sub}_`) || chatId.endsWith(`_${caller.sub}`));
+        if (path === "/clouddb/admin/test") {
+          if (!isAdminCaller) return jsonResponse({ error: "Admin only" }, 403);
+          const stored = await cloudDbConfig(env, Number.MAX_SAFE_INTEGER, true).catch(() => null);
+          const cfg = {
+            accountId: String(payload.accountId || stored?.accountId || "").trim(),
+            databaseId: String(payload.databaseId || stored?.databaseId || "").trim(),
+            apiToken: String(payload.apiToken || stored?.apiToken || "").trim()
+          };
+          if (!cfg.accountId || !cfg.databaseId || !cfg.apiToken) return jsonResponse({ error: "Account ID, Database ID and API token are required" }, 400);
+          const schema = await d1Query(cfg, D1_SCHEMA);
+          if (!schema.ok) return jsonResponse({ error: schema.error, step: "schema" }, 502);
+          const count = await d1Query(cfg, "SELECT COUNT(*) AS n FROM convo_messages");
+          if (!count.ok) return jsonResponse({ error: count.error, step: "count" }, 502);
+          return jsonResponse({ success: true, messages: Number(count.rows?.[0]?.n || 0), latencyMs: schema.ms });
+        }
+        const cfg = await cloudDbConfig(env, Number(payload.v || 0)).catch(() => null);
+        if (!cfg) return jsonResponse({ error: "Cloud message store is not configured or disabled" }, 503);
+        if (!member) return jsonResponse({ error: "Not a member of this chat" }, 403);
+        if (path === "/clouddb/put") {
+          const id = String(payload.id || "").slice(0, 160);
+          const text = String(payload.text || "").slice(0, 10000);
+          if (!id || !text) return jsonResponse({ error: "id and text required" }, 400);
+          const now = Date.now();
+          const r = await d1Query(cfg, "INSERT INTO convo_messages (id, chat_id, sender_id, text, ts, updated_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET text = excluded.text, updated_at = excluded.updated_at WHERE convo_messages.sender_id = excluded.sender_id AND convo_messages.chat_id = excluded.chat_id",
+            [id, chatId, caller.sub, text, String(Number(payload.ts || now)), String(now)]);
+          return r.ok ? jsonResponse({ success: true, id }) : jsonResponse({ error: r.error }, 502);
+        }
+        if (path === "/clouddb/get") {
+          const ids = [...new Set((Array.isArray(payload.ids) ? payload.ids : []).map(String).filter(Boolean))].slice(0, 100);
+          if (!ids.length) return jsonResponse({ success: true, items: {} });
+          const r = await d1Query(cfg, `SELECT id, text FROM convo_messages WHERE chat_id = ? AND id IN (${ids.map(() => "?").join(",")})`, [chatId, ...ids]);
+          if (!r.ok) return jsonResponse({ error: r.error }, 502);
+          return jsonResponse({ success: true, items: Object.fromEntries((r.rows || []).map(x => [x.id, x.text])) });
+        }
+        if (path === "/clouddb/history") {
+          const before = Number(payload.before || 0) > 0 ? Number(payload.before) : Date.now() + 60000;
+          const limit = Math.min(Math.max(Number(payload.limit || 200), 1), 500);
+          const r = await d1Query(cfg, "SELECT id, sender_id, text, ts FROM convo_messages WHERE chat_id = ? AND ts < ? ORDER BY ts DESC LIMIT ?", [chatId, String(before), String(limit)]);
+          if (!r.ok) return jsonResponse({ error: r.error }, 502);
+          return jsonResponse({ success: true, items: r.rows || [] });
+        }
+        if (path === "/clouddb/delete") {
+          const ids = [...new Set((Array.isArray(payload.ids) ? payload.ids : []).map(String).filter(Boolean))].slice(0, 100);
+          if (!ids.length) return jsonResponse({ success: true, deleted: 0 });
+          const r = await d1Query(cfg, `DELETE FROM convo_messages WHERE chat_id = ? AND sender_id = ? AND id IN (${ids.map(() => "?").join(",")})`, [chatId, caller.sub, ...ids]);
+          return r.ok ? jsonResponse({ success: true }) : jsonResponse({ error: r.error }, 502);
+        }
+        return jsonResponse({ error: "Unknown cloud store operation" }, 404);
+      }
+
+      if (path === "/ai/test") {
+        if (!isAdminCaller) return jsonResponse({ error: "Admin only" }, 403);
+        const provider = await activeAiProvider(env, Number.MAX_SAFE_INTEGER).catch(e => ({ error: e.message }));
+        if (provider && provider.error) return jsonResponse({ error: provider.error }, 502);
+        if (!provider && !env.MISTRAL_API_KEY) return jsonResponse({ error: "No active provider saved and no MISTRAL_API_KEY secret" }, 503);
+        const endpoint = provider ? `${provider.baseUrl}/chat/completions` : "https://api.mistral.ai/v1/chat/completions";
+        const model = provider ? provider.model : "mistral-small-latest";
+        const started = Date.now();
+        const up = await fetch(endpoint, { method: "POST", headers: { Authorization: `Bearer ${provider ? provider.apiKey : env.MISTRAL_API_KEY}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ model, max_tokens: 20, messages: [{ role: "user", content: "Reply with the single word: OK" }] }) });
+        const j = await up.json().catch(() => ({}));
+        if (!up.ok) return jsonResponse({ error: j?.error?.message || j?.message || `HTTP ${up.status}`, provider: provider ? provider.name : "Mistral (secret)", model }, 502);
+        return jsonResponse({ success: true, provider: provider ? provider.name : "Mistral (secret)", model, reply: String(j?.choices?.[0]?.message?.content || "").slice(0, 60), latencyMs: Date.now() - started });
+      }
+
       if (path === "/ai/chat") {
         // Admin-managed provider (Firestore admin_secrets/ai, admin-only rules) wins; otherwise
         // the MISTRAL_API_KEY Worker secret is used exactly as before.
-        const provider = await activeAiProvider(env).catch(() => null);
+        const provider = await activeAiProvider(env, Number(payload.aiv || 0)).catch(() => null);
         if (!provider && !env.MISTRAL_API_KEY) return jsonResponse({ error: "No AI provider configured (admin panel → AI providers, or MISTRAL_API_KEY secret)" }, 503);
         const allowedModels = new Set(["mistral-small-latest", "mistral-medium-latest", "mistral-large-latest", "open-mistral-nemo"]);
-        const model = provider ? String(provider.model || payload.model || "").slice(0, 120) : (allowedModels.has(String(payload.model || "")) ? String(payload.model) : "mistral-small-latest");
+        const model = provider ? String(provider.model).slice(0, 120) : (allowedModels.has(String(payload.model || "")) ? String(payload.model) : "mistral-small-latest");
         const aiEndpoint = provider ? `${provider.baseUrl}/chat/completions` : "https://api.mistral.ai/v1/chat/completions";
         const aiKey = provider ? provider.apiKey : env.MISTRAL_API_KEY;
         const message = String(payload.message || "").trim().slice(0, 4000);
@@ -201,12 +300,12 @@ export default {
             ]
           })
         });
-        if (payload.stream === true && upstream.ok) {
+        if (payload.stream === true && upstream.ok && String(upstream.headers.get("Content-Type") || "").includes("text/event-stream")) {
           return new Response(upstream.body, { status: 200, headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", "Access-Control-Allow-Origin": "*" } });
         }
-        const result = await upstream.json();
-        if (!upstream.ok) return jsonResponse({ error: result?.error?.message || result?.message || "AI provider request failed", upstreamStatus: upstream.status, provider: provider ? provider.name : "mistral" }, 502);
-        return jsonResponse({ success: true, model, reply: result?.choices?.[0]?.message?.content || "" });
+        const result = await upstream.json().catch(() => ({}));
+        if (!upstream.ok) return jsonResponse({ error: (Array.isArray(result) ? result[0]?.error?.message : null) || result?.error?.message || result?.message || `AI provider request failed (HTTP ${upstream.status})`, upstreamStatus: upstream.status, provider: provider ? provider.name : "mistral", model }, 502);
+        return jsonResponse({ success: true, model, provider: provider ? provider.name : "Mistral", reply: result?.choices?.[0]?.message?.content || "" });
       }
 
       if (path === "/media/delete") {
@@ -443,20 +542,52 @@ function escapeHtml(v){return String(v||"").replace(/[&<>"']/g,c=>c==="&"?"&amp;
 function htmlResponse(m,status=200){return new Response(`<!doctype html><meta name="viewport" content="width=device-width"><body style="background:#080914;color:white;font-family:system-ui;display:grid;place-items:center;height:100vh"><h2>${escapeHtml(m)}</h2></body>`,{status,headers:{"Content-Type":"text/html; charset=utf-8"}});}
 function toFV(v){if(v==null)return{nullValue:null};if(typeof v==="string")return{stringValue:v};if(typeof v==="boolean")return{booleanValue:v};if(typeof v==="number")return Number.isInteger(v)?{integerValue:String(v)}:{doubleValue:v};if(Array.isArray(v))return{arrayValue:{values:v.map(toFV)}};if(typeof v==="object")return{mapValue:{fields:Object.fromEntries(Object.entries(v).map(([k,x])=>[k,toFV(x)]))}};return{stringValue:String(v)};}
 function fromFV(v){if(!v)return null;if("stringValue"in v)return v.stringValue;if("integerValue"in v)return Number(v.integerValue);if("doubleValue"in v)return v.doubleValue;if("booleanValue"in v)return v.booleanValue;if("timestampValue"in v)return Date.parse(v.timestampValue);if("nullValue"in v)return null;if(v.arrayValue)return(v.arrayValue.values||[]).map(fromFV);if(v.mapValue)return Object.fromEntries(Object.entries(v.mapValue.fields||{}).map(([k,x])=>[k,fromFV(x)]));return null;}
-async function fsAuth(env){const a=JSON.parse(env.FIREBASE_SERVICE_ACCOUNT||"{}");return{a,t:await getGoogleAccessToken(a.client_email,a.private_key,"https://www.googleapis.com/auth/datastore")};}
-// Admin-managed AI provider config, cached for 60 s per isolate.
-let __aiCfgCache = { at: 0, value: null };
-async function activeAiProvider(env) {
+let __fsTok={t:"",exp:0};
+async function fsAuth(env){const a=JSON.parse(env.FIREBASE_SERVICE_ACCOUNT||"{}");if(!__fsTok.t||Date.now()>__fsTok.exp){__fsTok={t:await getGoogleAccessToken(a.client_email,a.private_key,"https://www.googleapis.com/auth/datastore"),exp:Date.now()+50*60*1000};}return{a,t:__fsTok.t};}
+// Admin-managed AI provider config. Cached per isolate for 60 s, but a client that knows a newer
+// config version (app_config/ai_public.version, written on every admin save) forces a re-read,
+// so a newly selected provider/model applies to the very next request.
+const AI_DEFAULT_MODELS = { mistral: "mistral-small-latest", openai: "gpt-4o-mini", gemini: "gemini-2.0-flash", groq: "llama-3.1-8b-instant", openrouter: "openrouter/auto", deepseek: "deepseek-chat", together: "meta-llama/Llama-3.3-70B-Instruct-Turbo" };
+let __aiCfgCache = { at: 0, version: 0, value: null };
+async function activeAiProvider(env, knownVersion = 0) {
   if (!env.FIREBASE_SERVICE_ACCOUNT) return null;
-  if (Date.now() - __aiCfgCache.at < 60000) return __aiCfgCache.value;
+  if (Date.now() - __aiCfgCache.at < 60000 && !(knownVersion > __aiCfgCache.version)) return __aiCfgCache.value;
   const cfg = await firestoreGet(env, "admin_secrets/ai").catch(() => null);
   let value = null;
-  const p = cfg && cfg.providers && cfg.activeProviderId ? cfg.providers[cfg.activeProviderId] : null;
+  const id = cfg && cfg.activeProviderId;
+  const p = cfg && cfg.providers && id ? cfg.providers[id] : null;
   if (p && p.enabled !== false && String(p.apiKey || "").length > 8 && /^https:\/\//i.test(String(p.baseUrl || ""))) {
-    value = { name: String(p.name || cfg.activeProviderId), baseUrl: String(p.baseUrl).replace(/\/+$/, ""), apiKey: String(p.apiKey), model: String(p.model || "") };
+    value = { id, name: String(p.name || id), baseUrl: String(p.baseUrl).replace(/\/+$/, ""), apiKey: String(p.apiKey), model: String(p.model || AI_DEFAULT_MODELS[id] || "") };
   }
-  __aiCfgCache = { at: Date.now(), value };
+  __aiCfgCache = { at: Date.now(), version: Number(cfg?.updatedAt || 0), value };
   return value;
+}
+// Cloud message store (Cloudflare D1) config from Firestore admin_secrets/cloud_db, same caching.
+const D1_SCHEMA = "CREATE TABLE IF NOT EXISTS convo_messages (id TEXT PRIMARY KEY, chat_id TEXT NOT NULL, sender_id TEXT NOT NULL, text TEXT NOT NULL, ts INTEGER NOT NULL, updated_at INTEGER NOT NULL); CREATE INDEX IF NOT EXISTS idx_convo_messages_chat_ts ON convo_messages (chat_id, ts)";
+let __cloudCfgCache = { at: 0, version: 0, value: null };
+async function cloudDbConfig(env, knownVersion = 0, ignoreEnabled = false) {
+  if (!env.FIREBASE_SERVICE_ACCOUNT) return null;
+  let entry = __cloudCfgCache;
+  if (!(Date.now() - entry.at < 60000 && !(knownVersion > entry.version))) {
+    const c = await firestoreGet(env, "admin_secrets/cloud_db").catch(() => null);
+    const value = c && c.accountId && c.databaseId && c.apiToken ? { enabled: c.enabled === true, accountId: String(c.accountId), databaseId: String(c.databaseId), apiToken: String(c.apiToken) } : null;
+    entry = __cloudCfgCache = { at: Date.now(), version: Number(c?.updatedAt || 0), value };
+  }
+  if (!entry.value) return null;
+  return ignoreEnabled || entry.value.enabled ? entry.value : null;
+}
+async function d1Query(cfg, sql, params = []) {
+  const started = Date.now();
+  try {
+    const r = await fetch(`https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(cfg.accountId)}/d1/database/${encodeURIComponent(cfg.databaseId)}/query`, {
+      method: "POST", headers: { Authorization: `Bearer ${cfg.apiToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify(params.length ? { sql, params } : { sql })
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || j.success === false) return { ok: false, error: (j.errors || []).map(e => e.message).join("; ") || `Cloudflare D1 HTTP ${r.status}`, ms: Date.now() - started };
+    const results = Array.isArray(j.result) ? j.result : [];
+    return { ok: true, rows: results.length ? results[results.length - 1].results || [] : [], ms: Date.now() - started };
+  } catch (e) { return { ok: false, error: e.message || "D1 request failed", ms: Date.now() - started }; }
 }
 async function firestoreGet(env,path){const{a,t}=await fsAuth(env);const r=await fetch(`https://firestore.googleapis.com/v1/projects/${a.project_id}/databases/(default)/documents/${path}`,{headers:{Authorization:`Bearer ${t}`}});if(r.status===404)return null;if(!r.ok)throw Error(`Firestore ${r.status}`);const d=await r.json();return Object.fromEntries(Object.entries(d.fields||{}).map(([k,v])=>[k,fromFV(v)]));}
 async function firestoreSet(env,path,data){const{a,t}=await fsAuth(env);const fields=Object.fromEntries(Object.entries(data).map(([k,v])=>[k,toFV(v)]));const r=await fetch(`https://firestore.googleapis.com/v1/projects/${a.project_id}/databases/(default)/documents/${path}`,{method:"PATCH",headers:{Authorization:`Bearer ${t}`,"Content-Type":"application/json"},body:JSON.stringify({fields})});if(!r.ok)throw Error(`Firestore write ${r.status}`);return r.json();}

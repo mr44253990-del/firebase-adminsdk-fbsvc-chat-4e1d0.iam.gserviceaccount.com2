@@ -175,6 +175,7 @@ fun PostComposerScreen(viewModel: ChatViewModel, onBack: () -> Unit, onPublished
     }
 
     Scaffold(
+        modifier = Modifier.modernBackdrop(),
         containerColor = Color.Transparent,
         topBar = {
             TopAppBar(

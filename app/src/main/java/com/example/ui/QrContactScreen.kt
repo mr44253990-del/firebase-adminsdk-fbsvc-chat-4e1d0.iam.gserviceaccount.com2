@@ -124,9 +124,12 @@ fun QrContactScreen(
     }
 
     Scaffold(
+        modifier = Modifier.modernBackdrop(),
+        containerColor = androidx.compose.ui.graphics.Color.Transparent,
         topBar = {
             TopAppBar(
-                title = { Text("QR code") },
+                colors = modernTopBarColors(),
+                title = { ModernTitle("QR code", if (scannerMode) "Point the camera at a Convo QR" else "Share or scan a profile") },
                 navigationIcon = { IconButton(onClick = { if (scannerMode) scannerMode = false else onBack() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } }
             )
         }

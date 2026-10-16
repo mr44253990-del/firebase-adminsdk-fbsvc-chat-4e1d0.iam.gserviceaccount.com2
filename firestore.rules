@@ -160,7 +160,7 @@ service cloud.firestore {
         resource.data.senderId == request.auth.uid
         || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likes', 'comments', 'reactions', 'shares'])
       );
-      allow delete: if signedIn() && resource.data.senderId == request.auth.uid;
+      allow delete: if signedIn() && (resource.data.senderId == request.auth.uid || request.auth.token.email == 'mr4425390@gmail.com');
     }
 
     match /stories/{storyId} {
@@ -170,7 +170,7 @@ service cloud.firestore {
         resource.data.senderId == request.auth.uid
         || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['views', 'viewers', 'reactions', 'comments'])
       );
-      allow delete: if signedIn() && resource.data.senderId == request.auth.uid;
+      allow delete: if signedIn() && (resource.data.senderId == request.auth.uid || request.auth.token.email == 'mr4425390@gmail.com');
     }
 
     match /groups/{groupId} {

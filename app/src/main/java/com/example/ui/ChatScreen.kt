@@ -297,25 +297,47 @@ fun ChatScreen(
         }
     }
 
-    // Initialize/start listening
-    LaunchedEffect(recipient.uid) {
-        viewModel.startListeningToChat(recipient.uid)
+    // Initialize/start listening. Attach/detach is reference counted in the ViewModel so an old
+    // chat screen that is disposed after a new one was composed can no longer kill the live
+    // listener (the cause of "new messages sometimes don't appear while I'm in the chat").
+    val chatLifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+    var chatResumed by remember { mutableStateOf(true) }
+    DisposableEffect(recipient.uid, chatLifecycleOwner) {
+        viewModel.attachChatScreen(recipient.uid)
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            when (event) {
+                androidx.lifecycle.Lifecycle.Event.ON_RESUME -> { chatResumed = true; viewModel.ensureChatListening(recipient.uid) }
+                androidx.lifecycle.Lifecycle.Event.ON_STOP -> chatResumed = false
+                else -> Unit
+            }
+        }
+        chatLifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            chatLifecycleOwner.lifecycle.removeObserver(observer)
+            viewModel.setTypingState(false)
+            viewModel.setVoiceRecordingState(false)
+            viewModel.detachChatScreen(recipient.uid)
+            mediaRecorder?.release()
+        }
     }
 
     LaunchedEffect(recipient.uid, privacySettings.showTypingStatus) {
         viewModel.refreshTypingStatus(recipient.uid)
     }
 
-    // Debounced typing signal with cancellation-safe cleanup. The old coroutine must always
-    // clear its lease when the text changes or the screen leaves, otherwise stale RTDB events
-    // can race a newly selected chat and destabilize the recipient UI.
-    LaunchedEffect(recipient.uid, messageText) {
-        if (messageText.isBlank()) {
+    // Typing indicator: shown for as long as there is unsent text in the composer — even if the
+    // user stops typing and just sits there — until the message is sent or the text is cleared.
+    // The RTDB lease is refreshed every 8 s; leaving the screen/app clears it (onDisconnect too).
+    val composerHasText = messageText.isNotBlank() && editingMessage == null
+    LaunchedEffect(recipient.uid, composerHasText, chatResumed) {
+        if (!composerHasText || !chatResumed) {
             viewModel.setTypingState(false)
         } else {
-            viewModel.setTypingState(true)
             try {
-                delay(1800L)
+                while (true) {
+                    viewModel.setTypingState(true)
+                    delay(8_000L)
+                }
             } finally {
                 viewModel.setTypingState(false)
             }
@@ -323,19 +345,15 @@ fun ChatScreen(
     }
 
     com.example.service.TrackOpenChat(peerUid = recipient.uid)
-    DisposableEffect(recipient.uid) {
-        onDispose {
-            viewModel.setTypingState(false)
-            viewModel.setVoiceRecordingState(false)
-            viewModel.stopListeningToChat()
-            mediaRecorder?.release()
-        }
-    }
 
-    // Scroll to bottom on new message
-    LaunchedEffect(messages.size) {
+    // Keep the newest message visible: keyed on the newest id (not the list size, which can stay
+    // the same when one message arrives while another expires/merges).
+    val newestMessageId = messages.maxByOrNull { it.timestamp }?.messageId
+    LaunchedEffect(newestMessageId) {
         if (messages.isNotEmpty()) {
-            listState.scrollToItem(0)
+            val newest = messages.maxByOrNull { it.timestamp }
+            val nearBottom = listState.firstVisibleItemIndex <= 3
+            if (nearBottom || newest?.senderId == currentUserId) listState.animateScrollToItem(0)
         }
     }
 
@@ -976,11 +994,12 @@ fun ChatScreen(
                     }
                 }
             } else {
+                Box(Modifier.fillMaxWidth().weight(1f)) {
                 LazyColumn(
                     state = listState,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .weight(1f)
+                        .fillMaxHeight()
                         .padding(horizontal = chatAppearance.sidePadding.dp),
                     contentPadding = PaddingValues(vertical = 12.dp),
                     verticalArrangement = Arrangement.spacedBy(chatAppearance.messageSpacing.dp, Alignment.Bottom),
@@ -1041,6 +1060,25 @@ fun ChatScreen(
                         }
                         }
                     }
+                }
+                // Scrolled up reading history? Show a "new message" jump pill instead of yanking.
+                val showJump by remember { derivedStateOf { listState.firstVisibleItemIndex > 3 } }
+                if (showJump) {
+                    Surface(
+                        onClick = { uiScope.launch { listState.animateScrollToItem(0) } },
+                        modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 10.dp),
+                        shape = RoundedCornerShape(50),
+                        color = MaterialTheme.colorScheme.primary,
+                        contentColor = MaterialTheme.colorScheme.onPrimary,
+                        shadowElevation = 8.dp
+                    ) {
+                        Row(Modifier.padding(horizontal = 14.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.KeyboardArrowDown, null, Modifier.size(18.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("Latest messages", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
                 }
             }
 

@@ -72,7 +72,9 @@ data class Message(
     /** Epoch millis after which the message should be hidden/removed; 0 means persistent. */
     val expiresAt: Long = 0L,
     val editHistory: List<MessageEditRecord> = emptyList(),
-    val reactions: Map<String, String> = emptyMap()
+    val reactions: Map<String, String> = emptyMap(),
+    /** True when the body lives in the admin-enabled Cloudflare D1 store (RTDB carries text = ""). */
+    val cloudText: Boolean = false
 )
 
 data class Story(

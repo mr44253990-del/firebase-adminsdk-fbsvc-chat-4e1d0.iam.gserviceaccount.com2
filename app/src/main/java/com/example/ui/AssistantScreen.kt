@@ -45,6 +45,7 @@ fun AssistantScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenUser: (U
     val users by viewModel.usersState.collectAsState()
     val posts by viewModel.postsState.collectAsState()
     val config by viewModel.flagshipConfig.collectAsState()
+    val aiPublicInfo by AiPublicInfo.info.collectAsState()
     val uid = FirebaseAuth.getInstance().currentUser?.uid.orEmpty()
     val prefs = remember(uid) { context.getSharedPreferences("assistant_memory_$uid", Context.MODE_PRIVATE) }
     val initial = remember(uid) {
@@ -113,9 +114,12 @@ fun AssistantScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenUser: (U
     }
 
     Scaffold(
+        modifier = Modifier.modernBackdrop(),
+        containerColor = Color.Transparent,
         topBar = {
             TopAppBar(
-                title = { Row(verticalAlignment = Alignment.CenterVertically) { Box(Modifier.size(40.dp).clip(CircleShape).background(Brush.linearGradient(listOf(Color(0xFF6657FF), Color(0xFFFF42B8)))), contentAlignment = Alignment.Center) { Icon(Icons.Default.AutoAwesome, null, tint = Color.White) }; Spacer(Modifier.width(10.dp)); Column { Text(config.aiDisplayName, fontWeight = FontWeight.Black); Text("Consent-controlled • account-aware • ${config.aiModel}", fontSize = 9.sp, color = MaterialTheme.colorScheme.primary) } } },
+                colors = modernTopBarColors(),
+                title = { Row(verticalAlignment = Alignment.CenterVertically) { Box(Modifier.size(40.dp).clip(CircleShape).background(Brush.linearGradient(listOf(Color(0xFF6657FF), Color(0xFFFF42B8)))), contentAlignment = Alignment.Center) { Icon(Icons.Default.AutoAwesome, null, tint = Color.White) }; Spacer(Modifier.width(10.dp)); Column { Text(config.aiDisplayName, fontWeight = FontWeight.Black); Text("Consent-controlled • account-aware" + aiPublicInfo.model.takeIf { it.isNotBlank() }?.let { " • $it" }.orEmpty(), fontSize = 9.sp, color = MaterialTheme.colorScheme.primary) } } },
                 navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
                 actions = { IconButton(onClick = { prefs.edit().clear().apply(); lines = emptyList() }) { Icon(Icons.Default.DeleteSweep, "Clear assistant memory") } }
             )

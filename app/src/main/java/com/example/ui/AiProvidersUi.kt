@@ -32,6 +32,9 @@ import com.example.data.WorkerRouter
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
@@ -109,11 +112,42 @@ object AiProviderStore {
         return Config(active, merged)
     }
 
-    suspend fun save(config: Config) {
-        val providers = config.providers.filter { it.apiKey.isNotBlank() || it.custom }.associate { it.id to it.toMap() }
-        doc.set(mapOf("activeProviderId" to config.activeId, "providers" to providers, "updatedAt" to System.currentTimeMillis())).awaitTask()
-        AdminAudit.log("ai_providers_save", "active=${config.activeId}, providers=${providers.size}")
+    /** Default model used when the admin left the model field empty (mirrors the Worker/edge function). */
+    fun defaultModel(id: String): String = PRESETS.firstOrNull { it.id == id }?.model.orEmpty()
+
+    /**
+     * Saves to the server (Firestore). Also publishes a key-free summary to `app_config/ai_public`
+     * so every client shows the active model and the Worker re-reads the config on the next call.
+     */
+    suspend fun save(config: Config): Config {
+        // Never leave the app on the silent "server default" when exactly one provider is ready.
+        val ready = config.providers.filter { it.ready }
+        val activeId = when {
+            config.activeId.isNotBlank() && ready.any { it.id == config.activeId } -> config.activeId
+            config.activeId.isBlank() && ready.size == 1 -> ready.first().id
+            config.activeId.isNotBlank() -> ready.firstOrNull()?.id.orEmpty()
+            else -> ""
+        }
+        val fixed = config.copy(activeId = activeId, providers = config.providers.map { p -> if (p.model.isBlank() && p.ready) p.copy(model = defaultModel(p.id)) else p })
+        val now = System.currentTimeMillis()
+        val providers = fixed.providers.filter { it.apiKey.isNotBlank() || it.custom }.associate { it.id to it.toMap() }
+        doc.set(mapOf("activeProviderId" to activeId, "providers" to providers, "updatedAt" to now)).awaitTask()
+        val active = fixed.active
+        FirebaseFirestore.getInstance().collection("app_config").document("ai_public").set(mapOf(
+            "providerId" to activeId, "providerName" to (active?.name ?: "Mistral (server key)"),
+            "model" to (active?.model ?: "mistral-small-latest"), "version" to now, "updatedAt" to now
+        )).awaitTask()
+        AdminAudit.log("ai_providers_save", "active=${activeId.ifBlank { "server-default" }}, model=${active?.model.orEmpty()}, providers=${providers.size}")
+        return fixed
     }
+
+    /** Asks the Worker to run one real completion with the SAVED config (proves the server side). */
+    suspend fun testServer(): Pair<Boolean, String> = runCatching {
+        val (code, json) = convoWorkerPost("ai", "/ai/test", JSONObject())
+        if (code in 200..299 && json.optBoolean("success"))
+            true to "✓ Server uses ${json.optString("provider")} · ${json.optString("model")} · replied \"${json.optString("reply").trim()}\" in ${json.optLong("latencyMs")} ms"
+        else false to "✗ ${json.optString("error").ifBlank { "HTTP $code" }}" + if (code == 404 || code == 401) " — redeploy the Worker (v4.3.3) once" else ""
+    }.getOrElse { false to "✗ ${it.localizedMessage}" }
 
     private val http by lazy { OkHttpClient.Builder().callTimeout(40, TimeUnit.SECONDS).build() }
 
@@ -145,7 +179,7 @@ object AiProviderStore {
     /** Single chat completion with an OpenAI-compatible provider. */
     suspend fun complete(p: AiProvider, system: String, user: String, temperature: Double = 0.9): String = withContext(Dispatchers.IO) {
         val payload = JSONObject()
-            .put("model", p.model)
+            .put("model", p.model.ifBlank { defaultModel(p.id) })
             .put("temperature", temperature)
             .put("max_tokens", 500)
             .put("messages", JSONArray()
@@ -278,7 +312,13 @@ fun AdminAiProvidersPanel(assistantEnabled: Boolean, onAssistantEnabled: (Boolea
         }
         loading = false
     }
-    fun update(p: AiProvider) { config = config.copy(providers = config.providers.map { if (it.id == p.id) p else it }) }
+    fun update(p: AiProvider) {
+        val list = config.providers.map { if (it.id == p.id) p else it }
+        // Picking a model / key for a provider while nothing is active makes it the active one.
+        config = config.copy(providers = list, activeId = if (config.activeId.isBlank() && p.ready) p.id else config.activeId)
+    }
+    var serverTest by remember { mutableStateOf<Pair<Boolean, String>?>(null) }
+    var serverTesting by remember { mutableStateOf(false) }
 
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(
@@ -305,7 +345,19 @@ fun AdminAiProvidersPanel(assistantEnabled: Boolean, onAssistantEnabled: (Boolea
                 FilterChip(selected = config.activeId == p.id, onClick = { config = config.copy(activeId = p.id) }, label = { Text(if (config.activeId == p.id) "✓ ${p.name}" else p.name) })
             }
         }
-        config.active?.let { Text("Using ${it.name} · ${it.model.ifBlank { "default model" }}", fontSize = 11.sp, color = Color(0xFF2E9E6A)) }
+        val activeNow = config.active
+        Row(
+            Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp))
+                .background(if (activeNow != null) Color(0xFF2E9E6A).copy(.12f) else MaterialTheme.colorScheme.errorContainer.copy(.45f)).padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(if (activeNow != null) Icons.Default.CheckCircle else Icons.Default.Info, null, tint = if (activeNow != null) Color(0xFF2E9E6A) else MaterialTheme.colorScheme.error)
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text(if (activeNow != null) "${activeNow.name} · ${activeNow.model.ifBlank { AiProviderStore.defaultModel(activeNow.id).ifBlank { "default model" } }}" else "Server default (Mistral secret)", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                Text("Used everywhere: AI assistant chat, smart replies, translation and auto AI posts. Nothing else to configure.", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
 
         config.providers.forEach { p ->
             val open = expanded == p.id
@@ -394,14 +446,28 @@ fun AdminAiProvidersPanel(assistantEnabled: Boolean, onAssistantEnabled: (Boolea
             saving = true
             scope.launch {
                 runCatching { AiProviderStore.save(config) }
-                    .onSuccess { Toast.makeText(context, "AI providers saved — live within ~1 minute", Toast.LENGTH_LONG).show() }
+                    .onSuccess { saved ->
+                        config = saved
+                        Toast.makeText(context, "Saved to server — ${saved.active?.let { "${it.name} · ${it.model}" } ?: "server default"} is live now", Toast.LENGTH_LONG).show()
+                        serverTesting = true
+                        serverTest = AiProviderStore.testServer()
+                        serverTesting = false
+                    }
                     .onFailure { Toast.makeText(context, "Save failed: ${it.localizedMessage}. Deploy firestore.rules (admin_secrets).", Toast.LENGTH_LONG).show() }
                 saving = false
             }
         }, enabled = !saving, modifier = Modifier.fillMaxWidth()) {
             if (saving) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp) else Icon(Icons.Default.Save, null)
-            Spacer(Modifier.width(6.dp)); Text("Save AI providers")
+            Spacer(Modifier.width(6.dp)); Text("Save to server")
         }
+        OutlinedButton(onClick = {
+            serverTesting = true
+            scope.launch { serverTest = AiProviderStore.testServer(); serverTesting = false }
+        }, enabled = !serverTesting && !saving, modifier = Modifier.fillMaxWidth()) {
+            if (serverTesting) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp) else Icon(Icons.Default.Dns, null)
+            Spacer(Modifier.width(6.dp)); Text("Test live server (uses the saved model)")
+        }
+        serverTest?.let { (ok, msg) -> Text(msg, fontSize = 12.sp, color = if (ok) Color(0xFF2E9E6A) else MaterialTheme.colorScheme.error) }
         Text(
             "Keys are stored in Firestore admin_secrets/ai, readable only by the admin account (firestore.rules). The Worker and the auto-post function read them server-side; users never receive them.",
             fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -419,4 +485,24 @@ private fun providerColor(id: String): Color = when {
     id.startsWith("deepseek") -> Color(0xFF4D6BFE)
     id.startsWith("together") -> Color(0xFF0F6FFF)
     else -> Color(0xFF8E5CE6)
+}
+
+/** Key-free summary of the active AI provider (Firestore `app_config/ai_public`), readable by every user. */
+object AiPublicInfo {
+    data class Info(val providerName: String = "", val model: String = "", val version: Long = 0L)
+    private val _info = MutableStateFlow(Info())
+    val info: StateFlow<Info> = _info.asStateFlow()
+    private var reg: com.google.firebase.firestore.ListenerRegistration? = null
+    @Volatile private var authHooked = false
+    fun listen() {
+        if (!authHooked) {
+            authHooked = true
+            FirebaseAuth.getInstance().addAuthStateListener { a -> if (a.currentUser != null) listen() else stop() }
+        }
+        if (reg != null || FirebaseAuth.getInstance().currentUser == null) return
+        reg = FirebaseFirestore.getInstance().collection("app_config").document("ai_public").addSnapshotListener { d, _ ->
+            if (d != null && d.exists()) _info.value = Info(d.getString("providerName").orEmpty(), d.getString("model").orEmpty(), d.getLong("version") ?: 0L)
+        }
+    }
+    fun stop() { reg?.remove(); reg = null }
 }

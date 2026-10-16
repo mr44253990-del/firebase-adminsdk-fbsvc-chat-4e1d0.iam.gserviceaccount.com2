@@ -231,6 +231,7 @@ fun HomeScreen(
     val deviceSessions by viewModel.deviceSessions.collectAsState()
     val adminReports by viewModel.adminReports.collectAsState()
     val accountBanned by viewModel.accountBanned.collectAsState()
+    val forcedLogout by viewModel.forcedLogout.collectAsState()
     val inAppNotification by viewModel.inAppNotification.collectAsState()
     val activityNotifications by viewModel.activityNotifications.collectAsState()
     val openActivitySignal by viewModel.openActivityCenterSignal.collectAsState()
@@ -2569,6 +2570,7 @@ fun HomeScreen(
         )
     }
 
+    if (forcedLogout && !accountBanned) AlertDialog(onDismissRequest = {}, icon = { Icon(Icons.Default.Logout, null) }, title = { Text("Signed out by admin") }, text = { Text("For security, this session was ended by the administrator. Please sign in again.") }, confirmButton = { Button(onClick = { viewModel.logout { onSignOut() } }) { Text("Sign in again") } })
     if (accountBanned) AlertDialog(onDismissRequest = {}, title = { Text("Account suspended") }, text = { Text("This account was disabled by ADMIN RAKIB after review. Contact support from another account if you believe this is a mistake.") }, confirmButton = { Button(onClick = { viewModel.logout { onSignOut() } }) { Text("Sign out") } })
 
     if (showAnalytics) {
