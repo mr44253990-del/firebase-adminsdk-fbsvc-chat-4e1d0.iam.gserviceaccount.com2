@@ -138,10 +138,19 @@ const TYPE_GUIDE: Record<string, string> = {
   poll: "a light, fun community poll question with 2 to 4 short answer options",
 };
 
-async function generatePost(config: Json, type: string, localTime: string): Promise<Json> {
-  const apiKey = env("MISTRAL_API_KEY");
-  if (!apiKey) throw new Error("MISTRAL_API_KEY secret is not configured");
-  const model = String(config.model || "mistral-small-latest");
+/** Admin-managed provider from Firestore `admin_secrets/ai` (OpenAI-compatible), or null. */
+async function activeProvider(projectId: string, token: string): Promise<Json | null> {
+  const cfg: Json = (await firestoreGet(projectId, "admin_secrets/ai", token).catch(() => null)) ?? {};
+  const p = cfg.providers && cfg.activeProviderId ? cfg.providers[cfg.activeProviderId] : null;
+  if (!p || p.enabled === false || String(p.apiKey || "").length < 8 || !/^https:\/\//i.test(String(p.baseUrl || ""))) return null;
+  return { name: String(p.name || cfg.activeProviderId), baseUrl: String(p.baseUrl).replace(/\/+$/, ""), apiKey: String(p.apiKey), model: String(p.model || "") };
+}
+
+async function generatePost(config: Json, type: string, localTime: string, provider: Json | null = null): Promise<Json> {
+  const apiKey = provider ? String(provider.apiKey) : env("MISTRAL_API_KEY");
+  if (!apiKey) throw new Error("No AI provider: set one in the admin panel or the MISTRAL_API_KEY secret");
+  const model = provider ? String(provider.model || config.model || "") : String(config.model || "mistral-small-latest");
+  const endpoint = provider ? `${provider.baseUrl}/chat/completions` : "https://api.mistral.ai/v1/chat/completions";
   const language = String(config.language || "Bengali");
   const useEmoji = config.useEmoji !== false;
   const adminPrompt = String(config.prompt || "").slice(0, 1500);
@@ -158,25 +167,27 @@ async function generatePost(config: Json, type: string, localTime: string): Prom
     `Local time for readers: ${localTime}.`,
     adminPrompt ? `Admin guidance (follow it unless it breaks the rules above):\n${adminPrompt}` : "",
   ].filter(Boolean).join("\n");
-  const response = await fetch("https://api.mistral.ai/v1/chat/completions", {
+  const response = await fetch(endpoint, {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify({
       model,
       temperature: 0.9,
       max_tokens: 400,
-      response_format: { type: "json_object" },
+      // json_object is Mistral/OpenAI specific; other providers get plain text and we extract JSON.
+      ...(provider ? {} : { response_format: { type: "json_object" } }),
       messages: [{ role: "system", content: system }, { role: "user", content: user }],
     }),
   });
   const body = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(`Mistral request failed (${response.status})`);
+  if (!response.ok) throw new Error(`${provider ? provider.name : "Mistral"} request failed (${response.status})`);
   const content = String(body?.choices?.[0]?.message?.content ?? "{}");
   let parsed: Json;
   try {
     parsed = JSON.parse(content);
   } catch (_) {
-    parsed = { text: content };
+    const match = content.match(/\{[\s\S]*\}/);
+    try { parsed = match ? JSON.parse(match[0]) : { text: content }; } catch (_e) { parsed = { text: content }; }
   }
   const text = String(parsed.text ?? "").trim().slice(0, 1200);
   if (!text) throw new Error("AI returned an empty post");
@@ -225,7 +236,8 @@ export async function runAutoPost(force = false): Promise<Json> {
     const admin: Json = (await firestoreGet(projectId, `users/${adminUid}`, token)) ?? {};
     const type = pickType(String(config.postType || "mixed"));
     const localTime = `${String(hour).padStart(2, "0")}:${String(new Date(now + tz * 60_000).getUTCMinutes()).padStart(2, "0")}`;
-    const generated = await generatePost(config, type, localTime);
+    const provider = await activeProvider(projectId, token);
+    const generated = await generatePost(config, type, localTime, provider);
     const id = crypto.randomUUID();
     let pollId = "";
     if (type === "poll" && generated.options.length >= 2) {

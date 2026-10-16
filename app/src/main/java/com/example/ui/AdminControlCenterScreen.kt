@@ -107,6 +107,7 @@ fun AdminControlCenterScreen(
     }
     var reelsEnabled by remember(flagshipConfig) { mutableStateOf(flagshipConfig.reelsEnabled) }
     var assistantEnabled by remember(flagshipConfig) { mutableStateOf(flagshipConfig.assistantEnabled) }
+    var locationSharingEnabled by remember(flagshipConfig) { mutableStateOf(flagshipConfig.locationSharingEnabled) }
     var aiModel by remember(flagshipConfig) { mutableStateOf(flagshipConfig.aiModel) }
     var aiName by remember(flagshipConfig) { mutableStateOf(flagshipConfig.aiDisplayName) }
     var aiPrompt by remember(flagshipConfig) { mutableStateOf(flagshipConfig.aiSystemPrompt) }
@@ -193,6 +194,8 @@ fun AdminControlCenterScreen(
     val menuItems = listOf(
         AdminMenuEntry("updates", "App updates", "Signed APK, release notes and rollout", Icons.Outlined.Publish, Color(0xFF635BFF), if (flagshipConfig.updateEnabled) "LIVE" else ""),
         AdminMenuEntry("maintenance", "Maintenance & notice", "Service status and announcements", Icons.Outlined.Build, Color(0xFFE28A22)),
+        AdminMenuEntry("ai_providers", "AI providers & keys", "Update keys, test models, custom providers, hide AI", Icons.Outlined.Key, Color(0xFF7A4FE0)),
+        AdminMenuEntry("workers", "Multi-worker routing", "Spread services across 2nd/3rd worker URLs", Icons.Outlined.Hub, Color(0xFF2B7FD9)),
         AdminMenuEntry("ai", "AI & feature flags", "Assistant and staged capabilities", Icons.Outlined.AutoAwesome, Color(0xFF8E5CE6)),
         AdminMenuEntry("premium", "Premium & payments", "Plans, pricing and payment methods", Icons.Outlined.WorkspacePremium, Color(0xFFCF9829)),
         AdminMenuEntry("campaigns", "Campaigns", "One-time Friday Fun message", Icons.Outlined.Campaign, Color(0xFFDB5B8C)),
@@ -506,6 +509,21 @@ fun AdminControlCenterScreen(
                             }, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Default.Save, null); Spacer(Modifier.width(7.dp)); Text("Save maintenance & notice") }
                         }
                     }
+                    "ai_providers" -> {
+                        AdminPanelCard("AI providers & API keys", "Mistral, OpenAI, Gemini, Groq, OpenRouter, DeepSeek, Together or any OpenAI-compatible endpoint", Icons.Outlined.Key) {
+                            AdminAiProvidersPanel(assistantEnabled) { enabled ->
+                                assistantEnabled = enabled
+                                viewModel.updateFlagshipFields(mapOf("assistantEnabled" to enabled)) { ok ->
+                                    Toast.makeText(context, if (!ok) "Save failed" else if (enabled) "AI features visible" else "AI features hidden", Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        }
+                    }
+                    "workers" -> {
+                        AdminPanelCard("Smart multi-worker routing", "Primary + extra workers; each service runs on exactly one, with automatic fallback", Icons.Outlined.Hub) {
+                            AdminWorkerRoutingPanel(viewModel)
+                        }
+                    }
                     "ai" -> {
                         AdminPanelCard("AI assistant", "Edit the assistant presentation and safe system guidance", Icons.Outlined.AutoAwesome) {
                             AdminSwitchRow("Show assistant to all users", "Remote control for the in-app assistant.", assistantEnabled, { assistantEnabled = it })
@@ -523,6 +541,7 @@ fun AdminControlCenterScreen(
                             AdminSwitchRow("Advanced themes", "", advancedThemesEnabled, { advancedThemesEnabled = it })
                             AdminSwitchRow("Creator profile", "", creatorProfileEnabled, { creatorProfileEnabled = it })
                             AdminSwitchRow("Usage analytics", "", analyticsEnabled, { analyticsEnabled = it })
+                            AdminSwitchRow("Location sharing", "Current + live location in chats (live sharing runs as a foreground service with a notification).", locationSharingEnabled, { locationSharingEnabled = it })
                             Button(onClick = {
                                 viewModel.updateFlagshipFields(mapOf(
                                     "assistantEnabled" to assistantEnabled,
@@ -535,7 +554,8 @@ fun AdminControlCenterScreen(
                                     "advancedCallQualityEnabled" to callQualityEnabled,
                                     "advancedThemesEnabled" to advancedThemesEnabled,
                                     "creatorProfileEnabled" to creatorProfileEnabled,
-                                    "analyticsEnabled" to analyticsEnabled
+                                    "analyticsEnabled" to analyticsEnabled,
+                                    "locationSharingEnabled" to locationSharingEnabled
                                 )) { ok -> Toast.makeText(context, if (ok) "AI & feature flags saved" else "Save failed", Toast.LENGTH_LONG).show() }
                             }, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Default.Save, null); Spacer(Modifier.width(7.dp)); Text("Save AI & feature flags") }
                         }

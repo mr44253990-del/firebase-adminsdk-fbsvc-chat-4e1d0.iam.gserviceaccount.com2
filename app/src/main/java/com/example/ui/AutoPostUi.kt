@@ -24,6 +24,7 @@ import com.google.firebase.firestore.SetOptions
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlinx.coroutines.launch
 
 /**
  * Admin settings for server-side automatic AI posts. Settings live in Firestore
@@ -46,6 +47,8 @@ fun AdminAutoPostPanel() {
     var endHour by remember { mutableIntStateOf(23) }
     var status by remember { mutableStateOf<Map<String, Any?>>(emptyMap()) }
     var saving by remember { mutableStateOf(false) }
+    var posting by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
 
     DisposableEffect(Unit) {
         val reg = docRef.addSnapshotListener { snap, _ ->
@@ -131,10 +134,26 @@ fun AdminAutoPostPanel() {
                 Icon(Icons.Default.Save, null); Spacer(Modifier.width(6.dp)); Text("Save")
             }
             OutlinedButton(
-                onClick = { save(mapOf("runNowRequestedAt" to System.currentTimeMillis()), "Queued — the server posts within ~10 minutes") },
-                enabled = !saving, modifier = Modifier.weight(1f)
-            ) { Icon(Icons.Default.Bolt, null); Spacer(Modifier.width(6.dp)); Text("Post one now") }
+                onClick = {
+                    // Instant: generated and published from this phone right now (no cron wait).
+                    posting = true
+                    scope.launch {
+                        val settings = mapOf(
+                            "postType" to postType, "language" to language, "prompt" to prompt,
+                            "useEmoji" to useEmoji, "styledBackground" to styled
+                        )
+                        val msg = runCatching { publishAiPostNow(settings) }.getOrElse { "Test post failed: ${it.localizedMessage}" }
+                        posting = false
+                        Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                    }
+                },
+                enabled = !saving && !posting, modifier = Modifier.weight(1f)
+            ) {
+                if (posting) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp) else Icon(Icons.Default.Bolt, null)
+                Spacer(Modifier.width(6.dp)); Text(if (posting) "Posting…" else "Test post now")
+            }
         }
+        Text("“Test post now” publishes immediately using the active AI provider (or the server key). The schedule keeps running on the server.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Card(shape = RoundedCornerShape(18.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .6f))) {
             Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {

@@ -65,7 +65,7 @@ class NotificationReplyReceiver : BroadcastReceiver() {
                 put("senderId", senderId); put("senderName", senderName); put("senderProfileUrl", image)
                 put("notificationType", "message"); put("targetId", messageId)
             }
-            val request = Request.Builder().url("https://solitary-hill-dcdc.mr44253990.workers.dev/")
+            val request = Request.Builder().url(com.example.data.WorkerRouter.resolve("push", com.example.data.WorkerRouter.primary.value.ifBlank { "https://solitary-hill-dcdc.mr44253990.workers.dev" }) + "/")
                 .header("Authorization", "Bearer $idToken")
                 .post(payload.toString().toRequestBody("application/json".toMediaType())).build()
             OkHttpClient().newCall(request).enqueue(object : Callback {

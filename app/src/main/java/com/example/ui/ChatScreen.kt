@@ -340,6 +340,36 @@ fun ChatScreen(
     }
 
     // Photo Gallery picker for attachment uploading to Supabase
+    val uploadChatPhoto: (ByteArray) -> Unit = { bytes ->
+        Toast.makeText(context, "Uploading photo...", Toast.LENGTH_SHORT).show()
+        val fileName = "chat_img_${System.currentTimeMillis()}.jpg"
+        viewModel.uploadFileToSupabase(
+            bucket = "chat_images",
+            fileName = fileName,
+            fileBytes = bytes,
+            contentType = "image/jpeg",
+            onSuccess = { publicUrl ->
+                viewModel.sendMessage(
+                    recipientUser = recipient,
+                    text = "",
+                    imageUrl = publicUrl,
+                    replyToId = replyingToMessage?.messageId,
+                    replyToText = replyingToMessage?.text,
+                    replyToSenderName = replyingToMessage?.senderName
+                )
+                replyingToMessage = null
+                Toast.makeText(context, "Photo sent!", Toast.LENGTH_SHORT).show()
+            },
+            onFailure = { err -> Toast.makeText(context, "Photo upload failed: $err", Toast.LENGTH_LONG).show() }
+        )
+    }
+    var cameraUri by remember { mutableStateOf<Uri?>(null) }
+    val cameraLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
+        val uri = cameraUri
+        if (ok && uri != null) {
+            runCatching { context.contentResolver.openInputStream(uri)?.use { it.readBytes() } }.getOrNull()?.let(uploadChatPhoto)
+        }
+    }
     val photoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
@@ -410,6 +440,62 @@ fun ChatScreen(
                 Toast.makeText(context, error, Toast.LENGTH_LONG).show()
             })
     }
+
+    // ---- Location sharing (current + live) ----
+    val locationScope = rememberCoroutineScope()
+    var showLocationSheet by remember { mutableStateOf(false) }
+    var locationLoading by remember { mutableStateOf(false) }
+    var showLocationOffDialog by remember { mutableStateOf(false) }
+    var pendingLiveMinutes by remember { mutableStateOf<Pair<Int, String>?>(null) }
+    var pendingCurrent by remember { mutableStateOf(false) }
+    val shareLocationNow: (Int?, String) -> Unit = { minutes, label ->
+        if (!com.example.location.LocationShare.isLocationEnabled(context)) {
+            showLocationOffDialog = true
+        } else {
+            locationLoading = true
+            locationScope.launch {
+                val fix = com.example.location.LocationShare.currentLocation(context)
+                locationLoading = false
+                if (fix == null) {
+                    Toast.makeText(context, "Couldn't get your location. Move near a window or turn on high accuracy.", Toast.LENGTH_LONG).show()
+                } else if (minutes == null) {
+                    viewModel.sendMessage(recipient, com.example.location.LocationShare.currentMessage(fix))
+                    showLocationSheet = false
+                } else {
+                    val me = currentUserId.orEmpty()
+                    val shareId = java.util.UUID.randomUUID().toString().replace("-", "").take(20)
+                    val until = System.currentTimeMillis() + minutes * 60_000L
+                    val chatId = listOf(me, recipient.uid).sorted().joinToString("_")
+                    com.example.location.LiveLocationService.start(context, shareId, me, recipient.uid, recipient.name, chatId, until, fix)
+                    viewModel.sendMessage(recipient, com.example.location.LocationShare.liveMessage(fix, shareId, until, label))
+                    showLocationSheet = false
+                    Toast.makeText(context, "Live location shared for $label", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+    val locationPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
+        val granted = result[Manifest.permission.ACCESS_FINE_LOCATION] == true || result[Manifest.permission.ACCESS_COARSE_LOCATION] == true
+        if (!granted) {
+            Toast.makeText(context, "Location permission is needed to share your location", Toast.LENGTH_LONG).show()
+        } else {
+            pendingLiveMinutes?.let { (m, l) -> shareLocationNow(m, l) }
+            if (pendingCurrent) shareLocationNow(null, "")
+        }
+        pendingLiveMinutes = null; pendingCurrent = false
+    }
+    val requestLocationThen: (Int?, String) -> Unit = { minutes, label ->
+        if (com.example.location.LocationShare.hasPermission(context)) shareLocationNow(minutes, label)
+        else {
+            if (minutes == null) pendingCurrent = true else pendingLiveMinutes = minutes to label
+            val perms = buildList {
+                add(Manifest.permission.ACCESS_FINE_LOCATION); add(Manifest.permission.ACCESS_COARSE_LOCATION)
+                if (minutes != null && android.os.Build.VERSION.SDK_INT >= 33) add(Manifest.permission.POST_NOTIFICATIONS)
+            }
+            locationPermissionLauncher.launch(perms.toTypedArray())
+        }
+    }
+    var showContactPicker by remember { mutableStateOf(false) }
 
     // Voice recording helpers
     val startRecording = {
@@ -766,22 +852,18 @@ fun ChatScreen(
                     }) {
                         Icon(Icons.Default.Search, contentDescription = "Search messages", tint = MaterialTheme.colorScheme.primary)
                     }
-                    IconButton(onClick = {
-                        val cameraGranted = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
-                        if (audioPermissionGranted && cameraGranted) onVideoCall()
-                        else videoPermissionLauncher.launch(arrayOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.CAMERA))
-                    }) {
-                        Icon(Icons.Default.Videocam, contentDescription = "Video call", tint = Color(0xFF55C7FF))
-                    }
-                    IconButton(onClick = {
-                        if (audioPermissionGranted) onCall()
-                        else { pendingCall = true; permissionLauncher.launch(Manifest.permission.RECORD_AUDIO) }
-                    }) {
-                        Icon(Icons.Default.Call, contentDescription = "Audio call", tint = Color(0xFF45D483))
-                    }
-                    IconButton(onClick = { showThemePicker = true }) {
-                        Icon(Icons.Default.Palette, contentDescription = "Chat theme", tint = MaterialTheme.colorScheme.primary)
-                    }
+                    ChatCallPill(
+                        onVideo = {
+                            val cameraGranted = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+                            if (audioPermissionGranted && cameraGranted) onVideoCall()
+                            else videoPermissionLauncher.launch(arrayOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.CAMERA))
+                        },
+                        onAudio = {
+                            if (audioPermissionGranted) onCall()
+                            else { pendingCall = true; permissionLauncher.launch(Manifest.permission.RECORD_AUDIO) }
+                        }
+                    )
+                    ChatThemeOrb(onClick = { showThemePicker = true }, accent = MaterialTheme.colorScheme.primary)
                     IconButton(onClick = { showChatSettings = true }) {
                         Icon(Icons.Default.MoreVert, contentDescription = "Chat settings")
                     }
@@ -1109,20 +1191,6 @@ fun ChatScreen(
                             }, enabled = !requestPending && !fileUploading) {
                                 Icon(Icons.Default.AddCircle, contentDescription = "Attachments", tint = composerAccent, modifier = Modifier.size(27.dp))
                             }
-                            DropdownMenu(showAttachmentMenu, { showAttachmentMenu = false }) {
-                                DropdownMenuItem(text = { Text("Photo") }, leadingIcon = { Icon(Icons.Default.AddPhotoAlternate, null) }, onClick = {
-                                    showAttachmentMenu = false; photoPickerLauncher.launch("image/*")
-                                })
-                                DropdownMenuItem(text = { Text("Document, PDF, APK or audio") }, leadingIcon = { Icon(Icons.Default.AttachFile, null) }, onClick = {
-                                    showAttachmentMenu = false; filePickerLauncher.launch(arrayOf("*/*"))
-                                })
-                                DropdownMenuItem(text = { Text("Schedule this message") }, leadingIcon = { Icon(Icons.Default.Schedule, null) }, onClick = {
-                                    showAttachmentMenu = false
-                                    if (messageText.isBlank()) Toast.makeText(context, "Write a message first", Toast.LENGTH_SHORT).show()
-                                    else if (!conversationAccepted) Toast.makeText(context, "Wait until the conversation is accepted", Toast.LENGTH_LONG).show()
-                                    else showScheduleDialog = true
-                                })
-                            }
                         }
                     }
 
@@ -1343,6 +1411,87 @@ fun ChatScreen(
                 }
             },
             dismissButton = { TextButton(onClick = { showScheduleDialog = false }) { Text("Cancel") } }
+        )
+    }
+
+    val locationAllowed by AppFeatureFlags.locationSharingEnabled.collectAsState()
+    if (showAttachmentMenu) {
+        val attachActions = buildList {
+            add(AttachAction("photo", "Gallery", Icons.Default.Image, listOf(Color(0xFF7C4DFF), Color(0xFFB388FF))))
+            add(AttachAction("camera", "Camera", Icons.Default.PhotoCamera, listOf(Color(0xFFFF4081), Color(0xFFFF80AB))))
+            add(AttachAction("file", "Document", Icons.Default.Description, listOf(Color(0xFF2979FF), Color(0xFF82B1FF))))
+            add(AttachAction("audio", "Audio", Icons.Default.Headphones, listOf(Color(0xFFFF6D00), Color(0xFFFFAB40))))
+            if (locationAllowed) add(AttachAction("location", "Location", Icons.Default.LocationOn, listOf(Color(0xFF00C853), Color(0xFF69F0AE))))
+            add(AttachAction("contact", "Contact", Icons.Default.ContactPage, listOf(Color(0xFF00B8D4), Color(0xFF84FFFF))))
+            add(AttachAction("schedule", "Schedule", Icons.Default.Schedule, listOf(Color(0xFF6200EA), Color(0xFF9575CD))))
+            add(AttachAction("apk", "APK / app", Icons.Default.Android, listOf(Color(0xFF3DDC84), Color(0xFF1B8A4B))))
+        }
+        SmartAttachSheet(attachActions, onDismiss = { showAttachmentMenu = false }) { key ->
+            showAttachmentMenu = false
+            when (key) {
+                "photo" -> photoPickerLauncher.launch("image/*")
+                "camera" -> runCatching {
+                    val dir = File(context.cacheDir, "camera").apply { mkdirs() }
+                    val file = File(dir, "cam_${System.currentTimeMillis()}.jpg")
+                    val uri = androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.files", file)
+                    cameraUri = uri
+                    cameraLauncher.launch(uri)
+                }.onFailure { Toast.makeText(context, "Camera unavailable: ${it.localizedMessage}", Toast.LENGTH_SHORT).show() }
+                "file" -> filePickerLauncher.launch(arrayOf("*/*"))
+                "audio" -> filePickerLauncher.launch(arrayOf("audio/*"))
+                "apk" -> filePickerLauncher.launch(arrayOf("application/vnd.android.package-archive"))
+                "location" -> showLocationSheet = true
+                "contact" -> showContactPicker = true
+                "schedule" -> {
+                    if (messageText.isBlank()) Toast.makeText(context, "Write a message first, then schedule it", Toast.LENGTH_SHORT).show()
+                    else showScheduleDialog = true
+                }
+            }
+        }
+    }
+    if (showLocationSheet) {
+        LocationShareSheet(
+            recipientName = recipient.name, loading = locationLoading,
+            onDismiss = { if (!locationLoading) showLocationSheet = false },
+            onShareCurrent = { requestLocationThen(null, "") },
+            onShareLive = { minutes, label -> requestLocationThen(minutes, label) }
+        )
+    }
+    if (showLocationOffDialog) {
+        AlertDialog(
+            onDismissRequest = { showLocationOffDialog = false },
+            icon = { Icon(Icons.Default.LocationOff, null) },
+            title = { Text("Turn on location") },
+            text = { Text("Your phone's location is off. Turn it on in Settings, then come back and share again.") },
+            confirmButton = {
+                Button(onClick = {
+                    showLocationOffDialog = false
+                    runCatching { context.startActivity(Intent(android.provider.Settings.ACTION_LOCATION_SOURCE_SETTINGS)) }
+                }) { Text("Open settings") }
+            },
+            dismissButton = { TextButton(onClick = { showLocationOffDialog = false }) { Text("Cancel") } }
+        )
+    }
+    if (showContactPicker) {
+        AlertDialog(
+            onDismissRequest = { showContactPicker = false },
+            title = { Text("Share a contact", fontWeight = FontWeight.Bold) },
+            text = {
+                LazyColumn(Modifier.heightIn(max = 420.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    items(users.filter { it.uid != recipient.uid }, key = { it.uid }) { person ->
+                        ListItem(
+                            headlineContent = { Text(person.name, fontWeight = FontWeight.Bold) },
+                            supportingContent = { Text("@${person.username}") },
+                            leadingContent = { AsyncImage(person.profileImageUrl.ifBlank { null }, person.name, modifier = Modifier.size(40.dp).clip(CircleShape)) },
+                            modifier = Modifier.clip(RoundedCornerShape(16.dp)).clickable {
+                                viewModel.sendMessage(recipient, "Contact: ${person.name} (@${person.username})\nhttps://solitary-hill-dcdc.mr44253990.workers.dev/profile?uid=${person.uid}")
+                                showContactPicker = false
+                            }
+                        )
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { showContactPicker = false }) { Text("Cancel") } }
         )
     }
 
@@ -1638,7 +1787,10 @@ fun MessageBubbleItem(
                     }
 
                     // Render text message if present
-                    if (message.text.isNotBlank()) {
+                    val sharedLocation = remember(message.text) { com.example.location.LocationShare.parse(message.text) }
+                    if (sharedLocation != null) {
+                        LocationMessageCard(sharedLocation, isSentByMe, textColor, if (isSentByMe) textColor else palette.accent)
+                    } else if (message.text.isNotBlank()) {
                         val onlyEmoji = remember(message.text) { isEmojiOnlyMessage(message.text) }
                         if (onlyEmoji) {
                             Text(message.text, fontSize = (34 * textScale).sp, lineHeight = (40 * textScale).sp)
@@ -1792,7 +1944,7 @@ fun MessageBubbleItem(
                     }
                 )
             }
-            if (message.text.isNotBlank()) {
+            if (message.text.isNotBlank() && AppFeatureFlags.aiEnabled.collectAsState().value) {
                 DropdownMenuItem(
                     text = { Text("Translate to Bengali (AI)") },
                     leadingIcon = { Icon(Icons.Default.Translate, null, tint = MaterialTheme.colorScheme.primary) },

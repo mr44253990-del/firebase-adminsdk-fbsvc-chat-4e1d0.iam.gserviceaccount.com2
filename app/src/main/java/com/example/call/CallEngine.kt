@@ -46,7 +46,9 @@ data class CallState(
 
 /** 1:1 audio engine. RTDB transports signaling only; Cloudflare TURN transports media when P2P fails. */
 object CallEngine {
-    private const val GATEWAY = "https://solitary-hill-dcdc.mr44253990.workers.dev/turn-credentials"
+    private const val DEFAULT_WORKER = "https://solitary-hill-dcdc.mr44253990.workers.dev"
+    /** TURN credentials follow the admin's "calls" worker routing; primary/default otherwise. */
+    private val GATEWAY: String get() = com.example.data.WorkerRouter.resolve("calls", com.example.data.WorkerRouter.primary.value.ifBlank { DEFAULT_WORKER }) + "/turn-credentials"
     private val _state = MutableStateFlow(CallState())
     val state: StateFlow<CallState> = _state
     private val mainHandler = Handler(Looper.getMainLooper())

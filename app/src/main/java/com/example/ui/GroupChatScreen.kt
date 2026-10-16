@@ -1049,7 +1049,7 @@ fun GroupMessageBubbleItem(
                 onDismissRequest = { showMenu = false },
                 modifier = Modifier.background(MaterialTheme.colorScheme.surface)
             ) {
-                if (msg.text.isNotBlank()) {
+                if (msg.text.isNotBlank() && AppFeatureFlags.aiEnabled.collectAsState().value) {
                     DropdownMenuItem(
                         text = { Text("Translate to Bengali (AI)") },
                         leadingIcon = { Icon(Icons.Default.Translate, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },

@@ -312,3 +312,9 @@ object LikeSound {
         }.start()
     }
 }
+
+/** Process-wide mirror of admin feature switches (from app_config/flagship). */
+object AppFeatureFlags {
+    val aiEnabled = kotlinx.coroutines.flow.MutableStateFlow(true)
+    val locationSharingEnabled = kotlinx.coroutines.flow.MutableStateFlow(true)
+}

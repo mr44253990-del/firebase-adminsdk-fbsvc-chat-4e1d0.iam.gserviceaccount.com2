@@ -4586,12 +4586,16 @@ fun ChatConversationUserItem(
                     when {
                         !m.imageUrl.isNullOrBlank() -> "photo"
                         !m.voiceUrl.isNullOrBlank() -> "voice"
+                        com.example.location.LocationShare.parse(m.text)?.isLive == true -> "live_location"
+                        com.example.location.LocationShare.parse(m.text) != null -> "location"
                         else -> "text"
                     }
                 } ?: "none"
                 val lastMsgText = when (lastKind) {
                     "photo" -> "Photo"
                     "voice" -> "Voice message"
+                    "live_location" -> "Live location"
+                    "location" -> "Location"
                     "text" -> convoStickerPreview(lastMessageState!!.text)
                     else -> "No messages yet. Say Hello!"
                 }
@@ -4600,6 +4604,7 @@ fun ChatConversationUserItem(
                     when (lastKind) {
                         "voice" -> { MicGlyph(MaterialTheme.colorScheme.primary, size = 15.dp); Spacer(Modifier.width(4.dp)) }
                         "photo" -> { PhotoGlyph(MaterialTheme.colorScheme.primary, size = 15.dp); Spacer(Modifier.width(4.dp)) }
+                        "location", "live_location" -> { MapPinGlyph(Color(0xFFE53935), size = 14.dp); Spacer(Modifier.width(4.dp)) }
                     }
                     Text(
                         text = lastMsgText,

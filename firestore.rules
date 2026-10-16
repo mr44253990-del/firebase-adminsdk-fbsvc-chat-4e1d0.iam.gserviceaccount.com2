@@ -82,6 +82,19 @@ service cloud.firestore {
       allow write: if signedIn() && request.auth.token.email == 'mr4425390@gmail.com';
     }
 
+    // Admin-only secrets (AI provider API keys). Never readable by regular users; the
+    // Worker / Edge Function read it with the service account.
+    match /admin_secrets/{documentId} {
+      allow read, write: if signedIn() && request.auth.token.email == 'mr4425390@gmail.com';
+    }
+
+    // Live location shares: the sender writes, both chat members read.
+    match /live_locations/{shareId} {
+      allow read: if signedIn() && (request.auth.uid == resource.data.senderId || request.auth.uid == resource.data.recipientId);
+      allow create: if signedIn() && request.resource.data.senderId == request.auth.uid;
+      allow update, delete: if signedIn() && resource.data.senderId == request.auth.uid;
+    }
+
     match /app_config/{documentId} {
       allow read: if signedIn();
       allow write: if signedIn() && request.auth.token.email == 'mr4425390@gmail.com';

@@ -408,6 +408,15 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     val selectedProfile: StateFlow<User?> = _selectedProfile.asStateFlow()
 
     private val _flagshipConfig = MutableStateFlow(FlagshipConfig())
+    init {
+        // Mirror remote feature switches into a process-wide holder that leaf composables read.
+        viewModelScope.launch {
+            _flagshipConfig.collect { cfg ->
+                AppFeatureFlags.aiEnabled.value = cfg.assistantEnabled
+                AppFeatureFlags.locationSharingEnabled.value = cfg.locationSharingEnabled
+            }
+        }
+    }
     val flagshipConfig: StateFlow<FlagshipConfig> = _flagshipConfig.asStateFlow()
     private val _featureRequests = MutableStateFlow<List<FeatureRequest>>(emptyList())
     val featureRequests: StateFlow<List<FeatureRequest>> = _featureRequests.asStateFlow()
@@ -506,6 +515,55 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             ?: defaultWebhookUrl
     )
     val webhookUrl: StateFlow<String> = _webhookUrl.asStateFlow()
+
+    /** Base URL for a service, honouring the admin's multi-worker routing (falls back to primary). */
+    private fun routed(service: String): String {
+        WorkerRouter.setPrimary(_webhookUrl.value)
+        return WorkerRouter.resolve(service, _webhookUrl.value.trimEnd('/'))
+    }
+    val workerPool: StateFlow<List<WorkerRouter.WorkerNode>> = WorkerRouter.nodes
+
+    /** Runs a request on the routed worker; on network error or 5xx from a secondary, retries on the primary. */
+    private fun executeRouted(service: String, client: OkHttpClient, build: (String) -> Request): Response {
+        val base = routed(service)
+        val primary = _webhookUrl.value.trimEnd('/')
+        if (base == primary) return client.newCall(build(base)).execute()
+        val first = runCatching { client.newCall(build(base)).execute() }.getOrNull()
+        if (first != null && first.code < 500) return first
+        first?.close()
+        WorkerRouter.markFailed(base)
+        return client.newCall(build(primary)).execute()
+    }
+
+    fun saveWorkerPool(nodes: List<WorkerRouter.WorkerNode>, onDone: (Boolean, String) -> Unit) {
+        if (!isCurrentAdmin()) return onDone(false, "Admin only")
+        val bad = nodes.firstOrNull { it.url.isNotBlank() && !it.valid }
+        if (bad != null) return onDone(false, "Worker URL must start with https:// (${bad.label.ifBlank { bad.id }})")
+        getDatabaseInstance().getReference("config").child("app_settings").child("workerPool")
+            .setValue(WorkerRouter.toMap(nodes.filter { it.url.isNotBlank() }))
+            .addOnSuccessListener { WorkerRouter.setNodes(nodes.filter { it.url.isNotBlank() }); onDone(true, "Worker routing saved") }
+            .addOnFailureListener { onDone(false, it.localizedMessage ?: "Save failed") }
+    }
+
+    /** Lightweight reachability probe for a worker URL: any HTTP answer within 8 s counts as up. */
+    fun probeWorker(url: String, onResult: (Boolean, String) -> Unit) {
+        val clean = url.trim().trimEnd('/')
+        if (!clean.startsWith("https://")) return onResult(false, "Invalid URL")
+        viewModelScope.launch(Dispatchers.IO) {
+            val started = System.currentTimeMillis()
+            val result = runCatching {
+                OkHttpClient.Builder().callTimeout(8, TimeUnit.SECONDS).build()
+                    .newCall(Request.Builder().url("$clean/health").get().build()).execute().use { it.code }
+            }
+            val ms = System.currentTimeMillis() - started
+            withContext(Dispatchers.Main) {
+                result.fold(
+                    { code -> if (code < 500) { WorkerRouter.markHealthy(clean); onResult(true, "Online · HTTP $code · ${ms} ms") } else onResult(false, "HTTP $code") },
+                    { onResult(false, it.localizedMessage ?: "Unreachable") }
+                )
+            }
+        }
+    }
 
     private val _gatewayHealth = MutableStateFlow(GatewayHealth())
     val gatewayHealth: StateFlow<GatewayHealth> = _gatewayHealth.asStateFlow()
@@ -830,7 +888,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val caller = getCurrentUserOrFallback() ?: return
         withUserFcmToken(recipient.uid, recipient.fcmToken) { token ->
             triggerFcmGatewayNotification(
-                gatewayUrl = _webhookUrl.value, targetToken = token,
+                gatewayUrl = routed("calls"), targetToken = token,
                 senderName = caller.name, messageBody = "Call ended",
                 senderId = caller.uid, senderProfileUrl = caller.profileImageUrl,
                 notificationType = "call_cancelled", targetId = callId
@@ -844,7 +902,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         CallEngine.startOutgoing(getApplication(), recipient.uid, recipient.name, recipient.profileImageUrl, video = video) { callId ->
             withUserFcmToken(recipient.uid, recipient.fcmToken) { token ->
                 triggerFcmGatewayNotification(
-                    gatewayUrl = _webhookUrl.value,
+                    gatewayUrl = routed("calls"),
                     targetToken = token,
                     senderName = caller.name,
                     messageBody = if (video) "Incoming Convo Chat video call" else "Incoming Convo Chat audio call",
@@ -893,10 +951,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         put("systemPrompt", _flagshipConfig.value.aiSystemPrompt.take(2000))
                         put("memory", JSONArray(memory.takeLast(20)))
                     }
-                    val request = Request.Builder().url(_webhookUrl.value.trimEnd('/') + "/ai/chat")
-                        .header("Authorization", "Bearer $token")
-                        .post(payload.toString().toRequestBody("application/json".toMediaTypeOrNull())).build()
-                    OkHttpClient.Builder().callTimeout(90, TimeUnit.SECONDS).build().newCall(request).execute().use { response ->
+                    executeRouted("ai", OkHttpClient.Builder().callTimeout(90, TimeUnit.SECONDS).build()) { base ->
+                        Request.Builder().url("$base/ai/chat")
+                            .header("Authorization", "Bearer $token")
+                            .post(payload.toString().toRequestBody("application/json".toMediaTypeOrNull())).build()
+                    }.use { response ->
                         val body = response.body?.string().orEmpty()
                         val text = if (response.isSuccessful) JSONObject(body).optString("reply")
                         else JSONObject(body.ifBlank { "{}" }).optString("error", "Assistant unavailable (${response.code})")
@@ -918,8 +977,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             viewModelScope.launch(Dispatchers.IO) {
                 try {
                     val payload = JSONObject().apply { put("message", prompt.take(4000)); put("model", _flagshipConfig.value.aiModel); put("systemPrompt", _flagshipConfig.value.aiSystemPrompt.take(2000)); put("memory", JSONArray(memory.takeLast(20))); put("stream", true) }
-                    val request = Request.Builder().url(_webhookUrl.value.trimEnd('/') + "/ai/chat").header("Authorization", "Bearer $token").post(payload.toString().toRequestBody("application/json".toMediaTypeOrNull())).build()
-                    OkHttpClient.Builder().callTimeout(2, TimeUnit.MINUTES).build().newCall(request).execute().use { response ->
+                    executeRouted("ai", OkHttpClient.Builder().callTimeout(2, TimeUnit.MINUTES).build()) { base ->
+                        Request.Builder().url("$base/ai/chat").header("Authorization", "Bearer $token").post(payload.toString().toRequestBody("application/json".toMediaTypeOrNull())).build()
+                    }.use { response ->
                         if (!response.isSuccessful) return@use withContext(Dispatchers.Main) { onDone("Assistant unavailable (${response.code})") }
                         response.body?.charStream()?.buffered()?.useLines { lines ->
                             lines.forEach { line ->
@@ -942,8 +1002,16 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             val token = tokenResult.token ?: return@addOnSuccessListener onResult(false, JSONObject().put("error", "Missing token"))
             viewModelScope.launch(Dispatchers.IO) {
                 try {
-                    val request = Request.Builder().url(_webhookUrl.value.trimEnd('/') + path).header("Authorization", "Bearer $token").post(payload.toString().toRequestBody("application/json".toMediaTypeOrNull())).build()
-                    OkHttpClient.Builder().callTimeout(45, TimeUnit.SECONDS).build().newCall(request).execute().use { response ->
+                    val base = routed("database")
+                    fun build(b: String) = Request.Builder().url(b + path).header("Authorization", "Bearer $token").post(payload.toString().toRequestBody("application/json".toMediaTypeOrNull())).build()
+                    val client = OkHttpClient.Builder().callTimeout(45, TimeUnit.SECONDS).build()
+                    val primary = _webhookUrl.value.trimEnd('/')
+                    // Secondary worker unreachable or 5xx: cool it down and retry on the primary.
+                    val firstTry = runCatching { client.newCall(build(base)).execute() }.getOrNull()
+                    val responseUsed = if (base != primary && (firstTry == null || firstTry.code >= 500)) {
+                        firstTry?.close(); WorkerRouter.markFailed(base); client.newCall(build(primary)).execute()
+                    } else firstTry ?: client.newCall(build(base)).execute()
+                    responseUsed.use { response ->
                         val json = runCatching { JSONObject(response.body?.string().orEmpty()) }.getOrDefault(JSONObject())
                         withContext(Dispatchers.Main) { onResult(response.isSuccessful, json) }
                     }
@@ -1048,7 +1116,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
         withUserFcmToken(admin.uid, admin.fcmToken) { token ->
             triggerFcmGatewayNotification(
-                gatewayUrl = _webhookUrl.value,
+                gatewayUrl = routed("push"),
                 targetToken = token,
                 senderName = "Convo Chat Diagnostics",
                 messageBody = "Direct FCM gateway test completed successfully",
@@ -1429,6 +1497,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                             it.startsWith("https://") && !it.contains("n8n", ignoreCase = true)
                         } ?: defaultWebhookUrl
                         _webhookUrl.value = url
+                        WorkerRouter.setPrimary(url)
+                        WorkerRouter.setNodes(WorkerRouter.parse(snapshot.child("workerPool").value))
                         sharedPrefs.edit().putString("webhook_url", url).apply()
                         val configuredPresenceUrl = snapshot.child("presenceWorkerUrl").getValue(String::class.java)
                         val presenceUrl = configuredPresenceUrl?.trim()?.trimEnd('/')
@@ -2759,7 +2829,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         )).addOnSuccessListener {
             withUserFcmToken(ownerId) { recipientToken ->
                 triggerFcmGatewayNotification(
-                    gatewayUrl = _webhookUrl.value,
+                    gatewayUrl = routed("push"),
                     targetToken = recipientToken,
                     senderName = actor.name,
                     messageBody = text,
@@ -2892,7 +2962,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         messagesRef.updateChildren(mapOf(originalId to original, replyId to response)).addOnSuccessListener {
             FirebaseFirestore.getInstance().collection("message_requests").document(request.id).delete()
             createActivityNotification(request.senderId, "message_accepted", me.uid, "replied to and accepted your message request")
-            withUserFcmToken(request.senderId) { token -> triggerFcmGatewayNotification(_webhookUrl.value, token, me.name, reply.trim(), me.uid, me.profileImageUrl, "message", replyId) }
+            withUserFcmToken(request.senderId) { token -> triggerFcmGatewayNotification(routed("push"), token, me.name, reply.trim(), me.uid, me.profileImageUrl, "message", replyId) }
             onComplete(true)
         }.addOnFailureListener { onComplete(false) }
     }
@@ -3022,7 +3092,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     .setValue(mapOf(
                         "senderId" to currentUser.uid,
                         "senderName" to currentUser.name,
-                        "text" to if (fileUrl != null) "File: ${fileName ?: "attachment"}" else if (voiceUrl != null) "Voice message" else if (imageUrl != null) "Photo" else text,
+                        "text" to if (fileUrl != null) "File: ${fileName ?: "attachment"}" else if (voiceUrl != null) "Voice message" else if (imageUrl != null) "Photo" else if (com.example.location.LocationShare.parse(text) != null) (if (com.example.location.LocationShare.parse(text)!!.isLive) "Shared a live location" else "Shared a location") else text,
                         "timestamp" to System.currentTimeMillis()
                     ))
 
@@ -3030,10 +3100,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 // authenticated Worker. The Worker performs no Firestore lookup.
                 withUserFcmToken(recipientUser.uid, recipientUser.fcmToken) { recipientToken ->
                     triggerFcmGatewayNotification(
-                        gatewayUrl = _webhookUrl.value,
+                        gatewayUrl = routed("push"),
                         targetToken = recipientToken,
                         senderName = currentUser.name,
-                        messageBody = if (fileUrl != null) "File: ${fileName ?: "attachment"}" else if (voiceUrl != null) "Voice message" else if (imageUrl != null) "Photo" else text,
+                        messageBody = if (fileUrl != null) "File: ${fileName ?: "attachment"}" else if (voiceUrl != null) "Voice message" else if (imageUrl != null) "Photo" else if (com.example.location.LocationShare.parse(text) != null) (if (com.example.location.LocationShare.parse(text)!!.isLive) "Shared a live location" else "Shared a location") else text,
                         senderId = currentUser.uid,
                         senderProfileUrl = currentUser.profileImageUrl,
                         notificationType = "message",
@@ -3112,7 +3182,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             viewModelScope.launch(Dispatchers.IO) { cacheDao.insertMessage(CachedMessage.fromMessage(message, chatId)) }
             withUserFcmToken(target.uid, target.fcmToken) { token ->
                 triggerFcmGatewayNotification(
-                    gatewayUrl = _webhookUrl.value, targetToken = token,
+                    gatewayUrl = routed("push"), targetToken = token,
                     senderName = sender.name, messageBody = "Forwarded: $text",
                     senderId = sender.uid, senderProfileUrl = sender.profileImageUrl,
                     notificationType = "message", targetId = id
@@ -3126,7 +3196,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         fun write(text:String,fileUrl:String?=null,fileName:String?=null,mime:String?=null,size:Long?=null,imageUrl:String?=null){
             val chatId=listOf(me.uid,target.uid).sorted().joinToString("_");val ref=getDatabaseInstance().getReference("chats").child(chatId).child("messages");val id=ref.push().key?:UUID.randomUUID().toString()
             val msg=Message(messageId=id,senderId=me.uid,senderName=me.name,senderUsername=me.username,text=text,timestamp=System.currentTimeMillis(),imageUrl=imageUrl,fileUrl=fileUrl,remoteFileUrl=fileUrl,fileName=fileName,fileMimeType=mime,fileSize=size,deliveredToRecipient=false,expiresAt=outgoingExpiryAt())
-            ref.child(id).setValue(msg).addOnSuccessListener{withUserFcmToken(target.uid,target.fcmToken){token->triggerFcmGatewayNotification(_webhookUrl.value,token,me.name,if(fileUrl!=null||imageUrl!=null)"Shared an attachment" else text,me.uid,me.profileImageUrl,"message",id)};onComplete(true,"Sent to ${target.name}")}.addOnFailureListener{onComplete(false,"Send failed")}
+            ref.child(id).setValue(msg).addOnSuccessListener{withUserFcmToken(target.uid,target.fcmToken){token->triggerFcmGatewayNotification(routed("push"),token,me.name,if(fileUrl!=null||imageUrl!=null)"Shared an attachment" else text,me.uid,me.profileImageUrl,"message",id)};onComplete(true,"Sent to ${target.name}")}.addOnFailureListener{onComplete(false,"Send failed")}
         }
         val uri=payload.uris.firstOrNull()
         if(uri==null){write(payload.text);return}
@@ -3143,7 +3213,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val id = ref.push().key ?: UUID.randomUUID().toString()
         val link = "https://solitary-hill-dcdc.mr44253990.workers.dev/post/${post.id}"
         val message = Message(messageId=id,senderId=me.uid,senderName=me.name,senderUsername=me.username,text="Shared post: ${post.title.ifBlank { "Shared a post" }}\n${post.text.take(220)}\n$link",timestamp=System.currentTimeMillis(),imageUrl=post.imageUrl.takeIf{it.isNotBlank()},deliveredToRecipient=false,expiresAt=outgoingExpiryAt())
-        ref.child(id).setValue(message).addOnSuccessListener { withUserFcmToken(target.uid,target.fcmToken){token->triggerFcmGatewayNotification(_webhookUrl.value,token,me.name,"Shared a Convo post",me.uid,me.profileImageUrl,"message",id)};onComplete(true) }.addOnFailureListener{onComplete(false)}
+        ref.child(id).setValue(message).addOnSuccessListener { withUserFcmToken(target.uid,target.fcmToken){token->triggerFcmGatewayNotification(routed("push"),token,me.name,"Shared a Convo post",me.uid,me.profileImageUrl,"message",id)};onComplete(true) }.addOnFailureListener{onComplete(false)}
     }
 
     fun editMessage(recipientUid: String, messageId: String, newText: String) {
@@ -3454,15 +3524,15 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             val idToken = tokenResult.token ?: return@addOnSuccessListener onFailure("Could not authenticate upload")
             viewModelScope.launch(Dispatchers.IO) {
                 try {
-                    val url = _webhookUrl.value.trimEnd('/') + "/media/upload?kind=$uploadKind&extension=$extension"
-                    val request = Request.Builder().url(url)
-                        .header("Authorization", "Bearer $idToken")
-                        .header("X-Media-Tags", tags.take(400).replace("[^A-Za-z0-9,# _-]".toRegex(), ""))
-                        .post(ProgressBytesRequestBody(bytes, contentType.toMediaTypeOrNull()) { percent, eta ->
-                            viewModelScope.launch(Dispatchers.Main) { onProgress(percent, eta) }
-                        })
-                        .build()
-                    OkHttpClient.Builder().callTimeout(3, TimeUnit.MINUTES).build().newCall(request).execute().use { response ->
+                    executeRouted("storage", OkHttpClient.Builder().callTimeout(3, TimeUnit.MINUTES).build()) { base ->
+                        Request.Builder().url("$base/media/upload?kind=$uploadKind&extension=$extension")
+                            .header("Authorization", "Bearer $idToken")
+                            .header("X-Media-Tags", tags.take(400).replace("[^A-Za-z0-9,# _-]".toRegex(), ""))
+                            .post(ProgressBytesRequestBody(bytes, contentType.toMediaTypeOrNull()) { percent, eta ->
+                                viewModelScope.launch(Dispatchers.Main) { onProgress(percent, eta) }
+                            })
+                            .build()
+                    }.use { response ->
                         val body = response.body?.string().orEmpty()
                         if (!response.isSuccessful) return@use withContext(Dispatchers.Main) {
                             val message = runCatching {
@@ -3494,7 +3564,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 if (storageConfig.storageWorkerUrl.isBlank()) return@addOnSuccessListener onComplete?.invoke() ?: Unit
                 "${storageConfig.storageWorkerUrl.trimEnd('/')}/storage/delete"
             } else {
-                _webhookUrl.value.trimEnd('/') + "/media/delete"
+                routed("storage") + "/media/delete"
             }
             val payload = JSONObject().put("key", key).toString()
             val request = Request.Builder().url(endpoint)
@@ -3685,11 +3755,22 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 client.newCall(request).enqueue(object : Callback {
                     override fun onFailure(call: Call, e: IOException) {
                         Log.e("FCM_GATEWAY", "Gateway request failed: ${e.message}")
+                        if (retryOnPrimary()) return
                         _gatewayHealth.value = GatewayHealth(message = "Notification gateway error: ${e.localizedMessage}")
                     }
 
+                    /** Secondary worker failed: cool it down and resend once through the primary. */
+                    fun retryOnPrimary(): Boolean {
+                        val primary = _webhookUrl.value.trimEnd('/')
+                        if (gatewayUrl.trimEnd('/') == primary) return false
+                        WorkerRouter.markFailed(gatewayUrl)
+                        triggerFcmGatewayNotification(primary, targetToken, senderName, messageBody, senderId, senderProfileUrl, notificationType, targetId, extraData)
+                        return true
+                    }
+
                     override fun onResponse(call: Call, response: Response) {
-                        val respBody = response.body?.string() ?: ""
+                        if (response.code >= 500 || response.code == 404) { response.close(); if (retryOnPrimary()) return }
+                        val respBody = runCatching { response.body?.string() }.getOrNull() ?: ""
                         Log.d("FCM_GATEWAY", "FCM gateway response [${response.code}]: $respBody")
                         if (response.isSuccessful) {
                             _gatewayHealth.value = _gatewayHealth.value.copy(
@@ -4565,7 +4646,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         recipients.forEach { memberUid ->
             withUserFcmToken(memberUid) { token ->
                 triggerFcmGatewayNotification(
-                    gatewayUrl = _webhookUrl.value,
+                    gatewayUrl = routed("calls"),
                     targetToken = token,
                     senderName = caller.name,
                     messageBody = "${caller.name} started a group $callType call in ${group.name}",

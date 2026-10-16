@@ -70,6 +70,8 @@ data class FlagshipConfig(
     val maintenanceTitle: String = "",
     /** Admin switch: when false, users no longer see the Reels tab or reel posts. */
     val reelsEnabled: Boolean = true,
+    /** Admin switch for current/live location sharing in chats. */
+    val locationSharingEnabled: Boolean = true,
     val assistantEnabled: Boolean = true,
     val aiModel: String = "mistral-small-latest",
     val aiDisplayName: String = "Convo Chat Assistant",
