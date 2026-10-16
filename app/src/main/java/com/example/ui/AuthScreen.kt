@@ -224,8 +224,6 @@ fun AuthScreen(
     val loginPrefs = remember { context.getSharedPreferences("convo_login", android.content.Context.MODE_PRIVATE) }
     var milkLook by remember { mutableStateOf(loginPrefs.getBoolean("milk_look", false)) }
     val lp = remember(milkLook) { loginPalette(milkLook) }
-    val deviceTilt by rememberDeviceTilt()
-    val backgroundBrush = lp.background
     val authFieldColors = OutlinedTextFieldDefaults.colors(
         focusedBorderColor = color1,
         unfocusedBorderColor = lp.text.copy(alpha = .18f),
@@ -256,11 +254,10 @@ fun AuthScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(backgroundBrush)
             .windowInsetsPadding(WindowInsets.safeDrawing)
     ) {
-        // Parallax orbs move with the phone tilt for depth.
-        LoginParallaxOrbs(lp, deviceTilt, orbDrift, orbPulse)
+        // Calm aurora light-field background (no tilt / 3D).
+        LoginAuroraBackground(lp.milk)
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -269,21 +266,30 @@ fun AuthScreen(
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text("Convo", color = lp.text, fontWeight = FontWeight.ExtraBold, fontSize = 22.sp, letterSpacing = (-0.5).sp)
+                Row(
+                    Modifier.clip(RoundedCornerShape(50)).background(lp.text.copy(alpha = .07f))
+                        .border(1.dp, lp.text.copy(alpha = .12f), RoundedCornerShape(50))
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Default.Lock, null, tint = ConvoBrand.Cyan, modifier = Modifier.size(13.dp))
+                    Spacer(Modifier.width(5.dp))
+                    Text("Private & secure", color = lp.text, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                }
                 Spacer(Modifier.weight(1f))
                 LoginLookToggle(lp, onToggle = {
                     milkLook = !milkLook
                     loginPrefs.edit().putBoolean("milk_look", milkLook).apply()
                 })
             }
-            Spacer(Modifier.height(8.dp))
-            // 3D hero: tilt the phone or drag the card
-            Login3DHero(lp, deviceTilt)
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(Modifier.height(6.dp))
+            // Code-drawn brand mark (vector-sharp, no bitmap) with a soft orbit glow.
+            LoginBrandHero(lp.text, lp.milk)
+            Spacer(modifier = Modifier.height(14.dp))
 
             Text(
-                text = if (isLoginMode) "Welcome back to Convo" else "Create your Convo account",
-                style = MaterialTheme.typography.headlineMedium.copy(
+                text = if (isLoginMode) "Welcome back" else "Create your account",
+                style = MaterialTheme.typography.headlineSmall.copy(
                     fontWeight = FontWeight.ExtraBold,
                     letterSpacing = (-0.5).sp
                 ),
@@ -388,15 +394,10 @@ fun AuthScreen(
             ElevatedCard(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .graphicsLayer {
-                        rotationY = deviceTilt.x * 3f
-                        rotationX = -deviceTilt.y * 2.5f
-                        cameraDistance = 18f * density
-                    }
                     .border(
-                        width = 2.dp,
+                        width = 1.2.dp,
                         brush = Brush.linearGradient(
-                            colors = if (lp.milk) lp.cardBorder else listOf(color1, color2, color3)
+                            colors = if (lp.milk) lp.cardBorder else listOf(ConvoBrand.Cyan.copy(alpha = .7f), Color.White.copy(alpha = .12f), ConvoBrand.Pink.copy(alpha = .7f))
                         ),
                         shape = RoundedCornerShape(24.dp)
                     ),

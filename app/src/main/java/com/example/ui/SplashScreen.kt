@@ -84,11 +84,7 @@ fun SplashScreen(onFinished: () -> Unit) {
                         .padding(15.dp),
                     contentAlignment = Alignment.Center
                 ) {
-                    Image(
-                        painter = painterResource(R.drawable.img_app_logo),
-                        contentDescription = "Convo Chat logo",
-                        modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(28.dp))
-                    )
+                    ConvoLogo(Modifier.fillMaxSize(), size = 94.dp)
                     Box(
                         Modifier.align(Alignment.TopStart).fillMaxWidth().height(36.dp)
                             .background(Brush.verticalGradient(listOf(Color.White.copy(.22f), Color.Transparent)))

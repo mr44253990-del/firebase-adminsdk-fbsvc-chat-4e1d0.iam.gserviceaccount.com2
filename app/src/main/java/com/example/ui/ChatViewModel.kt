@@ -2234,16 +2234,28 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     val seen = receipt.child("seen").getValue(Boolean::class.java) == true
                     val delivered = seen || receipt.child("delivered").getValue(Boolean::class.java) == true
                     recordReceipt(messageId, if (seen) 2 else if (delivered) 1 else 0)
+                    val stampedAt = receipt.child("seenAt").getValue(Long::class.java)
+                        ?: receipt.child("deliveredAt").getValue(Long::class.java) ?: 0L
                     viewModelScope.launch(Dispatchers.IO) {
-                        if (seen) cacheDao.markMessageSeen(messageId) else if (delivered) cacheDao.markMessageDelivered(messageId)
+                        // Only consume the receipt once the durable Room row really carries it.
+                        // If the sent message is not cached yet (race on a fresh send) the
+                        // receipt stays in RTDB and is re-applied the next time the chat opens.
+                        val rows = runCatching {
+                            if (seen) cacheDao.markMessageSeen(messageId) else if (delivered) cacheDao.markMessageDelivered(messageId) else 0
+                        }.getOrDefault(0)
+                        val stale = stampedAt > 0L && System.currentTimeMillis() - stampedAt > 14L * 24 * 60 * 60 * 1000
+                        // Delivered-only receipts are kept so a later "seen" can merge into the same node.
+                        if ((rows > 0 && seen) || stale) receipt.ref.removeValue()
                     }
-                    _chatMessagesState.value = _chatMessagesState.value.map {
-                        if (it.messageId == messageId) it.copy(
-                            seenByRecipient = it.seenByRecipient || seen,
-                            deliveredToRecipient = it.deliveredToRecipient || delivered
-                        ) else it
+                    val current = _chatMessagesState.value
+                    if (current.any { it.messageId == messageId && (it.seenByRecipient != seen && seen || it.deliveredToRecipient != delivered && delivered) }) {
+                        _chatMessagesState.value = current.map {
+                            if (it.messageId == messageId) it.copy(
+                                seenByRecipient = it.seenByRecipient || seen,
+                                deliveredToRecipient = it.deliveredToRecipient || delivered
+                            ) else it
+                        }
                     }
-                    receipt.ref.removeValue()
                 }
             }
             override fun onCancelled(error: DatabaseError) {}
@@ -2359,9 +2371,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 }.getOrDefault(false)
                 val wasTyping = _isRecipientTyping.value
                 _isRecipientTyping.value = isTyping
-                // Play only on the false -> true edge; repeated RTDB callbacks must not
-                // re-enter audio/UI work while Compose is recomposing.
-                if (isTyping && !wasTyping) runCatching { playTypingSound() }
+                if (isTyping) lastTypingSignalAt = System.currentTimeMillis()
+                // The typing sound loops for as long as the peer keeps typing and stops the
+                // moment the signal clears (or goes stale), the chat closes or the app pauses.
+                if (isTyping && !wasTyping) runCatching { startTypingLoop() }
+                if (!isTyping) stopTypingLoop()
             }
             override fun onCancelled(error: DatabaseError) {
                 if (activeTypingChatId == chatId && activeTypingRecipientUid == recipientUid) {
@@ -2437,7 +2451,41 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         })
     }
 
+    private var typingLoopPlayer: android.media.MediaPlayer? = null
+    private var typingWatchdog: kotlinx.coroutines.Job? = null
+    @Volatile private var lastTypingSignalAt = 0L
+
+    private fun startTypingLoop() {
+        if (!_typingSoundsEnabled.value || typingLoopPlayer != null) return
+        val app = getApplication<Application>()
+        typingLoopPlayer = runCatching {
+            val custom = AppSoundStore.activeFile(app, AppSoundStore.TYPING)
+            val player = if (custom != null) android.media.MediaPlayer().apply {
+                setDataSource(custom.absolutePath); prepare()
+            } else android.media.MediaPlayer.create(app, R.raw.typing_soft)
+            player?.apply { isLooping = true; setVolume(.32f, .32f); start() }
+        }.getOrNull()
+        typingWatchdog?.cancel()
+        typingWatchdog = viewModelScope.launch {
+            while (typingLoopPlayer != null) {
+                kotlinx.coroutines.delay(2_000)
+                // A peer that crashed mid-typing never clears the flag: stop after 16 s of silence.
+                if (System.currentTimeMillis() - lastTypingSignalAt > 16_000L) {
+                    _isRecipientTyping.value = false
+                    stopTypingLoop()
+                }
+            }
+        }
+    }
+
+    fun stopTypingLoop() {
+        typingWatchdog?.cancel(); typingWatchdog = null
+        typingLoopPlayer?.let { runCatching { it.stop() }; runCatching { it.release() } }
+        typingLoopPlayer = null
+    }
+
     private fun stopListeningToTyping() {
+        stopTypingLoop()
         val chatId = activeTypingChatId
         val recipientUid = activeTypingRecipientUid
         activeTypingListener?.let { listener ->
@@ -4851,6 +4899,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     override fun onCleared() {
+        stopTypingLoop()
         val database = runCatching { getDatabaseInstance() }.getOrNull()
         val currentUid = FirebaseAuth.getInstance().currentUser?.uid
         val chatId = activeChatId

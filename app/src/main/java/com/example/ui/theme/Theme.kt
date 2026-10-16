@@ -96,9 +96,24 @@ private val AmoledColors = DarkColors.copy(
 
 private fun themedDark(primary: Color, secondary: Color, background: Color, surface: Color) = darkColorScheme(
     primary = primary, secondary = secondary, tertiary = AuroraPink,
-    background = background, surface = surface, surfaceVariant = surface.copy(alpha = .92f),
+    background = background, surface = surface, surfaceVariant = androidx.compose.ui.graphics.lerp(surface, Color.White, .07f),
     onPrimary = Color(0xFF111218), onBackground = Color(0xFFF6F3FA),
-    onSurface = Color(0xFFF6F3FA), onSurfaceVariant = Color(0xFFD4D0DA)
+    onSurface = Color(0xFFF6F3FA), onSurfaceVariant = Color(0xFFD9D5E0),
+    onSecondary = Color(0xFF111218), onTertiary = Color(0xFF111218),
+    secondaryContainer = androidx.compose.ui.graphics.lerp(surface, secondary, .28f), onSecondaryContainer = Color.White,
+    tertiaryContainer = androidx.compose.ui.graphics.lerp(surface, AuroraPink, .26f), onTertiaryContainer = Color.White,
+    primaryContainer = androidx.compose.ui.graphics.lerp(surface, primary, .3f), onPrimaryContainer = Color.White,
+    // Material3 cards, sheets, menus and dialogs read the surfaceContainer roles; derive them from
+    // the theme surface so they never fall back to the baseline purple-grey with dark text.
+    surfaceContainerLowest = background,
+    surfaceContainerLow = androidx.compose.ui.graphics.lerp(surface, background, .4f),
+    surfaceContainer = surface,
+    surfaceContainerHigh = androidx.compose.ui.graphics.lerp(surface, Color.White, .05f),
+    surfaceContainerHighest = androidx.compose.ui.graphics.lerp(surface, Color.White, .09f),
+    surfaceBright = androidx.compose.ui.graphics.lerp(surface, Color.White, .12f),
+    surfaceDim = background,
+    inverseSurface = Color(0xFFF1EEF6), inverseOnSurface = Color(0xFF1B1A22),
+    outline = Color(0xFF9A96A6), outlineVariant = androidx.compose.ui.graphics.lerp(surface, Color.White, .16f)
 )
 
 @Composable
@@ -157,5 +172,12 @@ fun MyApplicationTheme(
         else -> if (darkTheme) DarkColors else LightColors
     }
 
-    MaterialTheme(colorScheme = colors, typography = Typography, shapes = PremiumShapes, content = content)
+    MaterialTheme(colorScheme = colors, typography = Typography, shapes = PremiumShapes) {
+        // Text drawn outside a Surface would otherwise default to black, which made many labels
+        // unreadable on dark themes. Provide the theme's on-background colour app-wide.
+        androidx.compose.runtime.CompositionLocalProvider(
+            androidx.compose.material3.LocalContentColor provides colors.onBackground,
+            content = content
+        )
+    }
 }

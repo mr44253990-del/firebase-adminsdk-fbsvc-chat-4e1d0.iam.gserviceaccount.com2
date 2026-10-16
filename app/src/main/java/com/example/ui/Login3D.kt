@@ -84,7 +84,7 @@ fun loginPalette(milk: Boolean): LoginPalette = if (milk) {
         orbs = listOf(Color(0xFF00C8FF), Color(0xFFFF4CCB), Color(0xFF8C3DFF), Color(0xFFFF70E8)),
         text = Color.White,
         textSoft = Color(0xFFD0CFE3),
-        card = Color(0xFF11162E).copy(alpha = .9f),
+        card = Color(0xFF12102A).copy(alpha = .78f),
         cardBorder = listOf(Color(0xFF673AB7), Color(0xFF00BCD4), Color(0xFFE91E63)),
         glass = Color.White.copy(alpha = .07f),
         glassBorder = Color.White.copy(alpha = .14f),

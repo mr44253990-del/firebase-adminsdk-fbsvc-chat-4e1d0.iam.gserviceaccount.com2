@@ -120,6 +120,14 @@ fun ChatScreen(
     val pendingRequestRecipients by viewModel.pendingMessageRequestRecipients.collectAsState()
     val requestPending = recipient.uid in pendingRequestRecipients
     val typingSounds by viewModel.typingSoundsEnabled.collectAsState()
+    val chatLifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+    DisposableEffect(chatLifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_STOP) viewModel.stopTypingLoop()
+        }
+        chatLifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { chatLifecycleOwner.lifecycle.removeObserver(observer); viewModel.stopTypingLoop() }
+    }
     val notificationSounds by viewModel.notificationSoundsEnabled.collectAsState()
     val privacySettings by PrivacyPreferences.settings.collectAsState()
     val callState by CallEngine.state.collectAsState()
@@ -901,9 +909,10 @@ fun ChatScreen(
                     verticalArrangement = Arrangement.spacedBy(chatAppearance.messageSpacing.dp, Alignment.Bottom),
                     reverseLayout = true
                 ) {
+                    val lastSeenOwnId = visibleMessages.lastOrNull { it.senderId == currentUserId && it.seenByRecipient }?.messageId
                     items(visibleMessages.reversed(), key = { it.messageId }) { msg ->
                         val entranceAnimate = remember(msg.messageId) { msg.timestamp > chatOpenedAt - 1500L && enteredMessageIds.add(msg.messageId) }
-                        Box(Modifier.fillMaxWidth().messageEntrance(chatAppearance.messageAnimation, entranceAnimate, msg.senderId == currentUserId)) {
+                        Box(Modifier.fillMaxWidth().messageEntrance(chatAppearance.messageAnimation, entranceAnimate, msg.senderId == currentUserId).padding(bottom = if (msg.messageId == lastSeenOwnId) 16.dp else 0.dp)) {
                         val isSentByMe = msg.senderId == currentUserId
                         MessageBubbleItem(
                             message = msg,
@@ -946,6 +955,12 @@ fun ChatScreen(
                                 }
                             }
                         )
+                        if (msg.messageId == lastSeenOwnId) {
+                            SeenAvatar(
+                                updatedRecipient.profileImageUrl, updatedRecipient.name,
+                                Modifier.align(Alignment.BottomEnd).offset(x = 0.dp, y = 17.dp)
+                            )
+                        }
                         }
                     }
                 }
@@ -1404,7 +1419,9 @@ private fun VoiceRecordingIndicator(name: String) {
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(9.dp)
         ) {
-            Icon(Icons.Default.Mic, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size((20.dp * pulse)))
+            Box(Modifier.size(30.dp).clip(CircleShape).background(MaterialTheme.colorScheme.error.copy(alpha = .16f)), contentAlignment = Alignment.Center) {
+                MicGlyph(MaterialTheme.colorScheme.error, size = 18.dp * pulse)
+            }
             Column {
                 Text("${name.ifBlank { "Someone" }} is recording a voice note", fontWeight = FontWeight.Bold, fontSize = 13.sp)
                 Text("You’ll hear it when it’s sent", fontSize = 11.sp, color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = .78f))
@@ -1676,19 +1693,15 @@ fun MessageBubbleItem(
                                         modifier = Modifier.size(16.dp)
                                     )
                                 }
-                                else -> Icon(
-                                    imageVector = when {
-                                        message.seenByRecipient -> Icons.Default.CheckCircle
-                                        message.deliveredToRecipient -> Icons.Default.DoneAll
-                                        else -> Icons.Default.Check
+                                else -> MessageTicks(
+                                    level = when {
+                                        message.seenByRecipient -> 2
+                                        message.deliveredToRecipient || deliveryState == "delivered" -> 1
+                                        else -> 0
                                     },
-                                    contentDescription = when {
-                                        message.seenByRecipient -> "Seen and saved"
-                                        message.deliveredToRecipient -> "Delivered"
-                                        else -> "Sent"
-                                    },
-                                    tint = if (message.seenByRecipient) Color(0xFF55D6FF) else palette.meta,
-                                    modifier = Modifier.size(if (message.seenByRecipient) 14.dp else 15.dp)
+                                    tint = palette.meta,
+                                    seenTint = if (palette.text.luminance() > .6f) Color(0xFF9BE7FF) else Color(0xFF1E9BE9),
+                                    size = 14.dp
                                 )
                             }
                         }

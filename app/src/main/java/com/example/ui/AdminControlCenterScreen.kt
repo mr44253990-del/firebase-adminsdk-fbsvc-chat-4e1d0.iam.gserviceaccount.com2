@@ -81,6 +81,8 @@ fun AdminControlCenterScreen(
     val globalSoundUrls by viewModel.globalSoundUrls.collectAsState()
 
     var selectedPage by rememberSaveable { mutableStateOf("dashboard") }
+    // Hoisted so returning from a sub-page restores the dashboard position instead of jumping to the top.
+    val dashboardScroll = rememberSaveable(saver = androidx.compose.foundation.ScrollState.Saver) { androidx.compose.foundation.ScrollState(0) }
     BackHandler(enabled = selectedPage != "dashboard") { selectedPage = "dashboard" }
 
     LaunchedEffect(webhookUrl) {
@@ -214,7 +216,7 @@ fun AdminControlCenterScreen(
     Column(Modifier.fillMaxSize()) {
         if (selectedPage == "dashboard") {
             Column(
-                Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp),
+                Modifier.fillMaxSize().verticalScroll(dashboardScroll).padding(horizontal = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
                 Spacer(Modifier.height(2.dp))

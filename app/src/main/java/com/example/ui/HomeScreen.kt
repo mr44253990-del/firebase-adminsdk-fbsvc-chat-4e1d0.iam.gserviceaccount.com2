@@ -498,11 +498,18 @@ fun HomeScreen(
                     },
                     label = null
                 )
-                if (flagshipConfig.reelsEnabled || isAdmin) NavigationBarItem(
+                // Always five slots so the create (+) button stays centred. When the admin
+                // turns Reels off (for everyone, admin included) the slot becomes Groups.
+                if (flagshipConfig.reelsEnabled) NavigationBarItem(
                     selected = currentTab == 6,
                     onClick = { viewModel.openReel() },
                     icon = { Icon(Icons.Default.SmartDisplay, contentDescription = "Reels") },
                     label = { Text("Reels", fontSize = 10.sp) }
+                ) else NavigationBarItem(
+                    selected = currentTab == 2,
+                    onClick = { viewModel.setCurrentTab(2) },
+                    icon = { Icon(Icons.Default.Groups, contentDescription = "Groups") },
+                    label = { Text("Groups", fontSize = 10.sp) }
                 )
                 NavigationBarItem(
                     selected = currentTab == 5,
@@ -513,7 +520,7 @@ fun HomeScreen(
             }
         },
         floatingActionButton = {
-            if (currentTab == 0) {
+            if (currentTab == 0 && flagshipConfig.assistantEnabled) {
                 FloatingActionButton(
                     onClick = onAssistant,
                     shape = CircleShape,
@@ -4575,23 +4582,34 @@ fun ChatConversationUserItem(
                 }
                 
                 // Show last message text instead of username
-                val lastMsgText = if (lastMessageState != null) {
-                    val m = lastMessageState!!
-                    if (!m.imageUrl.isNullOrBlank()) "📷 [Photo Attachment]" 
-                    else if (!m.voiceUrl.isNullOrBlank()) "🎙️ [Voice Note]"
-                    else convoStickerPreview(m.text)
-                } else {
-                    "No messages yet. Say Hello!"
+                val lastKind = lastMessageState?.let { m ->
+                    when {
+                        !m.imageUrl.isNullOrBlank() -> "photo"
+                        !m.voiceUrl.isNullOrBlank() -> "voice"
+                        else -> "text"
+                    }
+                } ?: "none"
+                val lastMsgText = when (lastKind) {
+                    "photo" -> "Photo"
+                    "voice" -> "Voice message"
+                    "text" -> convoStickerPreview(lastMessageState!!.text)
+                    else -> "No messages yet. Say Hello!"
                 }
-
-                Text(
-                    text = lastMsgText,
-                    fontSize = 13.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    fontWeight = if (hasUnread) FontWeight.ExtraBold else FontWeight.Normal,
-                    color = if (hasUnread) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                val previewColor = if (hasUnread) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.onSurfaceVariant
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    when (lastKind) {
+                        "voice" -> { MicGlyph(MaterialTheme.colorScheme.primary, size = 15.dp); Spacer(Modifier.width(4.dp)) }
+                        "photo" -> { PhotoGlyph(MaterialTheme.colorScheme.primary, size = 15.dp); Spacer(Modifier.width(4.dp)) }
+                    }
+                    Text(
+                        text = lastMsgText,
+                        fontSize = 13.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        fontWeight = if (hasUnread) FontWeight.ExtraBold else FontWeight.Normal,
+                        color = previewColor
+                    )
+                }
                 val presenceText = if (user.isOnline) "Active now" else {
                     val since = user.offlineSince.takeIf { it > 0L } ?: user.lastActive
                     if (since <= 0L) "Offline" else formatOfflineAge(since)

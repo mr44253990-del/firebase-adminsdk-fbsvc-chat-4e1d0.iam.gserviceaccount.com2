@@ -467,10 +467,10 @@ interface CacheDao {
     suspend fun getReceiptRows(ids: List<String>): List<ReceiptRow>
 
     @Query("UPDATE cached_messages SET deliveredToRecipient = 1 WHERE messageId = :messageId")
-    suspend fun markMessageDelivered(messageId: String)
+    suspend fun markMessageDelivered(messageId: String): Int
 
     @Query("UPDATE cached_messages SET seenByRecipient = 1, deliveredToRecipient = 1 WHERE messageId = :messageId")
-    suspend fun markMessageSeen(messageId: String)
+    suspend fun markMessageSeen(messageId: String): Int
 
     @Query("UPDATE cached_messages SET remoteVoiceUrl = NULL WHERE messageId = :messageId")
     suspend fun clearRemoteVoiceUrl(messageId: String)
