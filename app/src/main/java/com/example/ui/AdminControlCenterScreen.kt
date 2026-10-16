@@ -194,6 +194,8 @@ fun AdminControlCenterScreen(
     val menuItems = listOf(
         AdminMenuEntry("updates", "App updates", "Signed APK, release notes and rollout", Icons.Outlined.Publish, Color(0xFF635BFF), if (flagshipConfig.updateEnabled) "LIVE" else ""),
         AdminMenuEntry("maintenance", "Maintenance & notice", "Service status and announcements", Icons.Outlined.Build, Color(0xFFE28A22)),
+        AdminMenuEntry("announce", "Announcements", "Banner for every user: notices, features, events", Icons.Outlined.Campaign, Color(0xFF2979FF)),
+        AdminMenuEntry("audit", "Audit log", "Every admin change with time and account", Icons.Outlined.History, Color(0xFF546E7A)),
         AdminMenuEntry("ai_providers", "AI providers & keys", "Update keys, test models, custom providers, hide AI", Icons.Outlined.Key, Color(0xFF7A4FE0)),
         AdminMenuEntry("workers", "Multi-worker routing", "Spread services across 2nd/3rd worker URLs", Icons.Outlined.Hub, Color(0xFF2B7FD9)),
         AdminMenuEntry("ai", "AI & feature flags", "Assistant and staged capabilities", Icons.Outlined.AutoAwesome, Color(0xFF8E5CE6)),
@@ -518,6 +520,12 @@ fun AdminControlCenterScreen(
                                 }
                             }
                         }
+                    }
+                    "announce" -> {
+                        AdminPanelCard("Announcements", "Publish a banner to every signed-in user", Icons.Outlined.Campaign) { AdminAnnouncementPanel() }
+                    }
+                    "audit" -> {
+                        AdminPanelCard("Audit log", "Latest 100 admin actions", Icons.Outlined.History) { AdminAuditPanel() }
                     }
                     "workers" -> {
                         AdminPanelCard("Smart multi-worker routing", "Primary + extra workers; each service runs on exactly one, with automatic fallback", Icons.Outlined.Hub) {

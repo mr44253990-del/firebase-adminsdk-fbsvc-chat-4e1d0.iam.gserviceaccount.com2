@@ -84,6 +84,12 @@ service cloud.firestore {
 
     // Admin-only secrets (AI provider API keys). Never readable by regular users; the
     // Worker / Edge Function read it with the service account.
+    // Admin audit trail: admin-only, append-only.
+    match /admin_audit/{entryId} {
+      allow read, create: if signedIn() && request.auth.token.email == 'mr4425390@gmail.com';
+      allow update, delete: if false;
+    }
+
     match /admin_secrets/{documentId} {
       allow read, write: if signedIn() && request.auth.token.email == 'mr4425390@gmail.com';
     }

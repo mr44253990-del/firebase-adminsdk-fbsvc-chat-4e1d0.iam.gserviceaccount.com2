@@ -112,6 +112,7 @@ object AiProviderStore {
     suspend fun save(config: Config) {
         val providers = config.providers.filter { it.apiKey.isNotBlank() || it.custom }.associate { it.id to it.toMap() }
         doc.set(mapOf("activeProviderId" to config.activeId, "providers" to providers, "updatedAt" to System.currentTimeMillis())).awaitTask()
+        AdminAudit.log("ai_providers_save", "active=${config.activeId}, providers=${providers.size}")
     }
 
     private val http by lazy { OkHttpClient.Builder().callTimeout(40, TimeUnit.SECONDS).build() }
