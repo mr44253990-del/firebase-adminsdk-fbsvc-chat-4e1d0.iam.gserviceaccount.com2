@@ -3940,6 +3940,10 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
                                 Spacer(Modifier.width(5.dp)); Icon(Icons.Outlined.Verified, "Moderator", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(15.dp))
                                 Text(" MOD", color = MaterialTheme.colorScheme.primary, fontSize = 9.sp, fontWeight = FontWeight.Bold)
                             }
+                            if (postOwner?.staffRole == "sub_admin") {
+                                Spacer(Modifier.width(5.dp)); Icon(Icons.Default.Shield, "Staff", tint = Color(0xFF3949AB), modifier = Modifier.size(14.dp))
+                                Text(" STAFF", color = Color(0xFF3949AB), fontSize = 9.sp, fontWeight = FontWeight.ExtraBold)
+                            }
                         }
                         val metaColor = if (styledPost) Color.White.copy(alpha = .82f) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f)
                         Row(verticalAlignment = Alignment.CenterVertically) {

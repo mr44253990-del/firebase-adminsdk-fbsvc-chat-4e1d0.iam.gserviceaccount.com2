@@ -13,6 +13,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.data.Post
@@ -38,9 +39,10 @@ fun PostDetailScreen(post: Post, viewModel: ChatViewModel, onBack: () -> Unit, o
                 other.tags.any { it.lowercase().removePrefix("#") in tags }
         }.sortedByDescending { it.timestamp }.take(4)
     }
-    Scaffold(topBar = {
+    Scaffold(modifier = Modifier.modernBackdrop(), containerColor = Color.Transparent, topBar = {
         TopAppBar(
-            title = { Text(livePost.senderName.ifBlank { "Convo Post" }, fontWeight = FontWeight.Bold) },
+            colors = modernTopBarColors(),
+            title = { ModernTitle(livePost.senderName.ifBlank { "Convo Post" }, if (livePost.title.isNotBlank()) livePost.title else relativeTimeLabel(livePost.timestamp)) },
             navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } }
         )
     }) { padding ->

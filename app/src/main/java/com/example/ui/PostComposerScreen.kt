@@ -22,6 +22,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.ui.draw.alpha
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
@@ -202,8 +204,14 @@ fun PostComposerScreen(viewModel: ChatViewModel, onBack: () -> Unit, onPublished
                             )
                         },
                         enabled = (text.isNotBlank() || imageMedia.isNotEmpty() || videoMedia != null) && !publishing && !uploading,
-                        modifier = Modifier.padding(end = 8.dp)
-                    ) { if (publishing) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp) else Text("Publish") }
+                        colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent, contentColor = Color.White, disabledContainerColor = Color.Transparent, disabledContentColor = Color.White.copy(alpha = .7f)),
+                        modifier = Modifier.padding(end = 8.dp).clip(RoundedCornerShape(50))
+                            .background(Brush.horizontalGradient(listOf(Color(0xFF6B4EFF), Color(0xFFE64DAB))))
+                            .alpha(if ((text.isNotBlank() || imageMedia.isNotEmpty() || videoMedia != null) && !publishing && !uploading) 1f else .5f)
+                    ) {
+                        if (publishing) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = Color.White)
+                        else { Icon(Icons.AutoMirrored.Filled.Send, null, Modifier.size(16.dp)); Spacer(Modifier.width(6.dp)); Text("Post", fontWeight = FontWeight.Bold) }
+                    }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = .82f))
             )
@@ -294,6 +302,16 @@ fun PostComposerScreen(viewModel: ChatViewModel, onBack: () -> Unit, onPublished
                 }
             }
             MentionSuggestionBar(suggestions = mentionMatches, onPick = { user -> text = Mentions.complete(text, user) })
+            // Quick emoji bar: one tap appends to the post.
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                items(listOf("😀", "😂", "😍", "🥰", "🔥", "🎉", "❤️", "👍", "🙏", "😎", "🤩", "😢", "💯", "✨", "🌸", "🇧🇩")) { emoji ->
+                    Box(
+                        Modifier.size(40.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .6f))
+                            .clickable { if (text.length < 1198) text += emoji },
+                        contentAlignment = Alignment.Center
+                    ) { Text(emoji, fontSize = 20.sp) }
+                }
+            }
             if (!styledCanvas && !firstLink.isNullOrBlank()) {
                 RichLinkPreviewCard(url = firstLink, contentColor = MaterialTheme.colorScheme.onSurface, containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .55f))
             }

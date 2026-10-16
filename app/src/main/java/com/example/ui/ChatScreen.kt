@@ -33,6 +33,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
@@ -399,6 +400,8 @@ fun ChatScreen(
     var cameraUri by remember { mutableStateOf<Uri?>(null) }
     // Album send: pick up to 10 photos, preview, caption, then upload in order.
     var pendingImages by remember { mutableStateOf<List<Uri>>(emptyList()) }
+    var highlightedMessageId by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(highlightedMessageId) { if (highlightedMessageId != null) { kotlinx.coroutines.delay(1600); highlightedMessageId = null } }
     var albumProgress by remember { mutableStateOf<Pair<Int, Int>?>(null) }
     val multiPhotoLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetMultipleContents()) { uris ->
         if (uris.isNotEmpty()) {
@@ -1054,7 +1057,8 @@ fun ChatScreen(
                     val lastSeenOwnId = visibleMessages.lastOrNull { it.senderId == currentUserId && it.seenByRecipient }?.messageId
                     items(visibleMessages.reversed(), key = { it.messageId }) { msg ->
                         val entranceAnimate = remember(msg.messageId) { msg.timestamp > chatOpenedAt - 1500L && enteredMessageIds.add(msg.messageId) }
-                        Box(Modifier.fillMaxWidth().messageEntrance(chatAppearance.messageAnimation, entranceAnimate, msg.senderId == currentUserId).padding(bottom = if (msg.messageId == lastSeenOwnId) 16.dp else 0.dp)) {
+                        val flash by animateFloatAsState(if (highlightedMessageId == msg.messageId) .22f else 0f, tween(450), label = "jump_flash")
+                        Box(Modifier.fillMaxWidth().messageEntrance(chatAppearance.messageAnimation, entranceAnimate, msg.senderId == currentUserId).background(MaterialTheme.colorScheme.primary.copy(alpha = flash), RoundedCornerShape(16.dp)).padding(bottom = if (msg.messageId == lastSeenOwnId) 16.dp else 0.dp)) {
                         val isSentByMe = msg.senderId == currentUserId
                         MessageBubbleItem(
                             message = msg,
@@ -1080,6 +1084,11 @@ fun ChatScreen(
                             },
                             onFileConsumed = { viewModel.acknowledgeFileConsumed(msg.messageId, msg.remoteFileUrl) },
                             onForward = { forwardingMessage = msg },
+                            onJumpToReply = { targetId ->
+                                val index = visibleMessages.reversed().indexOfFirst { it.messageId == targetId }
+                                if (index >= 0) uiScope.launch { listState.animateScrollToItem(index); highlightedMessageId = targetId }
+                                else Toast.makeText(context, "Original message is no longer loaded", Toast.LENGTH_SHORT).show()
+                            },
                             bubbleAccent = bubbleAccent,
                             textScale = chatTextScale,
                             onMentionClick = openMention,
@@ -1248,6 +1257,36 @@ fun ChatScreen(
                 mentionQuery?.let { Mentions.suggestions(it, mentionUsers, currentUserId) }.orEmpty()
             }
             MentionSuggestionBar(mentionSuggestions, onPick = { user -> messageText = Mentions.complete(messageText, user) })
+
+            // Smart replies (on-device): one-tap answers to the latest incoming text.
+            val newestIncoming = remember(newestMessageId) {
+                messages.maxByOrNull { it.timestamp }?.takeIf { it.senderId != currentUserId && it.text.isNotBlank() && !ConvoStickers.isSticker(it.text) && it.text.length <= 300 }
+            }
+            var smartDismissedFor by remember(recipient.uid) { mutableStateOf<String?>(null) }
+            val incoming = newestIncoming
+            if (incoming != null && messageText.isBlank() && editingMessage == null && conversationAccepted && smartDismissedFor != incoming.messageId) {
+                val smartChips = remember(incoming.messageId) { com.example.service.SmartReplies.suggest(incoming.text) }
+                Row(
+                    Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 10.dp, vertical = 2.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Default.AutoAwesome, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
+                    smartChips.forEach { chip ->
+                        SuggestionChip(
+                            onClick = {
+                                viewModel.sendMessage(recipientUser = recipient, text = chip)
+                                smartDismissedFor = incoming.messageId
+                            },
+                            label = { Text(chip, fontSize = 12.sp) },
+                            shape = RoundedCornerShape(50)
+                        )
+                    }
+                    IconButton(onClick = { smartDismissedFor = incoming.messageId }, modifier = Modifier.size(28.dp)) {
+                        Icon(Icons.Default.Close, "Hide suggestions", modifier = Modifier.size(16.dp))
+                    }
+                }
+            }
 
             // Messenger-style composer: attachments + hold-to-record mic on the left, the
             // text field (or live recording status) in the middle, and a quick reaction that
@@ -1748,6 +1787,7 @@ fun MessageBubbleItem(
     onFileConsumed: () -> Unit,
     onForward: () -> Unit,
     onTranslate: (Message) -> Unit = {},
+    onJumpToReply: (String) -> Unit = {},
     bubbleAccent: Color? = null,
     textScale: Float = 1f,
     onMentionClick: (String) -> Unit = {},
@@ -1815,6 +1855,7 @@ fun MessageBubbleItem(
                         .fillMaxWidth()
                         .padding(bottom = 2.dp)
                         .clip(RoundedCornerShape(14.dp))
+                        .clickable { message.replyToId?.let(onJumpToReply) }
                         .glassmorphic(isDark = isDark, backgroundColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.4f))
                         .padding(6.dp)
                 ) {
