@@ -4174,8 +4174,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     fun refreshStaffAccess(user: User?) {
         val key = if (user == null) "" else "${user.staffRole}|${user.staffPermissions.sorted().joinToString()}"
         if (key == lastStaffKey) return
+        val wasStaff = lastStaffKey.startsWith("sub_admin")
         lastStaffKey = key
-        if (user?.staffRole == "sub_admin") listenFeatureRequestsIfAdmin()
+        if (user?.staffRole == "sub_admin" || wasStaff) listenFeatureRequestsIfAdmin()
     }
 
     private fun isCurrentAdmin(): Boolean = FirebaseAuth.getInstance().currentUser?.email?.lowercase()?.trim()?.trimEnd('.') == "mr4425390@gmail.com"
