@@ -38,7 +38,12 @@ data class User(
     val pronouns: String = "",
     val professionalTitle: String = "",
     val publicContactEmail: String = "",
-    val socialLinks: Map<String, String> = emptyMap()
+    val socialLinks: Map<String, String> = emptyMap(),
+    /** "sub_admin" when the admin delegated access; only the admin can change these three. */
+    val staffRole: String = "",
+    val staffPermissions: List<String> = emptyList(),
+    val staffTitle: String = "",
+    val mfaEnabled: Boolean = false
 )
 
 data class MessageEditRecord(

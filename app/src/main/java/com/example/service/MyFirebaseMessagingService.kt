@@ -389,6 +389,7 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
             "friend_request", "friend_accepted", "message_request", "message_accepted" ->
                 NotificationStyle("convo_requests_v1", "Requests", longArrayOf(0, 220, 100, 220), NotificationCompat.CATEGORY_SOCIAL)
             "admin_broadcast" -> NotificationStyle("convo_announcements_v1", "Announcements", longArrayOf(0, 80, 60, 80), NotificationCompat.CATEGORY_RECOMMENDATION)
+            "security_alert" -> NotificationStyle("convo_security_v1", "Security alerts", longArrayOf(0, 300, 120, 300), NotificationCompat.CATEGORY_STATUS)
             else -> NotificationStyle("convo_activity_v1", "Activity", longArrayOf(0, 100), NotificationCompat.CATEGORY_SOCIAL)
         }
 
@@ -402,7 +403,7 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         val avatarBitmap = avatar?.let { circleBitmap(it) } ?: if (isMessage) ConvoNotificationArt.initialsAvatar(senderName.ifBlank { title }, senderId) else null
 
         val notificationBuilder = NotificationCompat.Builder(this, channelId)
-            .setSmallIcon(android.R.drawable.stat_notify_chat)
+            .setSmallIcon(if (notificationType == "security_alert") android.R.drawable.ic_lock_lock else android.R.drawable.stat_notify_chat)
             .setColor(accent)
             .setWhen(sentAt)
             .setShowWhen(true)
@@ -494,6 +495,7 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
                     "convo_messages_custom_v1" -> "Chat messages using your custom notification sound"
                     "convo_requests_v1" -> "Friend and message requests"
                     "convo_announcements_v1" -> "News and announcements from the Convo Chat team"
+                    "convo_security_v1" -> "New sign-ins, 2-step verification and account changes"
                     else -> "Reactions, comments, tags and story activity"
                 }
                 when (channelId) {

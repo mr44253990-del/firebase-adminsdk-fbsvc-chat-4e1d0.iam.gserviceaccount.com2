@@ -232,6 +232,7 @@ fun HomeScreen(
     val adminReports by viewModel.adminReports.collectAsState()
     val accountBanned by viewModel.accountBanned.collectAsState()
     val forcedLogout by viewModel.forcedLogout.collectAsState()
+    val mfaGate by viewModel.mfaGate.collectAsState()
     val inAppNotification by viewModel.inAppNotification.collectAsState()
     val activityNotifications by viewModel.activityNotifications.collectAsState()
     val openActivitySignal by viewModel.openActivityCenterSignal.collectAsState()
@@ -268,6 +269,8 @@ fun HomeScreen(
     BackHandler(enabled = currentTab == 6 && !flagshipConfig.tiktokModeEnabled) { viewModel.setCurrentTab(0) }
     BackHandler(enabled = currentTab == 7) { viewModel.setCurrentTab(3) }
     val isAdmin = FirebaseAuth.getInstance().currentUser?.email?.lowercase()?.trim()?.trimEnd('.') == "mr4425390@gmail.com"
+    val staffPermissions: Set<String>? = currentUser?.takeIf { !isAdmin && it.staffRole == "sub_admin" && it.staffPermissions.isNotEmpty() }?.staffPermissions?.toSet()
+    val isStaff = staffPermissions != null
     var dismissNotice by remember(flagshipConfig.updatedAt) { mutableStateOf(false) }
     val validUpdate = flagshipConfig.updateEnabled && flagshipConfig.apkUrl.startsWith("https://")
     // Version code is the single source of truth. A republished campaign must
@@ -380,8 +383,8 @@ fun HomeScreen(
                         IconButton(onClick = { showGlobalSearch = true }) {
                             Icon(Icons.Outlined.Search, contentDescription = "Search people and media")
                         }
-                        if (isAdmin) IconButton(onClick = { viewModel.setCurrentTab(3) }) {
-                            Icon(Icons.Outlined.AdminPanelSettings, contentDescription = "Admin tools", tint = MaterialTheme.colorScheme.primary)
+                        if (isAdmin || isStaff) IconButton(onClick = { viewModel.setCurrentTab(3) }) {
+                            Icon(if (isStaff) Icons.Outlined.Shield else Icons.Outlined.AdminPanelSettings, contentDescription = if (isStaff) "Staff panel" else "Admin tools", tint = MaterialTheme.colorScheme.primary)
                         }
                         BadgedBox(
                             badge = {
@@ -836,10 +839,11 @@ fun HomeScreen(
                     }
                 }
                 3 -> {
-                    if (isAdmin) {
+                    if (isAdmin || isStaff) {
                         AdminControlCenterScreen(
                             viewModel = viewModel,
-                            onOpenAnalytics = { viewModel.setCurrentTab(7) }
+                            onOpenAnalytics = { viewModel.setCurrentTab(7) },
+                            staffPermissions = staffPermissions
                         )
                     } else {
                         AdminAccessDeniedScreen()
@@ -898,7 +902,7 @@ fun HomeScreen(
                                     DropdownMenuItem(text = { Text("Messages") }, leadingIcon = { Icon(Icons.Outlined.ChatBubbleOutline, null) }, onClick = { showSettingsNavigationMenu = false; viewModel.setCurrentTab(1) })
                                     DropdownMenuItem(text = { Text("Groups") }, leadingIcon = { Icon(Icons.Outlined.Groups, null) }, onClick = { showSettingsNavigationMenu = false; viewModel.setCurrentTab(2) })
                                     DropdownMenuItem(text = { Text("Discover people") }, leadingIcon = { Icon(Icons.Outlined.Search, null) }, onClick = { showSettingsNavigationMenu = false; viewModel.setCurrentTab(5) })
-                                    if (isAdmin) DropdownMenuItem(text = { Text("Admin tools") }, leadingIcon = { Icon(Icons.Outlined.AdminPanelSettings, null) }, onClick = { showSettingsNavigationMenu = false; viewModel.setCurrentTab(3) })
+                                    if (isAdmin || isStaff) DropdownMenuItem(text = { Text(if (isStaff) "Staff panel" else "Admin tools") }, leadingIcon = { Icon(Icons.Outlined.AdminPanelSettings, null) }, onClick = { showSettingsNavigationMenu = false; viewModel.setCurrentTab(3) })
                                 }
                             }
                             Column(Modifier.weight(1f)) {
@@ -968,6 +972,7 @@ fun HomeScreen(
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
                                 )
+                                if (currentUser?.staffRole == "sub_admin") StaffBadge(currentUser?.staffTitle.orEmpty().ifBlank { "Sub-admin" } + " • Convo staff")
                                 Surface(
                                     color = if (activePremium) Color(0xFFFFE6A8) else MaterialTheme.colorScheme.primaryContainer,
                                     shape = CircleShape
@@ -1110,9 +1115,9 @@ fun HomeScreen(
 
                         SettingsHubGroup("More") {
                             SettingsHubRow(
-                                icon = Icons.Outlined.Devices,
-                                title = "Devices & sessions",
-                                subtitle = "Review recent sign-ins and account sessions",
+                                icon = Icons.Outlined.Security,
+                                title = "Account security",
+                                subtitle = "Two-step verification, backup codes, devices & alerts",
                                 accent = Color(0xFF397BCC),
                                 onClick = { settingsPage = "devices" }
                             )
@@ -2055,6 +2060,7 @@ fun HomeScreen(
                         }
 
                         if (settingsPage == "devices") {
+                        TwoFactorCard()
                         Card(shape = RoundedCornerShape(28.dp), modifier = Modifier.fillMaxWidth().bringIntoViewRequester(devicesSectionRequester)) {
                             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                                 Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.Devices, null, tint = MaterialTheme.colorScheme.primary); Spacer(Modifier.width(9.dp)); Text("Devices & sessions", fontWeight = FontWeight.ExtraBold, modifier = Modifier.weight(1f)); IconButton(onClick = viewModel::refreshDeviceSessions) { Icon(Icons.Default.Refresh, "Refresh") } }
@@ -2570,6 +2576,14 @@ fun HomeScreen(
         )
     }
 
+    mfaGate?.let { gate ->
+        if (!forcedLogout && !accountBanned) MfaGateDialog(
+            method = gate.method.ifBlank { "email" },
+            maskedEmail = gate.email.ifBlank { "your e-mail" },
+            onVerified = { viewModel.mfaVerified() },
+            onSignOut = { viewModel.logout { onSignOut() } }
+        )
+    }
     if (forcedLogout && !accountBanned) AlertDialog(onDismissRequest = {}, icon = { Icon(Icons.Default.Logout, null) }, title = { Text("Signed out by admin") }, text = { Text("For security, this session was ended by the administrator. Please sign in again.") }, confirmButton = { Button(onClick = { viewModel.logout { onSignOut() } }) { Text("Sign in again") } })
     if (accountBanned) AlertDialog(onDismissRequest = {}, title = { Text("Account suspended") }, text = { Text("This account was disabled by ADMIN RAKIB after review. Contact support from another account if you believe this is a mistake.") }, confirmButton = { Button(onClick = { viewModel.logout { onSignOut() } }) { Text("Sign out") } })
 
@@ -3958,6 +3972,11 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
                             DropdownMenuItem(text = { Text("Edit post") }, leadingIcon = { Icon(Icons.Default.Edit, null) }, onClick = { showPostMenu = false; showEditPost = true })
                             DropdownMenuItem(text = { Text("Delete post", color = MaterialTheme.colorScheme.error) }, leadingIcon = { Icon(Icons.Default.DeleteOutline, null, tint = MaterialTheme.colorScheme.error) }, onClick = { showPostMenu = false; viewModel.deletePost(post.id) })
                         }
+                        if (post.senderId != currentUserId && viewModel.staffCan("posts")) DropdownMenuItem(
+                            text = { Text("Remove post (staff)", color = MaterialTheme.colorScheme.error) },
+                            leadingIcon = { Icon(Icons.Default.Shield, null, tint = MaterialTheme.colorScheme.error) },
+                            onClick = { showPostMenu = false; viewModel.deletePost(post.id); AdminAudit.log("post_removed", "${post.id} by ${post.senderId}") }
+                        )
                     }
                 }
             }
@@ -5003,7 +5022,7 @@ private fun settingsPageTitle(page: String): String = when (page) {
     "privacy" -> "Privacy controls"
     "notifications" -> "Notifications & calls"
     "viewers" -> "Profile viewers"
-    "devices" -> "Devices & sessions"
+    "devices" -> "Account security"
     "blocked" -> "Blocked accounts"
     "smart" -> "Smart tools"
     else -> "Settings"
@@ -5020,7 +5039,7 @@ private fun settingsPageSubtitle(page: String): String = when (page) {
     "privacy" -> "App lock, presence, receipts and AI"
     "notifications" -> "Alerts, sounds and incoming-call access"
     "viewers" -> "Stored only on this phone"
-    "devices" -> "Recent sign-ins and sessions"
+    "devices" -> "2-step verification, devices & alerts"
     "blocked" -> "People who cannot contact you"
     "smart" -> "Quiet hours, motion, live location and storage"
     else -> ""

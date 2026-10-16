@@ -150,6 +150,7 @@ fun AuthScreen(
     // Forgot Password states
     var showForgotPasswordDialog by remember { mutableStateOf(false) }
     var resetEmail by remember { mutableStateOf("") }
+    var showBackupRecovery by remember { mutableStateOf(false) }
     var resetLoading by remember { mutableStateOf(false) }
     var resetMessage by remember { mutableStateOf<String?>(null) }
     var resetError by remember { mutableStateOf<String?>(null) }
@@ -832,6 +833,9 @@ fun AuthScreen(
         }
     }
 
+    if (showBackupRecovery) {
+        BackupCodeRecoveryDialog(initialEmail = resetEmail.ifBlank { email }, onDismiss = { showBackupRecovery = false })
+    }
     // Forgot Password Dialog
     if (showForgotPasswordDialog) {
         AlertDialog(
@@ -894,6 +898,11 @@ fun AuthScreen(
                                 modifier = Modifier.padding(8.dp)
                             )
                         }
+                    }
+                    TextButton(onClick = { showBackupRecovery = true; showForgotPasswordDialog = false }, modifier = Modifier.fillMaxWidth()) {
+                        Icon(Icons.Default.Key, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("No e-mail access? Use a backup code")
                     }
                 }
             },

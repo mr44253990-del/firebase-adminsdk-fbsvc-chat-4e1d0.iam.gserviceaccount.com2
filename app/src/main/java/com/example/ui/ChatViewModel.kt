@@ -449,6 +449,27 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     val adminReports: StateFlow<List<UserReport>> = _adminReports.asStateFlow()
     private val _forcedLogout = MutableStateFlow(false)
     val forcedLogout: StateFlow<Boolean> = _forcedLogout.asStateFlow()
+
+    /** Two-step verification gate: non-null = this device session must verify (method, masked e-mail). */
+    private val _mfaGate = MutableStateFlow<MfaStatus?>(null)
+    val mfaGate: StateFlow<MfaStatus?> = _mfaGate.asStateFlow()
+    private var mfaCheckRunning = false
+    private fun checkMfaGate(enabled: Boolean, method: String) {
+        val app = getApplication<Application>()
+        if (!enabled) { _mfaGate.value = null; return }
+        if (MfaClient.cachedVerified(app) || mfaCheckRunning) return
+        mfaCheckRunning = true
+        viewModelScope.launch {
+            val status = MfaClient.status(app)
+            mfaCheckRunning = false
+            when {
+                status == null -> _mfaGate.value = MfaStatus(enabled = true, method = method.ifBlank { "email" }, sessionVerified = false) // fail closed; the gate can retry
+                status.enabled && !status.sessionVerified -> _mfaGate.value = status
+                else -> { MfaClient.rememberVerified(app, true); _mfaGate.value = null }
+            }
+        }
+    }
+    fun mfaVerified() { MfaClient.rememberVerified(getApplication(), true); _mfaGate.value = null }
     private val _accountBanned = MutableStateFlow(false)
     val accountBanned: StateFlow<Boolean> = _accountBanned.asStateFlow()
     private val _rememberedAccounts = MutableStateFlow(loadRememberedAccounts())
@@ -1107,7 +1128,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val id = prefs.getString("id", null) ?: UUID.randomUUID().toString().also { prefs.edit().putString("id", it).putLong("firstSeen", System.currentTimeMillis()).apply() }
         val localSession = DeviceSession(id, "${Build.MANUFACTURER} ${Build.MODEL}", "Android ${Build.VERSION.RELEASE}", BuildConfig.VERSION_NAME, prefs.getLong("firstSeen", System.currentTimeMillis()), System.currentTimeMillis(), true, "Protected", "Waiting for secure sync")
         if (_deviceSessions.value.none { it.sessionId == id }) _deviceSessions.value = listOf(localSession) + _deviceSessions.value
-        workerSecurityPost("/sessions/register", JSONObject().put("sessionId", id).put("deviceName", "${Build.MANUFACTURER} ${Build.MODEL}").put("androidVersion", "Android ${Build.VERSION.RELEASE}").put("appVersion", BuildConfig.VERSION_NAME).put("firstSeenAt", prefs.getLong("firstSeen", System.currentTimeMillis()))) { ok, _ -> if (ok) refreshDeviceSessions() }
+        com.google.firebase.messaging.FirebaseMessaging.getInstance().token.addOnCompleteListener { fcmTask -> val fcm = if (fcmTask.isSuccessful) fcmTask.result.orEmpty() else ""
+        workerSecurityPost("/sessions/register", JSONObject().put("sessionId", id).put("fcmToken", fcm).put("deviceName", "${Build.MANUFACTURER} ${Build.MODEL}").put("androidVersion", "Android ${Build.VERSION.RELEASE}").put("appVersion", BuildConfig.VERSION_NAME).put("firstSeenAt", prefs.getLong("firstSeen", System.currentTimeMillis()))) { ok, _ -> if (ok) refreshDeviceSessions() } }
     }
 
     fun refreshDeviceSessions() = workerSecurityPost("/sessions/list", JSONObject()) { ok, json ->
@@ -1385,16 +1407,16 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun listenFeatureRequestsIfAdmin() {
-        val admin = FirebaseAuth.getInstance().currentUser?.email?.lowercase()?.trim()?.trimEnd('.') == "mr4425390@gmail.com"
+        val admin = staffCan("support") || staffCan("premium")
         featureRequestListener?.remove(); featureRequestListener = null
         premiumRequestListener?.remove(); premiumRequestListener = null
         if (!admin) { _featureRequests.value = emptyList(); _premiumRequests.value = emptyList(); return }
-        featureRequestListener = FirebaseFirestore.getInstance().collection("feature_requests")
+        if (staffCan("support")) featureRequestListener = FirebaseFirestore.getInstance().collection("feature_requests")
             .addSnapshotListener { snapshot, _ ->
                 _featureRequests.value = snapshot?.documents?.mapNotNull { it.toObject(FeatureRequest::class.java) }
                     ?.sortedByDescending { it.createdAt } ?: emptyList()
             }
-        premiumRequestListener = FirebaseFirestore.getInstance().collection("premium_requests")
+        if (staffCan("premium")) premiumRequestListener = FirebaseFirestore.getInstance().collection("premium_requests")
             .whereEqualTo("status", "pending")
             .addSnapshotListener { snapshot, _ ->
                 _premiumRequests.value = snapshot?.documents?.mapNotNull { it.toObject(PremiumRequest::class.java) }
@@ -1432,7 +1454,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     fun reviewPremiumRequest(request: PremiumRequest, approve: Boolean, note: String = "", onComplete: (Boolean) -> Unit = {}) {
         val admin = FirebaseAuth.getInstance().currentUser ?: return onComplete(false)
-        if (admin.email?.lowercase()?.trim()?.trimEnd('.') != "mr4425390@gmail.com") return onComplete(false)
+        if (!staffCan("premium")) return onComplete(false)
         val now = System.currentTimeMillis()
         val until = when (request.plan) {
             "monthly" -> now + 30L * 24 * 60 * 60 * 1000
@@ -1450,7 +1472,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     fun grantPremiumGift(userIds: List<String>, days: Int, onComplete: (Boolean) -> Unit = {}) {
         val admin = FirebaseAuth.getInstance().currentUser ?: return onComplete(false)
-        if (admin.email?.lowercase()?.trim()?.trimEnd('.') != "mr4425390@gmail.com" || days !in 1..365 || userIds.isEmpty()) return onComplete(false)
+        if (!staffCan("premium") || days !in 1..365 || userIds.isEmpty()) return onComplete(false)
         val now = System.currentTimeMillis(); val firestore = FirebaseFirestore.getInstance(); val batch = firestore.batch()
         userIds.distinct().take(100).forEach { uid -> batch.update(firestore.collection("users").document(uid), mapOf("isPremium" to true, "premiumPlan" to "gift", "premiumUntil" to now + days * 86_400_000L, "premiumApprovedAt" to now, "premiumSource" to "admin_gift")) }
         batch.commit().addOnSuccessListener { userIds.distinct().take(100).forEach { createActivityNotification(it, "premium_gift", "gift_$now", "ADMIN RAKIB gifted you $days days of Convo Chat Premium") }; onComplete(true) }.addOnFailureListener { onComplete(false) }
@@ -1458,7 +1480,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     fun revokePremium(uid: String, onComplete: (Boolean) -> Unit = {}) {
         val admin = FirebaseAuth.getInstance().currentUser ?: return onComplete(false)
-        if (admin.email?.lowercase()?.trim()?.trimEnd('.') != "mr4425390@gmail.com") return onComplete(false)
+        if (!staffCan("premium")) return onComplete(false)
         FirebaseFirestore.getInstance().collection("users").document(uid).update(mapOf("isPremium" to false, "premiumPlan" to "", "premiumUntil" to 0L, "premiumSource" to "revoked"))
             .addOnSuccessListener { createActivityNotification(uid, "premium_revoked", uid, "Your Premium access was cancelled by ADMIN RAKIB"); onComplete(true) }.addOnFailureListener { onComplete(false) }
     }
@@ -1472,7 +1494,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun updateFeatureRequest(requestId: String, status: String, adminNote: String = "") {
-        if (FirebaseAuth.getInstance().currentUser?.email?.lowercase()?.trim()?.trimEnd('.') != "mr4425390@gmail.com") return
+        if (!staffCan("support")) return
         val ref = FirebaseFirestore.getInstance().collection("feature_requests").document(requestId)
         ref.update(mapOf("status" to status, "adminNote" to adminNote, "updatedAt" to System.currentTimeMillis()))
             .addOnSuccessListener {
@@ -1798,6 +1820,13 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     .setValue(mapOf("isOnline" to false, "lastActive" to System.currentTimeMillis(), "onlineUntil" to 0L, "offlineSince" to System.currentTimeMillis(), "connected" to false))
             }
             if (uid != null) syncPresenceToWorker(active = false, foreground = false)
+            // A new sign-in is a new device session: two-step verification is asked again.
+            runCatching {
+                val app = getApplication<Application>()
+                app.getSharedPreferences("convo_mfa", Context.MODE_PRIVATE).edit().clear().apply()
+                app.getSharedPreferences("convo_device_session", Context.MODE_PRIVATE).edit().remove("id").apply()
+            }
+            _mfaGate.value = null
             FirebaseAuth.getInstance().signOut()
             currentUserProfileListener?.remove()
             currentUserProfileListener = null
@@ -1863,6 +1892,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 val forceAt = document.getLong("forceLogoutAt") ?: 0L
                 val signedInAt = FirebaseAuth.getInstance().currentUser?.metadata?.lastSignInTimestamp ?: 0L
                 _forcedLogout.value = forceAt > 0L && signedInAt in 1 until forceAt
+                checkMfaGate(document.getBoolean("mfaEnabled") == true, document.getString("mfaMethod").orEmpty())
                 runCatching { document.toObject(User::class.java) }.getOrNull()?.let { parsed ->
                     val liveUser = parsed.copy(
                         isPremium = document.getBoolean("isPremium") ?: parsed.isPremium,
@@ -1872,6 +1902,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     )
                     _currentUserState.value = liveUser
                     rememberAccount(liveUser)
+                    refreshStaffAccess(liveUser)
                 }
             }
         }
@@ -4130,6 +4161,22 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     // --- Social Posts Logic ---
+
+    /** True for the admin, or a sub-admin whose staffPermissions include [permission]. */
+    fun staffCan(permission: String): Boolean {
+        if (isCurrentAdmin()) return true
+        val me = _currentUserState.value ?: return false
+        return me.staffRole == "sub_admin" && permission in me.staffPermissions
+    }
+
+    private var lastStaffKey = ""
+    /** Re-attach permission-scoped listeners when the admin changes this user's staff access. */
+    fun refreshStaffAccess(user: User?) {
+        val key = if (user == null) "" else "${user.staffRole}|${user.staffPermissions.sorted().joinToString()}"
+        if (key == lastStaffKey) return
+        lastStaffKey = key
+        if (user?.staffRole == "sub_admin") listenFeatureRequestsIfAdmin()
+    }
 
     private fun isCurrentAdmin(): Boolean = FirebaseAuth.getInstance().currentUser?.email?.lowercase()?.trim()?.trimEnd('.') == "mr4425390@gmail.com"
 

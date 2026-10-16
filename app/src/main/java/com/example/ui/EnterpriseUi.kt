@@ -42,7 +42,7 @@ object AdminAudit {
         val user = FirebaseAuth.getInstance().currentUser ?: return
         runCatching {
             FirebaseFirestore.getInstance().collection("admin_audit").add(
-                mapOf("action" to action, "detail" to detail.take(500), "at" to System.currentTimeMillis(), "by" to (user.email ?: user.uid))
+                mapOf("action" to action, "detail" to detail.take(500), "at" to System.currentTimeMillis(), "by" to user.uid, "byEmail" to (user.email ?: ""))
             )
         }
     }
@@ -174,7 +174,7 @@ fun AdminAuditPanel() {
         val reg = FirebaseFirestore.getInstance().collection("admin_audit").orderBy("at", Query.Direction.DESCENDING).limit(100)
             .addSnapshotListener { snap, e ->
                 if (e != null) { error = e.localizedMessage ?: "Cannot load audit log"; return@addSnapshotListener }
-                entries = snap?.documents?.map { AuditEntry(it.getString("action").orEmpty(), it.getString("detail").orEmpty(), it.getLong("at") ?: 0L, it.getString("by").orEmpty()) }.orEmpty()
+                entries = snap?.documents?.map { AuditEntry(it.getString("action").orEmpty(), it.getString("detail").orEmpty(), it.getLong("at") ?: 0L, it.getString("byEmail").orEmpty().ifBlank { it.getString("by").orEmpty() }) }.orEmpty()
             }
         onDispose { reg.remove() }
     }

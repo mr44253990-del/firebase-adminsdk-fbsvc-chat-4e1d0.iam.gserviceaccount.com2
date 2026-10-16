@@ -61,8 +61,11 @@ private data class AdminMenuEntry(
 @Composable
 fun AdminControlCenterScreen(
     viewModel: ChatViewModel,
-    onOpenAnalytics: () -> Unit
+    onOpenAnalytics: () -> Unit,
+    /** null = full admin; otherwise the sub-admin's delegated permissions. */
+    staffPermissions: Set<String>? = null
 ) {
+    val isStaffMode = staffPermissions != null
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val flagshipConfig by viewModel.flagshipConfig.collectAsState()
@@ -192,7 +195,9 @@ fun AdminControlCenterScreen(
         }
     }
 
-    val menuItems = listOf(
+    val allMenuItems = listOf(
+        AdminMenuEntry("staff", "Sub-admins & roles", "Delegate access: users, posts, reports, Premium…", Icons.Outlined.AdminPanelSettings, Color(0xFF3949AB), users.count { it.staffRole.isNotBlank() }.takeIf { it > 0 }?.toString().orEmpty()),
+        AdminMenuEntry("email_security", "Email & 2FA", "OTP e-mail sender (Brevo / Resend) and test", Icons.Outlined.MarkEmailRead, Color(0xFF00897B)),
         AdminMenuEntry("updates", "App updates", "Signed APK, release notes and rollout", Icons.Outlined.Publish, Color(0xFF635BFF), if (flagshipConfig.updateEnabled) "LIVE" else ""),
         AdminMenuEntry("maintenance", "Maintenance & notice", "Service status and announcements", Icons.Outlined.Build, Color(0xFFE28A22)),
         AdminMenuEntry("announce", "Announcements", "Banner for every user: notices, features, events", Icons.Outlined.Campaign, Color(0xFF2979FF)),
@@ -219,6 +224,12 @@ fun AdminControlCenterScreen(
         AdminMenuEntry("infrastructure", "Service health", "Health checks and admin tools", Icons.Outlined.HealthAndSafety, Color(0xFF477C67)),
         AdminMenuEntry("analytics", "Analytics", "Open usage and content insights", Icons.Outlined.Analytics, Color(0xFF6D61CC))
     )
+    val staffMenuIds = mapOf(
+        "users" to "users", "reports" to "reports", "feature_requests" to "support", "premium_requests" to "premium",
+        "premium_access" to "premium", "announce" to "announce", "analytics" to "analytics"
+    )
+    val menuItems = if (staffPermissions == null) allMenuItems
+        else allMenuItems.filter { entry -> staffMenuIds[entry.id]?.let { it in staffPermissions } == true }
     val pageEntry = menuItems.firstOrNull { it.id == selectedPage }
 
     Column(Modifier.fillMaxSize()) {
@@ -228,6 +239,8 @@ fun AdminControlCenterScreen(
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
                 Spacer(Modifier.height(2.dp))
+                if (isStaffMode) StaffPanelHeader(viewModel, staffPermissions.orEmpty())
+                if (!isStaffMode) {
                 Box(
                     Modifier.fillMaxWidth()
                         .background(
@@ -299,9 +312,10 @@ fun AdminControlCenterScreen(
                     DashboardStatCard("Feature ideas", featureRequests.size.toString(), Icons.Default.Lightbulb, MaterialTheme.colorScheme.secondary, Modifier.weight(1f))
                 }
 
+                }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
-                        Text("Management", fontWeight = FontWeight.ExtraBold, style = MaterialTheme.typography.titleLarge)
+                        Text(if (isStaffMode) "Your tools" else "Management", fontWeight = FontWeight.ExtraBold, style = MaterialTheme.typography.titleLarge)
                         Text("Tap a tile to open its dedicated settings page", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     Text("${menuItems.size} sections", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -331,8 +345,8 @@ fun AdminControlCenterScreen(
                         Icon(Icons.Default.VerifiedUser, null, tint = MaterialTheme.colorScheme.primary)
                         Spacer(Modifier.width(10.dp))
                         Column {
-                            Text("Admin session authenticated", fontWeight = FontWeight.Bold)
-                            Text("Signed in with the authorized administrator account", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(if (isStaffMode) "Staff session • limited access" else "Admin session authenticated", fontWeight = FontWeight.Bold)
+                            Text(if (isStaffMode) "Every action is checked by the server and written to the admin audit log" else "Signed in with the authorized administrator account", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                 }
@@ -523,6 +537,12 @@ fun AdminControlCenterScreen(
                                 }
                             }
                         }
+                    }
+                    "staff" -> {
+                        AdminPanelCard("Sub-admins & roles", "Give trusted people only the access they need", Icons.Outlined.AdminPanelSettings) { AdminStaffPanel(users) }
+                    }
+                    "email_security" -> {
+                        AdminPanelCard("Email & 2FA", "Sender for login codes, new-device alerts and recovery", Icons.Outlined.MarkEmailRead) { AdminEmailSecurityPanel() }
                     }
                     "power" -> {
                         AdminPanelCard("Power tools", "Act on every user at once and flip live switches", Icons.Outlined.Bolt) { AdminPowerToolsPanel(viewModel) }
@@ -1052,7 +1072,7 @@ fun AdminControlCenterScreen(
                         Text("Premium until: ${formatAdminTimestamp(person.premiumUntil)}", fontSize = 11.sp)
                     }
                     HorizontalDivider()
-                    AdminUserPowerActions(person)
+                    AdminUserPowerActions(person, permissions = staffPermissions)
                     OutlinedButton(
                         onClick = {
                             val uid = person.uid

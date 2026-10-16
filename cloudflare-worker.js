@@ -144,6 +144,32 @@ export default {
         });
       }
 
+      // ---- Account recovery with a one-time backup code (no sign-in possible) -------------
+      if (path === "/mfa/recover") {
+        const email = String(payload.email || "").trim().toLowerCase();
+        const code = normalizeBackupCode(payload.backupCode);
+        const newPassword = String(payload.newPassword || "");
+        if (!email || !code) return jsonResponse({ error: "Email and backup code are required" }, 400);
+        if (newPassword.length < 8) return jsonResponse({ error: "New password must be at least 8 characters" }, 400);
+        const uid = await lookupUidByEmail(env, email).catch(() => "");
+        // Same answer for unknown e-mail and wrong code so accounts cannot be enumerated.
+        if (!uid) return jsonResponse({ error: "Email or backup code is not correct" }, 403);
+        const state = (await firestoreGet(env, `mfa_state/${uid}`).catch(() => null)) || {};
+        if (Number(state.recoverLockUntil || 0) > Date.now()) return jsonResponse({ error: "Too many attempts. Try again later." }, 429);
+        const hashes = Array.isArray(state.backupHashes) ? state.backupHashes : [];
+        const hash = await sha256Hex(`${uid}:${code}`);
+        if (!hashes.includes(hash)) {
+          const fails = Number(state.recoverFails || 0) + 1;
+          await fsPatch(env, `mfa_state/${uid}`, { recoverFails: fails, recoverLockUntil: fails >= 5 ? Date.now() + 60 * 60 * 1000 : 0 });
+          return jsonResponse({ error: "Email or backup code is not correct" }, 403);
+        }
+        const auth = await updateFirebaseAccount(env, uid, { password: newPassword, validSince: String(Math.floor(Date.now() / 1000)) });
+        if (!auth.ok) return jsonResponse({ error: "Could not reset the password", upstreamStatus: auth.status }, 502);
+        await fsPatch(env, `mfa_state/${uid}`, { backupHashes: hashes.filter(h => h !== hash), recoverFails: 0, recoverLockUntil: 0, verifiedSessions: {}, updatedAt: Date.now() });
+        ctx.waitUntil(sendMail(env, email, "Your Convo Chat password was reset", mailHtml("Password reset with a backup code", "Your password was changed using one of your backup codes and every device was signed out. If this wasn't you, contact support immediately.")).catch(() => null));
+        return jsonResponse({ success: true, backupRemaining: hashes.length - 1 });
+      }
+
       // Authenticate the Android caller with its Firebase ID token. This prevents
       // an exposed Worker URL from becoming an unauthenticated push relay.
       const caller = await verifyFirebaseIdToken(request, projectId);
@@ -158,27 +184,153 @@ export default {
         const id=String(payload.sessionId||"").replace(/[^A-Za-z0-9_-]/g,"").slice(0,100); if(!id)return jsonResponse({error:"sessionId required"},400);
         const ip=request.headers.get("CF-Connecting-IP")||""; const masked=ip.includes(":")?`${ip.split(":").slice(0,3).join(":")}::`:ip.split(".").map((x,i)=>i===3?"x":x).join("."); const cf=request.cf||{};
         const record={sessionId:id,uid:caller.sub,deviceName:String(payload.deviceName||"Android device").slice(0,120),androidVersion:String(payload.androidVersion||""),appVersion:String(payload.appVersion||""),firstSeenAt:Number(payload.firstSeenAt||Date.now()),lastSeenAt:Date.now(),active:true,maskedIp:masked,city:String(cf.city||"Unknown"),region:String(cf.region||""),country:String(cf.country||""),latitude:Number(cf.latitude||0),longitude:Number(cf.longitude||0)};
-        await firestoreSet(env,`user_sessions/${caller.sub}/devices/${id}`,record); return jsonResponse({success:true,session:record});
+        const previous=await firestoreGet(env,`user_sessions/${caller.sub}/devices/${id}`).catch(()=>null);
+        const fcmToken=String(payload.fcmToken||"").slice(0,400); if(fcmToken)record.fcmToken=fcmToken; else if(previous&&previous.fcmToken)record.fcmToken=previous.fcmToken;
+        if(previous&&previous.firstSeenAt)record.firstSeenAt=Number(previous.firstSeenAt);
+        await firestoreSet(env,`user_sessions/${caller.sub}/devices/${id}`,record);
+        let alerted=0;
+        if(!previous){
+          // New device: alert every OTHER signed-in device (push) and the account e-mail.
+          const others=(await firestoreList(env,`user_sessions/${caller.sub}/devices`).catch(()=>[])).filter(x=>x.sessionId!==id&&x.active!==false);
+          if(others.length){
+            const where=[record.city!=="Unknown"?record.city:"",record.country].filter(Boolean).join(", ")||"an unknown location";
+            const msg=`${record.deviceName} • ${where}. If this wasn't you, open Convo Chat → Account security and sign out all devices.`;
+            alerted=await sendSecurityPush(env,others.map(x=>x.fcmToken),"New sign-in to your account",msg).catch(()=>0);
+            if(caller.email)ctx.waitUntil(sendMail(env,caller.email,"New sign-in to Convo Chat",mailHtml("New sign-in detected",`${msg} Time: ${new Date().toUTCString()}. IP: ${masked}.`)).catch(()=>null));
+          }
+        }
+        return jsonResponse({success:true,session:record,newDevice:!previous,alertedDevices:alerted});
       }
-      if(path==="/sessions/list") return jsonResponse({success:true,sessions:(await firestoreList(env,`user_sessions/${caller.sub}/devices`)).sort((a,b)=>(b.lastSeenAt||0)-(a.lastSeenAt||0))});
+      if(path==="/sessions/list") return jsonResponse({success:true,sessions:(await firestoreList(env,`user_sessions/${caller.sub}/devices`)).map(({fcmToken,...rest})=>rest).sort((a,b)=>(b.lastSeenAt||0)-(a.lastSeenAt||0))});
       if(path==="/sessions/revoke-all") { const auth=await updateFirebaseAccount(env,caller.sub,{validSince:String(Math.floor(Date.now()/1000))}); const sessions=await firestoreList(env,`user_sessions/${caller.sub}/devices`); await Promise.all(sessions.map(x=>firestoreSet(env,`user_sessions/${caller.sub}/devices/${x.sessionId}`,{...x,active:false,revokedAt:Date.now()}))); return jsonResponse({success:true,authRevoked:auth.ok}); }
       if(path==="/reports/create") { const id=crypto.randomUUID(); const report={id,reporterId:caller.sub,reporterEmail:caller.email||"",targetUid:String(payload.targetUid||""),category:String(payload.category||"other").slice(0,60),description:String(payload.description||"").slice(0,3000),status:"pending",createdAt:Date.now()}; await firestoreSet(env,`user_reports/${id}`,report); return jsonResponse({success:true,report}); }
-      if(path==="/admin/reports/list") { if(caller.email!=="mr4425390@gmail.com")return jsonResponse({error:"Admin only"},403); return jsonResponse({success:true,reports:await firestoreList(env,"user_reports")}); }
-      if(path==="/admin/user/ban"||path==="/admin/user/unban") { if(caller.email!=="mr4425390@gmail.com")return jsonResponse({error:"Admin only"},403); const uid=String(payload.uid||""); if(!uid)return jsonResponse({error:"uid required"},400); const disabled=path.endsWith("/ban"); const auth=await updateFirebaseAccount(env,uid,{disabled}); await firestoreMerge(env,`users/${uid}`,{banned:disabled,banReason:String(payload.reason||"").slice(0,500),bannedAt:disabled?Date.now():0}); return jsonResponse({success:auth.ok,disabled,upstreamStatus:auth.status},auth.ok?200:502); }
+      if(path==="/admin/reports/list") { if(!(await callerCan(env,caller,"reports")))return jsonResponse({error:"Admin only"},403); return jsonResponse({success:true,reports:await firestoreList(env,"user_reports")}); }
+      if(path==="/admin/user/ban"||path==="/admin/user/unban") { if(!(await callerCan(env,caller,"users")))return jsonResponse({error:"Admin only"},403); const uid=String(payload.uid||""); if(!uid)return jsonResponse({error:"uid required"},400); if(!(await canActOn(env,caller,uid)))return jsonResponse({error:"Only the admin can act on staff accounts"},403); const disabled=path.endsWith("/ban"); const auth=await updateFirebaseAccount(env,uid,{disabled}); await fsPatch(env,`users/${uid}`,{banned:disabled,banReason:String(payload.reason||"").slice(0,500),bannedAt:disabled?Date.now():0}); return jsonResponse({success:auth.ok,disabled,upstreamStatus:auth.status},auth.ok?200:502); }
 
       // ---- Admin power tools (v4.3.3) -------------------------------------------------
       const isAdminCaller = String(caller.email || "").toLowerCase() === String(env.ADMIN_EMAIL || "mr4425390@gmail.com").toLowerCase();
       if (path === "/admin/user/revoke") {
-        if (!isAdminCaller) return jsonResponse({ error: "Admin only" }, 403);
+        if (!(await callerCan(env, caller, "users"))) return jsonResponse({ error: "Admin only" }, 403);
         const uid = String(payload.uid || ""); if (!uid) return jsonResponse({ error: "uid required" }, 400);
+        if (!(await canActOn(env, caller, uid))) return jsonResponse({ error: "Only the admin can act on staff accounts" }, 403);
         const auth = await updateFirebaseAccount(env, uid, { validSince: String(Math.floor(Date.now() / 1000)) });
         const sessions = await firestoreList(env, `user_sessions/${uid}/devices`).catch(() => []);
         await Promise.all(sessions.map(x => firestoreSet(env, `user_sessions/${uid}/devices/${x.sessionId}`, { ...x, active: false, revokedAt: Date.now() })));
-        await firestoreMerge(env, `users/${uid}`, { forceLogoutAt: Date.now() }).catch(() => null);
+        await fsPatch(env, `users/${uid}`, { forceLogoutAt: Date.now() }).catch(() => null);
         return jsonResponse({ success: auth.ok, sessions: sessions.length }, auth.ok ? 200 : 502);
       }
-      if (path === "/admin/push") {
+      // ---- Two-factor authentication (e-mail code / authenticator app / backup codes) -----
+      if (path.startsWith("/mfa/")) {
+        const uid = caller.sub;
+        const accountEmail = String(caller.email || "").toLowerCase();
+        const sessionId = String(payload.sessionId || "").replace(/[^A-Za-z0-9_-]/g, "").slice(0, 100);
+        const statePath = `mfa_state/${uid}`;
+        const state = (await firestoreGet(env, statePath).catch(() => null)) || {};
+        const now = Date.now();
+        const backupHashes = Array.isArray(state.backupHashes) ? state.backupHashes : [];
+        const sessions = state.verifiedSessions && typeof state.verifiedSessions === "object" ? state.verifiedSessions : {};
+        const markSession = (extra = {}) => {
+          const next = { ...sessions };
+          if (sessionId) next[sessionId] = now;
+          const trimmed = Object.fromEntries(Object.entries(next).sort((a, b) => Number(b[1]) - Number(a[1])).slice(0, 20));
+          return { verifiedSessions: trimmed, failCount: 0, lockUntil: 0, ...extra };
+        };
+        // Verifies a code for the active method, a pending setup, or (optionally) a backup code.
+        const check = async (code, { method = state.method, secret = state.totpSecret, allowBackup = true } = {}) => {
+          const clean = String(code || "").replace(/\s+/g, "");
+          if (Number(state.lockUntil || 0) > now) return { ok: false, error: "Too many wrong codes. Try again in a few minutes.", status: 429 };
+          if (/^\d{6}$/.test(clean)) {
+            if (method === "totp" && secret && await verifyTotp(secret, clean)) return { ok: true };
+            if (method === "email" && state.otpHash && Number(state.otpExp || 0) > now && state.otpHash === await sha256Hex(`${uid}:otp:${clean}`)) return { ok: true, usedOtp: true };
+          }
+          if (allowBackup) {
+            const b = normalizeBackupCode(clean);
+            const h = b ? await sha256Hex(`${uid}:${b}`) : "";
+            if (h && backupHashes.includes(h)) return { ok: true, usedBackup: h };
+          }
+          const fails = Number(state.failCount || 0) + 1;
+          await fsPatch(env, statePath, { failCount: fails, lockUntil: fails >= 5 ? now + 15 * 60 * 1000 : 0 });
+          return { ok: false, error: fails >= 5 ? "Too many wrong codes. Locked for 15 minutes." : "That code is not correct", status: 403 };
+        };
+        const newBackupCodes = async () => {
+          const codes = Array.from({ length: 10 }, () => randomBackupCode());
+          return { codes, hashes: await Promise.all(codes.map(c => sha256Hex(`${uid}:${normalizeBackupCode(c)}`))) };
+        };
+
+        if (path === "/mfa/status") {
+          const mail = await emailConfig(env).catch(() => null);
+          return jsonResponse({
+            success: true, enabled: state.enabled === true, method: String(state.method || ""),
+            backupRemaining: backupHashes.length, sessionVerified: state.enabled !== true || Boolean(sessionId && sessions[sessionId]),
+            email: maskEmail(accountEmail), emailReady: Boolean(mail && mail.enabled !== false), updatedAt: Number(state.updatedAt || 0)
+          });
+        }
+        if (path === "/mfa/email/send") {
+          if (!accountEmail) return jsonResponse({ error: "This account has no e-mail address" }, 400);
+          if (now - Number(state.otpSentAt || 0) < 45000) return jsonResponse({ error: "Please wait a moment before requesting another code", retryInMs: 45000 - (now - Number(state.otpSentAt || 0)) }, 429);
+          const code = String(crypto.getRandomValues(new Uint32Array(1))[0] % 1000000).padStart(6, "0");
+          const purpose = String(payload.purpose || "verify").slice(0, 20);
+          const sent = await sendMail(env, accountEmail, `${code} is your Convo Chat security code`, mailHtml("Your security code", `Use this code to ${purpose === "enable" ? "turn on two-step verification" : purpose === "disable" ? "turn off two-step verification" : "finish signing in"}:`, code));
+          if (!sent.ok) return jsonResponse({ error: sent.error || "Could not send the e-mail" }, 502);
+          await fsPatch(env, statePath, { otpHash: await sha256Hex(`${uid}:otp:${code}`), otpExp: now + 10 * 60 * 1000, otpSentAt: now, otpPurpose: purpose });
+          return jsonResponse({ success: true, sentTo: maskEmail(accountEmail), expiresInSec: 600 });
+        }
+        if (path === "/mfa/totp/setup") {
+          const secret = base32Encode(crypto.getRandomValues(new Uint8Array(20)));
+          await fsPatch(env, statePath, { pendingTotpSecret: secret, pendingAt: now });
+          const label = encodeURIComponent(`Convo Chat:${accountEmail || uid}`);
+          return jsonResponse({ success: true, secret, uri: `otpauth://totp/${label}?secret=${secret}&issuer=Convo%20Chat&algorithm=SHA1&digits=6&period=30` });
+        }
+        if (path === "/mfa/enable") {
+          const method = String(payload.method || "") === "totp" ? "totp" : "email";
+          if (method === "totp" && (!state.pendingTotpSecret || now - Number(state.pendingAt || 0) > 30 * 60 * 1000)) return jsonResponse({ error: "Start the authenticator setup again" }, 400);
+          const result = await check(payload.code, { method, secret: state.pendingTotpSecret, allowBackup: false });
+          if (!result.ok) return jsonResponse({ error: result.error }, result.status);
+          const { codes, hashes } = await newBackupCodes();
+          await fsPatch(env, statePath, markSession({
+            enabled: true, method, totpSecret: method === "totp" ? state.pendingTotpSecret : "", pendingTotpSecret: "",
+            backupHashes: hashes, otpHash: "", otpExp: 0, enabledAt: now, updatedAt: now
+          }));
+          await fsPatch(env, `users/${uid}`, { mfaEnabled: true, mfaMethod: method }).catch(() => null);
+          if (accountEmail) ctx.waitUntil(sendMail(env, accountEmail, "Two-step verification is on", mailHtml("Two-step verification is on", `From now on, signing in on a new device needs a code from your ${method === "totp" ? "authenticator app" : "e-mail"}. Keep your backup codes somewhere safe.`)).catch(() => null));
+          return jsonResponse({ success: true, method, backupCodes: codes });
+        }
+        if (path === "/mfa/verify") {
+          if (state.enabled !== true) return jsonResponse({ success: true, sessionVerified: true });
+          const result = await check(payload.code);
+          if (!result.ok) return jsonResponse({ error: result.error }, result.status);
+          const extra = result.usedBackup ? { backupHashes: backupHashes.filter(h => h !== result.usedBackup) } : result.usedOtp ? { otpHash: "", otpExp: 0 } : {};
+          await fsPatch(env, statePath, markSession(extra));
+          return jsonResponse({ success: true, sessionVerified: true, usedBackupCode: Boolean(result.usedBackup), backupRemaining: backupHashes.length - (result.usedBackup ? 1 : 0) });
+        }
+        if (path === "/mfa/disable" || path === "/mfa/backup/regenerate") {
+          if (state.enabled !== true) return jsonResponse({ error: "Two-step verification is off" }, 400);
+          const result = await check(payload.code);
+          if (!result.ok) return jsonResponse({ error: result.error }, result.status);
+          if (path === "/mfa/disable") {
+            await fsPatch(env, statePath, { enabled: false, method: "", totpSecret: "", pendingTotpSecret: "", backupHashes: [], otpHash: "", otpExp: 0, verifiedSessions: {}, failCount: 0, lockUntil: 0, updatedAt: now });
+            await fsPatch(env, `users/${uid}`, { mfaEnabled: false, mfaMethod: "" }).catch(() => null);
+            if (accountEmail) ctx.waitUntil(sendMail(env, accountEmail, "Two-step verification was turned off", mailHtml("Two-step verification is off", "If you didn't do this, change your password and turn it back on.")).catch(() => null));
+            return jsonResponse({ success: true, enabled: false });
+          }
+          const { codes, hashes } = await newBackupCodes();
+          await fsPatch(env, statePath, markSession({ backupHashes: hashes, updatedAt: now }));
+          return jsonResponse({ success: true, backupCodes: codes });
+        }
+        return jsonResponse({ error: "Unknown two-step operation" }, 404);
+      }
+
+      // ---- Admin: e-mail delivery test (Brevo / Resend) ------------------------------------
+      if (path === "/admin/email/test") {
         if (!isAdminCaller) return jsonResponse({ error: "Admin only" }, 403);
+        __emailCfgCache = { at: 0, value: null };
+        const to = String(payload.to || caller.email || "").trim();
+        const sent = await sendMail(env, to, "Convo Chat e-mail test ✓", mailHtml("E-mail delivery works", "Security codes, new sign-in alerts and recovery e-mails will be sent like this one.", "123456"));
+        return sent.ok ? jsonResponse({ success: true, to: maskEmail(to), provider: sent.provider }) : jsonResponse({ error: sent.error }, 502);
+      }
+
+      if (path === "/admin/push") {
+        if (!(await callerCan(env, caller, "announce"))) return jsonResponse({ error: "Admin only" }, 403);
         const tokens = [...new Set((Array.isArray(payload.tokens) ? payload.tokens : []).map(String).filter(t => t.length > 20))].slice(0, 500);
         const pushTitle = String(payload.title || "Convo Chat").slice(0, 120);
         const pushBody = String(payload.body || "").slice(0, 500);
@@ -699,4 +851,121 @@ async function signRS256(data, pemKey) {
     .replace(/=/g, "")
     .replace(/\+/g, "-")
     .replace(/\//g, "_");
+}
+
+// ---- Security helpers: hashing, TOTP (RFC 6238), backup codes, e-mail delivery ------------
+async function sha256Hex(value) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(String(value)));
+  return [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, "0")).join("");
+}
+const B32 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+function base32Encode(bytes) {
+  let bits = 0, value = 0, out = "";
+  for (const byte of bytes) { value = (value << 8) | byte; bits += 8; while (bits >= 5) { out += B32[(value >>> (bits - 5)) & 31]; bits -= 5; } }
+  if (bits > 0) out += B32[(value << (5 - bits)) & 31];
+  return out;
+}
+function base32Decode(text) {
+  const clean = String(text || "").toUpperCase().replace(/[^A-Z2-7]/g, "");
+  let bits = 0, value = 0; const out = [];
+  for (const ch of clean) { value = (value << 5) | B32.indexOf(ch); bits += 5; if (bits >= 8) { out.push((value >>> (bits - 8)) & 255); bits -= 8; } }
+  return new Uint8Array(out);
+}
+async function totpAt(secret, counter) {
+  const key = await crypto.subtle.importKey("raw", base32Decode(secret), { name: "HMAC", hash: "SHA-1" }, false, ["sign"]);
+  const msg = new Uint8Array(8); let c = counter;
+  for (let i = 7; i >= 0; i--) { msg[i] = c & 255; c = Math.floor(c / 256); }
+  const h = new Uint8Array(await crypto.subtle.sign("HMAC", key, msg));
+  const o = h[h.length - 1] & 15;
+  const bin = ((h[o] & 127) << 24) | (h[o + 1] << 16) | (h[o + 2] << 8) | h[o + 3];
+  return String(bin % 1000000).padStart(6, "0");
+}
+async function verifyTotp(secret, code, now = Date.now()) {
+  const step = Math.floor(now / 30000);
+  for (const d of [0, -1, 1]) if (await totpAt(secret, step + d) === code) return true;
+  return false;
+}
+function randomBackupCode() {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; const r = crypto.getRandomValues(new Uint8Array(8));
+  const s = [...r].map(b => alphabet[b % alphabet.length]).join("");
+  return `${s.slice(0, 4)}-${s.slice(4)}`;
+}
+function normalizeBackupCode(value) {
+  const s = String(value || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+  return s.length === 8 ? s : "";
+}
+function maskEmail(email) {
+  const [user, domain] = String(email || "").split("@");
+  if (!domain) return "";
+  return `${user.slice(0, 2)}${"•".repeat(Math.max(1, Math.min(6, user.length - 2)))}@${domain}`;
+}
+async function fsPatch(env, path, data) {
+  const { a, t } = await fsAuth(env);
+  const fields = Object.fromEntries(Object.entries(data).map(([k, v]) => [k, toFV(v)]));
+  const url = new URL(`https://firestore.googleapis.com/v1/projects/${a.project_id}/databases/(default)/documents/${path}`);
+  Object.keys(data).forEach(k => url.searchParams.append("updateMask.fieldPaths", k));
+  const r = await fetch(url.toString(), { method: "PATCH", headers: { Authorization: `Bearer ${t}`, "Content-Type": "application/json" }, body: JSON.stringify({ fields }) });
+  if (!r.ok) throw Error(`Firestore patch ${r.status}`);
+  return true;
+}
+async function lookupUidByEmail(env, email) {
+  const a = JSON.parse(env.FIREBASE_SERVICE_ACCOUNT || "{}");
+  const t = await getGoogleAccessToken(a.client_email, a.private_key, "https://www.googleapis.com/auth/identitytoolkit");
+  const r = await fetch(`https://identitytoolkit.googleapis.com/v1/projects/${a.project_id}/accounts:lookup`, {
+    method: "POST", headers: { Authorization: `Bearer ${t}`, "Content-Type": "application/json" }, body: JSON.stringify({ email: [email] })
+  });
+  const j = await r.json().catch(() => ({}));
+  return String(j?.users?.[0]?.localId || "");
+}
+let __emailCfgCache = { at: 0, value: null };
+async function emailConfig(env) {
+  if (Date.now() - __emailCfgCache.at < 60000) return __emailCfgCache.value;
+  const c = await firestoreGet(env, "admin_secrets/email").catch(() => null);
+  const value = c && c.apiKey && c.fromEmail ? { provider: c.provider === "resend" ? "resend" : "brevo", apiKey: String(c.apiKey), fromEmail: String(c.fromEmail), fromName: String(c.fromName || "Convo Chat"), enabled: c.enabled !== false } : null;
+  __emailCfgCache = { at: Date.now(), value };
+  return value;
+}
+function mailHtml(heading, text, code = "") {
+  const esc = s => escapeHtml(s);
+  return `<div style="font-family:system-ui,Segoe UI,Roboto,sans-serif;background:#0b0c1a;padding:28px"><div style="max-width:460px;margin:auto;background:#15172b;border-radius:20px;padding:28px;color:#fff"><div style="font-size:13px;letter-spacing:.12em;color:#9d8cff;font-weight:700">CONVO CHAT • SECURITY</div><h2 style="margin:12px 0 8px">${esc(heading)}</h2><p style="color:#c9cbe0;line-height:1.5">${esc(text)}</p>${code ? `<div style="margin:18px 0;font-size:34px;letter-spacing:.35em;font-weight:800;text-align:center;background:#23264a;border-radius:14px;padding:14px">${esc(code)}</div><p style="color:#8f92b3;font-size:12px">The code expires in 10 minutes. Never share it with anyone — Convo Chat staff will never ask for it.</p>` : ""}</div></div>`;
+}
+async function sendMail(env, to, subject, html) {
+  const cfg = await emailConfig(env);
+  if (!cfg || !cfg.enabled) return { ok: false, error: "E-mail delivery is not set up yet (Admin → Email & 2FA)" };
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(to || ""))) return { ok: false, error: "Invalid recipient e-mail" };
+  const text = subject;
+  const r = cfg.provider === "resend"
+    ? await fetch("https://api.resend.com/emails", { method: "POST", headers: { Authorization: `Bearer ${cfg.apiKey}`, "Content-Type": "application/json" }, body: JSON.stringify({ from: `${cfg.fromName} <${cfg.fromEmail}>`, to: [to], subject, html, text }) })
+    : await fetch("https://api.brevo.com/v3/smtp/email", { method: "POST", headers: { "api-key": cfg.apiKey, "Content-Type": "application/json", accept: "application/json" }, body: JSON.stringify({ sender: { name: cfg.fromName, email: cfg.fromEmail }, to: [{ email: to }], subject, htmlContent: html, textContent: text }) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) return { ok: false, error: `${cfg.provider}: ${j?.message || j?.error?.message || j?.name || `HTTP ${r.status}`}` };
+  return { ok: true, provider: cfg.provider };
+}
+async function sendSecurityPush(env, tokens, title, body) {
+  const list = [...new Set(tokens.filter(t => String(t || "").length > 20))].slice(0, 20);
+  if (!list.length) return 0;
+  const a = JSON.parse(env.FIREBASE_SERVICE_ACCOUNT || "{}");
+  const t = await getGoogleAccessToken(a.client_email, a.private_key);
+  const ok = await Promise.all(list.map(token => fetch(`https://fcm.googleapis.com/v1/projects/${a.project_id}/messages:send`, {
+    method: "POST", headers: { Authorization: `Bearer ${t}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ message: { token, data: { title, body, senderId: "", senderName: "Convo Chat security", senderProfileUrl: "", notificationType: "security_alert", targetId: "", sentAt: String(Date.now()) }, android: { priority: "high" } } })
+  }).then(r => r.ok).catch(() => false)));
+  return ok.filter(Boolean).length;
+}
+
+// ---- Staff (sub-admin) permissions ---------------------------------------------------------
+const ADMIN_EMAIL_DEFAULT = "mr4425390@gmail.com";
+function isAdminEmail(env, caller) { return String(caller?.email || "").toLowerCase() === String(env.ADMIN_EMAIL || ADMIN_EMAIL_DEFAULT).toLowerCase(); }
+async function callerCan(env, caller, permission) {
+  if (isAdminEmail(env, caller)) return true;
+  const u = await firestoreGet(env, `users/${caller.sub}`).catch(() => null);
+  return Boolean(u && u.staffRole === "sub_admin" && Array.isArray(u.staffPermissions) && u.staffPermissions.includes(permission));
+}
+let __adminUidCache = "";
+async function canActOn(env, caller, targetUid) {
+  if (isAdminEmail(env, caller)) return true;
+  if (!__adminUidCache) __adminUidCache = await lookupUidByEmail(env, String(env.ADMIN_EMAIL || ADMIN_EMAIL_DEFAULT)).catch(() => "");
+  if (targetUid === __adminUidCache || targetUid === caller.sub) return false;
+  const t = await firestoreGet(env, `users/${targetUid}`).catch(() => null);
+  return !(t && t.staffRole);
 }
