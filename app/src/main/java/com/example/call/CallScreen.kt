@@ -233,7 +233,8 @@ fun CallScreen(
             AsyncImage(remoteImage, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize().blur(70.dp))
             Box(Modifier.fillMaxSize().background(Brush.verticalGradient(callPalette.background.map { it.copy(alpha = .72f) })))
         }
-        if (!effectiveVideo || !accepted) CallAuroraBackground(callPalette.accent)
+        if (!accepted && incoming) IncomingCallBackdrop(callPalette.accent)
+        else if (!effectiveVideo) CallAuroraBackground(callPalette.accent)
         if (effectiveVideo && accepted) {
             if (state.remoteCameraOff) {
                 Box(Modifier.fillMaxSize().background(Brush.verticalGradient(callPalette.background)), contentAlignment = Alignment.Center) {
@@ -275,12 +276,13 @@ fun CallScreen(
             Spacer(Modifier.weight(if (effectiveVideo && accepted) .06f else .18f))
             AnimatedVisibility(visible = !effectiveVideo || !accepted) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    AsyncImage(
+                    if (!accepted && incoming) IncomingCallerAvatar(remoteImage, remoteName, callPalette.accent)
+                    else AsyncImage(
                         model = remoteImage.ifBlank { null }, contentDescription = remoteName,
                         error = painterResource(R.drawable.img_app_logo), contentScale = ContentScale.Crop,
-                        modifier = Modifier.size(138.dp).scale(if (!accepted && incoming) callPulse else 1f).clip(CircleShape).border(4.dp, Brush.sweepGradient(listOf(callPalette.accent, Color.White.copy(alpha = .88f), callPalette.accent)), CircleShape)
+                        modifier = Modifier.size(138.dp).scale(if (state.status == "calling" || state.status == "ringing") callPulse else 1f).clip(CircleShape).border(4.dp, Brush.sweepGradient(listOf(callPalette.accent, Color.White.copy(alpha = .88f), callPalette.accent)), CircleShape)
                     )
-                    Spacer(Modifier.height(26.dp))
+                    Spacer(Modifier.height(if (!accepted && incoming) 6.dp else 26.dp))
                     Text(remoteName, color = Color.White, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.ExtraBold, textAlign = TextAlign.Center)
                 }
             }
@@ -300,9 +302,10 @@ fun CallScreen(
             }
             Spacer(Modifier.weight(1f))
             if (!accepted && incoming) {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-                    CallCircleButton(Color(0xFFE53935), Icons.Default.CallEnd, "Decline") { CallRingtoneController.stop(context, callId); CallEngine.decline(callId); onClose() }
-                    CallCircleButton(Color(0xFF36C76C), Icons.Default.Call, "Accept") {
+                IncomingAnswerControls(
+                    video = effectiveVideo,
+                    onDecline = { CallRingtoneController.stop(context, callId); CallEngine.decline(callId); onClose() },
+                    onAccept = {
                         val micGranted = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
                         val cameraGranted = !effectiveVideo || ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
                         if (micGranted && cameraGranted) {
@@ -313,7 +316,7 @@ fun CallScreen(
                             callPermissionLauncher.launch(if (effectiveVideo) arrayOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.CAMERA) else arrayOf(Manifest.permission.RECORD_AUDIO))
                         }
                     }
-                }
+                )
             } else {
                 Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp)) {
                     AnimatedVisibility(visible = showReactions && state.status == "connected") {

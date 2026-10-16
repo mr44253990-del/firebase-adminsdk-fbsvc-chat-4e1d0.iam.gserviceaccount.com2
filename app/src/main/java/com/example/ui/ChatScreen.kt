@@ -397,6 +397,52 @@ fun ChatScreen(
         )
     }
     var cameraUri by remember { mutableStateOf<Uri?>(null) }
+    // Album send: pick up to 10 photos, preview, caption, then upload in order.
+    var pendingImages by remember { mutableStateOf<List<Uri>>(emptyList()) }
+    var albumProgress by remember { mutableStateOf<Pair<Int, Int>?>(null) }
+    val multiPhotoLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetMultipleContents()) { uris ->
+        if (uris.isNotEmpty()) {
+            if (uris.size > MAX_BATCH_IMAGES) Toast.makeText(context, "Only the first $MAX_BATCH_IMAGES photos will be sent", Toast.LENGTH_SHORT).show()
+            pendingImages = uris.take(MAX_BATCH_IMAGES)
+        }
+    }
+    val sendAlbum: (List<Uri>, String, Boolean) -> Unit = { images, caption, hd ->
+        pendingImages = emptyList()
+        val reply = replyingToMessage
+        replyingToMessage = null
+        uiScope.launch {
+            var sent = 0
+            images.forEachIndexed { index, uri ->
+                albumProgress = (index + 1) to images.size
+                val bytes = compressChatImage(context, uri, hd)
+                if (bytes == null) return@forEachIndexed
+                val url = kotlinx.coroutines.suspendCancellableCoroutine<String?> { cont ->
+                    viewModel.uploadFileToSupabase(
+                        bucket = "chat_images",
+                        fileName = "chat_img_${System.currentTimeMillis()}_${index}_${(1000..9999).random()}.jpg",
+                        fileBytes = bytes,
+                        contentType = "image/jpeg",
+                        onSuccess = { if (cont.isActive) cont.resumeWith(Result.success(it)) },
+                        onFailure = { if (cont.isActive) cont.resumeWith(Result.success(null)) }
+                    )
+                }
+                if (url != null) {
+                    viewModel.sendMessage(
+                        recipientUser = recipient,
+                        text = "",
+                        imageUrl = url,
+                        replyToId = if (index == 0) reply?.messageId else null,
+                        replyToText = if (index == 0) reply?.text else null,
+                        replyToSenderName = if (index == 0) reply?.senderName else null
+                    )
+                    sent++
+                }
+            }
+            if (caption.isNotBlank() && sent > 0) viewModel.sendMessage(recipientUser = recipient, text = caption)
+            albumProgress = null
+            Toast.makeText(context, if (sent == images.size) "${if (sent == 1) "Photo" else "$sent photos"} sent" else "Sent $sent of ${images.size} photos", Toast.LENGTH_SHORT).show()
+        }
+    }
     val cameraLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
         val uri = cameraUri
         if (ok && uri != null) {
@@ -1101,6 +1147,16 @@ fun ChatScreen(
                 }
             }
 
+            albumProgress?.let { (done, total) ->
+                Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.primaryContainer, modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)) {
+                    Column(Modifier.padding(horizontal = 14.dp, vertical = 8.dp)) {
+                        Text("Sending photo $done of $total…", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                        Spacer(Modifier.height(5.dp))
+                        LinearProgressIndicator(progress = { done / total.toFloat() }, modifier = Modifier.fillMaxWidth())
+                    }
+                }
+            }
+
             // Replying to preview banner
             AnimatedVisibility(
                 visible = replyingToMessage != null,
@@ -1451,6 +1507,9 @@ fun ChatScreen(
     }
 
     val locationAllowed by AppFeatureFlags.locationSharingEnabled.collectAsState()
+    if (pendingImages.isNotEmpty()) {
+        MultiImageSendSheet(pendingImages, updatedRecipient.name, onDismiss = { pendingImages = emptyList() }, onSend = sendAlbum)
+    }
     if (showAttachmentMenu) {
         val attachActions = buildList {
             add(AttachAction("photo", "Gallery", Icons.Default.Image, listOf(Color(0xFF7C4DFF), Color(0xFFB388FF))))
@@ -1465,7 +1524,7 @@ fun ChatScreen(
         SmartAttachSheet(attachActions, onDismiss = { showAttachmentMenu = false }) { key ->
             showAttachmentMenu = false
             when (key) {
-                "photo" -> photoPickerLauncher.launch("image/*")
+                "photo" -> multiPhotoLauncher.launch("image/*")
                 "camera" -> runCatching {
                     val dir = File(context.cacheDir, "camera").apply { mkdirs() }
                     val file = File(dir, "cam_${System.currentTimeMillis()}.jpg")
@@ -1697,6 +1756,7 @@ fun MessageBubbleItem(
 ) {
     var showMenu by remember { mutableStateOf(false) }
     var showImageViewer by remember { mutableStateOf(false) }
+    var showSelectText by remember { mutableStateOf(false) }
     var dragOffset by remember { mutableFloatStateOf(0f) }
     val animatedDrag by animateFloatAsState(dragOffset, spring(stiffness = Spring.StiffnessMedium), label = "swipe_reply")
     val isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
@@ -1712,6 +1772,9 @@ fun MessageBubbleItem(
     val timeString = remember(message.timestamp, appearance.use24h) { appearance.formatTime(message.timestamp) }
     if (showImageViewer && !message.imageUrl.isNullOrBlank()) {
         FullScreenChatImage(message.imageUrl, onDismiss = { showImageViewer = false })
+    }
+    if (showSelectText && message.text.isNotBlank()) {
+        SelectableMessageDialog(message.text, "", onDismiss = { showSelectText = false })
     }
 
     Box(modifier = Modifier.fillMaxWidth(), contentAlignment = if (isSentByMe) Alignment.TopEnd else Alignment.TopStart) {
@@ -1999,6 +2062,7 @@ fun MessageBubbleItem(
                         showMenu = false
                     }
                 )
+                if (!isStickerOnly) MessageSmartTextActions(message.text, onSelectText = { showSelectText = true }, onDone = { showMenu = false })
             }
             if (message.text.isNotBlank() && AppFeatureFlags.aiEnabled.collectAsState().value) {
                 DropdownMenuItem(
