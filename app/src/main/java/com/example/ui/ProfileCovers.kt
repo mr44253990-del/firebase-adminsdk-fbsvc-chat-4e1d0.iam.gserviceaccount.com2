@@ -7,6 +7,7 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -17,6 +18,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -41,9 +45,9 @@ import kotlin.math.sin
  * cost no storage and work offline. A user's `coverImageUrl` may be "preset:<id>"; users with no
  * cover at all get a stable default chosen from their uid, so no profile looks empty.
  */
-data class CoverPreset(val id: String, val name: String, val colors: List<Color>)
+data class CoverPreset(val id: String, val name: String, val colors: List<Color>, val category: String = "Classic")
 
-val CoverPresets = listOf(
+val BaseCoverPresets = listOf(
     CoverPreset("aurora", "Aurora", listOf(Color(0xFF0B1026), Color(0xFF1B2B6B), Color(0xFF00D1B2), Color(0xFF7C4DFF))),
     CoverPreset("sunset", "Sunset hills", listOf(Color(0xFFFF7E5F), Color(0xFFFEB47B), Color(0xFF6A3093), Color(0xFF2B1055))),
     CoverPreset("ocean", "Ocean waves", listOf(Color(0xFF003973), Color(0xFF00A8CC), Color(0xFF7FDBFF), Color(0xFFE0F7FA))),
@@ -58,10 +62,12 @@ val CoverPresets = listOf(
     CoverPreset("forest", "Misty forest", listOf(Color(0xFF0B3D2E), Color(0xFF2E8B57), Color(0xFFA8E6CF), Color(0xFF052016)))
 )
 
+val CoverPresets: List<CoverPreset> by lazy { BaseCoverPresets + ExtraCoverPresets }
+
 fun coverPresetFor(url: String, uid: String): CoverPreset? {
     if (url.startsWith("preset:")) return CoverPresets.firstOrNull { it.id == url.removePrefix("preset:") } ?: CoverPresets.first()
     if (url.isNotBlank()) return null
-    return CoverPresets[abs(uid.hashCode()) % CoverPresets.size]
+    return BaseCoverPresets[abs(uid.hashCode()) % BaseCoverPresets.size]
 }
 
 /** Draws a user's cover: an uploaded photo, a chosen preset, or their automatic default. */
@@ -90,6 +96,7 @@ fun CoverPresetCanvas(preset: CoverPreset, modifier: Modifier = Modifier, animat
 }
 
 private fun DrawScope.drawCover(preset: CoverPreset, phase: Float) {
+    if (drawExtraCover(preset, phase)) return
     val c = preset.colors
     val w = size.width
     val h = size.height
@@ -239,21 +246,41 @@ private fun DrawScope.hills(color: Color, base: Float, frequency: Float, shift: 
     drawPath(path, color)
 }
 
-/** Horizontal picker of built-in covers for the profile editor. */
+/** Built-in cover picker with categories (Classic, Anime, Animated, Abstract, Nature). */
 @Composable
 fun CoverPresetPicker(selectedUrl: String, onSelect: (String) -> Unit) {
+    val categories = remember { listOf("All") + CoverPresets.map { it.category }.distinct() }
+    var category by remember { mutableStateOf("All") }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text("Built-in covers", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+        Text("Built-in covers · ${CoverPresets.size}", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            categories.forEach { cat ->
+                val on = cat == category
+                Text(
+                    cat, fontSize = 12.sp, fontWeight = if (on) FontWeight.Bold else FontWeight.Medium,
+                    color = if (on) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.clip(RoundedCornerShape(50)).background(if (on) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant)
+                        .clickable { category = cat }.padding(horizontal = 12.dp, vertical = 6.dp)
+                )
+            }
+        }
+        val shown = CoverPresets.filter { category == "All" || it.category == category }
         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            CoverPresets.forEach { preset ->
+            shown.forEach { preset ->
                 val selected = selectedUrl == "preset:${preset.id}"
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Box(
-                        Modifier.size(width = 96.dp, height = 56.dp).clip(RoundedCornerShape(14.dp))
+                        Modifier.size(width = 112.dp, height = 64.dp).clip(RoundedCornerShape(14.dp))
                             .border(if (selected) 2.5.dp else 1.dp, if (selected) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = .25f), RoundedCornerShape(14.dp))
                             .clickable { onSelect("preset:${preset.id}") }
-                    ) { CoverPresetCanvas(preset, Modifier.fillMaxSize(), animate = false) }
-                    Text(preset.name, fontSize = 10.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal)
+                    ) {
+                        CoverPresetCanvas(preset, Modifier.fillMaxSize(), animate = selected)
+                        if (preset.category == "Animated" || preset.category == "Anime") {
+                            Text(if (preset.category == "Anime") "ANIME" else "LIVE", fontSize = 8.sp, fontWeight = FontWeight.Black, color = Color.White,
+                                modifier = Modifier.align(Alignment.TopEnd).padding(4.dp).clip(RoundedCornerShape(6.dp)).background(Color.Black.copy(alpha = .45f)).padding(horizontal = 4.dp, vertical = 1.dp))
+                        }
+                    }
+                    Text(preset.name, fontSize = 10.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal, maxLines = 1)
                 }
             }
         }

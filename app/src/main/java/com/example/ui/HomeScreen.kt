@@ -762,7 +762,7 @@ fun HomeScreen(
                                 verticalArrangement = Arrangement.spacedBy(10.dp),
                                 contentPadding = PaddingValues(bottom = 16.dp)
                             ) {
-                                items(chatUsers, key = { it.uid }) { user ->
+                                items(chatUsers.sortedByDescending { ConversationPrefs.isPinned(context, it.uid) }, key = { it.uid }) { user ->
                                     val hasActiveStory = stories.any { it.senderId == user.uid }
                                     ChatConversationUserItem(
                                         user = user,
@@ -1096,6 +1096,16 @@ fun HomeScreen(
                             )
                         }
 
+                        SettingsHubGroup("Smart tools") {
+                            SettingsHubRow(
+                                icon = Icons.Default.AutoAwesome,
+                                title = "Smart tools",
+                                subtitle = "Quiet hours, motion, live location and storage",
+                                accent = Color(0xFF00A3A3),
+                                onClick = { settingsPage = "smart" }
+                            )
+                        }
+
                         SettingsHubGroup("More") {
                             SettingsHubRow(
                                 icon = Icons.Outlined.Devices,
@@ -1160,6 +1170,18 @@ fun HomeScreen(
                                 AppThemePreview("Slate", Color(0xFF0D1117), Color(0xFF161B22), Color(0xFF9EC1FF)),
                                 AppThemePreview("Crimson", Color(0xFF120506), Color(0xFF250C0E), Color(0xFFFF6B6B)),
                                 AppThemePreview("Emerald", Color(0xFF02100A), Color(0xFF0A2218), Color(0xFF4EE3A2))
+                            )),
+                            Triple("Anime & vivid", "Inspired by anime skies, neon cities and cozy evenings", listOf(
+                                AppThemePreview("Anime Sky", Color(0xFFF1F8FF), Color.White, Color(0xFF2F80ED)),
+                                AppThemePreview("Sakura Night", Color(0xFF120A16), Color(0xFF261729), Color(0xFFFF9EC4)),
+                                AppThemePreview("Neo Tokyo", Color(0xFF05010F), Color(0xFF160B2C), Color(0xFFFF4FD8)),
+                                AppThemePreview("Sunset Rooftop", Color(0xFF130C1F), Color(0xFF261A36), Color(0xFFFFB067)),
+                                AppThemePreview("Nordic", Color(0xFF242933), Color(0xFF2E3440), Color(0xFF88C0D0)),
+                                AppThemePreview("Terminal", Color(0xFF020402), Color(0xFF0C120C), Color(0xFF7CFC00)),
+                                AppThemePreview("Ruby", Color(0xFF110307), Color(0xFF240A12), Color(0xFFFF5C7A)),
+                                AppThemePreview("Rose Light", Color(0xFFFFF5F8), Color.White, Color(0xFFD6336C)),
+                                AppThemePreview("Teal Light", Color(0xFFF1FBFA), Color.White, Color(0xFF00897B)),
+                                AppThemePreview("Mono Light", Color(0xFFF8F9FA), Color.White, Color(0xFF212529))
                             )),
                             Triple("Premium", if (themeUnlocked) "Unlocked with Convo Premium" else "Unlock with Convo Premium", listOf(
                                 AppThemePreview("Royal Gold", Color(0xFF120C02), Color(0xFF241806), Color(0xFFFFD166)),
@@ -2089,6 +2111,10 @@ fun HomeScreen(
                                 },
                                 dismissButton = { TextButton(onClick = { deviceSessionPendingDelete = null }) { Text("Cancel") } }
                             )
+                        }
+
+                        if (settingsPage == "smart") {
+                            SmartSettingsPage()
                         }
 
                         if (settingsPage == "blocked") {
@@ -4549,9 +4575,17 @@ fun ChatConversationUserItem(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f, fill = false)) {
+                        val convCtx = androidx.compose.ui.platform.LocalContext.current
+                        val convVersion by ConversationPrefs.version.collectAsState()
+                        val convPinned = remember(convVersion, user.uid) { ConversationPrefs.isPinned(convCtx, user.uid) }
+                        val convMuted = remember(convVersion, user.uid) { ConversationPrefs.isMuted(convCtx, user.uid) }
+                        val convNick = remember(convVersion, user.uid) { ConversationPrefs.nickname(convCtx, user.uid) }
+                        if (convPinned) { Icon(Icons.Default.PushPin, "Pinned", tint = Color(0xFFD81B60), modifier = Modifier.size(14.dp)); Spacer(Modifier.width(3.dp)) }
                         Text(
-                            text = user.name,
+                            text = convNick.ifBlank { user.name },
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = if (hasUnread) FontWeight.ExtraBold else FontWeight.Bold,
                             color = if (hasUnread) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground
@@ -4561,6 +4595,7 @@ fun ChatConversationUserItem(
                         } else if (user.isPremium && (user.premiumPlan == "lifetime" || user.premiumUntil > System.currentTimeMillis())) {
                             Spacer(Modifier.width(4.dp)); Icon(Icons.Outlined.Verified, "Premium", tint = Color(0xFFFFA000), modifier = Modifier.size(15.dp))
                         }
+                        if (convMuted && !isMuted) { Spacer(Modifier.width(4.dp)); Icon(Icons.Default.NotificationsOff, "Muted", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(13.dp)) }
                     }
                     
                     if (hasUnread) {
@@ -4874,6 +4909,7 @@ private fun SettingsHubRow(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(20.dp))
+            .background(Brush.horizontalGradient(listOf(accent.copy(alpha = .10f), accent.copy(alpha = .03f), Color.Transparent)))
             .clickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 11.dp),
         verticalAlignment = Alignment.CenterVertically
@@ -4905,7 +4941,9 @@ private fun SettingsHubRow(
                 modifier = Modifier.widthIn(max = 82.dp).padding(end = 3.dp)
             )
         }
-        Icon(Icons.Default.ChevronRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = .7f), modifier = Modifier.size(21.dp))
+        Box(Modifier.size(26.dp).clip(CircleShape).background(accent.copy(alpha = .16f)), contentAlignment = Alignment.Center) {
+            Icon(Icons.Default.ChevronRight, contentDescription = null, tint = accent, modifier = Modifier.size(18.dp))
+        }
     }
 }
 
@@ -4933,6 +4971,7 @@ private fun settingsPageTitle(page: String): String = when (page) {
     "viewers" -> "Profile viewers"
     "devices" -> "Devices & sessions"
     "blocked" -> "Blocked accounts"
+    "smart" -> "Smart tools"
     else -> "Settings"
 }
 
@@ -4949,6 +4988,7 @@ private fun settingsPageSubtitle(page: String): String = when (page) {
     "viewers" -> "Stored only on this phone"
     "devices" -> "Recent sign-ins and sessions"
     "blocked" -> "People who cannot contact you"
+    "smart" -> "Quiet hours, motion, live location and storage"
     else -> ""
 }
 

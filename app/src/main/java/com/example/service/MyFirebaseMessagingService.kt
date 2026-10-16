@@ -109,7 +109,9 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         // The user is looking at this exact conversation right now: the message is already
         // on screen, so skip the system notification. Other senders still notify.
         if (notificationType == "message" && ActiveChatState.isViewingPeer(senderId)) return
+        if (notificationType == "message" && senderId.isNotBlank() && com.example.ui.ConversationPrefs.isMuted(applicationContext, senderId)) return
         if (notificationType == "group_message" && ActiveChatState.isViewingGroup(targetId)) return
+        if ((notificationType == "message" || notificationType == "group_message") && com.example.ui.SmartPrefs.inQuietHours(applicationContext)) return
         val senderProfileUrl = remoteMessage.data["senderProfileUrl"] ?: ""
         val senderName = if (hideContent) "Convo Chat user" else plainNotificationText(remoteMessage.data["senderName"] ?: title).ifBlank { title }
 

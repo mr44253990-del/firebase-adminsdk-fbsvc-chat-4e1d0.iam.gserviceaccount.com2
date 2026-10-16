@@ -20,7 +20,8 @@ object ThemeTextures {
     val all = listOf(
         "none", "glow", "paper", "grid", "petals", "rain", "stars", "waves", "bokeh", "hex",
         "dots", "diagonal", "hearts", "circuit", "confetti", "rings", "sparkle", "aurora",
-        "leaves", "bubbles", "zigzag", "diamonds"
+        "leaves", "bubbles", "zigzag", "diamonds", "doodle", "seigaiha", "topo", "linen", "grain",
+        "clouds", "mountains", "skyline", "snow", "music", "paws", "triangles", "plaid", "marble"
     )
 }
 
@@ -219,6 +220,150 @@ fun DrawScope.drawThemeTexture(texture: String, tint: Color = Color.White, inten
             drawCircle(Color(0xFF7CFFCB).copy(alpha = .09f * k), radius = w * .55f, center = Offset(w * .15f, h * .10f))
             drawCircle(Color(0xFF9B7CFF).copy(alpha = .09f * k), radius = w * .50f, center = Offset(w * .95f, h * .45f))
             drawCircle(Color(0xFFFF7CC8).copy(alpha = .07f * k), radius = w * .45f, center = Offset(w * .30f, h * .95f))
+        }
+        else -> drawExtraTexture(texture, w, h, ::c)
+    }
+}
+
+/** Newer textures (doodles, Japanese waves, topo lines, landscapes…). */
+private fun DrawScope.drawExtraTexture(texture: String, w: Float, h: Float, c: (Float) -> Color) {
+    val r = Seeded(texture.hashCode().toLong())
+    when (texture) {
+        "doodle" -> {
+            val step = 92f
+            var y = 20f; var row = 0
+            while (y < h + step) {
+                var x = if (row % 2 == 0) 18f else 18f + step / 2
+                while (x < w + step) {
+                    when (((x / step).toInt() + row) % 5) {
+                        0 -> { // heart
+                            val s = 9f
+                            val p = Path().apply { moveTo(x, y + s * .9f); cubicTo(x - s * 1.6f, y - s * .2f, x - s * .7f, y - s * 1.3f, x, y - s * .4f); cubicTo(x + s * .7f, y - s * 1.3f, x + s * 1.6f, y - s * .2f, x, y + s * .9f) }
+                            drawPath(p, c(.10f), style = Stroke(2f))
+                        }
+                        1 -> { // smiley
+                            drawCircle(c(.10f), 10f, Offset(x, y), style = Stroke(2f))
+                            drawCircle(c(.12f), 1.6f, Offset(x - 3.5f, y - 2.5f)); drawCircle(c(.12f), 1.6f, Offset(x + 3.5f, y - 2.5f))
+                            drawArc(c(.12f), 20f, 140f, false, Offset(x - 6f, y - 4f), Size(12f, 10f), style = Stroke(1.8f))
+                        }
+                        2 -> { // star
+                            val p = Path()
+                            for (i in 0 until 10) {
+                                val a = -PI.toFloat() / 2 + i * PI.toFloat() / 5
+                                val rr = if (i % 2 == 0) 10f else 4.5f
+                                if (i == 0) p.moveTo(x + cos(a) * rr, y + sin(a) * rr) else p.lineTo(x + cos(a) * rr, y + sin(a) * rr)
+                            }
+                            p.close(); drawPath(p, c(.10f), style = Stroke(1.8f))
+                        }
+                        3 -> { // chat bubble
+                            drawRoundRect(c(.10f), Offset(x - 11f, y - 8f), Size(22f, 15f), androidx.compose.ui.geometry.CornerRadius(6f), style = Stroke(1.8f))
+                            drawLine(c(.10f), Offset(x - 4f, y + 7f), Offset(x - 8f, y + 12f), strokeWidth = 1.8f)
+                        }
+                        else -> { // note
+                            drawCircle(c(.10f), 4f, Offset(x - 3f, y + 7f))
+                            drawLine(c(.10f), Offset(x + 1f, y + 7f), Offset(x + 1f, y - 9f), strokeWidth = 1.8f)
+                            drawLine(c(.10f), Offset(x + 1f, y - 9f), Offset(x + 8f, y - 6f), strokeWidth = 1.8f)
+                        }
+                    }
+                    x += step
+                }
+                y += step * .72f; row++
+            }
+        }
+        "seigaiha" -> {
+            val rad = 34f
+            var row = 0; var y = 0f
+            while (y < h + rad) {
+                var x = if (row % 2 == 0) 0f else rad
+                while (x < w + rad) {
+                    for (k in 1..4) drawArc(c(.07f), 180f, 180f, false, Offset(x - rad * k / 4f, y - rad * k / 4f), Size(rad * k / 2f, rad * k / 2f), style = Stroke(1.4f))
+                    x += rad * 2
+                }
+                y += rad * .5f; row++
+            }
+        }
+        "topo" -> {
+            for (ring in 0 until 3) {
+                val cx = w * (.2f + ring * .35f); val cy = h * (.25f + (ring % 2) * .45f)
+                for (i in 1..9) {
+                    val p = Path()
+                    for (a in 0..36) {
+                        val ang = a / 36f * 2f * PI.toFloat()
+                        val rr = i * 26f * (1f + .18f * sin(ang * 3f + i + ring))
+                        val px = cx + cos(ang) * rr; val py = cy + sin(ang) * rr
+                        if (a == 0) p.moveTo(px, py) else p.lineTo(px, py)
+                    }
+                    p.close(); drawPath(p, c(.06f), style = Stroke(1.2f))
+                }
+            }
+        }
+        "linen" -> {
+            var x = 0f
+            while (x < w) { drawLine(c(.035f), Offset(x, 0f), Offset(x, h), strokeWidth = 1f); x += 6f }
+            var y = 0f
+            while (y < h) { drawLine(c(.03f), Offset(0f, y), Offset(w, y), strokeWidth = 1f); y += 6f }
+        }
+        "grain" -> repeat(900) { drawCircle(c(.05f + r.f() * .05f), .8f + r.f(), Offset(r.f() * w, r.f() * h)) }
+        "clouds" -> repeat(9) {
+            val x = r.f() * w; val y = r.f() * h; val s = 26f + r.f() * 30f
+            drawCircle(c(.07f), s, Offset(x, y)); drawCircle(c(.07f), s * .8f, Offset(x - s, y + s * .3f)); drawCircle(c(.07f), s * .8f, Offset(x + s, y + s * .3f))
+        }
+        "mountains" -> for (layer in 0..2) {
+            val p = Path(); val base = h * (.62f + layer * .12f)
+            p.moveTo(0f, h); p.lineTo(0f, base)
+            var x = 0f
+            while (x <= w) { p.lineTo(x + w / 10f, base - (40f + r.f() * 90f) * (1f - layer * .2f)); p.lineTo(x + w / 5f, base); x += w / 5f }
+            p.lineTo(w, h); p.close(); drawPath(p, c(.05f + layer * .03f))
+        }
+        "skyline" -> {
+            var x = 0f
+            while (x < w) {
+                val bw = 22f + r.f() * 38f; val bh = h * (.12f + r.f() * .22f)
+                drawRect(c(.07f), Offset(x, h - bh), Size(bw, bh))
+                var wy = h - bh + 8f
+                while (wy < h - 6f) { if (r.f() > .55f) drawRect(c(.12f), Offset(x + 5f, wy), Size(4f, 5f)); wy += 12f }
+                x += bw + 4f
+            }
+        }
+        "snow" -> repeat(160) { drawCircle(c(.10f + r.f() * .15f), 1f + r.f() * 2.6f, Offset(r.f() * w, r.f() * h)) }
+        "music" -> repeat(26) {
+            val x = r.f() * w; val y = r.f() * h
+            drawCircle(c(.09f), 5f, Offset(x, y)); drawLine(c(.09f), Offset(x + 4.5f, y), Offset(x + 4.5f, y - 20f), strokeWidth = 2f)
+            if (r.f() > .5f) { drawCircle(c(.09f), 5f, Offset(x + 16f, y - 4f)); drawLine(c(.09f), Offset(x + 20.5f, y - 4f), Offset(x + 20.5f, y - 24f), strokeWidth = 2f); drawLine(c(.09f), Offset(x + 4.5f, y - 20f), Offset(x + 20.5f, y - 24f), strokeWidth = 4f) }
+        }
+        "paws" -> repeat(22) {
+            val x = r.f() * w; val y = r.f() * h
+            rotate(r.f() * 360f, Offset(x, y)) {
+                drawOval(c(.09f), Offset(x - 8f, y - 4f), Size(16f, 13f))
+                for (t in 0..3) drawCircle(c(.09f), 3.4f, Offset(x - 9f + t * 6f, y - 9f - if (t == 1 || t == 2) 3f else 0f))
+            }
+        }
+        "triangles" -> {
+            val s = 54f
+            var row = 0; var y = 0f
+            while (y < h) {
+                var x = if (row % 2 == 0) 0f else -s / 2
+                while (x < w) {
+                    if (r.f() > .45f) {
+                        val p = Path().apply { moveTo(x, y + s * .86f); lineTo(x + s / 2, y); lineTo(x + s, y + s * .86f); close() }
+                        drawPath(p, c(.03f + r.f() * .06f))
+                    }
+                    x += s
+                }
+                y += s * .86f; row++
+            }
+        }
+        "plaid" -> {
+            var x = 0f
+            while (x < w) { drawRect(c(.05f), Offset(x, 0f), Size(18f, h)); drawLine(c(.07f), Offset(x + 30f, 0f), Offset(x + 30f, h), strokeWidth = 2f); x += 64f }
+            var y = 0f
+            while (y < h) { drawRect(c(.05f), Offset(0f, y), Size(w, 18f)); drawLine(c(.07f), Offset(0f, y + 30f), Offset(w, y + 30f), strokeWidth = 2f); y += 64f }
+        }
+        "marble" -> repeat(7) { v ->
+            val p = Path(); var x = -20f; var y = r.f() * h
+            p.moveTo(x, y)
+            while (x < w + 20f) { x += 30f; y += (r.f() - .5f) * 50f; val cy = y + (r.f() - .5f) * 40f; p.cubicTo(x - 20f, cy, x - 10f, cy, x, y) }
+            drawPath(p, c(.05f + (v % 3) * .025f), style = Stroke(1f + r.f() * 3f))
         }
     }
 }

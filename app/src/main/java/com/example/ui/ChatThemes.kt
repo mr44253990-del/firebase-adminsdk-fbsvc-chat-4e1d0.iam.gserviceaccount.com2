@@ -119,6 +119,30 @@ object ChatThemeCatalog {
             incomingFill = Color.White.copy(alpha = .74f), outgoingFill = Color(0xFFDCDDFF).copy(alpha = .86f),
             defaultBubbleStyle = "liquid", glassBars = true
         ),
+        ChatThemeSpec(
+            "Anime Rooftop", listOf(Color(0xFF2B1F4F), Color(0xFF7A4A8C), Color(0xFFFFB067).copy(.5f)),
+            accent = Color(0xFFFF9E57), category = "Scenes", backgroundRes = R.drawable.chat_bg_anime_rooftop,
+            incomingFill = Color(0xFF1E1638).copy(alpha = .62f), outgoingFill = Color(0xFFE07A3F).copy(alpha = .74f),
+            defaultBubbleStyle = "liquid", glassBars = true
+        ),
+        ChatThemeSpec(
+            "Rainy Window", listOf(Color(0xFF071318), Color(0xFF14323A), Color(0xFFE0A458).copy(.35f)),
+            accent = Color(0xFF3FC1C9), category = "Scenes", backgroundRes = R.drawable.chat_bg_rain_window,
+            incomingFill = Color(0xFF0A1C22).copy(alpha = .62f), outgoingFill = Color(0xFF16808A).copy(alpha = .72f),
+            defaultBubbleStyle = "frosted", glassBars = true
+        ),
+        ChatThemeSpec(
+            "Starry Lake", listOf(Color(0xFF050A1F), Color(0xFF1B1E4B), Color(0xFF7B6CF6).copy(.4f)),
+            accent = Color(0xFF8C7CFF), category = "Scenes", backgroundRes = R.drawable.chat_bg_starry_lake,
+            incomingFill = Color(0xFF0C1030).copy(alpha = .60f), outgoingFill = Color(0xFF5B4BD6).copy(alpha = .70f),
+            defaultBubbleStyle = "neon", glassBars = true
+        ),
+        ChatThemeSpec(
+            "Sakura Street", listOf(Color(0xFFFFF5F8), Color(0xFFFFD9E6), Color(0xFFCFE6FF)),
+            accent = Color(0xFFE85A8C), light = true, category = "Scenes", backgroundRes = R.drawable.chat_bg_sakura_street,
+            incomingFill = Color.White.copy(alpha = .78f), outgoingFill = Color(0xFFFF9CC0).copy(alpha = .82f),
+            defaultBubbleStyle = "liquid", glassBars = true
+        ),
         // Classic
         // "Aurora" is the default and follows the app theme colors (see [ChatThemeSpec.adaptive]).
         ChatThemeSpec("Aurora", listOf(Color(0xFF0E1230), Color(0xFF3B2A7A), Color(0xFF6C63FF).copy(.45f)), accent = Color(0xFF7C6CFF), adaptive = true),
@@ -163,6 +187,28 @@ object ChatThemeCatalog {
         ChatThemeSpec("Matrix", listOf(Color.Black, Color(0xFF02180D), Color(0xFF00C853).copy(.25f)), texture = "rain", accent = Color(0xFF00C853), textureTint = Color(0xFF69F0AE), category = "Mood & pattern"),
         ChatThemeSpec("Party", listOf(Color(0xFF140A2E), Color(0xFF2C1460), Color(0xFF5A2BA8).copy(.6f)), ThemeBrushStyle.Radial, texture = "confetti", accent = Color(0xFFFFB703), category = "Mood & pattern"),
         ChatThemeSpec("Zigzag Retro", listOf(Color(0xFF1A1A2E), Color(0xFF16213E), Color(0xFFE94560).copy(.35f)), texture = "zigzag", accent = Color(0xFFE94560), category = "Mood & pattern"),
+        // Anime & art (new)
+        ChatThemeSpec("Anime Sky", listOf(Color(0xFFEAF6FF), Color(0xFFB9DDFF), Color(0xFF8EC5FC)), texture = "clouds", accent = Color(0xFF2F80ED), light = true, category = "Anime & art"),
+        ChatThemeSpec("Sakura Night", listOf(Color(0xFF1B0F24), Color(0xFF4A2245), Color(0xFFFF9EC4).copy(.5f)), ThemeBrushStyle.Linear, texture = "petals", accent = Color(0xFFFF8FB8), category = "Anime & art"),
+        ChatThemeSpec("Kyoto Waves", listOf(Color(0xFF0E2A47), Color(0xFF1D4E7A), Color(0xFF7FB3D5).copy(.45f)), texture = "seigaiha", accent = Color(0xFF5DADE2), textureTint = Color(0xFFE8F4FF), category = "Anime & art"),
+        ChatThemeSpec("Fuji Dawn", listOf(Color(0xFFFFE3D8), Color(0xFFFFB8A8), Color(0xFF9D8CD9)), texture = "mountains", accent = Color(0xFFE3646B), light = true, category = "Anime & art"),
+        ChatThemeSpec("Neo Tokyo", listOf(Color(0xFF05010F), Color(0xFF240046), Color(0xFFFF00C8).copy(.35f)), ThemeBrushStyle.Linear, texture = "skyline", accent = Color(0xFFFF2BD6), textureTint = Color(0xFF00F5FF), category = "Anime & art"),
+        ChatThemeSpec("Lo-Fi Study", listOf(Color(0xFF2A1E3F), Color(0xFF5C3D6E), Color(0xFFFFB38A).copy(.5f)), texture = "music", accent = Color(0xFFFFA07A), category = "Anime & art"),
+        ChatThemeSpec("Doodle Light", listOf(Color(0xFFFFFBF2), Color(0xFFF5EEDF), Color(0xFFEDE3CF)), texture = "doodle", accent = Color(0xFF00A884), light = true, category = "Anime & art"),
+        ChatThemeSpec("Doodle Dark", listOf(Color(0xFF0B141A), Color(0xFF111B21), Color(0xFF1F2C34)), texture = "doodle", accent = Color(0xFF00A884), category = "Anime & art"),
+        // Textures (new)
+        ChatThemeSpec("Topographic", listOf(Color(0xFF0F2027), Color(0xFF203A43), Color(0xFF2C5364)), texture = "topo", accent = Color(0xFF4DD0E1), category = "Textures"),
+        ChatThemeSpec("Linen", listOf(Color(0xFFFAF6EF), Color(0xFFF0E6D6), Color(0xFFE4D5BC)), texture = "linen", accent = Color(0xFF9C6B3C), light = true, category = "Textures"),
+        ChatThemeSpec("Film Grain", listOf(Color(0xFF1A1A1A), Color(0xFF2D2A26), Color(0xFF4A4036)), texture = "grain", accent = Color(0xFFE0B872), category = "Textures"),
+        ChatThemeSpec("Marble", listOf(Color(0xFFF8F8F8), Color(0xFFECECEC), Color(0xFFDADADA)), ThemeBrushStyle.Linear, texture = "marble", accent = Color(0xFF6D6875), light = true, category = "Textures"),
+        ChatThemeSpec("Black Marble", listOf(Color(0xFF0A0A0A), Color(0xFF1C1C1C), Color(0xFF2E2A24)), ThemeBrushStyle.Linear, texture = "marble", accent = Color(0xFFD4AF37), textureTint = Color(0xFFF5E6B8), category = "Textures"),
+        ChatThemeSpec("Tartan", listOf(Color(0xFF3B0A0A), Color(0xFF6B1212), Color(0xFF1B4332).copy(.6f)), texture = "plaid", accent = Color(0xFFE63946), category = "Textures"),
+        ChatThemeSpec("Polygon", listOf(Color(0xFF141E30), Color(0xFF243B55), Color(0xFF4B79A1).copy(.5f)), ThemeBrushStyle.Linear, texture = "triangles", accent = Color(0xFF64B5F6), category = "Textures"),
+        ChatThemeSpec("Winter", listOf(Color(0xFF1C3B57), Color(0xFF3E6A92), Color(0xFFB3D4F0).copy(.5f)), texture = "snow", accent = Color(0xFF90CAF9), category = "Textures"),
+        ChatThemeSpec("Pet Lover", listOf(Color(0xFFFFF7ED), Color(0xFFFFE8CC), Color(0xFFFFD8A8)), texture = "paws", accent = Color(0xFFE8590C), light = true, category = "Textures"),
+        ChatThemeSpec("Night City", listOf(Color(0xFF020617), Color(0xFF1E1B4B), Color(0xFF6366F1).copy(.4f)), texture = "skyline", accent = Color(0xFF818CF8), textureTint = Color(0xFFFBBF24), category = "Textures"),
+        ChatThemeSpec("Cloud Nine", listOf(Color(0xFFFDFBFF), Color(0xFFE9E4FF), Color(0xFFD6CCFF)), texture = "clouds", accent = Color(0xFF7C4DFF), light = true, category = "Textures"),
+        ChatThemeSpec("Emerald Hills", listOf(Color(0xFF052E1C), Color(0xFF0B5D3B), Color(0xFF52B788).copy(.5f)), texture = "mountains", accent = Color(0xFF40C057), category = "Textures"),
         // Premium
         ChatThemeSpec("Royal Gold", listOf(Color(0xFF120D05), Color(0xFF5B3A08), Color(0xFFFFD166).copy(.58f)), ThemeBrushStyle.Linear, texture = "diamonds", accent = Color(0xFFFFC233), premium = true, category = "Premium"),
         ChatThemeSpec("Cyber Lime", listOf(Color.Black, Color(0xFF102A20), Color(0xFFA7FF4F).copy(.42f)), ThemeBrushStyle.Linear, texture = "grid", accent = Color(0xFF9BEF3F), premium = true, category = "Premium"),

@@ -755,6 +755,7 @@ fun GroupChatScreen(
                                     .clip(CircleShape)
                                     .clickable {
                                         viewModel.playLikeSound()
+                                        if (chatAppearance.animateReactions && !ConvoStickers.isSticker(quickReaction)) ReactionFx.fire(quickReaction)
                                         viewModel.sendGroupMessage(groupId = group.id, text = quickReaction, replyTo = replyingToGroupMessage)
                                         replyingToGroupMessage = null
                                         groupUiScope.launch {
@@ -775,6 +776,7 @@ fun GroupChatScreen(
             }
         }
     }
+    ReactionFxOverlay()
     }
 
     if (showMembers) {

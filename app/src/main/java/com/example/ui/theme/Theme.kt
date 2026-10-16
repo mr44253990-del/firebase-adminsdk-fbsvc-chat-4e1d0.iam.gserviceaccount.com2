@@ -169,6 +169,17 @@ fun MyApplicationTheme(
         "galaxy" -> themedDark(Color(0xFFB69CFF), Color(0xFFFF8BD3), Color(0xFF05030F), Color(0xFF140C2A)).copy(tertiary = Color(0xFF7DF9FF), primaryContainer = Color(0xFF3B2580), onPrimaryContainer = Color.White)
         "diamond" -> themedDark(Color(0xFFA9B8FF), Color(0xFFE0E7FF), Color(0xFF070A1C), Color(0xFF131A3A)).copy(tertiary = Color(0xFF9FFFE0), primaryContainer = Color(0xFF2B3A85), onPrimaryContainer = Color.White)
         "rose quartz" -> themedDark(Color(0xFFFFB3CF), Color(0xFFE5A5FF), Color(0xFF140810), Color(0xFF2A1423)).copy(tertiary = Color(0xFFFFD1DC), primaryContainer = Color(0xFF69324F), onPrimaryContainer = Color.White)
+        // Anime & vivid (new)
+        "sakura night" -> themedDark(Color(0xFFFF9EC4), Color(0xFFC3A6FF), Color(0xFF120A16), Color(0xFF261729)).copy(tertiary = Color(0xFFFFE3A3), primaryContainer = Color(0xFF5E2A4A), onPrimaryContainer = Color.White)
+        "neo tokyo" -> themedDark(Color(0xFFFF4FD8), Color(0xFF00F5FF), Color(0xFF05010F), Color(0xFF160B2C)).copy(tertiary = Color(0xFFFFE066), primaryContainer = Color(0xFF4E1A5E), onPrimaryContainer = Color.White)
+        "sunset rooftop" -> themedDark(Color(0xFFFFB067), Color(0xFFC59BFF), Color(0xFF130C1F), Color(0xFF261A36)).copy(tertiary = Color(0xFFFF7AA8), primaryContainer = Color(0xFF5C3A2A), onPrimaryContainer = Color.White)
+        "nordic" -> themedDark(Color(0xFF88C0D0), Color(0xFF81A1C1), Color(0xFF242933), Color(0xFF2E3440)).copy(tertiary = Color(0xFFA3BE8C), primaryContainer = Color(0xFF3B4A5C), onPrimaryContainer = Color.White)
+        "terminal" -> themedDark(Color(0xFF7CFC00), Color(0xFF00E5A0), Color(0xFF020402), Color(0xFF0C120C)).copy(tertiary = Color(0xFFFFD54F), primaryContainer = Color(0xFF1E3D10), onPrimaryContainer = Color.White, onPrimary = Color(0xFF0A1A00))
+        "ruby" -> themedDark(Color(0xFFFF5C7A), Color(0xFFFF9F80), Color(0xFF110307), Color(0xFF240A12)).copy(tertiary = Color(0xFFFFD1DC), primaryContainer = Color(0xFF6A1428), onPrimaryContainer = Color.White)
+        "anime sky" -> LightColors.copy(primary = Color(0xFF2F80ED), secondary = Color(0xFFFF8A65), tertiary = Color(0xFF7C4DFF), background = Color(0xFFF1F8FF), surface = Color.White, surfaceVariant = Color(0xFFE0EEFC), primaryContainer = Color(0xFFD6E8FF), onPrimaryContainer = Color(0xFF002B5C))
+        "rose light" -> LightColors.copy(primary = Color(0xFFD6336C), secondary = Color(0xFF9C36B5), tertiary = Color(0xFFF08C00), background = Color(0xFFFFF5F8), surface = Color.White, surfaceVariant = Color(0xFFFBE4EC), primaryContainer = Color(0xFFFFD8E4), onPrimaryContainer = Color(0xFF4A0820))
+        "teal light" -> LightColors.copy(primary = Color(0xFF00897B), secondary = Color(0xFF3949AB), tertiary = Color(0xFFFF7043), background = Color(0xFFF1FBFA), surface = Color.White, surfaceVariant = Color(0xFFDDF1EE), primaryContainer = Color(0xFFC4EDE7), onPrimaryContainer = Color(0xFF00332D))
+        "mono light" -> LightColors.copy(primary = Color(0xFF212529), secondary = Color(0xFF495057), tertiary = Color(0xFF868E96), background = Color(0xFFF8F9FA), surface = Color.White, surfaceVariant = Color(0xFFECEEF0), primaryContainer = Color(0xFFDEE2E6), onPrimaryContainer = Color(0xFF111315))
         else -> if (darkTheme) DarkColors else LightColors
     }
 

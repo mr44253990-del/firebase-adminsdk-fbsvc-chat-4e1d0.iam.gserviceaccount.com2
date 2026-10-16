@@ -339,6 +339,21 @@ fun ChatScreen(
         }
     }
 
+    // Play a full-screen reaction effect when the partner sends a fresh quick reaction / emoji.
+    var lastFxMessageId by remember { mutableStateOf("") }
+    LaunchedEffect(messages.size) {
+        val newest = messages.maxByOrNull { it.timestamp } ?: return@LaunchedEffect
+        if (newest.messageId != lastFxMessageId) {
+            val firstLoad = lastFxMessageId.isEmpty()
+            lastFxMessageId = newest.messageId
+            if (!firstLoad && newest.senderId != currentUserId && chatAppearance.animateReactions &&
+                System.currentTimeMillis() - newest.timestamp < 15_000L && newest.imageUrl.isNullOrBlank() &&
+                isEmojiOnlyMessage(newest.text) && newest.text.length <= 12) {
+                ReactionFx.fire(newest.text.trim())
+            }
+        }
+    }
+
     // Photo Gallery picker for attachment uploading to Supabase
     val uploadChatPhoto: (ByteArray) -> Unit = { bytes ->
         Toast.makeText(context, "Uploading photo...", Toast.LENGTH_SHORT).show()
@@ -679,91 +694,71 @@ fun ChatScreen(
         )
     }
 
+    var settingsImageUrl by remember { mutableStateOf<String?>(null) }
+    var showReportDialog by remember { mutableStateOf(false) }
     if (showChatSettings) {
         val isBlocked = currentUser?.blockedUsers?.contains(recipient.uid) == true
+        ConversationSettingsPage(
+            recipient = updatedRecipient,
+            messages = messages,
+            myUid = currentUserId,
+            chatTheme = chatTheme,
+            headerBrush = chatGradientBg,
+            isBlocked = isBlocked,
+            typingSounds = typingSounds,
+            onTypingSounds = { viewModel.updateSoundPreferences(notificationSounds, it) },
+            onClose = { showChatSettings = false },
+            onProfile = { showChatSettings = false; onProfile() },
+            onAudioCall = {
+                showChatSettings = false
+                if (audioPermissionGranted) onCall() else { pendingCall = true; permissionLauncher.launch(Manifest.permission.RECORD_AUDIO) }
+            },
+            onVideoCall = {
+                showChatSettings = false
+                val cameraGranted = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+                if (audioPermissionGranted && cameraGranted) onVideoCall()
+                else videoPermissionLauncher.launch(arrayOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.CAMERA))
+            },
+            onSearch = { showChatSettings = false; showMessageSearch = true },
+            onTheme = { showChatSettings = false; showThemePicker = true },
+            onBlockToggle = {
+                if (isBlocked) viewModel.unblockUser(recipient.uid) { Toast.makeText(context, "User unblocked", Toast.LENGTH_SHORT).show() }
+                else viewModel.blockUser(recipient.uid) { Toast.makeText(context, "User blocked", Toast.LENGTH_SHORT).show(); onBack() }
+                showChatSettings = false
+            },
+            onReport = { showReportDialog = true },
+            onOpenImage = { settingsImageUrl = it }
+        )
+    }
+    settingsImageUrl?.let { url -> FullScreenChatImage(url, onDismiss = { settingsImageUrl = null }) }
+    if (showReportDialog) {
+        val categories = listOf("Spam", "Harassment", "Fake account", "Inappropriate content", "Other")
+        var category by remember { mutableStateOf(categories.first()) }
+        var details by remember { mutableStateOf("") }
+        var sending by remember { mutableStateOf(false) }
         AlertDialog(
-            onDismissRequest = { showChatSettings = false },
-            icon = {
-                Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = CircleShape) {
-                    Icon(Icons.Default.Forum, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(11.dp).size(22.dp))
-                }
-            },
-            title = {
-                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text("Conversation settings", fontWeight = FontWeight.ExtraBold)
-                    Text("Personalize your chat with ${updatedRecipient.name}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                }
-            },
+            onDismissRequest = { if (!sending) showReportDialog = false },
+            icon = { Icon(Icons.Default.Flag, null, tint = MaterialTheme.colorScheme.error) },
+            title = { Text("Report ${updatedRecipient.name}") },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Surface(
-                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .52f),
-                        shape = RoundedCornerShape(20.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Row(
-                            Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).clickable { showChatSettings = false; onProfile() }.padding(12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Box(Modifier.size(48.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer), contentAlignment = Alignment.Center) {
-                                if (updatedRecipient.profileImageUrl.isNotBlank()) {
-                                    AsyncImage(updatedRecipient.profileImageUrl, updatedRecipient.name, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize().clip(CircleShape))
-                                } else {
-                                    Text(updatedRecipient.name.take(1).uppercase(), color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
-                                }
-                            }
-                            Column(Modifier.weight(1f).padding(start = 11.dp)) {
-                                Text(updatedRecipient.name, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text(
-                                    if (updatedRecipient.isOnline) "Active now" else "@${updatedRecipient.username}",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = if (updatedRecipient.isOnline) Color(0xFF2E9B60) else MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                            Icon(Icons.Default.ChevronRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FlowRowCompat {
+                        categories.forEach { c -> FilterChip(selected = category == c, onClick = { category = c }, label = { Text(c) }) }
                     }
-
-                    Text("PERSONALIZE", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 4.dp))
-                    Surface(color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .34f), shape = RoundedCornerShape(20.dp), modifier = Modifier.fillMaxWidth()) {
-                        Column {
-                            ListItem(
-                                headlineContent = { Text("Chat background", fontWeight = FontWeight.SemiBold) },
-                                supportingContent = { Text(chatTheme, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                                leadingContent = { Icon(Icons.Default.Palette, null, tint = MaterialTheme.colorScheme.primary) },
-                                trailingContent = { Icon(Icons.Default.ChevronRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
-                                modifier = Modifier.clip(RoundedCornerShape(20.dp)).clickable { showChatSettings = false; showThemePicker = true }
-                            )
-                            HorizontalDivider(modifier = Modifier.padding(start = 56.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = .42f))
-                            ListItem(
-                                headlineContent = { Text("Typing sounds", fontWeight = FontWeight.SemiBold) },
-                                supportingContent = { Text("Play a soft sound while you type") },
-                                leadingContent = { Icon(Icons.Default.Keyboard, null, tint = MaterialTheme.colorScheme.primary) },
-                                trailingContent = { Switch(typingSounds, { viewModel.updateSoundPreferences(notificationSounds, it) }) }
-                            )
-                        }
-                    }
-
-                    Text("SAFETY", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 4.dp))
-                    Surface(color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .34f), shape = RoundedCornerShape(20.dp), modifier = Modifier.fillMaxWidth()) {
-                        ListItem(
-                            headlineContent = { Text(if (isBlocked) "Unblock account" else "Block account", fontWeight = FontWeight.SemiBold) },
-                            supportingContent = { Text(if (isBlocked) "Allow this person to contact you again" else "Stop messages and interactions from this person") },
-                            leadingContent = { Icon(if (isBlocked) Icons.Default.LockOpen else Icons.Default.Block, null, tint = MaterialTheme.colorScheme.error) },
-                            modifier = Modifier.clip(RoundedCornerShape(20.dp)).clickable {
-                                if (isBlocked) viewModel.unblockUser(recipient.uid) { Toast.makeText(context, "User unblocked", Toast.LENGTH_SHORT).show() }
-                                else viewModel.blockUser(recipient.uid) { Toast.makeText(context, "User blocked", Toast.LENGTH_SHORT).show(); onBack() }
-                                showChatSettings = false
-                            }
-                        )
-                    }
+                    OutlinedTextField(details, { details = it.take(500) }, label = { Text("What happened? (optional)") }, minLines = 3, modifier = Modifier.fillMaxWidth())
                 }
             },
-            confirmButton = { TextButton(onClick = { showChatSettings = false }) { Text("Done") } },
-            shape = RoundedCornerShape(30.dp),
-            containerColor = MaterialTheme.colorScheme.surface
+            confirmButton = {
+                Button(enabled = !sending, onClick = {
+                    sending = true
+                    viewModel.submitUserReport(recipient.uid, category, details) { ok, msg ->
+                        sending = false
+                        Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                        if (ok) showReportDialog = false
+                    }
+                }) { Text(if (sending) "Sending…" else "Send report") }
+            },
+            dismissButton = { TextButton(onClick = { showReportDialog = false }) { Text("Cancel") } }
         )
     }
 
@@ -826,7 +821,7 @@ fun ChatScreen(
 
                         Column {
                             Text(
-                                text = updatedRecipient.name,
+                                text = ConversationPrefs.version.collectAsState().value.let { ConversationPrefs.nickname(context, recipient.uid) }.ifBlank { updatedRecipient.name },
                                 style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                                 color = barColors?.content ?: MaterialTheme.colorScheme.onSurface,
                                 maxLines = 1,
@@ -1010,6 +1005,7 @@ fun ChatScreen(
                                 viewModel.deleteMessage(recipient.uid, msg.messageId)
                             },
                             onReactSelect = { reaction ->
+                                if (chatAppearance.animateReactions && !ConvoStickers.isSticker(reaction) && msg.reactions[currentUserId] != reaction) ReactionFx.fire(reaction)
                                 viewModel.addReaction(recipient.uid, msg.messageId, reaction)
                             },
                             deliveryState = deliveryStates[msg.messageId] ?: if (msg.deliveredToRecipient) "delivered" else "sent",
@@ -1298,6 +1294,7 @@ fun ChatScreen(
                                             enabled = !composerLocked,
                                             onClick = {
                                                 viewModel.playLikeSound()
+                                                if (chatAppearance.animateReactions && !ConvoStickers.isSticker(quickReaction)) ReactionFx.fire(quickReaction)
                                                 viewModel.sendMessage(
                                                     recipientUser = recipient,
                                                     text = quickReaction,
@@ -1361,6 +1358,7 @@ fun ChatScreen(
         }
         }
     }
+    ReactionFxOverlay()
     }
 
     if (showScheduleDialog) {
@@ -1793,7 +1791,8 @@ fun MessageBubbleItem(
                     } else if (message.text.isNotBlank()) {
                         val onlyEmoji = remember(message.text) { isEmojiOnlyMessage(message.text) }
                         if (onlyEmoji) {
-                            Text(message.text, fontSize = (34 * textScale).sp, lineHeight = (40 * textScale).sp)
+                            val freshEmoji = remember(message.messageId) { System.currentTimeMillis() - message.timestamp < 6_000L }
+                            Text(message.text, fontSize = (34 * textScale).sp, lineHeight = (40 * textScale).sp, modifier = Modifier.jumboEmojiEntrance(message.messageId, freshEmoji && appearance.animateReactions))
                         } else {
                             RichMessageText(
                                 text = message.text,
