@@ -129,7 +129,7 @@ fun AdminUserPowerActions(person: User, onDone: () -> Unit = {}) {
             Triple("Reset photo", Icons.Default.HideImage, Color(0xFF6D4C41) to { run("photo") { AdminPower.updateProfile(person.uid, mapOf("profileImageUrl" to "", "coverImageUrl" to "")); "Photo and cover reset" } }),
             Triple("Send push", Icons.Default.NotificationsActive, Color(0xFF7C4DFF) to { pushOpen = true }),
             Triple("Force logout", Icons.Default.Logout, Color(0xFFE65100) to {
-                confirm = "Sign ${person.name} out of every device?" to suspend { val (ok, m) = AdminPower.worker("/admin/user/revoke", JSONObject().put("uid", person.uid)); AdminAudit.log("user_force_logout", person.uid); if (ok) "All sessions revoked" else m }
+                confirm = "Sign ${person.name} out of every device?" to suspend { runCatching { AdminPower.updateProfile(person.uid, mapOf("forceLogoutAt" to System.currentTimeMillis())) }; val (ok, m) = AdminPower.worker("/admin/user/revoke", JSONObject().put("uid", person.uid)); AdminAudit.log("user_force_logout", person.uid); if (ok) "All sessions revoked" else m }
             }),
             Triple("Delete posts", Icons.Default.DeleteSweep, Color(0xFFD32F2F) to {
                 confirm = "Delete ALL posts and stories of ${person.name}? This cannot be undone." to suspend { "Deleted ${AdminPower.deleteAllPosts(person.uid)} items" }
