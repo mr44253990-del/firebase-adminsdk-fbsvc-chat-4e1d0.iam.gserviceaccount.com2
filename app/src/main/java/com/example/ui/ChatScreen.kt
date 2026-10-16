@@ -300,9 +300,9 @@ fun ChatScreen(
     // Initialize/start listening. Attach/detach is reference counted in the ViewModel so an old
     // chat screen that is disposed after a new one was composed can no longer kill the live
     // listener (the cause of "new messages sometimes don't appear while I'm in the chat").
-    val chatLifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+    val chatScreenLifecycle = androidx.compose.ui.platform.LocalLifecycleOwner.current
     var chatResumed by remember { mutableStateOf(true) }
-    DisposableEffect(recipient.uid, chatLifecycleOwner) {
+    DisposableEffect(recipient.uid, chatScreenLifecycle) {
         viewModel.attachChatScreen(recipient.uid)
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
             when (event) {
@@ -311,9 +311,9 @@ fun ChatScreen(
                 else -> Unit
             }
         }
-        chatLifecycleOwner.lifecycle.addObserver(observer)
+        chatScreenLifecycle.lifecycle.addObserver(observer)
         onDispose {
-            chatLifecycleOwner.lifecycle.removeObserver(observer)
+            chatScreenLifecycle.lifecycle.removeObserver(observer)
             viewModel.setTypingState(false)
             viewModel.setVoiceRecordingState(false)
             viewModel.detachChatScreen(recipient.uid)
