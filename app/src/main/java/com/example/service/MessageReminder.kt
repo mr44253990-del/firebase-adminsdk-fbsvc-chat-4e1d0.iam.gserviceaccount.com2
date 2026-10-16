@@ -150,7 +150,8 @@ object ConvoNotificationArt {
      */
     fun pushConversationShortcut(context: Context, peerUid: String, name: String, avatar: Bitmap?) {
         runCatching {
-            val icon = IconCompat.createWithAdaptiveBitmap(avatar ?: initialsAvatar(name, peerUid))
+            // Plain (non-adaptive) bitmap: adaptive icons are zoom-cropped and could hide the face.
+            val icon = IconCompat.createWithBitmap(avatar ?: initialsAvatar(name, peerUid))
             val person = Person.Builder().setName(name).setKey(peerUid).setIcon(icon).setImportant(true).build()
             val intent = Intent(context, MainActivity::class.java).apply {
                 action = Intent.ACTION_VIEW
@@ -171,9 +172,17 @@ object ConvoNotificationArt {
 
 /** "Mark as read" action on message notifications. */
 class NotificationActionReceiver : BroadcastReceiver() {
+    companion object { const val ACTION_MUTE_HOUR = "com.example.action.MUTE_CHAT_HOUR" }
+
     override fun onReceive(context: Context, intent: Intent) {
         val senderId = intent.getStringExtra("senderId").orEmpty()
         if (senderId.isBlank()) return
+        if (intent.action == ACTION_MUTE_HOUR) {
+            com.example.ui.ConversationPrefs.setMuted(context, senderId, System.currentTimeMillis() + 3_600_000L)
+            runCatching { (context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).cancel(("chat_" + senderId).hashCode()) }
+            android.widget.Toast.makeText(context, "Muted for 1 hour", android.widget.Toast.LENGTH_SHORT).show()
+            return
+        }
         runCatching { (context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).cancel(("chat_" + senderId).hashCode()) }
         MessageReminder.markChatOpened(context, senderId)
         com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid?.let { me ->

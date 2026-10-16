@@ -8,9 +8,9 @@ command -v supabase >/dev/null || { echo "Install the Supabase CLI first: https:
 
 supabase link --project-ref "$REF"
 # Read the Mistral key without echoing it or saving it in shell history.
-read -r -s -p "Mistral API key (input hidden): " MISTRAL_KEY; echo
-[ -n "$MISTRAL_KEY" ] || { echo "A Mistral API key is required"; exit 1; }
-supabase secrets set "MISTRAL_API_KEY=$MISTRAL_KEY"
+# Optional: the provider/model saved in the app (Admin -> AI providers & keys) is used first.
+read -r -s -p "Fallback Mistral API key (optional, Enter to skip): " MISTRAL_KEY; echo
+[ -n "$MISTRAL_KEY" ] && supabase secrets set "MISTRAL_API_KEY=$MISTRAL_KEY"
 supabase functions deploy auto-ai-post --no-verify-jwt
 
 echo

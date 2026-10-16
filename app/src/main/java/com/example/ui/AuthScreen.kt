@@ -592,13 +592,12 @@ fun AuthScreen(
                             modifier = Modifier.fillMaxWidth(),
                             contentAlignment = Alignment.CenterEnd
                         ) {
-                            TextButton(
+                            // Saved-password picker: icon only (no label); same Credential Manager flow.
+                            IconButton(
                                 onClick = { offerSavedPasswords(silentIfNone = false) },
-                                modifier = Modifier.align(Alignment.CenterStart)
+                                modifier = Modifier.align(Alignment.CenterStart).size(40.dp)
                             ) {
-                                Icon(Icons.Default.Key, null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)
-                                Spacer(Modifier.width(5.dp))
-                                Text("Saved passwords", style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold), color = MaterialTheme.colorScheme.primary)
+                                Icon(Icons.Default.Key, contentDescription = "Saved passwords", modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary.copy(alpha = .8f))
                             }
                             TextButton(
                                 onClick = { showForgotPasswordDialog = true },

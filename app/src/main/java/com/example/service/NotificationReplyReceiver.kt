@@ -34,7 +34,8 @@ class NotificationReplyReceiver : BroadcastReceiver() {
         val sentAt = System.currentTimeMillis()
         val immediateName = authUser.displayName ?: authUser.email?.substringBefore("@") ?: "User"
         val immediate = Message(messageId=messageId,senderId=authUser.uid,senderName=immediateName,text=reply,timestamp=sentAt)
-        NotificationManagerCompat.from(context).cancel(intent.getIntExtra("notificationId", 0))
+        val notificationId = intent.getIntExtra("notificationId", 0)
+        showReplyInNotification(context, notificationId, reply, sentAt)
         FirebaseDatabase.getInstance().getReference("chats").child(chatId).child("messages").child(messageId).setValue(immediate).addOnCompleteListener { saved ->
             if (!saved.isSuccessful) { pending.finish(); return@addOnCompleteListener }
             // Notification replies bypass ChatViewModel, so persist an equivalent local copy.
@@ -44,6 +45,13 @@ class NotificationReplyReceiver : BroadcastReceiver() {
                         .insertMessage(CachedMessage.fromMessage(immediate, chatId))
                 }
             }
+            // Replying means the conversation was read: clear my unread badge, mark their
+            // messages seen, and bump the peer's unread counter exactly like an in-app send.
+            FirebaseDatabase.getInstance().getReference("unread_counts").child(authUser.uid).child(recipientUid).setValue(0)
+            FirebaseDatabase.getInstance().getReference("unread_counts").child(recipientUid).child(authUser.uid)
+                .setValue(com.google.firebase.database.ServerValue.increment(1))
+            DeliveryAck.ackFrom(recipientUid, seen = true)
+            MessageReminder.markChatOpened(context, recipientUid)
             FirebaseDatabase.getInstance().getReference("notifications").child(recipientUid).setValue(mapOf("senderId" to authUser.uid,"senderName" to immediateName,"text" to reply,"timestamp" to sentAt))
             val firestore=FirebaseFirestore.getInstance()
             firestore.collection("users").document(authUser.uid).get().addOnCompleteListener { meTask ->
@@ -73,6 +81,25 @@ class NotificationReplyReceiver : BroadcastReceiver() {
                 override fun onResponse(call: Call, response: Response) { response.close(); done() }
             })
         }?.addOnFailureListener { done() } ?: done()
+    }
+
+    /** Keeps the conversation notification and appends "You: …" (like Messages/WhatsApp) instead of closing it. */
+    private fun showReplyInNotification(context: Context, notificationId: Int, reply: String, sentAt: Long) {
+        runCatching {
+            val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+            val active = manager.activeNotifications.firstOrNull { it.id == notificationId }?.notification
+            val style = active?.let { androidx.core.app.NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(it) }
+            if (active == null || style == null) { NotificationManagerCompat.from(context).cancel(notificationId); return }
+            style.addMessage(androidx.core.app.NotificationCompat.MessagingStyle.Message(reply, sentAt, null as androidx.core.app.Person?))
+            val rebuilt = androidx.core.app.NotificationCompat.Builder(context, active)
+                .setStyle(style)
+                .setOnlyAlertOnce(true)
+                .setSilent(true)
+                .setSubText("Sent ✓")
+                .setTimeoutAfter(8_000L)
+                .build()
+            manager.notify(notificationId, rebuilt)
+        }.onFailure { NotificationManagerCompat.from(context).cancel(notificationId) }
     }
 
     companion object { const val REPLY_KEY = "firechat_inline_reply" }

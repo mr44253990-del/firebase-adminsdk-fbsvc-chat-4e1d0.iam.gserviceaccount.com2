@@ -17,20 +17,134 @@
  * Secrets: FIREBASE_SERVICE_ACCOUNT, PRESENCE_CRON_SECRET, MISTRAL_API_KEY
  * Deploy:  supabase functions deploy auto-ai-post --no-verify-jwt
  */
-import {
-  clampInt,
-  corsHeaders,
-  firestoreGet,
-  firestorePatch,
-  getGoogleAccessToken,
-  jsonResponse,
-  readServiceAccount,
-  safeError,
-} from "../presence-monitor/presence.js";
+// ---------------------------------------------------------------------------------------
+// Self-contained helpers. This file has NO local imports, so it deploys the same way from
+// the Supabase Dashboard editor (single file) or the CLI. Earlier versions imported
+// ../presence-monitor/presence.js, which the Dashboard bundler cannot see
+// ("Module not found .../presence-monitor/presence.js").
+// ---------------------------------------------------------------------------------------
+// deno-lint-ignore no-explicit-any
+type Any = any;
+
+function corsHeaders(extra: Record<string, string> = {}): Record<string, string> {
+  return {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization, apikey, x-client-info, x-cron-secret",
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Cache-Control": "no-store",
+    ...extra,
+  };
+}
+
+function jsonResponse(value: unknown, status = 200): Response {
+  return new Response(JSON.stringify(value), { status, headers: corsHeaders({ "Content-Type": "application/json; charset=utf-8" }) });
+}
+
+function safeError(error: Any): string {
+  return String(error?.message || "Request failed").slice(0, 240);
+}
+
+function clampInt(value: unknown, minimum: number, maximum: number, fallback: number): number {
+  const number = Number.parseInt(String(value ?? ""), 10);
+  return Number.isFinite(number) ? Math.min(maximum, Math.max(minimum, number)) : fallback;
+}
+
+function readServiceAccount(source: { FIREBASE_SERVICE_ACCOUNT?: string }): Any {
+  try {
+    return JSON.parse(source.FIREBASE_SERVICE_ACCOUNT || "{}");
+  } catch (_) {
+    return null;
+  }
+}
+
+function base64UrlEncode(value: Any): string {
+  const bytes: Uint8Array = value instanceof Uint8Array ? value : new TextEncoder().encode(JSON.stringify(value));
+  let binary = "";
+  for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(offset, Math.min(offset + 0x8000, bytes.length)));
+  }
+  return btoa(binary).replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
+}
+
+async function signRs256(value: string, pem: string): Promise<string> {
+  const base64 = String(pem || "")
+    .replace(/-----BEGIN PRIVATE KEY-----/g, "")
+    .replace(/-----END PRIVATE KEY-----/g, "")
+    .replace(/\\n/g, "")
+    .replace(/\s+/g, "");
+  if (!base64) throw new Error("Firebase private key is missing");
+  const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+  const key = await crypto.subtle.importKey("pkcs8", bytes.buffer, { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, false, ["sign"]);
+  const signature = await crypto.subtle.sign("RSASSA-PKCS1-v1_5", key, new TextEncoder().encode(value));
+  return base64UrlEncode(new Uint8Array(signature));
+}
+
+let cachedToken = "";
+let cachedTokenUntil = 0;
+
+async function getGoogleAccessToken(account: Any, scope: string): Promise<string> {
+  if (cachedToken && Date.now() < cachedTokenUntil) return cachedToken;
+  const now = Math.floor(Date.now() / 1000);
+  const input = `${base64UrlEncode({ alg: "RS256", typ: "JWT" })}.${base64UrlEncode({
+    iss: account.client_email,
+    scope,
+    aud: "https://oauth2.googleapis.com/token",
+    iat: now,
+    exp: now + 3600,
+  })}`;
+  const assertion = `${input}.${await signRs256(input, account.private_key)}`;
+  const response = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer", assertion }),
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok || !result.access_token) throw new Error(`Could not obtain a Firebase service access token (${response.status})`);
+  cachedToken = result.access_token;
+  cachedTokenUntil = Date.now() + 50 * 60_000;
+  return cachedToken;
+}
+
+function fromFirestoreValue(value: Any): Any {
+  if (!value) return null;
+  if ("stringValue" in value) return value.stringValue;
+  if ("integerValue" in value) return Number(value.integerValue);
+  if ("doubleValue" in value) return value.doubleValue;
+  if ("booleanValue" in value) return value.booleanValue;
+  if ("timestampValue" in value) return Date.parse(value.timestampValue);
+  if ("nullValue" in value) return null;
+  if (value.arrayValue) return (value.arrayValue.values || []).map(fromFirestoreValue);
+  if (value.mapValue) return Object.fromEntries(Object.entries(value.mapValue.fields || {}).map(([k, v]) => [k, fromFirestoreValue(v)]));
+  return null;
+}
+
+async function firestoreGet(projectId: string, documentPath: string, token: string): Promise<Any> {
+  const response = await fetch(
+    `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(projectId)}/databases/(default)/documents/${documentPath}`,
+    { headers: { Authorization: `Bearer ${token}` } },
+  );
+  if (response.status === 404) return null;
+  if (!response.ok) throw new Error(`Firestore read failed (${response.status})`);
+  const document = await response.json();
+  return Object.fromEntries(Object.entries(document.fields || {}).map(([k, v]) => [k, fromFirestoreValue(v)]));
+}
+
+async function firestorePatch(projectId: string, documentPath: string, data: Any, token: string): Promise<Any> {
+  const fields = Object.fromEntries(Object.entries(data).map(([k, v]) => [k, toValue(v)]));
+  const url = new URL(`https://firestore.googleapis.com/v1/projects/${encodeURIComponent(projectId)}/databases/(default)/documents/${documentPath}`);
+  Object.keys(data).forEach((field) => url.searchParams.append("updateMask.fieldPaths", field));
+  const response = await fetch(url.toString(), {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ fields }),
+  });
+  if (!response.ok) throw new Error(`Firestore merge failed (${response.status})`);
+  return response.json().catch(() => ({}));
+}
 
 declare const EdgeRuntime: { waitUntil?: (promise: Promise<unknown>) => void } | undefined;
 
-const VERSION = "1.0.0";
+const VERSION = "1.1.0-standalone";
 const SCOPE = "https://www.googleapis.com/auth/datastore";
 const DAY_MS = 24 * 60 * 60 * 1000;
 const POST_TYPES = ["status", "tip", "quote", "question", "fun_fact", "motivation", "poll"] as const;

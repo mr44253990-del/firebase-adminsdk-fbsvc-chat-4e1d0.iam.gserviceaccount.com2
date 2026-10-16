@@ -1775,12 +1775,31 @@ fun MessageBubbleItem(
 
             if (isStickerOnly) {
                 ConvoStickerView(message.text, 92.dp, animate = appearance.animateReactions)
-                Text(
-                    timeString,
-                    fontSize = 9.sp,
-                    color = if (themeSpec?.isScene == true && !themeSpec.light) Color.White.copy(alpha = .75f) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = .75f),
-                    modifier = Modifier.padding(horizontal = 6.dp)
-                )
+                val stickerMeta = if (themeSpec?.isScene == true && !themeSpec.light) Color.White.copy(alpha = .75f) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = .75f)
+                // Stickers / quick likes show the same sent → delivered → seen ticks as text bubbles.
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 6.dp)) {
+                    Text(timeString, fontSize = 9.sp, color = stickerMeta)
+                    if (isSentByMe) {
+                        Spacer(Modifier.width(4.dp))
+                        val stickerState = if (message.deliveredToRecipient || message.seenByRecipient) "sent" else deliveryState
+                        when (stickerState) {
+                            "pending" -> CircularProgressIndicator(modifier = Modifier.size(12.dp), strokeWidth = 1.5.dp, color = stickerMeta)
+                            "failed" -> IconButton(onClick = onRetry, modifier = Modifier.size(22.dp)) {
+                                Icon(Icons.Default.ErrorOutline, contentDescription = "Retry sending", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(16.dp))
+                            }
+                            else -> MessageTicks(
+                                level = when {
+                                    message.seenByRecipient -> 2
+                                    message.deliveredToRecipient || deliveryState == "delivered" -> 1
+                                    else -> 0
+                                },
+                                tint = stickerMeta,
+                                seenTint = Color(0xFF1E9BE9),
+                                size = 14.dp
+                            )
+                        }
+                    }
+                }
             } else
             Box(
                 modifier = Modifier.chatBubble(bubbleStyle, shape, palette, appearance)

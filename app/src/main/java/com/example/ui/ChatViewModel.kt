@@ -1940,6 +1940,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         counts[senderId] = count
                     }
                     _unreadCountsState.value = counts
+                    // This device is online and just learned about unread messages: mark them
+                    // delivered (✓✓) for the senders even though the chats are not open yet.
+                    counts.filter { it.value > 0 }.keys.forEach { com.example.service.DeliveryAck.ackFrom(it) }
                 }
                 override fun onCancelled(error: DatabaseError) {}
             })

@@ -88,6 +88,9 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         val senderId = remoteMessage.data["senderId"] ?: ""
         // Presence probes are data-only and intentionally not user-visible. Both the
         // RTDB reachability lease and the Firestore dashboard acknowledgement update.
+        // Any wake-up (probe or push) proves this device is reachable: acknowledge delivery of
+        // messages that arrived while it was offline so senders see ✓✓ without opening the chat.
+        runCatching { DeliveryAck.ackAllPending() }
         if (notificationType == "presence_probe") return
         val sentAt = (remoteMessage.data["sentAt"]?.toLongOrNull() ?: remoteMessage.sentTime.takeIf { it > 0L } ?: System.currentTimeMillis())
             .coerceAtMost(System.currentTimeMillis())
@@ -394,7 +397,7 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         // One notification per conversation; new messages are appended to it.
         val notificationId = if (isMessage) ("chat_" + senderId).hashCode() else System.currentTimeMillis().toInt()
         val messageSound = Uri.parse("android.resource://$packageName/${R.raw.mixkit_confirmation_tone_2867}")
-        val avatar = loadBitmap(senderProfileUrl)
+        val avatar = if (senderId.isNotBlank() || senderProfileUrl.startsWith("http")) NotificationAvatarCache.load(this, senderId, senderProfileUrl) else null
         val accent = if (isMessage) ConvoNotificationArt.accentFor(senderId) else 0xFF7C5CFC.toInt()
         val avatarBitmap = avatar?.let { circleBitmap(it) } ?: if (isMessage) ConvoNotificationArt.initialsAvatar(senderName.ifBlank { title }, senderId) else null
 
@@ -426,7 +429,7 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
                     NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(it)
                 }
             } else null
-            val style = NotificationCompat.MessagingStyle(me)
+            val style = NotificationCompat.MessagingStyle(me).setGroupConversation(false)
             previous?.messages?.takeLast(6)?.forEach { style.addMessage(it) }
             style.addMessage(NotificationCompat.MessagingStyle.Message(messageBody, sentAt, sender))
             val count = style.messages.size
@@ -461,12 +464,25 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         } else notificationBuilder.setDefaults(NotificationCompat.DEFAULT_SOUND)
 
         if (isMessage) {
-            val replyInput = RemoteInput.Builder(NotificationReplyReceiver.REPLY_KEY).setLabel("Reply to $title").build()
+            // Inline reply with one-tap smart chips (Android shows them under the reply field).
+            val replyInput = RemoteInput.Builder(NotificationReplyReceiver.REPLY_KEY)
+                .setLabel("Reply to ${senderName.ifBlank { title }}")
+                .setChoices(SmartReplies.suggest(messageBody).toTypedArray())
+                .build()
             val replyIntent = Intent(this, NotificationReplyReceiver::class.java).apply {
                 putExtra("senderId", senderId); putExtra("notificationId", notificationId)
             }
             val replyPending = PendingIntent.getBroadcast(this, notificationId, replyIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE)
-            notificationBuilder.addAction(NotificationCompat.Action.Builder(android.R.drawable.ic_menu_send, "Reply", replyPending).addRemoteInput(replyInput).setAllowGeneratedReplies(true).setSemanticAction(NotificationCompat.Action.SEMANTIC_ACTION_REPLY).build())
+            notificationBuilder.addAction(NotificationCompat.Action.Builder(android.R.drawable.ic_menu_send, "Reply", replyPending).addRemoteInput(replyInput).setAllowGeneratedReplies(true).setSemanticAction(NotificationCompat.Action.SEMANTIC_ACTION_REPLY).setShowsUserInterface(false).build())
+            val mute = PendingIntent.getBroadcast(
+                this, ("mute_" + senderId).hashCode(),
+                Intent(this, NotificationActionReceiver::class.java).setAction(NotificationActionReceiver.ACTION_MUTE_HOUR).putExtra("senderId", senderId),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            notificationBuilder.addAction(
+                NotificationCompat.Action.Builder(android.R.drawable.ic_lock_silent_mode, "Mute 1h", mute)
+                    .setSemanticAction(NotificationCompat.Action.SEMANTIC_ACTION_MUTE).setShowsUserInterface(false).build()
+            )
         }
 
         avatarBitmap?.let { notificationBuilder.setLargeIcon(it) }
