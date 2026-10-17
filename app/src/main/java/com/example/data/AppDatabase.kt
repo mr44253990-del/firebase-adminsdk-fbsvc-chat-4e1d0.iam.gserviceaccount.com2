@@ -87,6 +87,9 @@ data class CachedUser(
     }
 }
 
+/** Receipt flags only ever move forward (sent → delivered → seen). */
+data class ReceiptRow(val messageId: String, val deliveredToRecipient: Boolean, val seenByRecipient: Boolean)
+
 @Entity(tableName = "cached_messages")
 data class CachedMessage(
     @PrimaryKey val messageId: String,
@@ -447,7 +450,8 @@ interface CacheDao {
     @Query("SELECT * FROM cached_messages WHERE chatId = :chatId ORDER BY timestamp ASC")
     fun getMessagesForChat(chatId: String): Flow<List<CachedMessage>>
 
-    @Query("SELECT DISTINCT chatId FROM cached_messages")
+    /** Conversation ids ordered by their most recent cached message (newest first). */
+    @Query("SELECT chatId FROM cached_messages GROUP BY chatId ORDER BY MAX(timestamp) DESC")
     fun getConversationChatIds(): Flow<List<String>>
 
     @Query("SELECT * FROM cached_messages ORDER BY timestamp ASC")
@@ -459,11 +463,14 @@ interface CacheDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertMessages(msgs: List<CachedMessage>)
 
+    @Query("SELECT messageId, deliveredToRecipient, seenByRecipient FROM cached_messages WHERE messageId IN (:ids) AND (deliveredToRecipient = 1 OR seenByRecipient = 1)")
+    suspend fun getReceiptRows(ids: List<String>): List<ReceiptRow>
+
     @Query("UPDATE cached_messages SET deliveredToRecipient = 1 WHERE messageId = :messageId")
-    suspend fun markMessageDelivered(messageId: String)
+    suspend fun markMessageDelivered(messageId: String): Int
 
     @Query("UPDATE cached_messages SET seenByRecipient = 1, deliveredToRecipient = 1 WHERE messageId = :messageId")
-    suspend fun markMessageSeen(messageId: String)
+    suspend fun markMessageSeen(messageId: String): Int
 
     @Query("UPDATE cached_messages SET remoteVoiceUrl = NULL WHERE messageId = :messageId")
     suspend fun clearRemoteVoiceUrl(messageId: String)

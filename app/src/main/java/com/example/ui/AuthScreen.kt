@@ -23,16 +23,24 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.credentials.Credential
 import androidx.credentials.CredentialManager
 import androidx.credentials.CustomCredential
 import androidx.credentials.GetCredentialRequest
+import androidx.credentials.CreatePasswordRequest
+import androidx.credentials.GetPasswordOption
+import androidx.credentials.PasswordCredential
+import androidx.compose.ui.autofill.ContentType
+import androidx.compose.ui.semantics.contentType
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
@@ -50,8 +58,6 @@ import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import com.google.firebase.auth.GoogleAuthProvider
 import kotlinx.coroutines.launch
-import java.io.InputStream
-import java.text.SimpleDateFormat
 import java.util.*
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -87,6 +93,20 @@ fun AuthScreen(
         ).build()
         return credentialManager.getCredential(context, hinted).credential
     }
+    // Google Password Manager: after a successful email/password login or sign-up, offer to
+    // save the credential; navigation waits for the system sheet so it is not cancelled.
+    fun savePasswordThen(savedEmail: String, savedPassword: String, then: () -> Unit) {
+        val activity = context.findActivityForCredentials()
+        if (activity == null || savedEmail.isBlank() || savedPassword.isBlank()) { then(); return }
+        scope.launch {
+            runCatching {
+                kotlinx.coroutines.withTimeoutOrNull(90_000L) {
+                    credentialManager.createCredential(activity, CreatePasswordRequest(id = savedEmail.trim(), password = savedPassword))
+                }
+            }.onFailure { android.util.Log.d("AUTH", "Password save skipped: ${it.javaClass.simpleName}") }
+            then()
+        }
+    }
     val authLoading by viewModel.authLoading.collectAsState()
     val authError by viewModel.authError.collectAsState()
     val isFirebaseConfigured by viewModel.isFirebaseConfigured.collectAsState()
@@ -95,16 +115,42 @@ fun AuthScreen(
     var isLoginMode by remember { mutableStateOf(true) }
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
+    var savedPasswordOffered by rememberSaveable { mutableStateOf(false) }
+    // Quick login: offer passwords already saved in Google Password Manager (no UI when none).
+    fun offerSavedPasswords(silentIfNone: Boolean) {
+        val activity = context.findActivityForCredentials() ?: return
+        scope.launch {
+            runCatching {
+                val request = GetCredentialRequest.Builder()
+                    .addCredentialOption(GetPasswordOption())
+                    .setPreferImmediatelyAvailableCredentials(silentIfNone)
+                    .build()
+                val credential = credentialManager.getCredential(activity, request).credential
+                if (credential is PasswordCredential) {
+                    email = credential.id
+                    password = credential.password
+                    viewModel.login(credential.id, credential.password, onAuthSuccess)
+                }
+            }.onFailure {
+                if (!silentIfNone) Toast.makeText(context, "No saved passwords for Convo Chat yet", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+    LaunchedEffect(Unit) {
+        if (!savedPasswordOffered) { savedPasswordOffered = true; offerSavedPasswords(silentIfNone = true) }
+    }
     var name by remember { mutableStateOf("") }
     var dob by remember { mutableStateOf("") }
     
     // Profile Picture fields for Sign Up
     var signupProfilePicUrl by remember { mutableStateOf("") }
+    var signupProfilePicBytes by remember { mutableStateOf<ByteArray?>(null) }
     var isUploadingPic by remember { mutableStateOf(false) }
 
     // Forgot Password states
     var showForgotPasswordDialog by remember { mutableStateOf(false) }
     var resetEmail by remember { mutableStateOf("") }
+    var showBackupRecovery by remember { mutableStateOf(false) }
     var resetLoading by remember { mutableStateOf(false) }
     var resetMessage by remember { mutableStateOf<String?>(null) }
     var resetError by remember { mutableStateOf<String?>(null) }
@@ -121,40 +167,26 @@ fun AuthScreen(
         calendar.get(Calendar.DAY_OF_MONTH)
     )
 
-    // Gallery Picker for Profile Pic
+    // Hold the optional signup photo locally until Firebase creates the account. The
+    // authenticated storage Worker must never accept an anonymous service-role upload.
     val galleryLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
         if (uri != null) {
             isUploadingPic = true
             try {
-                val inputStream: InputStream? = context.contentResolver.openInputStream(uri)
-                val bytes = inputStream?.readBytes()
+                val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
                 if (bytes != null) {
-                    val fileExtension = "jpg"
-                    val tempFileName = "signup_${UUID.randomUUID()}_${System.currentTimeMillis()}.$fileExtension"
-                    
-                    viewModel.uploadFileToSupabase(
-                        bucket = "avatars",
-                        fileName = tempFileName,
-                        fileBytes = bytes,
-                        contentType = "image/jpeg",
-                        onSuccess = { publicUrl ->
-                            isUploadingPic = false
-                            signupProfilePicUrl = publicUrl
-                            Toast.makeText(context, "Profile picture selected successfully!", Toast.LENGTH_SHORT).show()
-                        },
-                        onFailure = { errorMsg ->
-                            isUploadingPic = false
-                            Toast.makeText(context, "Upload failed: $errorMsg", Toast.LENGTH_LONG).show()
-                        }
-                    )
+                    signupProfilePicBytes = bytes
+                    signupProfilePicUrl = uri.toString()
+                    Toast.makeText(context, "Profile photo ready; it will upload securely after account creation.", Toast.LENGTH_SHORT).show()
                 } else {
-                    isUploadingPic = false
+                    Toast.makeText(context, "Could not read the selected image", Toast.LENGTH_SHORT).show()
                 }
             } catch (e: Exception) {
-                isUploadingPic = false
                 Toast.makeText(context, "Error reading image: ${e.message}", Toast.LENGTH_SHORT).show()
+            } finally {
+                isUploadingPic = false
             }
         }
     }
@@ -190,13 +222,21 @@ fun AuthScreen(
         label = "color3"
     )
 
-    val backgroundBrush = Brush.verticalGradient(
-        colors = listOf(
-            Color(0xFF050A1D),
-            Color(0xFF071A35),
-            Color(0xFF160B2C),
-            Color(0xFF050817)
-        )
+    val loginPrefs = remember { context.getSharedPreferences("convo_login", android.content.Context.MODE_PRIVATE) }
+    var milkLook by remember { mutableStateOf(loginPrefs.getBoolean("milk_look", false)) }
+    val lp = remember(milkLook) { loginPalette(milkLook) }
+    val authFieldColors = OutlinedTextFieldDefaults.colors(
+        focusedBorderColor = color1,
+        unfocusedBorderColor = lp.text.copy(alpha = .18f),
+        focusedLabelColor = color1,
+        unfocusedLabelColor = lp.textSoft,
+        cursorColor = color1,
+        focusedTextColor = lp.text,
+        unfocusedTextColor = lp.text,
+        focusedPlaceholderColor = lp.textSoft,
+        unfocusedPlaceholderColor = lp.textSoft,
+        focusedContainerColor = lp.text.copy(alpha = .035f),
+        unfocusedContainerColor = lp.text.copy(alpha = .025f)
     )
     val orbTransition = rememberInfiniteTransition(label = "auth_orbs")
     val orbDrift by orbTransition.animateFloat(
@@ -215,36 +255,10 @@ fun AuthScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(backgroundBrush)
             .windowInsetsPadding(WindowInsets.safeDrawing)
     ) {
-        // Lightweight ambient motion matching the supplied neon reference.
-        Box(
-            modifier = Modifier
-                .size(132.dp)
-                .offset(x = (-34).dp, y = (42 + orbDrift).dp)
-                .alpha(orbPulse)
-                .clip(CircleShape)
-                .background(Brush.radialGradient(listOf(Color(0xFF00C8FF), Color(0xFF193D9B), Color.Transparent)))
-        )
-        Box(
-            modifier = Modifier
-                .size(176.dp)
-                .align(Alignment.TopEnd)
-                .offset(x = 54.dp, y = (210 - orbDrift).dp)
-                .alpha(orbPulse * 0.72f)
-                .clip(CircleShape)
-                .background(Brush.radialGradient(listOf(Color(0xFFFF4CCB), Color(0xFF52208B), Color.Transparent)))
-        )
-        Box(
-            modifier = Modifier
-                .size(78.dp)
-                .align(Alignment.CenterEnd)
-                .offset(x = 26.dp, y = 110.dp)
-                .alpha(orbPulse)
-                .clip(CircleShape)
-                .background(Brush.radialGradient(listOf(Color(0xFFFF70E8), Color.Transparent)))
-        )
+        // Calm aurora light-field background (no tilt / 3D).
+        LoginAuroraBackground(lp.milk)
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -252,63 +266,41 @@ fun AuthScreen(
                 .padding(horizontal = 18.dp, vertical = 14.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Hero Illustration Container
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(142.dp)
-                    .clip(RoundedCornerShape(32.dp))
-                    .background(Brush.linearGradient(listOf(Color(0xFF12142A), Color(0xFF27164C), Color(0xFF071D2B))))
-                    .border(1.dp, MaterialTheme.colorScheme.primary.copy(.35f), RoundedCornerShape(32.dp))
-            ) {
-                Image(
-                    painter = painterResource(id = R.drawable.img_app_logo),
-                    contentDescription = "Convo Chat",
-                    contentScale = ContentScale.Fit,
-                    modifier = Modifier.fillMaxSize()
-                )
-                // Ambient gradient overlay over the hero
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(
-                            Brush.verticalGradient(
-                                colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.5f))
-                            )
-                        )
-                )
-                // Brand tag over image
-                Surface(
-                    color = MaterialTheme.colorScheme.primaryContainer,
-                    shape = RoundedCornerShape(18.dp),
-                    modifier = Modifier
-                        .align(Alignment.BottomStart)
-                        .padding(16.dp)
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    Modifier.clip(RoundedCornerShape(50)).background(lp.text.copy(alpha = .07f))
+                        .border(1.dp, lp.text.copy(alpha = .12f), RoundedCornerShape(50))
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = "🔒 Secure Chat",
-                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                        color = MaterialTheme.colorScheme.onPrimaryContainer,
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
-                    )
+                    Icon(Icons.Default.Lock, null, tint = ConvoBrand.Cyan, modifier = Modifier.size(13.dp))
+                    Spacer(Modifier.width(5.dp))
+                    Text(tr("Private & secure"), color = lp.text, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                 }
+                Spacer(Modifier.weight(1f))
+                LoginLookToggle(lp, onToggle = {
+                    milkLook = !milkLook
+                    loginPrefs.edit().putBoolean("milk_look", milkLook).apply()
+                })
             }
-
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(Modifier.height(6.dp))
+            // Code-drawn brand mark (vector-sharp, no bitmap) with a soft orbit glow.
+            LoginBrandHero(lp.text, lp.milk)
+            Spacer(modifier = Modifier.height(14.dp))
 
             Text(
-                text = if (isLoginMode) "Welcome back to Convo" else "Create your Convo account",
-                style = MaterialTheme.typography.headlineMedium.copy(
+                text = if (isLoginMode) "Welcome back" else "Create your account",
+                style = MaterialTheme.typography.headlineSmall.copy(
                     fontWeight = FontWeight.ExtraBold,
                     letterSpacing = (-0.5).sp
                 ),
-                color = Color.White
+                color = lp.text
             )
 
             Text(
                 text = if (isLoginMode) "Sign in to continue your secure conversations" else "Join us to start chatting with verified profiles securely",
                 style = MaterialTheme.typography.bodyMedium,
-                color = Color(0xFFD7D6E9),
+                color = lp.textSoft,
                 textAlign = TextAlign.Center,
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
             )
@@ -356,8 +348,8 @@ fun AuthScreen(
                     .fillMaxWidth()
                     .height(54.dp)
                     .clip(RoundedCornerShape(20.dp))
-                    .background(Color.White.copy(alpha = 0.07f))
-                    .border(1.dp, Color.White.copy(alpha = 0.14f), RoundedCornerShape(20.dp))
+                    .background(lp.text.copy(alpha = 0.07f))
+                    .border(1.dp, lp.text.copy(alpha = 0.14f), RoundedCornerShape(20.dp))
                     .padding(4.dp)
             ) {
                 val tabWidth = maxWidth / 2
@@ -383,7 +375,7 @@ fun AuthScreen(
                             .testTag("login_tab"),
                         contentAlignment = Alignment.Center
                     ) {
-                        Text("Log In", color = Color.White, fontWeight = if (isLoginMode) FontWeight.ExtraBold else FontWeight.Medium, fontSize = 15.sp)
+                        Text(tr("Log In"), color = lp.text, fontWeight = if (isLoginMode) FontWeight.ExtraBold else FontWeight.Medium, fontSize = 15.sp)
                     }
                     Box(
                         modifier = Modifier
@@ -393,7 +385,7 @@ fun AuthScreen(
                             .testTag("signup_tab"),
                         contentAlignment = Alignment.Center
                     ) {
-                        Text("Sign Up", color = Color.White.copy(alpha = if (isLoginMode) .64f else 1f), fontWeight = if (!isLoginMode) FontWeight.ExtraBold else FontWeight.Medium, fontSize = 15.sp)
+                        Text(tr("Sign Up"), color = lp.text.copy(alpha = if (isLoginMode) .64f else 1f), fontWeight = if (!isLoginMode) FontWeight.ExtraBold else FontWeight.Medium, fontSize = 15.sp)
                     }
                 }
             }
@@ -404,15 +396,15 @@ fun AuthScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .border(
-                        width = 2.dp,
+                        width = 1.2.dp,
                         brush = Brush.linearGradient(
-                            colors = listOf(color1, color2, color3)
+                            colors = if (lp.milk) lp.cardBorder else listOf(ConvoBrand.Cyan.copy(alpha = .7f), Color.White.copy(alpha = .12f), ConvoBrand.Pink.copy(alpha = .7f))
                         ),
                         shape = RoundedCornerShape(24.dp)
                     ),
                 shape = RoundedCornerShape(24.dp),
                 colors = CardDefaults.elevatedCardColors(
-                    containerColor = Color(0xFF11162E).copy(alpha = 0.92f)
+                    containerColor = lp.card
                 ),
                 elevation = CardDefaults.elevatedCardElevation(defaultElevation = 8.dp)
             ) {
@@ -507,7 +499,8 @@ fun AuthScreen(
                                 shape = RoundedCornerShape(22.dp),
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .testTag("signup_name_input")
+                                    .testTag("signup_name_input"),
+                                colors = authFieldColors
                             )
 
                             // Birth date button picker
@@ -516,7 +509,7 @@ fun AuthScreen(
                                 onValueChange = {},
                                 readOnly = true,
                                 label = { Text("Date of Birth (YYYY-MM-DD)") },
-                                placeholder = { Text("Select Date") },
+                                placeholder = { Text(tr("Select Date")) },
                                 leadingIcon = { Icon(Icons.Default.DateRange, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
                                 trailingIcon = {
                                     IconButton(onClick = { datePickerDialog.show() }) {
@@ -527,7 +520,8 @@ fun AuthScreen(
                                 shape = RoundedCornerShape(22.dp),
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .testTag("signup_dob_input")
+                                    .testTag("signup_dob_input"),
+                                colors = authFieldColors
                             )
                         }
                     }
@@ -536,24 +530,25 @@ fun AuthScreen(
                     OutlinedTextField(
                         value = email,
                         onValueChange = { email = it },
-                        label = { Text("Email Address") },
+                        label = { Text(tr("Email Address")) },
                         placeholder = { Text("example@domain.com") },
                         leadingIcon = { Icon(Icons.Default.Email, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
                         singleLine = true,
                         shape = RoundedCornerShape(22.dp),
                         modifier = Modifier
                             .fillMaxWidth()
+                            .semantics { contentType = ContentType.EmailAddress + ContentType.Username }
                             .testTag("email_input"),
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedBorderColor = color1,
-                            unfocusedBorderColor = Color.White.copy(alpha = .18f),
+                            unfocusedBorderColor = lp.text.copy(alpha = .18f),
                             focusedLabelColor = color1,
-                            unfocusedLabelColor = Color(0xFFB9BAD0),
+                            unfocusedLabelColor = lp.textSoft,
                             cursorColor = color1,
-                            focusedTextColor = Color.White,
-                            unfocusedTextColor = Color.White,
-                            focusedContainerColor = Color.White.copy(alpha = .035f),
-                            unfocusedContainerColor = Color.White.copy(alpha = .025f)
+                            focusedTextColor = lp.text,
+                            unfocusedTextColor = lp.text,
+                            focusedContainerColor = lp.text.copy(alpha = .035f),
+                            unfocusedContainerColor = lp.text.copy(alpha = .025f)
                         )
                     )
 
@@ -563,7 +558,7 @@ fun AuthScreen(
                         value = password,
                         onValueChange = { password = it },
                         label = { Text(if (isLoginMode) "Password" else "Choose Password") },
-                        placeholder = { Text("At least 6 characters") },
+                        placeholder = { Text(tr("At least 6 characters")) },
                         leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
                         trailingIcon = {
                             val image = if (passwordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff
@@ -577,17 +572,18 @@ fun AuthScreen(
                         shape = RoundedCornerShape(22.dp),
                         modifier = Modifier
                             .fillMaxWidth()
+                            .semantics { contentType = if (isLoginMode) ContentType.Password else ContentType.NewPassword }
                             .testTag("password_input"),
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedBorderColor = color2,
-                            unfocusedBorderColor = Color.White.copy(alpha = .18f),
+                            unfocusedBorderColor = lp.text.copy(alpha = .18f),
                             focusedLabelColor = color2,
-                            unfocusedLabelColor = Color(0xFFB9BAD0),
+                            unfocusedLabelColor = lp.textSoft,
                             cursorColor = color2,
-                            focusedTextColor = Color.White,
-                            unfocusedTextColor = Color.White,
-                            focusedContainerColor = Color.White.copy(alpha = .035f),
-                            unfocusedContainerColor = Color.White.copy(alpha = .025f)
+                            focusedTextColor = lp.text,
+                            unfocusedTextColor = lp.text,
+                            focusedContainerColor = lp.text.copy(alpha = .035f),
+                            unfocusedContainerColor = lp.text.copy(alpha = .025f)
                         )
                     )
 
@@ -597,6 +593,13 @@ fun AuthScreen(
                             modifier = Modifier.fillMaxWidth(),
                             contentAlignment = Alignment.CenterEnd
                         ) {
+                            // Saved-password picker: icon only (no label); same Credential Manager flow.
+                            IconButton(
+                                onClick = { offerSavedPasswords(silentIfNone = false) },
+                                modifier = Modifier.align(Alignment.CenterStart).size(40.dp)
+                            ) {
+                                Icon(Icons.Default.Key, contentDescription = "Saved passwords", modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary.copy(alpha = .8f))
+                            }
                             TextButton(
                                 onClick = { showForgotPasswordDialog = true },
                                 modifier = Modifier.testTag("forgot_password_button")
@@ -653,9 +656,16 @@ fun AuthScreen(
                             .border(1.dp, Color.White.copy(alpha = ctaGlow), RoundedCornerShape(22.dp))
                             .clickable(enabled = !authLoading && !isUploadingPic) {
                                 if (isLoginMode) {
-                                    viewModel.login(email, password, onAuthSuccess)
+                                    val e = email; val pw = password
+                                    viewModel.login(e, pw) { savePasswordThen(e, pw, onAuthSuccess) }
                                 } else {
-                                    viewModel.signup(email, name, dob, password, signupProfilePicUrl, onAuthSuccess)
+                                    val e = email; val pw = password
+                                    viewModel.signup(
+                                        email, name, dob, password,
+                                        if (signupProfilePicBytes == null) signupProfilePicUrl else "",
+                                        { savePasswordThen(e, pw, onAuthSuccess) },
+                                        profileImageBytes = signupProfilePicBytes
+                                    )
                                 }
                             }
                             .testTag("submit_button"),
@@ -727,11 +737,11 @@ fun AuthScreen(
                 onClick = { isLoginMode = !isLoginMode },
                 modifier = Modifier.testTag("switch_mode_button")
             ) {
-                Text(text = if (isLoginMode) "Don't have an account? Sign Up" else "Already have an account? Log In", color = Color(0xFF9D8CFF), fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                Text(text = if (isLoginMode) "Don't have an account? Sign Up" else "Already have an account? Log In", color = lp.link, fontWeight = FontWeight.Bold, fontSize = 15.sp)
             }
 
             Surface(
-                color = Color.White.copy(alpha = .065f),
+                color = lp.text.copy(alpha = .065f),
                 shape = RoundedCornerShape(18.dp),
                 modifier = Modifier.padding(top = 2.dp, bottom = 4.dp)
             ) {
@@ -742,21 +752,21 @@ fun AuthScreen(
                     Icon(
                         imageVector = Icons.Default.Shield,
                         contentDescription = "Encrypted",
-                        tint = Color(0xFF63E6FF).copy(alpha = orbPulse),
+                        tint = lp.highlight.copy(alpha = orbPulse),
                         modifier = Modifier.size(17.dp)
                     )
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("End-to-end encrypted", color = Color(0xFFD7D6E9), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    Text(tr("End-to-end encrypted"), color = lp.textSoft, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                 }
             }
 
             if (rememberedAccounts.isNotEmpty()) {
                 Spacer(Modifier.height(8.dp))
-                Text("Previous accounts", fontWeight = FontWeight.ExtraBold, modifier = Modifier.fillMaxWidth())
+                Text(tr("Previous accounts"), color = lp.text, fontWeight = FontWeight.ExtraBold, modifier = Modifier.fillMaxWidth())
                 Text(
                     "Tap a saved account to continue. Secure credentials stay with Android and are never written to app files.",
                     fontSize = 10.sp,
-                    color = Color(0xFFB8B7CB),
+                    color = lp.textSoft,
                     modifier = Modifier.fillMaxWidth()
                 )
                 Column(
@@ -793,7 +803,7 @@ fun AuthScreen(
                                 }
                             },
                             shape = RoundedCornerShape(18.dp),
-                            color = Color.White.copy(alpha = 0.065f)
+                            color = lp.text.copy(alpha = 0.065f)
                         ) {
                             Row(
                                 modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 9.dp),
@@ -809,11 +819,11 @@ fun AuthScreen(
                                 Spacer(Modifier.width(10.dp))
                                 Column(Modifier.weight(1f)) {
                                     Text(account.name.ifBlank { account.email }, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                    Text(account.email, fontSize = 11.sp, color = Color(0xFFB8B7CB), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text(account.email, fontSize = 11.sp, color = lp.textSoft, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 }
-                                Text(account.provider.replaceFirstChar { it.uppercase() }, fontSize = 10.sp, color = Color(0xFF63E6FF))
+                                Text(account.provider.replaceFirstChar { it.uppercase() }, fontSize = 10.sp, color = lp.highlight)
                                 IconButton(onClick = { viewModel.forgetRememberedAccount(account.uid) }) {
-                                    Icon(Icons.Default.Close, contentDescription = "Remove account", tint = Color(0xFFB8B7CB), modifier = Modifier.size(18.dp))
+                                    Icon(Icons.Default.Close, contentDescription = "Remove account", tint = lp.textSoft, modifier = Modifier.size(18.dp))
                                 }
                             }
                         }
@@ -823,6 +833,9 @@ fun AuthScreen(
         }
     }
 
+    if (showBackupRecovery) {
+        BackupCodeRecoveryDialog(initialEmail = resetEmail.ifBlank { email }, onDismiss = { showBackupRecovery = false })
+    }
     // Forgot Password Dialog
     if (showForgotPasswordDialog) {
         AlertDialog(
@@ -849,7 +862,7 @@ fun AuthScreen(
                     OutlinedTextField(
                         value = resetEmail,
                         onValueChange = { resetEmail = it },
-                        label = { Text("Email Address") },
+                        label = { Text(tr("Email Address")) },
                         leadingIcon = { Icon(Icons.Default.Email, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
                         singleLine = true,
                         shape = RoundedCornerShape(18.dp),
@@ -886,6 +899,11 @@ fun AuthScreen(
                             )
                         }
                     }
+                    TextButton(onClick = { showBackupRecovery = true; showForgotPasswordDialog = false }, modifier = Modifier.fillMaxWidth()) {
+                        Icon(Icons.Default.Key, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("No e-mail access? Use a backup code")
+                    }
                 }
             },
             confirmButton = {
@@ -915,7 +933,7 @@ fun AuthScreen(
                             modifier = Modifier.size(18.dp)
                         )
                     } else {
-                        Text("Send Reset Link")
+                        Text(tr("Send Reset Link"))
                     }
                 }
             },
@@ -928,11 +946,21 @@ fun AuthScreen(
                         resetError = null
                     }
                 ) {
-                    Text("Cancel")
+                    Text(tr("Cancel"))
                 }
             },
             shape = RoundedCornerShape(24.dp),
             containerColor = MaterialTheme.colorScheme.surfaceColorAtElevation(6.dp)
         )
     }
+}
+
+
+private fun android.content.Context.findActivityForCredentials(): android.app.Activity? {
+    var current: android.content.Context? = this
+    while (current is android.content.ContextWrapper) {
+        if (current is android.app.Activity) return current
+        current = current.baseContext
+    }
+    return null
 }

@@ -1,5 +1,6 @@
 package com.example.call
 
+import com.example.ui.ThemeTextureLayer
 import android.Manifest
 import android.app.Activity
 import android.content.Context
@@ -30,6 +31,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
@@ -48,8 +54,16 @@ import com.example.service.CallRingtoneController
 import org.webrtc.SurfaceViewRenderer
 
 class IncomingCallActivity : ComponentActivity() {
+    companion object { @Volatile var alive: Boolean = false }
+
+    override fun onDestroy() {
+        alive = false
+        super.onDestroy()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        alive = true
         window.addFlags(WindowManager.LayoutParams.FLAG_SECURE or WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
             setShowWhenLocked(true)
@@ -84,11 +98,34 @@ class IncomingCallActivity : ComponentActivity() {
                     callId = callId, remoteUid = callerId, remoteName = callerName,
                     remoteImage = callerImage, incoming = true, video = videoCall,
                     initiallyAccepted = intent.action == "com.ebchat.ACCEPT_CALL" && canUseMedia,
-                    onMinimize = { minimizeCallToPip() },
+                    // Back = stay inside Convo Chat with the floating call bubble.
+                    onMinimize = { returnToAppWithCallBubble() },
                     onClose = { finish() }
                 )
             }
         }
+    }
+
+    private fun returnToAppWithCallBubble() {
+        val active = CallEngine.state.value.status !in listOf("idle", "ended", "declined", "missed", "failed")
+        if (!active) { finish(); return }
+        val keyguard = getSystemService(KEYGUARD_SERVICE) as? android.app.KeyguardManager
+        if (keyguard?.isKeyguardLocked == true && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            keyguard.requestDismissKeyguard(this, object : android.app.KeyguardManager.KeyguardDismissCallback() {
+                override fun onDismissSucceeded() { openMainAndFinish() }
+            })
+            return
+        }
+        openMainAndFinish()
+    }
+
+    private fun openMainAndFinish() {
+        runCatching {
+            startActivity(Intent(this, com.example.MainActivity::class.java).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+            })
+        }
+        finish()
     }
 
     private fun minimizeCallToPip() {
@@ -101,6 +138,11 @@ class IncomingCallActivity : ComponentActivity() {
                 )
             }.onFailure { finish() }
         } else finish()
+    }
+
+    override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: android.content.res.Configuration) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        CallPipState.set(isInPictureInPictureMode)
     }
 
     override fun onUserLeaveHint() {
@@ -132,7 +174,10 @@ fun CallScreen(
 ) {
     val context = LocalContext.current
     val view = LocalView.current
+    val callSkinId by CallSkinPreferences.selectedId.collectAsState()
     val state by CallEngine.state.collectAsState()
+    LaunchedEffect(context.applicationContext) { CallSkinPreferences.load(context) }
+    val callPalette = CallSkinPreferences.palette(callSkinId)
     val effectiveVideo = video || state.video
     var elapsedSeconds by remember { mutableLongStateOf(0L) }
     val callMotion = rememberInfiniteTransition(label = "call_liquid_motion")
@@ -143,6 +188,19 @@ fun CallScreen(
         else window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         if (effectiveVideo) window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         else window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+    }
+    val activeForLock = state.status !in listOf("idle", "ended", "declined", "missed", "failed")
+    DisposableEffect(activeForLock) {
+        val activity = view.context as? Activity
+        // Locking the phone during a call keeps the full call screen on top of the lock screen.
+        if (activeForLock && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+            activity?.setShowWhenLocked(true); activity?.setTurnScreenOn(true)
+        }
+        onDispose {
+            if (activity != null && activity !is IncomingCallActivity && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+                activity.setShowWhenLocked(false); activity.setTurnScreenOn(false)
+            }
+        }
     }
     DisposableEffect(Unit) {
         val window = (view.context as? Activity)?.window
@@ -161,9 +219,19 @@ fun CallScreen(
     BackHandler(enabled = true) { if (accepted) onMinimize() }
     var pendingAccept by remember { mutableStateOf(false) }
     var showMoreControls by remember { mutableStateOf(false) }
+    var showReactions by remember { mutableStateOf(false) }
+    // Video calls: one tap hides/shows every control, double tap flips the camera.
+    var controlsVisible by remember { mutableStateOf(true) }
+    var showFilters by remember { mutableStateOf(false) }
+    val inPip by CallPipState.inPip.collectAsState()
     val screenShareLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode == Activity.RESULT_OK && result.data != null) {
             if (!CallEngine.startScreenShare(result.data!!)) android.widget.Toast.makeText(context, "Could not start screen sharing", android.widget.Toast.LENGTH_LONG).show()
+            else {
+                android.widget.Toast.makeText(context, "Screen sharing is on — Convo moved to the background", android.widget.Toast.LENGTH_SHORT).show()
+                // Leave the app so the other person sees your home screen / other apps right away.
+                view.postDelayed({ (view.context as? Activity)?.moveTaskToBack(true) }, 700)
+            }
         }
     }
     val callPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { results ->
@@ -175,16 +243,27 @@ fun CallScreen(
         } else pendingAccept = false
     }
     LaunchedEffect(state.status) { if (state.status in listOf("ended", "declined", "missed", "failed")) kotlinx.coroutines.delay(900).also { onClose() } }
+    if (inPip && accepted) {
+        // Picture-in-Picture: only the call — never a shrunken copy of the whole screen.
+        PrivateCallPipContent(state, callPalette.accent)
+        return
+    }
     Box(
-        Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF080A12), Color(0xFF28204B), Color(0xFF071B26)))),
+        Modifier.fillMaxSize().background(Brush.verticalGradient(callPalette.background)),
         contentAlignment = Alignment.Center
     ) {
-        if (remoteImage.isNotBlank() && !effectiveVideo) AsyncImage(remoteImage, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize().blur(70.dp))
+        ThemeTextureLayer(callPalette.texture, callPalette.accent, 1.3f)
+        if (remoteImage.isNotBlank() && !effectiveVideo) {
+            AsyncImage(remoteImage, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize().blur(70.dp))
+            Box(Modifier.fillMaxSize().background(Brush.verticalGradient(callPalette.background.map { it.copy(alpha = .72f) })))
+        }
+        if (!accepted && incoming) IncomingCallBackdrop(callPalette.accent)
+        else if (!effectiveVideo) CallAuroraBackground(callPalette.accent)
         if (effectiveVideo && accepted) {
             if (state.remoteCameraOff) {
-                Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF090A13), Color(0xFF26213F)))), contentAlignment = Alignment.Center) {
+                Box(Modifier.fillMaxSize().background(Brush.verticalGradient(callPalette.background)), contentAlignment = Alignment.Center) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        AsyncImage(remoteImage.ifBlank { null }, remoteName, error = painterResource(R.drawable.img_app_logo), contentScale = ContentScale.Crop, modifier = Modifier.size(150.dp).clip(CircleShape).border(3.dp, Color.White.copy(.75f), CircleShape))
+                        AsyncImage(remoteImage.ifBlank { null }, remoteName, error = painterResource(R.drawable.img_app_logo), contentScale = ContentScale.Crop, modifier = Modifier.size(150.dp).clip(CircleShape).border(3.dp, callPalette.accent.copy(.82f), CircleShape))
                         Spacer(Modifier.height(14.dp)); Text("$remoteName turned off the camera", color = Color.White, fontWeight = FontWeight.Bold)
                     }
                 }
@@ -206,21 +285,54 @@ fun CallScreen(
                 modifier = Modifier.align(Alignment.TopEnd).windowInsetsPadding(WindowInsets.statusBars).padding(14.dp).size(width = 104.dp, height = 148.dp).clip(RoundedCornerShape(26.dp)).border(1.dp, Color.White.copy(.6f), RoundedCornerShape(26.dp)),
                 onRelease = CallEngine::detachRenderer
             )
+            Box(
+                Modifier.fillMaxSize().pointerInput(Unit) {
+                    detectTapGestures(
+                        onTap = { controlsVisible = !controlsVisible; if (!controlsVisible) showFilters = false },
+                        onDoubleTap = {
+                            if (!CallEngine.state.value.screenSharing && !CallEngine.state.value.cameraOff) {
+                                CallEngine.switchCamera()
+                                view.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY)
+                            }
+                        }
+                    )
+                }
+            )
+            if (controlsVisible && !state.screenSharing && !state.cameraOff) {
+                Column(
+                    Modifier.align(Alignment.CenterEnd).padding(end = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    GlassCallButton(Icons.Default.Cameraswitch, if (state.frontCamera) "Back cam" else "Selfie", accent = callPalette.accent, size = 52) {
+                        CallEngine.switchCamera(); view.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY)
+                    }
+                    if (!state.frontCamera) GlassCallButton(if (state.torchOn) Icons.Default.FlashlightOn else Icons.Default.FlashlightOff, "Light", active = state.torchOn, accent = callPalette.accent, size = 46) { CallEngine.toggleTorch() }
+                    GlassCallButton(Icons.Default.AutoFixHigh, "Filters", active = showFilters || state.filter != CallFilter.NONE, accent = callPalette.accent, size = 46) { showFilters = !showFilters }
+                }
+            }
         }
-        if (accepted) IconButton(
+        if (accepted && (controlsVisible || !effectiveVideo)) IconButton(
             onClick = onMinimize,
             modifier = Modifier.align(Alignment.TopStart).windowInsetsPadding(WindowInsets.statusBars).padding(12.dp).background(Color.Black.copy(.42f), CircleShape)
         ) { Icon(Icons.Default.KeyboardArrowDown, "Minimize call", tint = Color.White, modifier = Modifier.size(30.dp)) }
-        Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).padding(28.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        if (accepted) CallReactionsLayer(active = state.status == "connected" || state.status == "reconnecting")
+        if (accepted && (controlsVisible || !effectiveVideo)) CallQualityPill(
+            connected = state.status == "connected",
+            accent = callPalette.accent,
+            modifier = Modifier.align(Alignment.TopCenter).windowInsetsPadding(WindowInsets.statusBars).padding(top = 18.dp)
+        )
+        Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).padding(horizontal = 16.dp, vertical = 28.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             Spacer(Modifier.weight(if (effectiveVideo && accepted) .06f else .18f))
             AnimatedVisibility(visible = !effectiveVideo || !accepted) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    AsyncImage(
+                    if (!accepted && incoming) IncomingCallerAvatar(remoteImage, remoteName, callPalette.accent)
+                    else AsyncImage(
                         model = remoteImage.ifBlank { null }, contentDescription = remoteName,
                         error = painterResource(R.drawable.img_app_logo), contentScale = ContentScale.Crop,
-                        modifier = Modifier.size(138.dp).scale(if (!accepted && incoming) callPulse else 1f).clip(CircleShape).border(4.dp, Brush.sweepGradient(listOf(Color(0xFF66E5FF),Color(0xFF9A6CFF),Color(0xFFFF5BAD),Color(0xFF66E5FF))), CircleShape)
+                        modifier = Modifier.size(138.dp).scale(if (state.status == "calling" || state.status == "ringing") callPulse else 1f).clip(CircleShape).border(4.dp, Brush.sweepGradient(listOf(callPalette.accent, Color.White.copy(alpha = .88f), callPalette.accent)), CircleShape)
                     )
-                    Spacer(Modifier.height(26.dp))
+                    Spacer(Modifier.height(if (!accepted && incoming) 6.dp else 26.dp))
                     Text(remoteName, color = Color.White, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.ExtraBold, textAlign = TextAlign.Center)
                 }
             }
@@ -240,9 +352,10 @@ fun CallScreen(
             }
             Spacer(Modifier.weight(1f))
             if (!accepted && incoming) {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-                    CallCircleButton(Color(0xFFE53935), Icons.Default.CallEnd, "Decline") { CallRingtoneController.stop(context, callId); CallEngine.decline(callId); onClose() }
-                    CallCircleButton(Color(0xFF36C76C), Icons.Default.Call, "Accept") {
+                IncomingAnswerControls(
+                    video = effectiveVideo,
+                    onDecline = { CallRingtoneController.stop(context, callId); CallEngine.decline(callId); onClose() },
+                    onAccept = {
                         val micGranted = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
                         val cameraGranted = !effectiveVideo || ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
                         if (micGranted && cameraGranted) {
@@ -253,14 +366,51 @@ fun CallScreen(
                             callPermissionLauncher.launch(if (effectiveVideo) arrayOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.CAMERA) else arrayOf(Manifest.permission.RECORD_AUDIO))
                         }
                     }
-                }
-            } else {
-                Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
-                        CallCircleButton(Color.White.copy(.15f), if (state.muted) Icons.Default.MicOff else Icons.Default.Mic, if (state.muted) "Unmute" else "Mute") { CallEngine.toggleMute() }
-                        CallCircleButton(Color(0xFFE53935), Icons.Default.CallEnd, "End") { onEndCall(); onClose() }
+                )
+            } else if (controlsVisible || !effectiveVideo) {
+                Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    AnimatedVisibility(visible = showFilters && effectiveVideo && !state.screenSharing) {
+                        Row(
+                            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            CallFilter.entries.forEach { f ->
+                                val selected = state.filter == f
+                                Column(
+                                    Modifier.clip(RoundedCornerShape(18.dp))
+                                        .background(if (selected) Color.White else Color.Black.copy(alpha = .38f))
+                                        .border(1.dp, if (selected) callPalette.accent else Color.White.copy(alpha = .25f), RoundedCornerShape(18.dp))
+                                        .clickable { CallEngine.setFilter(f) }
+                                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally
+                                ) {
+                                    Text(f.emoji, style = MaterialTheme.typography.titleMedium)
+                                    Text(f.label, color = if (selected) Color.Black else Color.White, style = MaterialTheme.typography.labelSmall)
+                                }
+                            }
+                        }
+                    }
+                    AnimatedVisibility(visible = showReactions && state.status == "connected") {
+                        CallReactionBar(callPalette.accent, onPick = { token ->
+                            if (!CallEngine.sendReaction(token)) view.performHapticFeedback(android.view.HapticFeedbackConstants.REJECT)
+                        })
+                    }
+                    Row(
+                        Modifier.fillMaxWidth()
+                            .clip(RoundedCornerShape(36.dp))
+                            .background(Brush.verticalGradient(listOf(Color.White.copy(.16f), Color.Black.copy(.28f))))
+                            .border(1.dp, Brush.verticalGradient(listOf(Color.White.copy(.45f), callPalette.accent.copy(.25f))), RoundedCornerShape(36.dp))
+                            .padding(horizontal = 4.dp, vertical = 12.dp),
+                        horizontalArrangement = Arrangement.SpaceEvenly,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        GlassCallButton(if (state.muted) Icons.Default.MicOff else Icons.Default.Mic, if (state.muted) "Unmute" else "Mute", active = state.muted, accent = callPalette.accent) { CallEngine.toggleMute() }
+                        GlassCallButton(if (state.speaker) Icons.Default.VolumeUp else Icons.Default.Hearing, if (state.speaker) "Speaker" else "Earpiece", active = state.speaker, accent = callPalette.accent) { CallEngine.toggleSpeaker() }
+                        if (effectiveVideo) GlassCallButton(if (state.cameraOff) Icons.Default.VideocamOff else Icons.Default.Videocam, "Camera", active = state.cameraOff, accent = callPalette.accent) { CallEngine.toggleCamera() }
+                        GlassCallButton(Icons.Default.EmojiEmotions, "React", active = showReactions, accent = callPalette.accent) { showReactions = !showReactions }
+                        GlassCallButton(Icons.Default.CallEnd, "End", danger = true, size = 56) { onEndCall(); onClose() }
                         Box {
-                            CallCircleButton(Color.White.copy(.15f), Icons.Default.MoreVert, "More") { showMoreControls = true }
+                            GlassCallButton(Icons.Default.MoreVert, "More", accent = callPalette.accent) { showMoreControls = true }
                             DropdownMenu(
                                 expanded = showMoreControls,
                                 onDismissRequest = { showMoreControls = false }
@@ -305,8 +455,12 @@ fun CallScreen(
                     }
                 }
             }
-            Spacer(Modifier.height(30.dp))
-            Text("Secured with WebRTC • Cloudflare TURN", color = Color.White.copy(.4f), style = MaterialTheme.typography.labelSmall)
+            Spacer(Modifier.height(18.dp))
+            if (controlsVisible || !effectiveVideo) Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.Lock, null, tint = callPalette.accent.copy(.7f), modifier = Modifier.size(12.dp))
+                Spacer(Modifier.width(5.dp))
+                Text("Encrypted media (WebRTC DTLS-SRTP) • Cloudflare TURN", color = callPalette.accent.copy(.6f), style = MaterialTheme.typography.labelSmall)
+            }
         }
     }
 }

@@ -41,12 +41,17 @@ data class CallState(
     val screenSharing: Boolean = false,
     val remoteScreenSharing: Boolean = false,
     val connectedAt: Long = 0L,
-    val error: String? = null
+    val error: String? = null,
+    val frontCamera: Boolean = true,
+    val torchOn: Boolean = false,
+    val filter: CallFilter = CallFilter.NONE
 )
 
 /** 1:1 audio engine. RTDB transports signaling only; Cloudflare TURN transports media when P2P fails. */
 object CallEngine {
-    private const val GATEWAY = "https://solitary-hill-dcdc.mr44253990.workers.dev/turn-credentials"
+    private const val DEFAULT_WORKER = "https://solitary-hill-dcdc.mr44253990.workers.dev"
+    /** TURN credentials follow the admin's "calls" worker routing; primary/default otherwise. */
+    private val GATEWAY: String get() = com.example.data.WorkerRouter.resolve("calls", com.example.data.WorkerRouter.primary.value.ifBlank { DEFAULT_WORKER }) + "/turn-credentials"
     private val _state = MutableStateFlow(CallState())
     val state: StateFlow<CallState> = _state
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -191,9 +196,38 @@ object CallEngine {
         _state.value = _state.value.copy(muted = muted)
     }
 
+    private val filterProcessor = CallFilterProcessor()
+
     fun switchCamera() {
-        runCatching { (videoCapturer as? CameraVideoCapturer)?.switchCamera(null) }
-            .onFailure { Log.w("CALL_ENGINE", "Camera switch failed", it) }
+        if (_state.value.screenSharing) return
+        runCatching {
+            (videoCapturer as? CameraVideoCapturer)?.switchCamera(object : CameraVideoCapturer.CameraSwitchHandler {
+                override fun onCameraSwitchDone(isFrontCamera: Boolean) {
+                    mainHandler.post {
+                        // Only the selfie camera is mirrored; the back camera shows the real world as-is.
+                        localRenderer?.setMirror(isFrontCamera)
+                        _state.value = _state.value.copy(frontCamera = isFrontCamera, torchOn = false)
+                    }
+                }
+                override fun onCameraSwitchError(errorDescription: String?) { Log.w("CALL_ENGINE", "Camera switch failed: $errorDescription") }
+            })
+        }.onFailure { Log.w("CALL_ENGINE", "Camera switch failed", it) }
+    }
+
+    /** Flashlight for the back camera (best effort, depends on the phone). */
+    fun toggleTorch(): Boolean {
+        val st = _state.value
+        if (st.screenSharing || st.cameraOff) return false
+        if (st.frontCamera) { notice("Switch to the back camera to use the flashlight"); return false }
+        val target = !st.torchOn
+        val ok = CallTorch.set(videoCapturer, target)
+        if (ok) _state.value = st.copy(torchOn = target) else notice("Flashlight isn't available on this phone during calls")
+        return ok
+    }
+
+    fun setFilter(filter: CallFilter) {
+        filterProcessor.filter = filter
+        _state.value = _state.value.copy(filter = filter)
     }
 
     fun toggleCamera() {
@@ -204,26 +238,79 @@ object CallEngine {
         callRef?.child(if (_state.value.direction == "outgoing") "callerCameraOff" else "calleeCameraOff")?.setValue(off)
     }
 
+    /**
+     * Starts screen sharing. Android 14+ requires the mediaProjection foreground service to be
+     * running *before* the projection is created, and startForegroundService() is asynchronous,
+     * so capture begins once the service reports it is in the foreground (max ~4 s).
+     */
     fun startScreenShare(permissionData: Intent): Boolean {
         val context = appContext ?: return false
+        if (videoSource == null || surfaceTextureHelper == null) return false
+        val requestedAt = System.currentTimeMillis()
+        runCatching { CallForegroundService.start(context, _state.value.callId, _state.value.remoteName, true, screenShare = true) }
+            .onFailure { Log.e("CALL_ENGINE", "Could not start projection service", it); return false }
+        fun attempt(triesLeft: Int) {
+            val ready = Build.VERSION.SDK_INT < 34 || CallForegroundService.projectionForegroundAt >= requestedAt
+            if (!ready && triesLeft > 0) { mainHandler.postDelayed({ attempt(triesLeft - 1) }, 100); return }
+            if (!beginScreenCapture(context, permissionData)) {
+                notice("Screen sharing could not start on this phone")
+                CallForegroundService.start(context, _state.value.callId, _state.value.remoteName, _state.value.video, screenShare = false)
+            }
+        }
+        mainHandler.postDelayed({ attempt(40) }, 120)
+        return true
+    }
+
+    private fun beginScreenCapture(context: Context, permissionData: Intent): Boolean {
         val source = videoSource ?: return false
         return runCatching {
             runCatching { videoCapturer?.stopCapture() }
             videoCapturer?.dispose()
-            CallForegroundService.start(context, _state.value.callId, _state.value.remoteName, true, screenShare = true)
+            videoCapturer = null
             val screenCapturer = ScreenCapturerAndroid(permissionData, object : MediaProjection.Callback() {
                 override fun onStop() { mainHandler.post { stopScreenShare() } }
             })
             val metrics = context.resources.displayMetrics
+            // Keep the encoder light: ~720p on the long edge-aware short side.
+            val scale = (720f / metrics.widthPixels.coerceAtLeast(1)).coerceAtMost(1f)
+            val width = (metrics.widthPixels * scale).toInt().coerceAtLeast(360) / 2 * 2
+            val height = (metrics.heightPixels * scale).toInt().coerceAtLeast(640) / 2 * 2
             screenCapturer.initialize(surfaceTextureHelper, context, source.capturerObserver)
-            screenCapturer.startCapture(metrics.widthPixels.coerceAtLeast(720), metrics.heightPixels.coerceAtLeast(1280), 15)
+            screenCapturer.startCapture(width, height, 15)
             videoCapturer = screenCapturer
+            localRenderer?.setMirror(false)
             localVideoTrack?.setEnabled(true)
             _state.value = _state.value.copy(video = true, screenSharing = true, cameraOff = false)
             callRef?.child(if (_state.value.direction == "outgoing") "callerCameraOff" else "calleeCameraOff")?.setValue(false)
             callRef?.child(if (_state.value.direction == "outgoing") "callerScreenSharing" else "calleeScreenSharing")?.setValue(true)
             true
         }.onFailure { Log.e("CALL_ENGINE", "Screen share failed", it) }.getOrDefault(false)
+    }
+
+    private fun notice(message: String) {
+        val context = appContext ?: return
+        mainHandler.post { android.widget.Toast.makeText(context, message, android.widget.Toast.LENGTH_LONG).show() }
+    }
+
+    /** Wired/Bluetooth headsets win over the loudspeaker. */
+    private fun headsetConnected(manager: AudioManager): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return false
+        return manager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).any {
+            it.type in setOf(
+                android.media.AudioDeviceInfo.TYPE_WIRED_HEADSET, android.media.AudioDeviceInfo.TYPE_WIRED_HEADPHONES,
+                android.media.AudioDeviceInfo.TYPE_BLUETOOTH_SCO, android.media.AudioDeviceInfo.TYPE_BLUETOOTH_A2DP,
+                android.media.AudioDeviceInfo.TYPE_USB_HEADSET
+            )
+        }
+    }
+
+    /** Video calls start on the loudspeaker (like Messenger/WhatsApp) unless a headset is in use. */
+    private fun autoSpeakerForVideo() {
+        val context = appContext ?: return
+        if (!_state.value.video || _state.value.speaker) return
+        val manager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        if (headsetConnected(manager)) return
+        toggleSpeaker()
     }
 
     fun stopScreenShare(): Boolean {
@@ -310,6 +397,8 @@ object CallEngine {
         val context = appContext ?: throw IllegalStateException("Missing call context")
         surfaceTextureHelper = SurfaceTextureHelper.create("Convo ChatVideo", eglBase!!.eglBaseContext)
         videoSource = factory?.createVideoSource(false) ?: throw IllegalStateException("Could not create video source")
+        filterProcessor.filter = CallFilter.NONE
+        videoSource?.setVideoProcessor(filterProcessor)
         localVideoTrack = factory?.createVideoTrack("firechat_video_$myUid", videoSource)?.also { track ->
             track.setEnabled(false)
             peer?.addTrack(track, listOf("firechat"))
@@ -332,13 +421,19 @@ object CallEngine {
     private fun createCameraCapturer(context: Context): VideoCapturer? {
         val enumerator: CameraEnumerator = if (Camera2Enumerator.isSupported(context)) Camera2Enumerator(context) else Camera1Enumerator(false)
         val names = enumerator.deviceNames
-        names.firstOrNull { enumerator.isFrontFacing(it) }?.let { enumerator.createCapturer(it, null)?.let { capturer -> return capturer } }
-        names.firstOrNull()?.let { return enumerator.createCapturer(it, null) }
+        names.firstOrNull { enumerator.isFrontFacing(it) }?.let { enumerator.createCapturer(it, null)?.let { capturer ->
+            _state.value = _state.value.copy(frontCamera = true, torchOn = false); localRenderer?.setMirror(true); return capturer
+        } }
+        names.firstOrNull()?.let { name ->
+            val front = enumerator.isFrontFacing(name)
+            _state.value = _state.value.copy(frontCamera = front, torchOn = false); localRenderer?.setMirror(front)
+            return enumerator.createCapturer(name, null)
+        }
         return null
     }
 
     fun attachLocalRenderer(renderer: SurfaceViewRenderer) {
-        try { localRenderer = renderer; renderer.init(eglBase?.eglBaseContext, null); renderer.setMirror(true); localVideoTrack?.addSink(renderer) } catch (e: Throwable) { Log.w("CALL_ENGINE", "Local renderer unavailable", e) }
+        try { localRenderer = renderer; renderer.init(eglBase?.eglBaseContext, null); renderer.setMirror(_state.value.frontCamera && !_state.value.screenSharing); localVideoTrack?.addSink(renderer) } catch (e: Throwable) { Log.w("CALL_ENGINE", "Local renderer unavailable", e) }
     }
     fun attachRemoteRenderer(renderer: SurfaceViewRenderer) {
         try { remoteRenderer = renderer; renderer.init(eglBase?.eglBaseContext, null); renderer.setMirror(false); remoteVideoTrack?.addSink(renderer) } catch (e: Throwable) { Log.w("CALL_ENGINE", "Remote renderer unavailable", e) }
@@ -374,6 +469,7 @@ object CallEngine {
                 )
                 if (status == "connected") {
                     activateCallRuntime()
+                    if (previous != "connected") autoSpeakerForVideo()
                     updateProximityLock()
                 }
                 if (status in listOf("declined", "ended", "missed")) cleanup(status)
@@ -508,7 +604,55 @@ object CallEngine {
         audioTrack?.dispose(); audioTrack = null
         if (wasConnected) vibrateCallEnded()
         startedAsVideoCall = false
-        _state.value = _state.value.copy(status = finalStatus, video = false, cameraOff = false, screenSharing = false, remoteScreenSharing = false)
+        filterProcessor.filter = CallFilter.NONE
+        lastPacketsLost = 0L; lastPacketsReceived = 0L
+        _state.value = _state.value.copy(status = finalStatus, video = false, cameraOff = false, screenSharing = false, remoteScreenSharing = false, torchOn = false, filter = CallFilter.NONE)
+    }
+
+    /** Live reactions travel through the existing calls/{callId} node, so no extra RTDB rules are needed. */
+    private var lastReactionAt = 0L
+    fun sendReaction(token: String): Boolean {
+        val uid = FirebaseAuth.getInstance().currentUser?.uid ?: return false
+        val now = System.currentTimeMillis()
+        if (now - lastReactionAt < 450L) return false
+        lastReactionAt = now
+        val ref = callRef ?: return false
+        ref.child("reactions").push().setValue(mapOf("from" to uid, "token" to token.take(40), "at" to ServerValue.TIMESTAMP))
+        return true
+    }
+
+    fun reactionsRef(): DatabaseReference? = callRef?.child("reactions")
+
+    private var lastPacketsLost = 0L
+    private var lastPacketsReceived = 0L
+    /** Samples WebRTC stats: round-trip time in ms and recent packet loss %. Values are null when unknown. */
+    fun sampleQuality(onResult: (Int?, Double?) -> Unit) {
+        val pc = peer ?: run { onResult(null, null); return }
+        runCatching {
+            pc.getStats(RTCStatsCollectorCallback { report ->
+                var rttSeconds: Double? = null
+                var lost = 0L
+                var received = 0L
+                report.statsMap.values.forEach { stat ->
+                    val members = stat.members
+                    when (stat.type) {
+                        "candidate-pair" -> if (members["state"] == "succeeded" && members["nominated"] != false) {
+                            (members["currentRoundTripTime"] as? Number)?.toDouble()?.let { rttSeconds = it }
+                        }
+                        "inbound-rtp" -> {
+                            (members["packetsLost"] as? Number)?.toLong()?.let { lost += it }
+                            (members["packetsReceived"] as? Number)?.toLong()?.let { received += it }
+                        }
+                    }
+                }
+                val deltaLost = (lost - lastPacketsLost).coerceAtLeast(0L)
+                val deltaReceived = (received - lastPacketsReceived).coerceAtLeast(0L)
+                lastPacketsLost = lost; lastPacketsReceived = received
+                val loss = if (deltaLost + deltaReceived > 0L) deltaLost * 100.0 / (deltaLost + deltaReceived) else null
+                val rttMs = rttSeconds?.let { (it * 1000).toInt() }
+                mainHandler.post { onResult(rttMs, loss) }
+            })
+        }.onFailure { onResult(null, null) }
     }
 
     fun reportFailure(message: String) = fail(message)

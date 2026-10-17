@@ -13,7 +13,13 @@
 /captures
 .externalNativeBuild
 .cxx
+/.firebase/
 local.properties
 .env
 debug.keystore
 !debug.keystore
+supabase/functions/.env
+supabase/.env
+supabase/.temp/
+supabase/.branches/
+service-account*.json

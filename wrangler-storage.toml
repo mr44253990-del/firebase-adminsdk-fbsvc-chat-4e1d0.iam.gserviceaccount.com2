@@ -1,0 +1,11 @@
+name = "convo-chat-storage"
+main = "firechat-storage-worker.js"
+compatibility_date = "2026-10-10"
+workers_dev = true
+
+[vars]
+ADMIN_EMAIL = "mr4425390@gmail.com"
+
+# Configure these as Cloudflare Worker secrets, not vars:
+#   FIREBASE_SERVICE_ACCOUNT
+#   SUPABASE_SERVICE_ROLE_KEY
