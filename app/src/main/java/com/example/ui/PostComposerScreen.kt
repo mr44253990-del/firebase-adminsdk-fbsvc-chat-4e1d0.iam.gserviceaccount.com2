@@ -181,7 +181,7 @@ fun PostComposerScreen(viewModel: ChatViewModel, onBack: () -> Unit, onPublished
         containerColor = Color.Transparent,
         topBar = {
             TopAppBar(
-                title = { Column { Text("Create post", fontWeight = FontWeight.Bold); Text("${if (storageRoutingConfig.provider == "supabase") "Supabase" else "R2"} media expires in 10 days", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) } },
+                title = { Column { Text(tr("Create post"), fontWeight = FontWeight.Bold); Text("${if (storageRoutingConfig.provider == "supabase") "Supabase" else "R2"} media expires in 10 days", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) } },
                 navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
                 actions = {
                     Button(
@@ -210,7 +210,7 @@ fun PostComposerScreen(viewModel: ChatViewModel, onBack: () -> Unit, onPublished
                             .alpha(if ((text.isNotBlank() || imageMedia.isNotEmpty() || videoMedia != null) && !publishing && !uploading) 1f else .5f)
                     ) {
                         if (publishing) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = Color.White)
-                        else { Icon(Icons.AutoMirrored.Filled.Send, null, Modifier.size(16.dp)); Spacer(Modifier.width(6.dp)); Text("Post", fontWeight = FontWeight.Bold) }
+                        else { Icon(Icons.AutoMirrored.Filled.Send, null, Modifier.size(16.dp)); Spacer(Modifier.width(6.dp)); Text(tr("Post"), fontWeight = FontWeight.Bold) }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = .82f))
@@ -261,7 +261,7 @@ fun PostComposerScreen(viewModel: ChatViewModel, onBack: () -> Unit, onPublished
                             modifier = Modifier.height(30.dp)
                         )
                         if (feeling.isNotBlank()) AssistChip(onClick = { toolTab = "feeling" }, label = { Text(feeling, fontSize = 11.sp) }, modifier = Modifier.height(30.dp))
-                        if (isReel) AssistChip(onClick = { toolTab = "media" }, label = { Text("Reel", fontSize = 11.sp) }, modifier = Modifier.height(30.dp))
+                        if (isReel) AssistChip(onClick = { toolTab = "media" }, label = { Text(tr("Reel"), fontSize = 11.sp) }, modifier = Modifier.height(30.dp))
                     }
                 }
             }
@@ -275,7 +275,7 @@ fun PostComposerScreen(viewModel: ChatViewModel, onBack: () -> Unit, onPublished
                 Column(Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 6.dp)) {
                     TextField(
                         value = title, onValueChange = { if (it.length <= 80) title = it },
-                        placeholder = { Text("Add a title (optional)") },
+                        placeholder = { Text(tr("Add a title (optional)")) },
                         singleLine = true,
                         colors = transparentFieldColors,
                         textStyle = TextStyle(fontSize = 17.sp, fontWeight = FontWeight.ExtraBold, textAlign = if (styledCanvas) TextAlign.Center else TextAlign.Start),
@@ -379,7 +379,7 @@ fun PostComposerScreen(viewModel: ChatViewModel, onBack: () -> Unit, onPublished
                                     Icon(Icons.Outlined.AddPhotoAlternate, null); Spacer(Modifier.width(6.dp)); Text("Photos ${imageMedia.size}/5")
                                 }
                                 FilledTonalButton(onClick = { videoPicker.launch("video/*") }, enabled = !uploading && videoMedia == null, modifier = Modifier.weight(1f), shape = RoundedCornerShape(16.dp)) {
-                                    Icon(Icons.Outlined.VideoLibrary, null); Spacer(Modifier.width(6.dp)); Text("Video")
+                                    Icon(Icons.Outlined.VideoLibrary, null); Spacer(Modifier.width(6.dp)); Text(tr("Video"))
                                 }
                             }
                             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -391,7 +391,7 @@ fun PostComposerScreen(viewModel: ChatViewModel, onBack: () -> Unit, onPublished
                             }
                         }
                         "background" -> {
-                            Text("Pick a color canvas for text posts", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(tr("Pick a color canvas for text posts"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             postCanvasStyles.chunked(4).forEach { rowStyles ->
                                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                     rowStyles.forEach { item ->
@@ -424,7 +424,7 @@ fun PostComposerScreen(viewModel: ChatViewModel, onBack: () -> Unit, onPublished
                         }
                         "people" -> {
                             OutlinedTextField(
-                                value = tagQuery, onValueChange = { tagQuery = it }, label = { Text("Tag people") },
+                                value = tagQuery, onValueChange = { tagQuery = it }, label = { Text(tr("Tag people")) },
                                 leadingIcon = { Icon(Icons.Outlined.AlternateEmail, null) }, placeholder = { Text("Type a name or username") }, modifier = Modifier.fillMaxWidth(), singleLine = true, shape = RoundedCornerShape(16.dp)
                             )
                             val matches = if (tagQuery.trim().length < 2) emptyList() else users.filter { it.uid !in taggedIds && (it.name.contains(tagQuery.trim(), true) || it.username.contains(tagQuery.trim().removePrefix("@"), true)) }.take(5)
@@ -442,7 +442,7 @@ fun PostComposerScreen(viewModel: ChatViewModel, onBack: () -> Unit, onPublished
                         }
                         "hashtags" -> {
                             OutlinedTextField(
-                                value = tags, onValueChange = { tags = it }, label = { Text("Hashtags") },
+                                value = tags, onValueChange = { tags = it }, label = { Text(tr("Hashtags")) },
                                 placeholder = { Text("convo, thoughts, friends") }, modifier = Modifier.fillMaxWidth(), singleLine = true, shape = RoundedCornerShape(16.dp)
                             )
                             LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -470,9 +470,9 @@ fun PostComposerScreen(viewModel: ChatViewModel, onBack: () -> Unit, onPublished
                                     val prompt = "Write one engaging social post caption. Title: $title. Tags: $tags. Existing idea: $text. Return only the caption, under 700 characters."
                                     viewModel.askAssistant(prompt, emptyList()) { reply -> aiGenerating = false; if (!reply.contains("unavailable", true) && !reply.contains("failed", true)) text = reply.take(1200) else Toast.makeText(context, reply, Toast.LENGTH_LONG).show() }
                                 }, enabled = !aiGenerating, modifier = Modifier.weight(1f)) {
-                                    if (aiGenerating) CircularProgressIndicator(Modifier.size(17.dp), strokeWidth = 2.dp) else Icon(Icons.Outlined.AutoAwesome, null, Modifier.size(17.dp)); Spacer(Modifier.width(6.dp)); Text("AI caption")
+                                    if (aiGenerating) CircularProgressIndicator(Modifier.size(17.dp), strokeWidth = 2.dp) else Icon(Icons.Outlined.AutoAwesome, null, Modifier.size(17.dp)); Spacer(Modifier.width(6.dp)); Text(tr("AI caption"))
                                 }
-                                OutlinedButton(onClick = { text = ""; title = ""; tags = ""; feeling = ""; draftPrefs.edit().clear().apply() }, modifier = Modifier.weight(1f)) { Icon(Icons.Outlined.Delete, null, Modifier.size(17.dp)); Spacer(Modifier.width(6.dp)); Text("Clear draft") }
+                                OutlinedButton(onClick = { text = ""; title = ""; tags = ""; feeling = ""; draftPrefs.edit().clear().apply() }, modifier = Modifier.weight(1f)) { Icon(Icons.Outlined.Delete, null, Modifier.size(17.dp)); Spacer(Modifier.width(6.dp)); Text(tr("Clear draft")) }
                             }
                         }
                     }
@@ -493,7 +493,7 @@ fun PostComposerScreen(viewModel: ChatViewModel, onBack: () -> Unit, onPublished
                 runCatching{context.startActivity(facebook)}.onFailure{context.startActivity(android.content.Intent.createChooser(android.content.Intent(android.content.Intent.ACTION_SEND).apply{type="text/plain";putExtra(android.content.Intent.EXTRA_TEXT,shareText)},"Share post"))}
                 publishedPostId=null;onPublished()
             }) { Text("Share to Facebook") } },
-            dismissButton = { TextButton(onClick={publishedPostId=null;onPublished()}){Text("Not now")} }
+            dismissButton = { TextButton(onClick={publishedPostId=null;onPublished()}){Text(tr("Not now"))} }
         )
     }
 }

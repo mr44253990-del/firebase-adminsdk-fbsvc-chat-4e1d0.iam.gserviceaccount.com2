@@ -149,17 +149,17 @@ fun BackupCodesDialog(codes: List<String>, onDone: () -> Unit) {
                     }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick = { copyText(context, "Convo Chat backup codes", "Convo Chat backup codes\n$all") }, modifier = Modifier.weight(1f)) { Icon(Icons.Default.ContentCopy, null, Modifier.size(16.dp)); Spacer(Modifier.width(6.dp)); Text("Copy") }
+                    OutlinedButton(onClick = { copyText(context, "Convo Chat backup codes", "Convo Chat backup codes\n$all") }, modifier = Modifier.weight(1f)) { Icon(Icons.Default.ContentCopy, null, Modifier.size(16.dp)); Spacer(Modifier.width(6.dp)); Text(tr("Copy")) }
                     OutlinedButton(onClick = {
                         context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, "Convo Chat backup codes\n$all"), "Save backup codes"))
-                    }, modifier = Modifier.weight(1f)) { Icon(Icons.Default.Share, null, Modifier.size(16.dp)); Spacer(Modifier.width(6.dp)); Text("Save") }
+                    }, modifier = Modifier.weight(1f)) { Icon(Icons.Default.Share, null, Modifier.size(16.dp)); Spacer(Modifier.width(6.dp)); Text(tr("Save")) }
                 }
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable { saved = !saved }) {
                     Checkbox(saved, { saved = it }); Text("I saved these codes", style = MaterialTheme.typography.bodyMedium)
                 }
             }
         },
-        confirmButton = { Button(onClick = onDone, enabled = saved) { Text("Done") } }
+        confirmButton = { Button(onClick = onDone, enabled = saved) { Text(tr("Done")) } }
     )
 }
 
@@ -192,7 +192,7 @@ fun TwoFactorCard() {
                 }
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
-                    Text("Two-step verification", fontWeight = FontWeight.ExtraBold)
+                    Text(tr("Two-step verification"), fontWeight = FontWeight.ExtraBold)
                     Text(
                         when {
                             loading -> "Checking…"
@@ -238,7 +238,7 @@ fun TwoFactorCard() {
                         }
                     }
                 }
-                TextButton(onClick = { setupMethod = "" }) { Text("Cancel") }
+                TextButton(onClick = { setupMethod = "" }) { Text(tr("Cancel")) }
             }
 
             if (setupMethod == "totp") {
@@ -261,7 +261,7 @@ fun TwoFactorCard() {
             if (setupMethod == "totp" || setupMethod == "email") {
                 CodeField(code, { code = it })
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick = { setupMethod = ""; code = "" }, modifier = Modifier.weight(1f)) { Text("Cancel") }
+                    OutlinedButton(onClick = { setupMethod = ""; code = "" }, modifier = Modifier.weight(1f)) { Text(tr("Cancel")) }
                     Button(enabled = code.length == 6 && !busy, onClick = {
                         scope.launch {
                             busy = true
@@ -274,7 +274,7 @@ fun TwoFactorCard() {
                                 setupMethod = ""; code = ""
                             } else error = j.optString("error")
                         }
-                    }, modifier = Modifier.weight(1f)) { if (busy) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp) else Text("Turn on") }
+                    }, modifier = Modifier.weight(1f)) { if (busy) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp) else Text(tr("Turn on")) }
                 }
             }
 
@@ -311,9 +311,9 @@ fun TwoFactorCard() {
                             confirmAction = ""; code = ""; refresh()
                         } else error = j.optString("error")
                     }
-                }) { Text("Confirm") }
+                }) { Text(tr("Confirm")) }
             },
-            dismissButton = { TextButton(onClick = { confirmAction = "" }) { Text("Cancel") } }
+            dismissButton = { TextButton(onClick = { confirmAction = "" }) { Text(tr("Cancel")) } }
         )
     }
 }
@@ -352,7 +352,7 @@ fun MfaGateDialog(method: String, maskedEmail: String, onVerified: () -> Unit, o
                 Box(Modifier.size(86.dp).clip(CircleShape).background(Brush.linearGradient(listOf(Color(0xFF7C4DFF), Color(0xFF00E5FF)))).border(3.dp, Color.White.copy(alpha = .25f), CircleShape), contentAlignment = Alignment.Center) {
                     Icon(Icons.Default.Shield, null, tint = Color.White, modifier = Modifier.size(42.dp))
                 }
-                Text("Two-step verification", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Black)
+                Text(tr("Two-step verification"), color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Black)
                 Text(
                     when {
                         useBackup -> "Enter one of your 8-character backup codes (like ABCD-1234)."
@@ -384,14 +384,14 @@ fun MfaGateDialog(method: String, maskedEmail: String, onVerified: () -> Unit, o
                             },
                             shape = RoundedCornerShape(16.dp),
                             modifier = Modifier.fillMaxWidth().height(52.dp)
-                        ) { if (busy) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = Color.White) else Text("Verify", fontWeight = FontWeight.Bold) }
+                        ) { if (busy) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = Color.White) else Text(tr("Verify"), fontWeight = FontWeight.Bold) }
                     }
                 }
-                if (method == "email" && !useBackup) TextButton(onClick = { sendEmail() }, enabled = !busy) { Text("Resend code", color = Color.White) }
+                if (method == "email" && !useBackup) TextButton(onClick = { sendEmail() }, enabled = !busy) { Text(tr("Resend code"), color = Color.White) }
                 TextButton(onClick = { useBackup = !useBackup; code = ""; error = "" }) {
                     Text(if (useBackup) "Use ${if (method == "totp") "authenticator" else "e-mail"} code instead" else "Lost access? Use a backup code", color = Color(0xFFB39DDB))
                 }
-                TextButton(onClick = onSignOut) { Icon(Icons.Default.Logout, null, tint = Color.White.copy(alpha = .7f)); Spacer(Modifier.width(6.dp)); Text("Sign out", color = Color.White.copy(alpha = .7f)) }
+                TextButton(onClick = onSignOut) { Icon(Icons.Default.Logout, null, tint = Color.White.copy(alpha = .7f)); Spacer(Modifier.width(6.dp)); Text(tr("Sign out"), color = Color.White.copy(alpha = .7f)) }
             }
         }
     }
@@ -420,12 +420,12 @@ fun BackupCodeRecoveryDialog(initialEmail: String, onDismiss: () -> Unit) {
             }
         },
         confirmButton = {
-            if (result?.first == true) Button(onClick = onDismiss) { Text("Sign in") }
+            if (result?.first == true) Button(onClick = onDismiss) { Text(tr("Sign in")) }
             else Button(enabled = !busy && email.contains("@") && backup.count { it.isLetterOrDigit() } == 8 && pass.length >= 8, onClick = {
                 scope.launch { busy = true; result = MfaClient.recover(email, backup, pass); busy = false }
             }) { Text(if (busy) "Checking…" else "Reset password") }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+        dismissButton = { TextButton(onClick = onDismiss) { Text(tr("Cancel")) } }
     )
 }
 

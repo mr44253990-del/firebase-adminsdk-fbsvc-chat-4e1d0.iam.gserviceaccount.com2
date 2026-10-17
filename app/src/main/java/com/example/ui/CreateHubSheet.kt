@@ -49,7 +49,7 @@ fun CreateHubSheet(viewModel: ChatViewModel, onDismiss: () -> Unit, onCreatePost
         Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp).padding(bottom = 28.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(Modifier.size(48.dp).background(Brush.linearGradient(listOf(Color(0xFF6652FF), Color(0xFFFF39BD))), CircleShape), contentAlignment = Alignment.Center) { Icon(Icons.Default.Add, null, tint = Color.White) }
-                Spacer(Modifier.width(12.dp)); Column { Text("Create something", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold); Text("One smart hub for every format", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                Spacer(Modifier.width(12.dp)); Column { Text(tr("Create something"), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold); Text(tr("One smart hub for every format"), color = MaterialTheme.colorScheme.onSurfaceVariant) }
             }
             if (uploading) {
                 LinearProgressIndicator(progress = { progress / 100f }, modifier = Modifier.fillMaxWidth())
@@ -62,8 +62,8 @@ fun CreateHubSheet(viewModel: ChatViewModel, onDismiss: () -> Unit, onCreatePost
                 val hubAdmin = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.email?.lowercase()?.trim() == "mr4425390@gmail.com"
                 if (hubConfig.reelsEnabled || hubAdmin) CreateHubAction(Icons.Default.SmartDisplay, "Create Reel", "Upload directly as a vertical Reel") { viewModel.prepareComposer("reel"); onDismiss(); onCreatePost() }
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    OutlinedButton(onClick = { photoStory.launch("image/*") }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(18.dp)) { Icon(Icons.Default.AutoStories, null); Spacer(Modifier.width(6.dp)); Text("Photo story") }
-                    OutlinedButton(onClick = { videoStory.launch("video/*") }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(18.dp)) { Icon(Icons.Default.Movie, null); Spacer(Modifier.width(6.dp)); Text("Video story") }
+                    OutlinedButton(onClick = { photoStory.launch("image/*") }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(18.dp)) { Icon(Icons.Default.AutoStories, null); Spacer(Modifier.width(6.dp)); Text(tr("Photo story")) }
+                    OutlinedButton(onClick = { videoStory.launch("video/*") }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(18.dp)) { Icon(Icons.Default.Movie, null); Spacer(Modifier.width(6.dp)); Text(tr("Video story")) }
                 }
             }
         }

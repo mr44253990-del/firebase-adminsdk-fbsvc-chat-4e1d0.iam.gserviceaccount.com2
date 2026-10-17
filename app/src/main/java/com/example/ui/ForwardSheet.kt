@@ -67,7 +67,7 @@ fun ForwardMessageSheet(
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
                     Text("Forward", fontWeight = FontWeight.ExtraBold, fontSize = 20.sp)
-                    Text("Only your friends are shown", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(tr("Only your friends are shown"), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
             Spacer(Modifier.height(12.dp))
@@ -100,7 +100,7 @@ fun ForwardMessageSheet(
                 shape = RoundedCornerShape(18.dp),
                 leadingIcon = { Icon(Icons.Default.Search, null) },
                 trailingIcon = { if (query.isNotEmpty()) IconButton(onClick = { query = "" }) { Icon(Icons.Default.Close, "Clear") } },
-                placeholder = { Text("Search friends") }
+                placeholder = { Text(tr("Search friends")) }
             )
             AnimatedVisibility(selected.isNotEmpty()) {
                 Row(Modifier.fillMaxWidth().padding(top = 8.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {

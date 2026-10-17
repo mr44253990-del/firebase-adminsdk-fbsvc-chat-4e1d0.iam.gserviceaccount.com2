@@ -107,7 +107,7 @@ fun SmartSettingsPage() {
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         SmartCard(Icons.Default.Bedtime, Color(0xFF5C6BC0), "Quiet hours", if (quietOn) "Messages are silent ${hourLabel(quietStart)} – ${hourLabel(quietEnd)}. Calls still ring." else "Silence message notifications at night") {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Enabled", Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
+                Text(tr("Enabled"), Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
                 Switch(quietOn, { quietOn = it; SmartPrefs.setQuiet(context, it, quietStart, quietEnd) })
             }
             if (quietOn) {
@@ -120,14 +120,14 @@ fun SmartSettingsPage() {
         SmartCard(Icons.Default.NotificationsActive, Color(0xFF00897B), "Smart notifications", "Online alerts and photo previews") {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
-                    Text("Tell me when they come online", fontWeight = FontWeight.SemiBold)
+                    Text(tr("Tell me when they come online"), fontWeight = FontWeight.SemiBold)
                     Text("If you message someone who is offline, get a notification when they open Convo.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 Switch(onlineAlerts, { onlineAlerts = it; NotificationExtrasPrefs.setOnlineAlerts(context, it) })
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
-                    Text("Show photos in notifications", fontWeight = FontWeight.SemiBold)
+                    Text(tr("Show photos in notifications"), fontWeight = FontWeight.SemiBold)
                     Text("Photo messages show a preview. Hidden while \"Hide notification content\" or App lock is on.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 Switch(richImages, { richImages = it; NotificationExtrasPrefs.setRichImages(context, it) })
@@ -135,7 +135,7 @@ fun SmartSettingsPage() {
         }
         SmartCard(Icons.Default.Animation, Color(0xFFEC407A), "Motion & effects", "Full-screen reaction effects, animated stickers and covers") {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Reduce motion", Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
+                Text(tr("Reduce motion"), Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
                 Switch(reduceMotion, { SmartPrefs.setReduceMotion(context, it) })
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -145,7 +145,7 @@ fun SmartSettingsPage() {
             OutlinedButton(onClick = { ReactionFx.fire("❤️") }, enabled = !reduceMotion) { Text("Preview effect") }
         }
         SmartCard(Icons.Default.LocationOn, Color(0xFF43A047), "Live location", liveShare?.let { "Sharing with ${it.recipientName.ifBlank { "a chat" }} until " + java.text.SimpleDateFormat("h:mm a", java.util.Locale.getDefault()).format(java.util.Date(it.until)) } ?: "Not sharing your location right now") {
-            if (liveShare != null) Button(onClick = { LiveLocationService.stop(context) }, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE53935))) { Text("Stop sharing") }
+            if (liveShare != null) Button(onClick = { LiveLocationService.stop(context) }, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE53935))) { Text(tr("Stop sharing")) }
             else Text("Share from any chat: + → Location. You can choose 10 minutes up to 8 hours.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         SmartCard(Icons.Default.Storage, Color(0xFFFF8F00), "Storage", if (cacheBytes < 0) "Calculating…" else "Temporary files and image cache: ${formatBytes(cacheBytes)}") {

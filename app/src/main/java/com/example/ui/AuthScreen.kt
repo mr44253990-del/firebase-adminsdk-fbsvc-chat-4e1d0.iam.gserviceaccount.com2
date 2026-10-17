@@ -275,7 +275,7 @@ fun AuthScreen(
                 ) {
                     Icon(Icons.Default.Lock, null, tint = ConvoBrand.Cyan, modifier = Modifier.size(13.dp))
                     Spacer(Modifier.width(5.dp))
-                    Text("Private & secure", color = lp.text, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                    Text(tr("Private & secure"), color = lp.text, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                 }
                 Spacer(Modifier.weight(1f))
                 LoginLookToggle(lp, onToggle = {
@@ -375,7 +375,7 @@ fun AuthScreen(
                             .testTag("login_tab"),
                         contentAlignment = Alignment.Center
                     ) {
-                        Text("Log In", color = lp.text, fontWeight = if (isLoginMode) FontWeight.ExtraBold else FontWeight.Medium, fontSize = 15.sp)
+                        Text(tr("Log In"), color = lp.text, fontWeight = if (isLoginMode) FontWeight.ExtraBold else FontWeight.Medium, fontSize = 15.sp)
                     }
                     Box(
                         modifier = Modifier
@@ -385,7 +385,7 @@ fun AuthScreen(
                             .testTag("signup_tab"),
                         contentAlignment = Alignment.Center
                     ) {
-                        Text("Sign Up", color = lp.text.copy(alpha = if (isLoginMode) .64f else 1f), fontWeight = if (!isLoginMode) FontWeight.ExtraBold else FontWeight.Medium, fontSize = 15.sp)
+                        Text(tr("Sign Up"), color = lp.text.copy(alpha = if (isLoginMode) .64f else 1f), fontWeight = if (!isLoginMode) FontWeight.ExtraBold else FontWeight.Medium, fontSize = 15.sp)
                     }
                 }
             }
@@ -509,7 +509,7 @@ fun AuthScreen(
                                 onValueChange = {},
                                 readOnly = true,
                                 label = { Text("Date of Birth (YYYY-MM-DD)") },
-                                placeholder = { Text("Select Date") },
+                                placeholder = { Text(tr("Select Date")) },
                                 leadingIcon = { Icon(Icons.Default.DateRange, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
                                 trailingIcon = {
                                     IconButton(onClick = { datePickerDialog.show() }) {
@@ -530,7 +530,7 @@ fun AuthScreen(
                     OutlinedTextField(
                         value = email,
                         onValueChange = { email = it },
-                        label = { Text("Email Address") },
+                        label = { Text(tr("Email Address")) },
                         placeholder = { Text("example@domain.com") },
                         leadingIcon = { Icon(Icons.Default.Email, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
                         singleLine = true,
@@ -558,7 +558,7 @@ fun AuthScreen(
                         value = password,
                         onValueChange = { password = it },
                         label = { Text(if (isLoginMode) "Password" else "Choose Password") },
-                        placeholder = { Text("At least 6 characters") },
+                        placeholder = { Text(tr("At least 6 characters")) },
                         leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
                         trailingIcon = {
                             val image = if (passwordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff
@@ -756,13 +756,13 @@ fun AuthScreen(
                         modifier = Modifier.size(17.dp)
                     )
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("End-to-end encrypted", color = lp.textSoft, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    Text(tr("End-to-end encrypted"), color = lp.textSoft, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                 }
             }
 
             if (rememberedAccounts.isNotEmpty()) {
                 Spacer(Modifier.height(8.dp))
-                Text("Previous accounts", color = lp.text, fontWeight = FontWeight.ExtraBold, modifier = Modifier.fillMaxWidth())
+                Text(tr("Previous accounts"), color = lp.text, fontWeight = FontWeight.ExtraBold, modifier = Modifier.fillMaxWidth())
                 Text(
                     "Tap a saved account to continue. Secure credentials stay with Android and are never written to app files.",
                     fontSize = 10.sp,
@@ -862,7 +862,7 @@ fun AuthScreen(
                     OutlinedTextField(
                         value = resetEmail,
                         onValueChange = { resetEmail = it },
-                        label = { Text("Email Address") },
+                        label = { Text(tr("Email Address")) },
                         leadingIcon = { Icon(Icons.Default.Email, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
                         singleLine = true,
                         shape = RoundedCornerShape(18.dp),
@@ -933,7 +933,7 @@ fun AuthScreen(
                             modifier = Modifier.size(18.dp)
                         )
                     } else {
-                        Text("Send Reset Link")
+                        Text(tr("Send Reset Link"))
                     }
                 }
             },
@@ -946,7 +946,7 @@ fun AuthScreen(
                         resetError = null
                     }
                 ) {
-                    Text("Cancel")
+                    Text(tr("Cancel"))
                 }
             },
             shape = RoundedCornerShape(24.dp),

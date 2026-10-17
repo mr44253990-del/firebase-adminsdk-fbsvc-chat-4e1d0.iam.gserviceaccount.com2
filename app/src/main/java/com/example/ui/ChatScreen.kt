@@ -702,8 +702,8 @@ fun ChatScreen(
                 )
                 Spacer(Modifier.height(10.dp))
                 TabRow(selectedTabIndex = pickerTab, containerColor = Color.Transparent, modifier = Modifier.clip(RoundedCornerShape(14.dp))) {
-                    Tab(selected = pickerTab == 0, onClick = { pickerTab = 0 }, text = { Text("Themes") }, icon = { Icon(Icons.Default.Palette, null) })
-                    Tab(selected = pickerTab == 1, onClick = { pickerTab = 1 }, text = { Text("Bubbles") }, icon = { Icon(Icons.Default.ChatBubble, null) })
+                    Tab(selected = pickerTab == 0, onClick = { pickerTab = 0 }, text = { Text(tr("Themes")) }, icon = { Icon(Icons.Default.Palette, null) })
+                    Tab(selected = pickerTab == 1, onClick = { pickerTab = 1 }, text = { Text(tr("Bubbles")) }, icon = { Icon(Icons.Default.ChatBubble, null) })
                 }
                 Spacer(Modifier.height(12.dp))
                 if (pickerTab == 1) {
@@ -730,19 +730,19 @@ fun ChatScreen(
     if (translationMessage != null) {
         AlertDialog(
             onDismissRequest = { if (!translationLoading) translationMessage = null },
-            title = { Text("AI translation", fontWeight = FontWeight.Bold) },
+            title = { Text(tr("AI translation"), fontWeight = FontWeight.Bold) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(translationMessage?.text.orEmpty(), color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 5, overflow = TextOverflow.Ellipsis)
                     if (translationLoading) {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                             CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
-                            Text("Translating to Bengali…")
+                            Text(tr("Translating to Bengali…"))
                         }
                     } else Text(translationText.ifBlank { "No translation returned." })
                 }
             },
-            confirmButton = { TextButton(enabled = !translationLoading, onClick = { translationMessage = null }) { Text("Close") } }
+            confirmButton = { TextButton(enabled = !translationLoading, onClick = { translationMessage = null }) { Text(tr("Close")) } }
         )
     }
 
@@ -797,7 +797,7 @@ fun ChatScreen(
                     FlowRowCompat {
                         categories.forEach { c -> FilterChip(selected = category == c, onClick = { category = c }, label = { Text(c) }) }
                     }
-                    OutlinedTextField(details, { details = it.take(500) }, label = { Text("What happened? (optional)") }, minLines = 3, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(details, { details = it.take(500) }, label = { Text(tr("What happened? (optional)")) }, minLines = 3, modifier = Modifier.fillMaxWidth())
                 }
             },
             confirmButton = {
@@ -810,7 +810,7 @@ fun ChatScreen(
                     }
                 }) { Text(if (sending) "Sending…" else "Send report") }
             },
-            dismissButton = { TextButton(onClick = { showReportDialog = false }) { Text("Cancel") } }
+            dismissButton = { TextButton(onClick = { showReportDialog = false }) { Text(tr("Cancel")) } }
         )
     }
 
@@ -959,7 +959,7 @@ fun ChatScreen(
                                     }
                                 }
                             },
-                            placeholder = { Text("Search messages", fontSize = 12.sp) },
+                            placeholder = { Text(tr("Search messages"), fontSize = 12.sp) },
                             modifier = Modifier.weight(1f).height(46.dp),
                             textStyle = LocalTextStyle.current.copy(fontSize = 13.sp),
                             shape = RoundedCornerShape(18.dp)
@@ -1019,7 +1019,7 @@ fun ChatScreen(
                             modifier = Modifier.size(48.dp)
                         )
                         Spacer(modifier = Modifier.height(8.dp))
-                        Text("No matching messages", style = MaterialTheme.typography.titleMedium)
+                        Text(tr("No matching messages"), style = MaterialTheme.typography.titleMedium)
                         Text(
                             "Try another keyword",
                             style = MaterialTheme.typography.bodySmall,
@@ -1106,11 +1106,11 @@ fun ChatScreen(
                         if (msg.messageId == newestOwnId) {
                             val liveState = deliveryStates[msg.messageId]
                             val statusLabel = when {
-                                msg.seenByRecipient -> "Seen"
-                                msg.deliveredToRecipient || liveState == "delivered" -> "Delivered · not seen yet"
-                                liveState == "pending" -> "Sending…"
-                                liveState == "failed" -> "Not sent — tap ! to retry"
-                                else -> "Sent · waiting for ${updatedRecipient.name.substringBefore(' ').ifBlank { "them" }}"
+                                msg.seenByRecipient -> tr("Seen")
+                                msg.deliveredToRecipient || liveState == "delivered" -> tr("Delivered · not seen yet")
+                                liveState == "pending" -> tr("Sending…")
+                                liveState == "failed" -> tr("Not sent — tap ! to retry")
+                                else -> tr("Sent · waiting for") + " " + updatedRecipient.name.substringBefore(' ').ifBlank { tr("them") }
                             }
                             Text(
                                 statusLabel,
@@ -1142,7 +1142,7 @@ fun ChatScreen(
                         Row(Modifier.padding(horizontal = 14.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                             Icon(Icons.Default.KeyboardArrowDown, null, Modifier.size(18.dp))
                             Spacer(Modifier.width(4.dp))
-                            Text("Latest messages", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Text(tr("Latest messages"), fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
@@ -1227,7 +1227,7 @@ fun ChatScreen(
                             Icon(Icons.Default.Edit, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
                             Spacer(modifier = Modifier.width(8.dp))
                             Column {
-                                Text("Editing Message", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                Text(tr("Editing Message"), color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold, fontSize = 12.sp)
                                 Text(emsg.text, color = MaterialTheme.colorScheme.onSurface, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
                         }
@@ -1247,7 +1247,7 @@ fun ChatScreen(
                         Icon(Icons.Default.HourglassTop, null)
                         Spacer(Modifier.width(10.dp))
                         Column {
-                            Text("Message request pending", fontWeight = FontWeight.Bold)
+                            Text(tr("Message request pending"), fontWeight = FontWeight.Bold)
                             Text("${recipient.name} must confirm before you can continue chatting.", fontSize = 11.sp)
                         }
                     }
@@ -1385,7 +1385,7 @@ fun ChatScreen(
                             value = messageText,
                             onValueChange = { messageText = it },
                             enabled = !requestPending && !fileUploading,
-                            placeholder = { Text(if (requestPending) "Waiting for confirmation…" else "Type a message…", color = (barColors?.content ?: MaterialTheme.colorScheme.onSurfaceVariant).copy(alpha = 0.6f)) },
+                            placeholder = { Text(if (requestPending) tr("Waiting for confirmation…") else tr("Type a message…"), color = (barColors?.content ?: MaterialTheme.colorScheme.onSurfaceVariant).copy(alpha = 0.6f)) },
                             modifier = Modifier
                                 .weight(1f)
                                 .testTag("chat_input_text_field"),
@@ -1477,7 +1477,7 @@ fun ChatScreen(
                                     else Text(quickReaction, fontSize = 27.sp)
                                 }
                                 DropdownMenu(showReactionPicker, { showReactionPicker = false }) {
-                                    Text("Chat emoji · changes for both of you", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp))
+                                    Text(tr("Chat emoji · changes for both of you"), style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp))
                                     ChatPreferences.reactionChoices.chunked(4).forEach { row ->
                                         Row(Modifier.padding(horizontal = 8.dp)) {
                                             row.forEach { emoji ->
@@ -1493,7 +1493,7 @@ fun ChatScreen(
                                             }
                                         }
                                     }
-                                    Text("Convo animated stickers", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp))
+                                    Text(tr("Convo animated stickers"), style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp))
                                     ConvoStickers.all.chunked(4).forEach { row ->
                                         Row(Modifier.padding(horizontal = 8.dp)) {
                                             row.forEach { sticker ->
@@ -1524,10 +1524,10 @@ fun ChatScreen(
     if (showScheduleDialog) {
         AlertDialog(
             onDismissRequest = { showScheduleDialog = false },
-            title = { Text("Schedule message") },
+            title = { Text(tr("Schedule message")) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("Choose when to send this text message.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(tr("Choose when to send this text message."), color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text("\"${messageText.trim().take(120)}${if (messageText.trim().length > 120) "…" else "\""}", fontWeight = FontWeight.SemiBold)
                 }
             },
@@ -1541,7 +1541,7 @@ fun ChatScreen(
                             chatDraftPrefs.edit().remove("draft_${recipient.uid}").apply()
                         }
                         showScheduleDialog = false
-                    }) { Text("In 10 minutes") }
+                    }) { Text(tr("In 10 minutes")) }
                     TextButton(onClick = {
                         val at = System.currentTimeMillis() + 60 * 60 * 1000L
                         viewModel.scheduleMessage(updatedRecipient, messageText, at) {
@@ -1550,7 +1550,7 @@ fun ChatScreen(
                             chatDraftPrefs.edit().remove("draft_${recipient.uid}").apply()
                         }
                         showScheduleDialog = false
-                    }) { Text("In 1 hour") }
+                    }) { Text(tr("In 1 hour")) }
                     TextButton(onClick = {
                         val calendar = Calendar.getInstance().apply {
                             add(Calendar.DAY_OF_YEAR, 1)
@@ -1565,10 +1565,10 @@ fun ChatScreen(
                             chatDraftPrefs.edit().remove("draft_${recipient.uid}").apply()
                         }
                         showScheduleDialog = false
-                    }) { Text("Tomorrow at 9:00 AM") }
+                    }) { Text(tr("Tomorrow at 9:00 AM")) }
                 }
             },
-            dismissButton = { TextButton(onClick = { showScheduleDialog = false }) { Text("Cancel") } }
+            dismissButton = { TextButton(onClick = { showScheduleDialog = false }) { Text(tr("Cancel")) } }
         )
     }
 
@@ -1622,21 +1622,21 @@ fun ChatScreen(
         AlertDialog(
             onDismissRequest = { showLocationOffDialog = false },
             icon = { Icon(Icons.Default.LocationOff, null) },
-            title = { Text("Turn on location") },
+            title = { Text(tr("Turn on location")) },
             text = { Text("Your phone's location is off. Turn it on in Settings, then come back and share again.") },
             confirmButton = {
                 Button(onClick = {
                     showLocationOffDialog = false
                     runCatching { context.startActivity(Intent(android.provider.Settings.ACTION_LOCATION_SOURCE_SETTINGS)) }
-                }) { Text("Open settings") }
+                }) { Text(tr("Open settings")) }
             },
-            dismissButton = { TextButton(onClick = { showLocationOffDialog = false }) { Text("Cancel") } }
+            dismissButton = { TextButton(onClick = { showLocationOffDialog = false }) { Text(tr("Cancel")) } }
         )
     }
     if (showContactPicker) {
         AlertDialog(
             onDismissRequest = { showContactPicker = false },
-            title = { Text("Share a contact", fontWeight = FontWeight.Bold) },
+            title = { Text(tr("Share a contact"), fontWeight = FontWeight.Bold) },
             text = {
                 LazyColumn(Modifier.heightIn(max = 420.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     items(users.filter { it.uid != recipient.uid }, key = { it.uid }) { person ->
@@ -1652,7 +1652,7 @@ fun ChatScreen(
                     }
                 }
             },
-            confirmButton = { TextButton(onClick = { showContactPicker = false }) { Text("Cancel") } }
+            confirmButton = { TextButton(onClick = { showContactPicker = false }) { Text(tr("Cancel")) } }
         )
     }
 
@@ -1722,7 +1722,7 @@ private fun VoiceRecordingIndicator(name: String) {
             }
             Column {
                 Text("${name.ifBlank { "Someone" }} is recording a voice note", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                Text("You’ll hear it when it’s sent", fontSize = 11.sp, color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = .78f))
+                Text(tr("You’ll hear it when it’s sent"), fontSize = 11.sp, color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = .78f))
             }
         }
     }
@@ -1768,7 +1768,7 @@ private fun TypingGlassIndicator(name: String) {
             Spacer(Modifier.width(9.dp))
             Column(Modifier.weight(1f)) {
                 Text(name.ifBlank { "Someone" }, fontWeight = FontWeight.Bold, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text("is composing a message", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(tr("is composing a message"), fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             Row(Modifier.height(22.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
                 dotScales.forEach { scale ->
@@ -2093,7 +2093,7 @@ fun MessageBubbleItem(
                     )
                 }
             }
-            Text("Convo stickers", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 12.dp))
+            Text(tr("Convo stickers"), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 12.dp))
             ConvoStickers.all.chunked(5).forEach { rowStickers ->
                 Row(Modifier.fillMaxWidth().padding(horizontal = 6.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
                     rowStickers.forEach { sticker ->
@@ -2132,7 +2132,7 @@ fun MessageBubbleItem(
             }
             if (message.text.isNotBlank() && AppFeatureFlags.aiEnabled.collectAsState().value) {
                 DropdownMenuItem(
-                    text = { Text("Translate to Bengali (AI)") },
+                    text = { Text(tr("Translate to Bengali (AI)")) },
                     leadingIcon = { Icon(Icons.Default.Translate, null, tint = MaterialTheme.colorScheme.primary) },
                     onClick = {
                         showMenu = false
@@ -2142,7 +2142,7 @@ fun MessageBubbleItem(
             }
             if (isSentByMe) {
                 DropdownMenuItem(
-                    text = { Text("Delete Message", color = MaterialTheme.colorScheme.error) },
+                    text = { Text(tr("Delete Message"), color = MaterialTheme.colorScheme.error) },
                     leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
                     onClick = {
                         onDeleteSelect()
@@ -2388,7 +2388,7 @@ private fun FullScreenChatImage(imageUrl: String, onDismiss: () -> Unit) {
                     Icon(Icons.Default.Close, "Close", tint = Color.White)
                 }
             }
-            Text("Pinch to zoom • drag to move", color = Color.White.copy(alpha = .65f), modifier = Modifier.align(Alignment.BottomCenter).windowInsetsPadding(WindowInsets.navigationBars).padding(18.dp))
+            Text(tr("Pinch to zoom • drag to move"), color = Color.White.copy(alpha = .65f), modifier = Modifier.align(Alignment.BottomCenter).windowInsetsPadding(WindowInsets.navigationBars).padding(18.dp))
         }
     }
 }

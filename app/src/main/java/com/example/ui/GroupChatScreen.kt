@@ -105,19 +105,19 @@ fun GroupChatScreen(
     if (translationMessage != null) {
         AlertDialog(
             onDismissRequest = { if (!translationLoading) translationMessage = null },
-            title = { Text("AI translation", fontWeight = FontWeight.Bold) },
+            title = { Text(tr("AI translation"), fontWeight = FontWeight.Bold) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(translationMessage?.text.orEmpty(), color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 5, overflow = TextOverflow.Ellipsis)
                     if (translationLoading) {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                             CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
-                            Text("Translating to Bengali…")
+                            Text(tr("Translating to Bengali…"))
                         }
                     } else Text(translationText.ifBlank { "No translation returned." })
                 }
             },
-            confirmButton = { TextButton(enabled = !translationLoading, onClick = { translationMessage = null }) { Text("Close") } }
+            confirmButton = { TextButton(enabled = !translationLoading, onClick = { translationMessage = null }) { Text(tr("Close")) } }
         )
     }
 
@@ -428,11 +428,11 @@ fun GroupChatScreen(
                         Icon(Icons.Default.Call, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                         Spacer(Modifier.width(10.dp))
                         Column(Modifier.weight(1f)) {
-                            Text("Group call available", fontWeight = FontWeight.Bold)
+                            Text(tr("Group call available"), fontWeight = FontWeight.Bold)
                             Text("Join ${group.name} when you are ready", style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                         TextButton(onClick = { pendingCallRoomId?.let { onJoinPendingCall(it, pendingCallVideo) } }) {
-                            Text("Join Call", fontWeight = FontWeight.Bold)
+                            Text(tr("Join Call"), fontWeight = FontWeight.Bold)
                         }
                         IconButton(onClick = onDismissPendingCall) {
                             Icon(Icons.Default.Close, contentDescription = "Dismiss call")
@@ -492,7 +492,7 @@ fun GroupChatScreen(
                                     }
                                 }
                             },
-                            placeholder = { Text("Search group messages") },
+                            placeholder = { Text(tr("Search group messages")) },
                             modifier = Modifier.weight(1f),
                             shape = RoundedCornerShape(22.dp)
                         )
@@ -544,8 +544,8 @@ fun GroupChatScreen(
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Icon(Icons.Default.SearchOff, contentDescription = null, tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f), modifier = Modifier.size(48.dp))
                         Spacer(Modifier.height(8.dp))
-                        Text("No matching group messages", style = MaterialTheme.typography.titleMedium)
-                        Text("Try another keyword", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(tr("No matching group messages"), style = MaterialTheme.typography.titleMedium)
+                        Text(tr("Try another keyword"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             } else {
@@ -711,7 +711,7 @@ fun GroupChatScreen(
                         OutlinedTextField(
                             value = messageText,
                             onValueChange = { messageText = it },
-                            placeholder = { Text("Message the group", color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)) },
+                            placeholder = { Text(tr("Message the group"), color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)) },
                             modifier = Modifier
                                 .weight(1f)
                                 .testTag("group_message_input"),
@@ -828,7 +828,7 @@ fun GroupChatScreen(
                                     Text(member?.name?.ifBlank { memberId.take(10) } ?: memberId.take(10), fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                     Text(if (member?.isOnline == true) "Online now" else "Member", style = MaterialTheme.typography.bodySmall, color = if (member?.isOnline == true) Color(0xFF1B8A4B) else MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
-                                if (memberId == currentUserId) Text("You", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                                if (memberId == currentUserId) Text(tr("You"), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                             }
                         }
                     }
@@ -842,10 +842,10 @@ fun GroupChatScreen(
         val selected = remember { mutableStateListOf<String>() }
         AlertDialog(
             onDismissRequest = { showAddMembers = false },
-            title = { Text("Add group members", fontWeight = FontWeight.Bold) },
+            title = { Text(tr("Add group members"), fontWeight = FontWeight.Bold) },
             text = {
                 if (selectable.isEmpty()) {
-                    Text("Everyone is already in this group.")
+                    Text(tr("Everyone is already in this group."))
                 } else {
                     LazyColumn(Modifier.heightIn(max = 380.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         items(selectable, key = { it.uid }) { user ->
@@ -874,9 +874,9 @@ fun GroupChatScreen(
                         showAddMembers = false
                     },
                     enabled = selected.isNotEmpty()
-                ) { Text("Add") }
+                ) { Text(tr("Add")) }
             },
-            dismissButton = { TextButton(onClick = { showAddMembers = false }) { Text("Cancel") } }
+            dismissButton = { TextButton(onClick = { showAddMembers = false }) { Text(tr("Cancel")) } }
         )
     }
 
@@ -1055,7 +1055,7 @@ fun GroupMessageBubbleItem(
             ) {
                 if (msg.text.isNotBlank() && AppFeatureFlags.aiEnabled.collectAsState().value) {
                     DropdownMenuItem(
-                        text = { Text("Translate to Bengali (AI)") },
+                        text = { Text(tr("Translate to Bengali (AI)")) },
                         leadingIcon = { Icon(Icons.Default.Translate, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
                         onClick = {
                             showMenu = false
@@ -1064,7 +1064,7 @@ fun GroupMessageBubbleItem(
                     )
                 }
                 DropdownMenuItem(
-                    text = { Text("Delete Message", color = MaterialTheme.colorScheme.error) },
+                    text = { Text(tr("Delete Message"), color = MaterialTheme.colorScheme.error) },
                     leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
                     onClick = {
                         onDeleteSelect()

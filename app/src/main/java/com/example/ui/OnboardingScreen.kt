@@ -122,7 +122,7 @@ fun OnboardingScreen(onFinished: () -> Unit) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("Convo Chat", color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 18.sp, modifier = Modifier.weight(1f))
                 if (pagerState.currentPage < ONBOARDING_PAGES.lastIndex) TextButton(onClick = finish, modifier = Modifier.testTag("onboarding_skip")) {
-                    Text("Skip", color = Color.White.copy(alpha = .8f))
+                    Text(tr("Skip"), color = Color.White.copy(alpha = .8f))
                 }
             }
             HorizontalPager(state = pagerState, modifier = Modifier.weight(1f)) { index ->
@@ -135,9 +135,9 @@ fun OnboardingScreen(onFinished: () -> Unit) {
                 ) {
                     EmojiHero(item, active = pagerState.currentPage == index)
                     Spacer(Modifier.height(30.dp))
-                    Text(item.title, color = Color.White, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold, textAlign = TextAlign.Center)
+                    Text(tr(item.title), color = Color.White, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold, textAlign = TextAlign.Center)
                     Spacer(Modifier.height(12.dp))
-                    Text(item.description, color = Color.White.copy(alpha = .78f), textAlign = TextAlign.Center, lineHeight = 21.sp)
+                    Text(tr(item.description), color = Color.White.copy(alpha = .78f), textAlign = TextAlign.Center, lineHeight = 21.sp)
                     Spacer(Modifier.height(20.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                         item.chips.forEachIndexed { i, chip ->
@@ -178,7 +178,7 @@ fun OnboardingScreen(onFinished: () -> Unit) {
                     contentAlignment = Alignment.Center
                 ) {
                     if (last) Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("Get started", color = Color.White, fontWeight = FontWeight.ExtraBold)
+                        Text(tr("Get started"), color = Color.White, fontWeight = FontWeight.ExtraBold)
                         Spacer(Modifier.width(6.dp)); Icon(Icons.Default.Check, null, tint = Color.White)
                     } else Icon(Icons.AutoMirrored.Filled.ArrowForward, "Next", tint = Color.White)
                 }

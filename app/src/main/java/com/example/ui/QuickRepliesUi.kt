@@ -94,7 +94,7 @@ fun QuickReplyBar(query: String, accent: Color, onSend: (String) -> Unit, onMana
             Row(Modifier.padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Default.Bolt, null, tint = accent, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(4.dp))
-                Text("Quick replies · tap to send", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = accent, modifier = Modifier.weight(1f))
+                Text(tr("Quick replies · tap to send"), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = accent, modifier = Modifier.weight(1f))
                 Text("Manage", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable(onClick = onManage).padding(horizontal = 6.dp, vertical = 2.dp))
             }

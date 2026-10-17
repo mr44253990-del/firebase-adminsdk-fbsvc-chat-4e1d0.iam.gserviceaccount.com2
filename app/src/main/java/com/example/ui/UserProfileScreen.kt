@@ -111,7 +111,7 @@ fun UserProfileScreen(
                             onDismissRequest = { showProfileMenu = false }
                         ) {
                             DropdownMenuItem(
-                                text = { Text("Copy profile link") },
+                                text = { Text(tr("Copy profile link")) },
                                 leadingIcon = { Icon(Icons.Outlined.ContentCopy, null) },
                                 onClick = {
                                     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
@@ -121,7 +121,7 @@ fun UserProfileScreen(
                                 }
                             )
                             DropdownMenuItem(
-                                text = { Text("Share profile") },
+                                text = { Text(tr("Share profile")) },
                                 leadingIcon = { Icon(Icons.Outlined.Share, null) },
                                 onClick = {
                                     showProfileMenu = false
@@ -249,7 +249,7 @@ fun UserProfileScreen(
                                 Text("Profile QR", fontWeight = FontWeight.ExtraBold)
                                 Text(if (qrRequested) "Scan or share this profile" else "Hidden until you generate it", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
-                            if (qrRequested) TextButton(onClick = { qrRequested = false }) { Text("Hide") }
+                            if (qrRequested) TextButton(onClick = { qrRequested = false }) { Text(tr("Hide")) }
                             else FilledTonalButton(onClick = { qrRequested = true }) { Text("Generate QR") }
                         }
                         if (qrRequested) {
@@ -357,23 +357,23 @@ fun UserProfileScreen(
                         }
                         if (isFriend) {
                             OutlinedButton(onClick = onMessage, modifier = Modifier.weight(1f), shape = RoundedCornerShape(18.dp)) {
-                                Icon(Icons.Outlined.ChatBubbleOutline, null); Spacer(Modifier.width(6.dp)); Text("Message")
+                                Icon(Icons.Outlined.ChatBubbleOutline, null); Spacer(Modifier.width(6.dp)); Text(tr("Message"))
                             }
                         } else if (isRequested) {
                             OutlinedButton(
                                 onClick = { viewModel.cancelFriendRequest(liveUser.uid) { Toast.makeText(context, if (it) "Request cancelled" else "Could not cancel", Toast.LENGTH_SHORT).show() } },
                                 modifier = Modifier.weight(1f), shape = RoundedCornerShape(18.dp)
-                            ) { Text("Requested") }
+                            ) { Text(tr("Requested")) }
                         } else {
                             OutlinedButton(
                                 onClick = { viewModel.sendFriendRequest(liveUser) { _, message -> Toast.makeText(context, message, Toast.LENGTH_SHORT).show() } },
                                 modifier = Modifier.weight(1f), shape = RoundedCornerShape(18.dp)
-                            ) { Icon(Icons.Outlined.PersonAdd, null); Spacer(Modifier.width(5.dp)); Text("Add friend") }
+                            ) { Icon(Icons.Outlined.PersonAdd, null); Spacer(Modifier.width(5.dp)); Text(tr("Add friend")) }
                         }
                     }
                     if (!isFriend) {
                         OutlinedButton(onClick = onMessage, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp)) {
-                            Icon(Icons.Outlined.MarkUnreadChatAlt, null); Spacer(Modifier.width(7.dp)); Text("Send message request")
+                            Icon(Icons.Outlined.MarkUnreadChatAlt, null); Spacer(Modifier.width(7.dp)); Text(tr("Send message request"))
                         }
                     }
                     if (liveUser.role == "moderator") {
@@ -387,7 +387,7 @@ fun UserProfileScreen(
             item(key = "about") {
                 Card(Modifier.fillMaxWidth().padding(horizontal = 16.dp), shape = RoundedCornerShape(26.dp)) {
                     Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(13.dp)) {
-                        Text("About", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.ExtraBold)
+                        Text(tr("About"), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.ExtraBold)
                         ProfileInfoRow(Icons.Outlined.Cake, if (liveUser.dob.isBlank()) "Birthday not shared" else "Born ${liveUser.dob}")
                         ProfileInfoRow(Icons.Outlined.CalendarMonth, "Joined ${SimpleDateFormat("MMMM yyyy", Locale.getDefault()).format(Date(liveUser.createdAt))}")
                         ProfileInfoRow(Icons.Outlined.People, "${liveUser.followers.size} followers • ${liveUser.following.size} following")
@@ -397,7 +397,7 @@ fun UserProfileScreen(
 
             item(key = "post_title") {
                 Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text("Posts", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold, modifier = Modifier.weight(1f))
+                    Text(tr("Posts"), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold, modifier = Modifier.weight(1f))
                     Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = CircleShape) { Text(userPosts.size.toString(), color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp), fontWeight = FontWeight.Bold) }
                 }
             }
@@ -406,8 +406,8 @@ fun UserProfileScreen(
                     Card(Modifier.fillMaxWidth().padding(horizontal = 16.dp), shape = RoundedCornerShape(26.dp)) {
                         Column(Modifier.fillMaxWidth().height(180.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
                             Icon(Icons.Outlined.Article, null, Modifier.size(48.dp), tint = MaterialTheme.colorScheme.primary.copy(alpha = .55f))
-                            Spacer(Modifier.height(8.dp)); Text("No posts yet", fontWeight = FontWeight.Bold)
-                            Text("Shared moments will appear here", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Spacer(Modifier.height(8.dp)); Text(tr("No posts yet"), fontWeight = FontWeight.Bold)
+                            Text(tr("Shared moments will appear here"), color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                 }
@@ -437,7 +437,7 @@ fun UserProfileScreen(
                     enabled = title.isNotBlank() && description.isNotBlank()
                 ) { Text("Send request") }
             },
-            dismissButton = { TextButton(onClick = { showFeatureSuggestion = false }) { Text("Cancel") } }
+            dismissButton = { TextButton(onClick = { showFeatureSuggestion = false }) { Text(tr("Cancel")) } }
         )
     }
 }

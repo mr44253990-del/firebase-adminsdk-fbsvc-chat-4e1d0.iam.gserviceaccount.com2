@@ -1,6 +1,7 @@
 package com.example.call
 
 import com.example.ui.drawThemeTexture
+import com.example.ui.tr
 import android.Manifest
 import android.app.Activity
 import android.content.Context
@@ -301,7 +302,7 @@ fun GroupCallScreen(
                         ) {
                             Icon(Icons.Default.Call, contentDescription = null)
                             Spacer(Modifier.width(8.dp))
-                            Text("Join Call")
+                            Text(tr("Join Call"))
                         }
                     }
                 }

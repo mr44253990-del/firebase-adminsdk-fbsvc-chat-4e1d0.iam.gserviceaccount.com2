@@ -214,7 +214,22 @@ object ChatThemeCatalog {
         ChatThemeSpec("Cyber Lime", listOf(Color.Black, Color(0xFF102A20), Color(0xFFA7FF4F).copy(.42f)), ThemeBrushStyle.Linear, texture = "grid", accent = Color(0xFF9BEF3F), premium = true, category = "Premium"),
         ChatThemeSpec("Rose Quartz", listOf(Color(0xFF2A101F), Color(0xFF7A3157), Color(0xFFFFB4D7).copy(.55f)), ThemeBrushStyle.Linear, texture = "sparkle", accent = Color(0xFFFF8CC6), premium = true, category = "Premium"),
         ChatThemeSpec("Diamond", listOf(Color(0xFF0E1230), Color(0xFF26307A), Color(0xFF9FB4FF).copy(.45f)), ThemeBrushStyle.Linear, texture = "diamonds", accent = Color(0xFF8FA6FF), premium = true, category = "Premium"),
-        ChatThemeSpec("Aurora Borealis", listOf(Color(0xFF02101A), Color(0xFF0B3D3A), Color(0xFF6BFFB8).copy(.38f), Color(0xFFB57CFF).copy(.30f)), ThemeBrushStyle.Linear, texture = "aurora", accent = Color(0xFF3EE3A0), premium = true, category = "Premium")
+        ChatThemeSpec("Aurora Borealis", listOf(Color(0xFF02101A), Color(0xFF0B3D3A), Color(0xFF6BFFB8).copy(.38f), Color(0xFFB57CFF).copy(.30f)), ThemeBrushStyle.Linear, texture = "aurora", accent = Color(0xFF3EE3A0), premium = true, category = "Premium"),
+        // New in 4.3.5
+        ChatThemeSpec("Eid Night", listOf(Color(0xFF0B1030), Color(0xFF1B2A6B), Color(0xFF3A1C71).copy(.6f)), texture = "crescent", accent = Color(0xFFFFD36E), textureTint = Color(0xFFFFF3C4), category = "New"),
+        ChatThemeSpec("Constellation", listOf(Color(0xFF050816), Color(0xFF0F1B3D), Color(0xFF233A7A).copy(.6f)), texture = "constellation", accent = Color(0xFF7FB2FF), category = "New"),
+        ChatThemeSpec("Lantern Festival", listOf(Color(0xFF2A0A0A), Color(0xFF6B1A12), Color(0xFFFF8F3D).copy(.4f)), texture = "lanterns", accent = Color(0xFFFF9F43), textureTint = Color(0xFFFFD36E), category = "New"),
+        ChatThemeSpec("Candy Stripes", listOf(Color(0xFFFFF5FA), Color(0xFFFFE1EF), Color(0xFFE6F0FF)), ThemeBrushStyle.Linear, texture = "stripes", accent = Color(0xFFFF5FA2), light = true, category = "New"),
+        ChatThemeSpec("Galaxy Swirl", listOf(Color(0xFF07021A), Color(0xFF1E0B4B), Color(0xFF0B3A5C).copy(.7f)), ThemeBrushStyle.Radial, texture = "galaxy", accent = Color(0xFFC77DFF), category = "New"),
+        ChatThemeSpec("Sakura Breeze", listOf(Color(0xFFFFF8FB), Color(0xFFFFE4EF), Color(0xFFF7D6FF)), texture = "sakura", accent = Color(0xFFE64C8C), light = true, category = "New"),
+        ChatThemeSpec("Retro Polka", listOf(Color(0xFFFFF4D6), Color(0xFFFFE3A3), Color(0xFFFFC46B)), texture = "polka", accent = Color(0xFFE76F51), light = true, textureTint = Color(0xFF7A3E12), category = "New"),
+        ChatThemeSpec("Neon Circuit", listOf(Color(0xFF020B10), Color(0xFF042A2E), Color(0xFF00E5FF).copy(.18f)), texture = "circuitry_glow", accent = Color(0xFF00E5FF), textureTint = Color(0xFF64FFDA), category = "New"),
+        ChatThemeSpec("Mint Cream", listOf(Color(0xFFF3FFF9), Color(0xFFD9FBEA), Color(0xFFC3F2DD)), texture = "dots", accent = Color(0xFF12B886), light = true, category = "New"),
+        ChatThemeSpec("Sunset Boulevard", listOf(Color(0xFF2B1055), Color(0xFF7597DE).copy(.6f), Color(0xFFFF8A65).copy(.7f)), ThemeBrushStyle.Linear, texture = "skyline", accent = Color(0xFFFF8A65), textureTint = Color(0xFFFFE0B2), category = "New"),
+        ChatThemeSpec("Ocean Depth", listOf(Color(0xFF001B2E), Color(0xFF00384F), Color(0xFF00708A).copy(.7f)), texture = "bubbles", accent = Color(0xFF4FC3F7), category = "New"),
+        ChatThemeSpec("Lavender Fields", listOf(Color(0xFFF8F4FF), Color(0xFFE9DDFF), Color(0xFFD4C1FF)), texture = "leaves", accent = Color(0xFF8B5CF6), light = true, category = "New"),
+        ChatThemeSpec("Obsidian Gold", listOf(Color(0xFF000000), Color(0xFF14110A), Color(0xFF3D2F0D).copy(.8f)), ThemeBrushStyle.Linear, texture = "constellation", accent = Color(0xFFE6B85C), textureTint = Color(0xFFFFE08A), premium = true, category = "Premium"),
+        ChatThemeSpec("Holo Galaxy", listOf(Color(0xFF0A0322), Color(0xFF2D0B5A), Color(0xFFFF4FD8).copy(.35f), Color(0xFF3DD6FF).copy(.30f)), ThemeBrushStyle.Linear, texture = "galaxy", accent = Color(0xFFFF7AE0), premium = true, category = "Premium")
     )
 
     private val byName = all.associateBy { it.name }
@@ -373,6 +388,8 @@ fun ChatThemeGallery(
                     "Glass & texture" -> "Soft glass effects and patterns"
                     "Fresh & bright" -> "Light and airy"
                     "Mood & pattern" -> "Bold textures with personality"
+                    "New" -> "Fresh themes added in Convo 4.3.5"
+                    "Textures" -> "Hand-drawn vector patterns"
                     else -> "Exclusive to Convo Premium"
                 })
             }

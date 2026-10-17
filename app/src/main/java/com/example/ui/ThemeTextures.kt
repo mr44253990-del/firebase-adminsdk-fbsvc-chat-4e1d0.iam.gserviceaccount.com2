@@ -21,7 +21,8 @@ object ThemeTextures {
         "none", "glow", "paper", "grid", "petals", "rain", "stars", "waves", "bokeh", "hex",
         "dots", "diagonal", "hearts", "circuit", "confetti", "rings", "sparkle", "aurora",
         "leaves", "bubbles", "zigzag", "diamonds", "doodle", "seigaiha", "topo", "linen", "grain",
-        "clouds", "mountains", "skyline", "snow", "music", "paws", "triangles", "plaid", "marble"
+        "clouds", "mountains", "skyline", "snow", "music", "paws", "triangles", "plaid", "marble",
+        "crescent", "constellation", "lanterns", "stripes", "galaxy", "sakura", "polka", "circuitry_glow"
     )
 }
 
@@ -364,6 +365,39 @@ private fun DrawScope.drawExtraTexture(texture: String, w: Float, h: Float, c: (
             p.moveTo(x, y)
             while (x < w + 20f) { x += 30f; y += (r.f() - .5f) * 50f; val cy = y + (r.f() - .5f) * 40f; p.cubicTo(x - 20f, cy, x - 10f, cy, x, y) }
             drawPath(p, c(.05f + (v % 3) * .025f), style = Stroke(1f + r.f() * 3f))
+        }
+        "crescent" -> {
+            repeat(70) { drawCircle(c(.10f + r.f() * .18f), .8f + r.f() * 1.6f, Offset(r.f() * w, r.f() * h * .8f)) }
+            val cx = w * .78f; val cy = h * .16f; val rad = min(w, h) * .10f
+            drawCircle(c(.22f), rad, Offset(cx, cy))
+            drawCircle(Color(0xFF0B1030).copy(alpha = (c(.55f).alpha).coerceAtMost(.9f)), rad * .92f, Offset(cx + rad * .42f, cy - rad * .18f))
+        }
+        "constellation" -> {
+            val pts = List(26) { Offset(r.f() * w, r.f() * h) }
+            pts.forEachIndexed { i, p -> drawCircle(c(.30f), 1.6f + (i % 3), p); if (i % 4 != 3 && i + 1 < pts.size) drawLine(c(.09f), p, pts[i + 1], strokeWidth = 1f) }
+        }
+        "lanterns" -> repeat(9) {
+            val x = r.f() * w; val y = r.f() * h * .9f; val s = 10f + r.f() * 14f
+            drawLine(c(.10f), Offset(x, 0f), Offset(x, y - s), strokeWidth = 1f)
+            drawRoundRect(c(.16f), Offset(x - s * .6f, y - s), Size(s * 1.2f, s * 1.8f), androidx.compose.ui.geometry.CornerRadius(s * .5f))
+            drawCircle(Color(0xFFFFD36E).copy(alpha = c(.10f).alpha), s * 2.2f, Offset(x, y - s * .1f))
+        }
+        "stripes" -> { var x = -h; while (x < w) { drawLine(c(.05f), Offset(x, h), Offset(x + h, 0f), strokeWidth = 14f); x += 46f } }
+        "galaxy" -> {
+            drawCircle(Color(0xFFB57CFF).copy(alpha = c(.10f).alpha), w * .45f, Offset(w * .3f, h * .35f))
+            drawCircle(Color(0xFF3DD6FF).copy(alpha = c(.08f).alpha), w * .40f, Offset(w * .8f, h * .7f))
+            repeat(180) { drawCircle(c(.08f + r.f() * .30f), .6f + r.f() * 1.8f, Offset(r.f() * w, r.f() * h)) }
+        }
+        "sakura" -> repeat(30) {
+            val center = Offset(r.f() * w, r.f() * h); val s = 5f + r.f() * 8f; val angle = r.f() * 360f
+            rotate(angle, center) { repeat(5) { i -> val a = i * 2 * PI / 5; drawCircle(Color(0xFFFFB7D5).copy(alpha = c(.16f).alpha), s * .55f, Offset(center.x + (cos(a) * s * .6f).toFloat(), center.y + (sin(a) * s * .6f).toFloat())) } }
+        }
+        "polka" -> { var y = 12f; var row = 0; while (y < h) { var x = if (row % 2 == 0) 12f else 34f; while (x < w) { drawCircle(c(.07f), 6f, Offset(x, y)); x += 44f }; y += 38f; row++ } }
+        "circuitry_glow" -> repeat(22) {
+            var x = r.f() * w; var y = r.f() * h
+            val p = Path(); p.moveTo(x, y)
+            repeat(4) { if (r.f() > .5f) x += (r.f() - .5f) * 160f else y += (r.f() - .5f) * 160f; p.lineTo(x, y) }
+            drawPath(p, c(.10f), style = Stroke(1.6f)); drawCircle(c(.24f), 3f, Offset(x, y))
         }
     }
 }

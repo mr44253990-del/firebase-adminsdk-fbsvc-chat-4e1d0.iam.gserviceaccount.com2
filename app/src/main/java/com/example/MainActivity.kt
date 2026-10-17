@@ -318,7 +318,10 @@ class MainActivity : FragmentActivity() {
                 // Check starting destination depending on whether onboarding has been completed and if a user is already signed in
                 val destinationAfterSplash = remember {
                     try {
-                        if (!isOnboardingCompleted(context)) {
+                        com.example.ui.AppLanguage.load(context)
+                        if (!com.example.ui.AppLanguage.hasChosen(context)) {
+                            "language"
+                        } else if (!isOnboardingCompleted(context)) {
                             "onboarding"
                         } else if (FirebaseAuth.getInstance().currentUser != null) {
                             "home"
@@ -399,6 +402,16 @@ class MainActivity : FragmentActivity() {
                                     popUpTo("splash") { inclusive = true }
                                 }
                             }
+                        }
+
+                        composable("language") {
+                            com.example.ui.LanguagePickerScreen(onDone = {
+                                val dest = try {
+                                    if (!isOnboardingCompleted(context)) "onboarding"
+                                    else if (FirebaseAuth.getInstance().currentUser != null) "home" else "auth"
+                                } catch (e: Exception) { "auth" }
+                                navController.navigate(dest) { popUpTo("language") { inclusive = true } }
+                            })
                         }
 
                         composable("onboarding") {

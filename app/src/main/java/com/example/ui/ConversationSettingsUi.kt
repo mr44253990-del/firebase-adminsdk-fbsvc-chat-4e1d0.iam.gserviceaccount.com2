@@ -277,7 +277,7 @@ fun ConversationSettingsPage(
         }
         "reaction" -> AlertDialog(
             onDismissRequest = { dialog = "" },
-            title = { Text("Quick reaction") },
+            title = { Text(tr("Quick reaction")) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     ChatPreferences.reactionChoices.chunked(4).forEach { row ->
@@ -294,7 +294,7 @@ fun ConversationSettingsPage(
                     }
                 }
             },
-            confirmButton = { TextButton(onClick = { dialog = "" }) { Text("Close") } }
+            confirmButton = { TextButton(onClick = { dialog = "" }) { Text(tr("Close")) } }
         )
         "nickname" -> {
             var value by remember { mutableStateOf(nickname) }
@@ -302,8 +302,8 @@ fun ConversationSettingsPage(
                 onDismissRequest = { dialog = "" },
                 title = { Text("Nickname") },
                 text = { OutlinedTextField(value, { value = it.take(40) }, singleLine = true, label = { Text("Only visible to you") }) },
-                confirmButton = { Button(onClick = { ConversationPrefs.setNickname(context, recipient.uid, value); dialog = "" }) { Text("Save") } },
-                dismissButton = { TextButton(onClick = { ConversationPrefs.setNickname(context, recipient.uid, ""); dialog = "" }) { Text("Clear") } }
+                confirmButton = { Button(onClick = { ConversationPrefs.setNickname(context, recipient.uid, value); dialog = "" }) { Text(tr("Save")) } },
+                dismissButton = { TextButton(onClick = { ConversationPrefs.setNickname(context, recipient.uid, ""); dialog = "" }) { Text(tr("Clear")) } }
             )
         }
     }
@@ -396,6 +396,6 @@ private fun OptionDialog(title: String, options: List<String>, selected: Int, on
                 }
             }
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } }
+        confirmButton = { TextButton(onClick = onDismiss) { Text(tr("Close")) } }
     )
 }
