@@ -55,6 +55,11 @@ service cloud.firestore {
       }
     }
 
+    // Private per-user settings (quick replies, …): only the owner can read or write.
+    match /user_private/{uid}/{document=**} {
+      allow read, write: if signedIn() && request.auth.uid == uid;
+    }
+
     match /fcm_tokens/{uid} {
       allow create, update, delete: if owner(uid);
       allow read: if owner(uid); // Worker service account bypasses client rules.

@@ -186,7 +186,15 @@ fun ChatScreen(
     var voiceCancelArmed by remember { mutableStateOf(false) }
     val uiScope = rememberCoroutineScope()
     LaunchedEffect(Unit) { ChatPreferences.load(context) }
-    val quickReaction by ChatPreferences.quickReaction.collectAsState()
+    val personalQuickReaction by ChatPreferences.quickReaction.collectAsState()
+    val sharedQuickReaction by viewModel.chatQuickReaction.collectAsState()
+    val chatReactions by viewModel.chatReactions.collectAsState()
+    val allOutgoingUploads by viewModel.outgoingUploads.collectAsState()
+    val uploadsChatId = remember(currentUserId, recipient.uid) { listOf(currentUserId, recipient.uid).sorted().joinToString("_") }
+    val chatUploads = remember(allOutgoingUploads, uploadsChatId) { allOutgoingUploads.filter { it.chatId == uploadsChatId } }
+    LaunchedEffect(chatUploads.size) { if (chatUploads.isNotEmpty()) runCatching { listState.animateScrollToItem(0) } }
+    // The conversation emoji (set by either person) wins over the personal default.
+    val quickReaction = sharedQuickReaction ?: personalQuickReaction
     val chatTextScale by ChatPreferences.textScale.collectAsState()
     val chatAppearance by ChatPreferences.appearance.collectAsState()
     // New messages animate in once; history and scroll-back stay still.
@@ -374,28 +382,28 @@ fun ChatScreen(
     }
 
     // Photo Gallery picker for attachment uploading to Supabase
-    val uploadChatPhoto: (ByteArray) -> Unit = { bytes ->
-        Toast.makeText(context, "Uploading photo...", Toast.LENGTH_SHORT).show()
-        val fileName = "chat_img_${System.currentTimeMillis()}.jpg"
-        viewModel.uploadFileToSupabase(
+    // Photos appear in the chat immediately as an uploading bubble (progress + time left).
+    val uploadChatPhoto: (ByteArray, String?) -> Unit = { bytes, previewUri ->
+        val reply = replyingToMessage
+        replyingToMessage = null
+        viewModel.sendTrackedUpload(
+            kind = "photo",
+            label = "Photo",
             bucket = "chat_images",
-            fileName = fileName,
-            fileBytes = bytes,
+            fileName = "chat_img_${System.currentTimeMillis()}_${(1000..9999).random()}.jpg",
+            bytes = bytes,
             contentType = "image/jpeg",
-            onSuccess = { publicUrl ->
-                viewModel.sendMessage(
-                    recipientUser = recipient,
-                    text = "",
-                    imageUrl = publicUrl,
-                    replyToId = replyingToMessage?.messageId,
-                    replyToText = replyingToMessage?.text,
-                    replyToSenderName = replyingToMessage?.senderName
-                )
-                replyingToMessage = null
-                Toast.makeText(context, "Photo sent!", Toast.LENGTH_SHORT).show()
-            },
-            onFailure = { err -> Toast.makeText(context, "Photo upload failed: $err", Toast.LENGTH_LONG).show() }
-        )
+            preview = previewUri
+        ) { publicUrl ->
+            viewModel.sendMessage(
+                recipientUser = recipient,
+                text = "",
+                imageUrl = publicUrl,
+                replyToId = reply?.messageId,
+                replyToText = reply?.text,
+                replyToSenderName = reply?.senderName
+            )
+        }
     }
     var cameraUri by remember { mutableStateOf<Uri?>(null) }
     // Album send: pick up to 10 photos, preview, caption, then upload in order.
@@ -419,16 +427,15 @@ fun ChatScreen(
                 albumProgress = (index + 1) to images.size
                 val bytes = compressChatImage(context, uri, hd)
                 if (bytes == null) return@forEachIndexed
-                val url = kotlinx.coroutines.suspendCancellableCoroutine<String?> { cont ->
-                    viewModel.uploadFileToSupabase(
-                        bucket = "chat_images",
-                        fileName = "chat_img_${System.currentTimeMillis()}_${index}_${(1000..9999).random()}.jpg",
-                        fileBytes = bytes,
-                        contentType = "image/jpeg",
-                        onSuccess = { if (cont.isActive) cont.resumeWith(Result.success(it)) },
-                        onFailure = { if (cont.isActive) cont.resumeWith(Result.success(null)) }
-                    )
-                }
+                val url = viewModel.awaitTrackedUpload(
+                    kind = "photo",
+                    label = "Photo ${index + 1} of ${images.size}",
+                    bucket = "chat_images",
+                    fileName = "chat_img_${System.currentTimeMillis()}_${index}_${(1000..9999).random()}.jpg",
+                    bytes = bytes,
+                    contentType = "image/jpeg",
+                    preview = uri.toString()
+                ) { lateUrl -> viewModel.sendMessage(recipientUser = recipient, text = "", imageUrl = lateUrl) }
                 if (url != null) {
                     viewModel.sendMessage(
                         recipientUser = recipient,
@@ -449,41 +456,16 @@ fun ChatScreen(
     val cameraLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
         val uri = cameraUri
         if (ok && uri != null) {
-            runCatching { context.contentResolver.openInputStream(uri)?.use { it.readBytes() } }.getOrNull()?.let(uploadChatPhoto)
+            runCatching { context.contentResolver.openInputStream(uri)?.use { it.readBytes() } }.getOrNull()?.let { uploadChatPhoto(it, uri.toString()) }
         }
     }
     val photoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
         if (uri != null) {
-            Toast.makeText(context, "Uploading photo...", Toast.LENGTH_SHORT).show()
             try {
-                val inputStream: InputStream? = context.contentResolver.openInputStream(uri)
-                val bytes = inputStream?.readBytes()
-                if (bytes != null) {
-                    val fileName = "chat_img_${System.currentTimeMillis()}.jpg"
-                    viewModel.uploadFileToSupabase(
-                        bucket = "chat_images",
-                        fileName = fileName,
-                        fileBytes = bytes,
-                        contentType = "image/jpeg",
-                        onSuccess = { publicUrl ->
-                            viewModel.sendMessage(
-                                recipientUser = recipient,
-                                text = "",
-                                imageUrl = publicUrl,
-                                replyToId = replyingToMessage?.messageId,
-                                replyToText = replyingToMessage?.text,
-                                replyToSenderName = replyingToMessage?.senderName
-                            )
-                            replyingToMessage = null
-                            Toast.makeText(context, "Photo sent!", Toast.LENGTH_SHORT).show()
-                        },
-                        onFailure = { err ->
-                            Toast.makeText(context, "Photo upload failed: $err", Toast.LENGTH_LONG).show()
-                        }
-                    )
-                }
+                val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                if (bytes != null) uploadChatPhoto(bytes, uri.toString())
             } catch (e: Exception) {
                 Toast.makeText(context, "Error loading file: ${e.message}", Toast.LENGTH_SHORT).show()
             }
@@ -503,24 +485,27 @@ fun ChatScreen(
             }
         }
         val mime = context.contentResolver.getType(uri) ?: "application/octet-stream"
-        fileUploading = true; fileProgress = 0; fileEta = 0L
-        viewModel.setFileUploadState(fileName, 0, 0L, active = true)
-        viewModel.uploadUriToSupabase(uri, fileName, mime, fileSize,
-            onProgress = { percent, eta ->
-                fileProgress = percent
-                fileEta = eta
-                viewModel.setFileUploadState(fileName, percent, eta, active = true)
-            },
-            onSuccess = { url ->
-                fileUploading = false
-                viewModel.setFileUploadState(fileName, 100, 0L, active = false)
-                viewModel.sendMessage(recipient, "", fileUrl = url, fileName = fileName, fileMimeType = mime, fileSize = fileSize)
-            },
-            onFailure = { error ->
-                fileUploading = false
-                viewModel.setFileUploadState(fileName, 0, 0L, active = false)
-                Toast.makeText(context, error, Toast.LENGTH_LONG).show()
-            })
+        // The file shows up in the chat right away as an uploading bubble; the composer stays usable.
+        val upId = viewModel.startOutgoingUpload("file", fileName, fileSize)
+        fun startFileUpload() {
+            viewModel.setFileUploadState(fileName, 0, 0L, active = true)
+            viewModel.uploadUriToSupabase(uri, fileName, mime, fileSize,
+                onProgress = { percent, eta ->
+                    viewModel.updateOutgoingUpload(upId, percent, eta)
+                    viewModel.setFileUploadState(fileName, percent, eta, active = true)
+                },
+                onSuccess = { url ->
+                    viewModel.setFileUploadState(fileName, 100, 0L, active = false)
+                    val wanted = viewModel.isOutgoingUploadActive(upId)
+                    viewModel.dismissOutgoingUpload(upId)
+                    if (wanted) viewModel.sendMessage(recipient, "", fileUrl = url, fileName = fileName, fileMimeType = mime, fileSize = fileSize)
+                },
+                onFailure = { error ->
+                    viewModel.setFileUploadState(fileName, 0, 0L, active = false)
+                    viewModel.failOutgoingUpload(upId, error) { startFileUpload() }
+                })
+        }
+        startFileUpload()
     }
 
     // ---- Location sharing (current + live) ----
@@ -636,27 +621,27 @@ fun ChatScreen(
             file?.delete()
             if (bytes != null) {
                 val fileName = "voice_${System.currentTimeMillis()}.m4a"
-                viewModel.uploadFileToSupabase(
+                val reply = replyingToMessage
+                replyingToMessage = null
+                viewModel.sendTrackedUpload(
+                    kind = "voice",
+                    label = "Voice message",
                     bucket = "voice_notes",
                     fileName = fileName,
-                    fileBytes = bytes,
+                    bytes = bytes,
                     contentType = "audio/m4a",
-                    onSuccess = { publicUrl ->
-                        viewModel.sendMessage(
-                            recipientUser = recipient,
-                            text = "",
-                            voiceUrl = publicUrl,
-                            voiceDurationSec = durationSec,
-                            replyToId = replyingToMessage?.messageId,
-                            replyToText = replyingToMessage?.text,
-                            replyToSenderName = replyingToMessage?.senderName
-                        )
-                        replyingToMessage = null
-                    },
-                    onFailure = { err ->
-                        Toast.makeText(context, "Voice upload failed: $err", Toast.LENGTH_LONG).show()
-                    }
-                )
+                    durationSec = durationSec
+                ) { publicUrl ->
+                    viewModel.sendMessage(
+                        recipientUser = recipient,
+                        text = "",
+                        voiceUrl = publicUrl,
+                        voiceDurationSec = durationSec,
+                        replyToId = reply?.messageId,
+                        replyToText = reply?.text,
+                        replyToSenderName = reply?.senderName
+                    )
+                }
             }
         } catch (e: Exception) {
             runCatching { recorder?.release() }
@@ -1055,10 +1040,21 @@ fun ChatScreen(
                     reverseLayout = true
                 ) {
                     val lastSeenOwnId = visibleMessages.lastOrNull { it.senderId == currentUserId && it.seenByRecipient }?.messageId
-                    items(visibleMessages.reversed(), key = { it.messageId }) { msg ->
+                    val newestOwnId = visibleMessages.lastOrNull { it.senderId == currentUserId }?.messageId
+                    // Uploading photos / voice / files sit at the bottom (reverse layout → first items).
+                    items(chatUploads.reversed(), key = { it.id }) { up ->
+                        OutgoingUploadBubble(
+                            upload = up,
+                            accent = bubbleAccent ?: MaterialTheme.colorScheme.primary,
+                            onRetry = { viewModel.retryOutgoingUpload(up.id) },
+                            onCancel = { viewModel.dismissOutgoingUpload(up.id) }
+                        )
+                    }
+                    items(visibleMessages.reversed(), key = { it.messageId }) { rawMsg ->
+                        val msg = chatReactions[rawMsg.messageId]?.let { live -> rawMsg.copy(reactions = rawMsg.reactions + live) } ?: rawMsg
                         val entranceAnimate = remember(msg.messageId) { msg.timestamp > chatOpenedAt - 1500L && enteredMessageIds.add(msg.messageId) }
                         val flash by animateFloatAsState(if (highlightedMessageId == msg.messageId) .22f else 0f, tween(450), label = "jump_flash")
-                        Box(Modifier.fillMaxWidth().messageEntrance(chatAppearance.messageAnimation, entranceAnimate, msg.senderId == currentUserId).background(MaterialTheme.colorScheme.primary.copy(alpha = flash), RoundedCornerShape(16.dp)).padding(bottom = if (msg.messageId == lastSeenOwnId) 16.dp else 0.dp)) {
+                        Box(Modifier.fillMaxWidth().messageEntrance(chatAppearance.messageAnimation, entranceAnimate, msg.senderId == currentUserId).background(MaterialTheme.colorScheme.primary.copy(alpha = flash), RoundedCornerShape(16.dp)).padding(bottom = if (msg.messageId == lastSeenOwnId || msg.messageId == newestOwnId) 16.dp else 0.dp)) {
                         val isSentByMe = msg.senderId == currentUserId
                         MessageBubbleItem(
                             message = msg,
@@ -1086,7 +1082,7 @@ fun ChatScreen(
                             onForward = { forwardingMessage = msg },
                             onJumpToReply = { targetId ->
                                 val index = visibleMessages.reversed().indexOfFirst { it.messageId == targetId }
-                                if (index >= 0) uiScope.launch { listState.animateScrollToItem(index); highlightedMessageId = targetId }
+                                if (index >= 0) uiScope.launch { listState.animateScrollToItem(index + chatUploads.size); highlightedMessageId = targetId }
                                 else Toast.makeText(context, "Original message is no longer loaded", Toast.LENGTH_SHORT).show()
                             },
                             bubbleAccent = bubbleAccent,
@@ -1107,6 +1103,22 @@ fun ChatScreen(
                                 }
                             }
                         )
+                        if (msg.messageId == newestOwnId) {
+                            val liveState = deliveryStates[msg.messageId]
+                            val statusLabel = when {
+                                msg.seenByRecipient -> "Seen"
+                                msg.deliveredToRecipient || liveState == "delivered" -> "Delivered · not seen yet"
+                                liveState == "pending" -> "Sending…"
+                                liveState == "failed" -> "Not sent — tap ! to retry"
+                                else -> "Sent · waiting for ${updatedRecipient.name.substringBefore(' ').ifBlank { "them" }}"
+                            }
+                            Text(
+                                statusLabel,
+                                fontSize = 10.sp,
+                                color = if (chatThemeSpec?.isScene == true && !chatThemeSpec.light) Color.White.copy(alpha = .78f) else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.align(Alignment.BottomEnd).padding(end = if (msg.messageId == lastSeenOwnId) 24.dp else 6.dp).offset(y = 2.dp)
+                            )
+                        }
                         if (msg.messageId == lastSeenOwnId) {
                             SeenAvatar(
                                 updatedRecipient.profileImageUrl, updatedRecipient.name,
@@ -1257,6 +1269,21 @@ fun ChatScreen(
                 mentionQuery?.let { Mentions.suggestions(it, mentionUsers, currentUserId) }.orEmpty()
             }
             MentionSuggestionBar(mentionSuggestions, onPick = { user -> messageText = Mentions.complete(messageText, user) })
+
+            // Quick replies (saved on the server): type "/" and tap one to send it instantly.
+            var showQuickManager by remember { mutableStateOf(false) }
+            if (messageText.startsWith("/") && messageText.length <= 40 && editingMessage == null && conversationAccepted) {
+                QuickReplyBar(
+                    query = messageText,
+                    accent = bubbleAccent ?: MaterialTheme.colorScheme.primary,
+                    onSend = { reply ->
+                        viewModel.sendMessage(recipientUser = recipient, text = reply)
+                        messageText = ""
+                    },
+                    onManage = { showQuickManager = true }
+                )
+            }
+            if (showQuickManager) QuickReplyManagerDialog(onDismiss = { showQuickManager = false })
 
             // Smart replies (on-device): one-tap answers to the latest incoming text.
             val newestIncoming = remember(newestMessageId) {
@@ -1450,7 +1477,7 @@ fun ChatScreen(
                                     else Text(quickReaction, fontSize = 27.sp)
                                 }
                                 DropdownMenu(showReactionPicker, { showReactionPicker = false }) {
-                                    Text("Quick reaction", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp))
+                                    Text("Chat emoji · changes for both of you", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp))
                                     ChatPreferences.reactionChoices.chunked(4).forEach { row ->
                                         Row(Modifier.padding(horizontal = 8.dp)) {
                                             row.forEach { emoji ->
@@ -1458,7 +1485,7 @@ fun ChatScreen(
                                                     Modifier.size(46.dp).clip(CircleShape)
                                                         .background(if (emoji == quickReaction) composerAccent.copy(alpha = .18f) else Color.Transparent)
                                                         .clickable {
-                                                            ChatPreferences.setQuickReaction(context, emoji)
+                                                            viewModel.updateChatQuickReaction(emoji)
                                                             showReactionPicker = false
                                                         },
                                                     contentAlignment = Alignment.Center
@@ -1474,7 +1501,7 @@ fun ChatScreen(
                                                     Modifier.size(46.dp).clip(CircleShape)
                                                         .background(if (sticker.token == quickReaction) composerAccent.copy(alpha = .18f) else Color.Transparent)
                                                         .clickable {
-                                                            ChatPreferences.setQuickReaction(context, sticker.token)
+                                                            viewModel.updateChatQuickReaction(sticker.token)
                                                             showReactionPicker = false
                                                         },
                                                     contentAlignment = Alignment.Center
@@ -1630,28 +1657,16 @@ fun ChatScreen(
     }
 
     forwardingMessage?.let { original ->
-        AlertDialog(
-            onDismissRequest = { forwardingMessage = null },
-            title = { Text("Forward message", fontWeight = FontWeight.Bold) },
-            text = {
-                LazyColumn(Modifier.heightIn(max = 420.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    items(users, key = { it.uid }) { target ->
-                        ListItem(
-                            headlineContent = { Text(target.name, fontWeight = FontWeight.Bold) },
-                            supportingContent = { Text("@${target.username}") },
-                            leadingContent = {
-                                AsyncImage(target.profileImageUrl.ifBlank { null }, target.name, modifier = Modifier.size(42.dp).clip(CircleShape))
-                            },
-                            modifier = Modifier.clip(RoundedCornerShape(18.dp)).clickable {
-                                viewModel.forwardMessage(target, original)
-                                Toast.makeText(context, "Forwarded to ${target.name}", Toast.LENGTH_SHORT).show()
-                                forwardingMessage = null
-                            }
-                        )
-                    }
-                }
-            },
-            confirmButton = { TextButton(onClick = { forwardingMessage = null }) { Text("Cancel") } }
+        ForwardMessageSheet(
+            message = original,
+            me = currentUser,
+            users = users,
+            onDismiss = { forwardingMessage = null },
+            onSend = { targets ->
+                targets.forEach { viewModel.forwardMessage(it, original) }
+                Toast.makeText(context, if (targets.size == 1) "Forwarded to ${targets.first().name}" else "Forwarded to ${targets.size} friends", Toast.LENGTH_SHORT).show()
+                forwardingMessage = null
+            }
         )
     }
 
@@ -1960,7 +1975,14 @@ fun MessageBubbleItem(
                                 color = textColor,
                                 onMentionClick = onMentionClick,
                                 style = MaterialTheme.typography.bodyMedium.copy(fontSize = (14 * textScale).sp, lineHeight = (20 * textScale).sp),
-                                mentionColor = if (isSentByMe) textColor else palette.accent
+                                mentionColor = if (isSentByMe) textColor else palette.accent,
+                                onPlainClick = { showMenu = !showMenu },
+                                onLongPress = { showMenu = true },
+                                onDoubleTap = {
+                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                    clipboard.setPrimaryClip(ClipData.newPlainText("Convo Chat message", message.text))
+                                    Toast.makeText(context, "Message copied", Toast.LENGTH_SHORT).show()
+                                }
                             )
                         }
                     }
@@ -2085,24 +2107,27 @@ fun MessageBubbleItem(
                     }
                 }
             }
-            DropdownMenuItem(
-                text = { Text("Reply", color = MaterialTheme.colorScheme.onSurface) },
-                leadingIcon = { Icon(Icons.Default.Reply, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
-                onClick = {
-                    onReplySelect()
-                    showMenu = false
-                }
-            )
-            if (message.text.isNotBlank()) {
-                DropdownMenuItem(
-                    text = { Text("Copy text") },
-                    leadingIcon = { Icon(Icons.Default.ContentCopy, null) },
-                    onClick = {
+            // Quick actions — one tap, big targets.
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly
+            ) {
+                MenuQuickAction(Icons.Default.Reply, "Reply") { onReplySelect(); showMenu = false }
+                if (message.text.isNotBlank()) {
+                    MenuQuickAction(Icons.Default.ContentCopy, "Copy") {
                         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                         clipboard.setPrimaryClip(ClipData.newPlainText("Convo Chat message", message.text))
+                        Toast.makeText(context, "Copied", Toast.LENGTH_SHORT).show()
                         showMenu = false
                     }
-                )
+                }
+                MenuQuickAction(Icons.AutoMirrored.Filled.Forward, "Forward") { showMenu = false; onForward() }
+                if (isSentByMe && message.text.isNotBlank() && !isStickerOnly) {
+                    MenuQuickAction(Icons.Default.Edit, "Edit") { onEditSelect(); showMenu = false }
+                }
+            }
+            HorizontalDivider(Modifier.padding(horizontal = 12.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = .5f))
+            if (message.text.isNotBlank()) {
                 if (!isStickerOnly) MessageSmartTextActions(message.text, onSelectText = { showSelectText = true }, onDone = { showMenu = false })
             }
             if (message.text.isNotBlank() && AppFeatureFlags.aiEnabled.collectAsState().value) {
@@ -2112,21 +2137,6 @@ fun MessageBubbleItem(
                     onClick = {
                         showMenu = false
                         onTranslate(message)
-                    }
-                )
-            }
-            DropdownMenuItem(
-                text = { Text("Forward") },
-                leadingIcon = { Icon(Icons.AutoMirrored.Filled.Forward, null) },
-                onClick = { showMenu = false; onForward() }
-            )
-            if (isSentByMe && message.text.isNotBlank()) {
-                DropdownMenuItem(
-                    text = { Text("Edit Message", color = MaterialTheme.colorScheme.onSurface) },
-                    leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
-                    onClick = {
-                        onEditSelect()
-                        showMenu = false
                     }
                 )
             }
@@ -2141,6 +2151,21 @@ fun MessageBubbleItem(
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun MenuQuickAction(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, onClick: () -> Unit) {
+    Column(
+        Modifier.clip(RoundedCornerShape(14.dp)).clickable(onClick = onClick).padding(horizontal = 8.dp, vertical = 6.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Box(
+            Modifier.size(40.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary.copy(alpha = .12f)),
+            contentAlignment = Alignment.Center
+        ) { Icon(icon, label, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp)) }
+        Spacer(Modifier.height(3.dp))
+        Text(label, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface)
     }
 }
 

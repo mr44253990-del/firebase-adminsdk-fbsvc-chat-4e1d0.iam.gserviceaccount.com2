@@ -185,8 +185,7 @@ private fun minutesLeft(until: Long, now: Long): String {
     return if (m >= 60) "${m / 60} h ${m % 60} min" else "$m min"
 }
 
-/** Full-screen interactive map (Leaflet + OSM in a WebView), following live updates. */
-@SuppressLint("SetJavaScriptEnabled")
+/** Full-screen interactive map: native pinch-zoom/pan OSM tiles, follows live updates. */
 @Composable
 fun LiveMapDialog(loc: SharedLocation, onDismiss: () -> Unit) {
     val context = LocalContext.current
@@ -194,55 +193,60 @@ fun LiveMapDialog(loc: SharedLocation, onDismiss: () -> Unit) {
     val lat = live?.lat ?: loc.lat
     val lng = live?.lng ?: loc.lng
     val acc = live?.accuracy ?: loc.accuracyM.toDouble()
-    var web by remember { mutableStateOf<WebView?>(null) }
-    LaunchedEffect(lat, lng, acc, web) { web?.evaluateJavascript("window.updatePos && updatePos($lat,$lng,$acc)", null) }
+    val controller = remember { OsmMapController(16.0).also { it.centerOn(loc.lat, loc.lng) } }
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Box(Modifier.fillMaxSize().background(Color.Black)) {
-            AndroidView(factory = { ctx ->
-                WebView(ctx).apply {
-                    settings.javaScriptEnabled = true
-                    settings.domStorageEnabled = true
-                    webViewClient = WebViewClient()
-                    loadDataWithBaseURL("https://convo.local/", leafletHtml(lat, lng, acc, loc.isLive), "text/html", "utf-8", null)
-                    web = this
-                }
-            }, modifier = Modifier.fillMaxSize())
+        Box(Modifier.fillMaxSize().background(Color(0xFFE8EEF2))) {
+            InteractiveOsmMap(
+                lat = lat, lng = lng, controller = controller,
+                modifier = Modifier.fillMaxSize(),
+                pinColor = if (loc.isLive) Color(0xFF1E88E5) else Color(0xFFE53935),
+                pulse = loc.isLive,
+                accuracyMeters = acc
+            )
             Row(
                 Modifier.align(Alignment.TopStart).fillMaxWidth().statusBarsPadding().padding(12.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 FilledTonalIconButton(onClick = onDismiss) { Icon(Icons.Default.Close, "Close") }
                 Spacer(Modifier.width(8.dp))
-                Surface(shape = RoundedCornerShape(16.dp), color = Color.White.copy(alpha = .92f)) {
+                Surface(shape = RoundedCornerShape(16.dp), color = Color.White.copy(alpha = .94f), shadowElevation = 4.dp) {
                     Column(Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) {
                         Text(if (loc.isLive) "Live location" else "Shared location", fontWeight = FontWeight.Bold, color = Color(0xFF1B1B1F))
-                        Text("%.5f, %.5f".format(Locale.US, lat, lng), fontSize = 11.sp, color = Color(0xFF444444))
+                        Text("%.5f, %.5f".format(Locale.US, lat, lng) + if (acc > 0) "  ±${acc.toInt()} m" else "", fontSize = 11.sp, color = Color(0xFF444444))
                     }
                 }
             }
-            Button(
-                onClick = { runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("geo:$lat,$lng?q=$lat,$lng"))) } },
-                modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(16.dp)
-            ) { Icon(Icons.Default.Directions, null); Spacer(Modifier.width(6.dp)); Text("Directions") }
+            Column(
+                Modifier.align(Alignment.CenterEnd).padding(end = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Surface(shape = RoundedCornerShape(16.dp), color = Color.White.copy(alpha = .95f), shadowElevation = 6.dp) {
+                    Column {
+                        IconButton(onClick = { controller.zoomBy(1.0) }) { Icon(Icons.Default.Add, "Zoom in", tint = Color(0xFF1B1B1F)) }
+                        HorizontalDivider(Modifier.width(48.dp), color = Color(0x22000000))
+                        IconButton(onClick = { controller.zoomBy(-1.0) }) { Icon(Icons.Default.Remove, "Zoom out", tint = Color(0xFF1B1B1F)) }
+                    }
+                }
+                Surface(shape = CircleShape, color = if (controller.follow) Color(0xFF1E88E5) else Color.White.copy(alpha = .95f), shadowElevation = 6.dp) {
+                    IconButton(onClick = { controller.follow = true; controller.centerOn(lat, lng) }) {
+                        Icon(Icons.Default.MyLocation, "Center on pin", tint = if (controller.follow) Color.White else Color(0xFF1B1B1F))
+                    }
+                }
+            }
+            Row(
+                Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(16.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Button(onClick = { runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("geo:$lat,$lng?q=$lat,$lng"))) } }) {
+                    Icon(Icons.Default.Directions, null); Spacer(Modifier.width(6.dp)); Text("Directions")
+                }
+                FilledTonalButton(onClick = { runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://maps.google.com/?q=$lat,$lng"))) } }) {
+                    Icon(Icons.Default.Map, null); Spacer(Modifier.width(6.dp)); Text("Google Maps")
+                }
+            }
         }
     }
 }
-
-private fun leafletHtml(lat: Double, lng: Double, acc: Double, live: Boolean) = """
-<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<style>html,body,#m{height:100%;margin:0}.pulse{width:18px;height:18px;border-radius:50%;background:${if (live) "#1E88E5" else "#E53935"};border:3px solid #fff;box-shadow:0 0 0 0 rgba(30,136,229,.6);animation:p 1.6s infinite}@keyframes p{70%{box-shadow:0 0 0 22px rgba(30,136,229,0)}100%{box-shadow:0 0 0 0 rgba(30,136,229,0)}}</style>
-</head><body><div id="m"></div><script>
-var map=L.map('m',{zoomControl:false}).setView([$lat,$lng],16);
-L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'&copy; OpenStreetMap'}).addTo(map);
-var icon=L.divIcon({className:'',html:'<div class="pulse"></div>',iconSize:[24,24],iconAnchor:[12,12]});
-var mk=L.marker([$lat,$lng],{icon:icon}).addTo(map);
-var circle=L.circle([$lat,$lng],{radius:${acc.coerceAtLeast(5.0)},color:'#1E88E5',weight:1,fillOpacity:.12}).addTo(map);
-var trail=L.polyline([[$lat,$lng]],{color:'#1E88E5',weight:4,opacity:.6}).addTo(map);
-window.updatePos=function(a,b,c){var ll=[a,b];mk.setLatLng(ll);circle.setLatLng(ll);circle.setRadius(Math.max(5,c));trail.addLatLng(ll);map.panTo(ll,{animate:true});};
-</script></body></html>
-""".trimIndent()
 
 /** Bottom sheet: share current location or live location with a duration picker. */
 @OptIn(ExperimentalMaterial3Api::class)

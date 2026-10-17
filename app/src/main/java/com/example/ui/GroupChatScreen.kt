@@ -1026,7 +1026,9 @@ fun GroupMessageBubbleItem(
                                 color = textColor,
                                 onMentionClick = onMentionClick,
                                 style = MaterialTheme.typography.bodyMedium.copy(fontSize = (14 * textScale).sp, lineHeight = (20 * textScale).sp),
-                                mentionColor = if (isSentByMe) textColor else palette.accent
+                                mentionColor = if (isSentByMe) textColor else palette.accent,
+                                onPlainClick = { showMenu = true },
+                                onLongPress = { showMenu = true }
                             )
                         }
                     }

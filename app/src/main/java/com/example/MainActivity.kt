@@ -712,7 +712,8 @@ class MainActivity : FragmentActivity() {
                 LaunchedEffect(intent) {
                     val notificationType = intent?.getStringExtra("notificationType") ?: "message"
                     val senderId = intent?.getStringExtra("senderId")
-                    if (notificationType != "message") {
+                    // "online_alert" (someone you messaged is online now) opens that chat directly.
+                    if (notificationType != "message" && notificationType != "online_alert") {
                         viewModel.requestOpenActivityCenter()
                         navController.navigate("home") { launchSingleTop = true }
                     } else if (!senderId.isNullOrBlank()) {

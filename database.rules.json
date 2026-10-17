@@ -65,11 +65,23 @@
         }
       }
     },
+    "online_watch": {
+      "$target": {
+        ".read": "auth != null && auth.uid === $target",
+        ".write": "auth != null && auth.uid === $target",
+        "$watcher": {
+          ".write": "auth != null && auth.uid === $watcher"
+        }
+      }
+    },
     "chat_settings": {
       "$chatId": {
         ".read": "auth != null && $chatId.contains(auth.uid)",
         ".write": "auth != null && $chatId.contains(auth.uid)",
         "theme": {
+          ".validate": "newData.isString() && newData.val().length <= 32"
+        },
+        "quickReaction": {
           ".validate": "newData.isString() && newData.val().length <= 32"
         }
       }

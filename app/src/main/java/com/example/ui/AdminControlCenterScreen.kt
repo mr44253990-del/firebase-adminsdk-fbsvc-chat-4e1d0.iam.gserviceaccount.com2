@@ -209,6 +209,7 @@ fun AdminControlCenterScreen(
         AdminMenuEntry("audit", "Audit log", "Every admin change with time and account", Icons.Outlined.History, Color(0xFF546E7A)),
         AdminMenuEntry("power", "Power tools", "Broadcast push, live switches, reminders, typing sound", Icons.Outlined.Bolt, Color(0xFFFF6D00)),
         AdminMenuEntry("cloud_db", "Cloud backup", "Text messages in Cloudflare D1 · on/off · test", Icons.Outlined.Cloud, Color(0xFFF38020), if (cloudDbOn) "ON" else ""),
+        AdminMenuEntry("ai_autoreply", "AI auto-reply (admin)", "AI answers messages sent to you — server side", Icons.Outlined.SmartToy, Color(0xFF7C4DFF)),
         AdminMenuEntry("ai_providers", "AI providers & keys", "Update keys, test models, custom providers, hide AI", Icons.Outlined.Key, Color(0xFF7A4FE0)),
         AdminMenuEntry("workers", "Multi-worker routing", "Spread services across 2nd/3rd worker URLs", Icons.Outlined.Hub, Color(0xFF2B7FD9)),
         AdminMenuEntry("ai", "AI & feature flags", "Assistant and staged capabilities", Icons.Outlined.AutoAwesome, Color(0xFF8E5CE6)),
@@ -559,6 +560,9 @@ fun AdminControlCenterScreen(
                                 }
                             }
                         }
+                    }
+                    "ai_autoreply" -> {
+                        AdminPanelCard("AI auto-reply", "When ON, messages to the admin get an AI answer from the server", Icons.Outlined.SmartToy) { AdminAiAutoReplyPanel(viewModel) }
                     }
                     "staff" -> {
                         AdminPanelCard("Sub-admins & roles", "Give trusted people only the access they need", Icons.Outlined.AdminPanelSettings) { AdminStaffPanel(users) }

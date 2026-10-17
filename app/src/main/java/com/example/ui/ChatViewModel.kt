@@ -110,6 +110,22 @@ data class StorageSetupHealth(
     val instructions: List<String> = emptyList()
 )
 
+/** A photo / voice / file that is still uploading — shown as a bubble in the chat right away. */
+data class OutgoingUpload(
+    val id: String,
+    val chatId: String,
+    val kind: String,              // "photo" | "voice" | "file"
+    val label: String,
+    val preview: String? = null,   // local uri/path for photo thumbnails
+    val totalBytes: Long = 0L,
+    val percent: Int = 0,
+    val etaSeconds: Long = -1L,
+    val durationSec: Int = 0,
+    val failed: Boolean = false,
+    val error: String = "",
+    val startedAt: Long = System.currentTimeMillis()
+)
+
 data class R2MediaResult(
     val publicUrl: String,
     val key: String,
@@ -399,6 +415,18 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     val recipientUploadState: StateFlow<ActiveUploadState?> = _recipientUploadState.asStateFlow()
     private val _chatTheme = MutableStateFlow("Aurora")
     val chatTheme: StateFlow<String> = _chatTheme.asStateFlow()
+    /** Conversation-wide quick reaction ("knock" emoji): changing it updates both people. */
+    private val _chatQuickReaction = MutableStateFlow<String?>(null)
+    val chatQuickReaction: StateFlow<String?> = _chatQuickReaction.asStateFlow()
+    private var activeQuickReactionListener: Pair<com.google.firebase.database.DatabaseReference, ValueEventListener>? = null
+    /**
+     * Message reactions live in chat_settings/{chatId}/reactions/{messageId}/{uid}. The message
+     * node itself is deleted from RTDB once the recipient stores it locally, so writing reactions
+     * there silently failed validation — that is why new reactions never appeared.
+     */
+    private val _chatReactions = MutableStateFlow<Map<String, Map<String, String>>>(emptyMap())
+    val chatReactions: StateFlow<Map<String, Map<String, String>>> = _chatReactions.asStateFlow()
+    private var activeReactionsListener: Pair<com.google.firebase.database.DatabaseReference, ValueEventListener>? = null
 
     private val _inAppNotification = MutableStateFlow<InAppNotificationData?>(null)
     val inAppNotification: StateFlow<InAppNotificationData?> = _inAppNotification.asStateFlow()
@@ -692,6 +720,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 val callback = object : ConnectivityManager.NetworkCallback() {
                     override fun onAvailable(network: Network) {
                         setNetworkStatus(true)
+                        viewModelScope.launch(Dispatchers.Main) {
+                            kotlinx.coroutines.delay(1_500)
+                            autoResendAfterReconnect()
+                        }
                     }
                     override fun onLost(network: Network) {
                         setNetworkStatus(false)
@@ -703,6 +735,26 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 Log.e("NETWORK_CALLBACK", "Error registering network callback: ${e.message}")
             }
         }
+    }
+
+    /**
+     * Back online: re-send messages that failed (or have been stuck "pending" for a while) and
+     * retry failed media uploads, so things written offline go out automatically.
+     */
+    private fun autoResendAfterReconnect() {
+        val me = FirebaseAuth.getInstance().currentUser?.uid ?: return
+        _outgoingUploads.value.filter { it.failed }.forEach { retryOutgoingUpload(it.id) }
+        val recipient = _activeRecipientUser.value ?: return
+        val states = _messageDeliveryStates.value
+        val now = System.currentTimeMillis()
+        _chatMessagesState.value
+            .filter { it.senderId == me }
+            .filter { msg ->
+                val st = states[msg.messageId]
+                st == "failed" || (st == "pending" && now - msg.timestamp > 15_000L)
+            }
+            .take(30)
+            .forEach { retryMessage(recipient, it) }
     }
 
     fun selectRecipient(user: User?) {
@@ -2094,6 +2146,107 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         return isFriend || hasConversation
     }
 
+    /**
+     * "Tell me when they come online": when I message someone who is offline, leave a small
+     * marker at online_watch/{them}/{me}. Their app notifies me (via push) the next time it
+     * connects, then removes the marker.
+     */
+    // ---- Admin AI auto-reply (runs on the Worker; config in app_config/admin_ai_reply) ----
+    @Volatile private var adminAiConfig: Map<String, Any?>? = null
+    @Volatile private var adminAiConfigAt = 0L
+
+    private fun maybeRequestAdminAutoReply(recipient: User, chatId: String, messageId: String, text: String, me: User) {
+        if (recipient.uid == me.uid) return
+        fun proceed(cfg: Map<String, Any?>) {
+            if (cfg["enabled"] != true || cfg["adminUid"] != recipient.uid) return
+            val adminOnline = _usersState.value.firstOrNull { it.uid == recipient.uid }?.isOnline == true
+            if (cfg["onlyWhenOffline"] == true && adminOnline) return
+            val history = org.json.JSONArray()
+            _chatMessagesState.value.takeLast(9).dropLast(1).forEach { m ->
+                if (m.text.isNotBlank()) history.put((if (m.senderId == recipient.uid) "admin: " else "user: ") + m.text.take(400))
+            }
+            val payload = JSONObject()
+                .put("recipientUid", recipient.uid)
+                .put("chatId", chatId)
+                .put("messageId", messageId)
+                .put("text", text.take(2000))
+                .put("senderName", me.name)
+                .put("callerToken", me.fcmToken)
+                .put("databaseUrl", getDatabaseInstance().reference.toString().trimEnd('/'))
+                .put("history", history)
+            workerSecurityPost("/ai/admin-autoreply", payload) { ok, json ->
+                if (!ok) Log.w("ADMIN_AI_REPLY", json.optString("error", "skipped"))
+            }
+        }
+        val cached = adminAiConfig
+        if (cached != null && System.currentTimeMillis() - adminAiConfigAt < 5 * 60_000L) return proceed(cached)
+        FirebaseFirestore.getInstance().collection("app_config").document("admin_ai_reply").get()
+            .addOnSuccessListener { doc ->
+                val cfg = doc.data ?: emptyMap()
+                adminAiConfig = cfg; adminAiConfigAt = System.currentTimeMillis()
+                proceed(cfg)
+            }
+    }
+
+    private val awayRequestAt = ConcurrentHashMap<String, Long>()
+    /** Server-side away reply: the Worker answers for the recipient even if their phone is off. */
+    private fun maybeRequestAwayReply(recipient: User, chatId: String, me: User) {
+        val profile = _usersState.value.firstOrNull { it.uid == recipient.uid } ?: recipient
+        val now = System.currentTimeMillis()
+        if (!profile.awayReplyEnabled || profile.awayReplyText.isBlank()) return
+        if (profile.awayReplyUntil in 1..now) return
+        if (now - (awayRequestAt[recipient.uid] ?: 0L) < 10 * 60_000L) return
+        awayRequestAt[recipient.uid] = now
+        val payload = JSONObject()
+            .put("recipientUid", recipient.uid)
+            .put("chatId", chatId)
+            .put("callerToken", me.fcmToken)
+            .put("databaseUrl", getDatabaseInstance().reference.toString().trimEnd('/'))
+        workerSecurityPost("/autoreply/away", payload) { ok, json -> if (!ok) Log.w("AWAY_REPLY", json.optString("error", "skipped")) }
+    }
+
+    private fun registerOnlineWatchIfOffline(recipientUid: String, me: User) {
+        if (!NotificationExtrasPrefs.onlineAlertsEnabled(getApplication())) return
+        val recipientOnline = _usersState.value.firstOrNull { it.uid == recipientUid }?.isOnline == true
+        if (recipientOnline) return
+        getDatabaseInstance().getReference("online_watch").child(recipientUid).child(me.uid)
+            .setValue(mapOf("at" to System.currentTimeMillis(), "name" to me.name.take(60)))
+            .addOnFailureListener { Log.w("ONLINE_WATCH", "watch not saved (deploy database.rules.json)", it) }
+    }
+
+    @Volatile private var lastOnlineWatchCheck = 0L
+    private fun notifyOnlineWatchers(uid: String) {
+        val now = System.currentTimeMillis()
+        if (now - lastOnlineWatchCheck < 60_000L) return
+        lastOnlineWatchCheck = now
+        val ref = getDatabaseInstance().getReference("online_watch").child(uid)
+        ref.get().addOnSuccessListener { snapshot ->
+            if (!snapshot.exists()) return@addOnSuccessListener
+            val me = _currentUserState.value
+            val shareStatus = com.example.security.PrivacyPreferences.load(getApplication()).showOnlineStatus
+            snapshot.children.forEach { child ->
+                val watcherUid = child.key ?: return@forEach
+                val at = child.child("at").getValue(Long::class.java) ?: 0L
+                // Only fresh watches (3 days) and only if I share my active status.
+                if (me != null && shareStatus && now - at < 3 * 24 * 3600_000L && watcherUid != uid) {
+                    withUserFcmToken(watcherUid) { token ->
+                        triggerFcmGatewayNotification(
+                            gatewayUrl = routed("push"),
+                            targetToken = token,
+                            senderName = me.name,
+                            messageBody = "${me.name.substringBefore(' ').ifBlank { "Your friend" }} is online now 🟢 — your message can be seen",
+                            senderId = me.uid,
+                            senderProfileUrl = me.profileImageUrl,
+                            notificationType = "online_alert",
+                            targetId = me.uid
+                        )
+                    }
+                }
+            }
+            ref.removeValue()
+        }
+    }
+
     // Online Presence handling
     private fun setupPresence(uid: String) {
         val database = getDatabaseInstance()
@@ -2110,6 +2263,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     // internet-connected user. Only record the disconnect; the lease decides.
                     statusRef.onDisconnect().updateChildren(mapOf("connected" to false, "lastDisconnectAt" to ServerValue.TIMESTAMP))
                     syncPresenceToWorker(active = true, foreground = true)
+                    viewModelScope.launch { kotlinx.coroutines.delay(4_000); notifyOnlineWatchers(uid) }
                 }
             }
             override fun onCancelled(error: DatabaseError) {}
@@ -2744,6 +2898,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         activeChatThemeListener?.let {
             getDatabaseInstance().getReference("chat_settings").child(chatId).child("theme").removeEventListener(it)
         }
+        listenChatQuickReaction(chatId)
         val ref = getDatabaseInstance().getReference("chat_settings").child(chatId).child("theme")
         activeChatThemeListener = ref.addValueEventListener(object : ValueEventListener {
             override fun onDataChange(snapshot: DataSnapshot) {
@@ -2752,6 +2907,43 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             }
             override fun onCancelled(error: DatabaseError) { _chatTheme.value = ChatPreferences.defaultChatTheme.value }
         })
+    }
+
+    fun updateChatQuickReaction(emoji: String) {
+        val chatId = activeChatId ?: return
+        val clean = emoji.trim().take(32)
+        if (clean.isBlank()) return
+        _chatQuickReaction.value = clean
+        getDatabaseInstance().getReference("chat_settings").child(chatId).child("quickReaction").setValue(clean)
+    }
+
+    private fun listenChatQuickReaction(chatId: String) {
+        activeQuickReactionListener?.let { (ref, l) -> ref.removeEventListener(l) }
+        _chatQuickReaction.value = null
+        val ref = getDatabaseInstance().getReference("chat_settings").child(chatId).child("quickReaction")
+        val listener = object : ValueEventListener {
+            override fun onDataChange(snapshot: DataSnapshot) { _chatQuickReaction.value = (snapshot.value as? String)?.takeIf { it.isNotBlank() } }
+            override fun onCancelled(error: DatabaseError) {}
+        }
+        ref.addValueEventListener(listener)
+        activeQuickReactionListener = ref to listener
+
+        activeReactionsListener?.let { (r, l) -> r.removeEventListener(l) }
+        _chatReactions.value = emptyMap()
+        val reactionsRef = getDatabaseInstance().getReference("chat_settings").child(chatId).child("reactions")
+        val reactionsListener = object : ValueEventListener {
+            override fun onDataChange(snapshot: DataSnapshot) {
+                _chatReactions.value = snapshot.children.mapNotNull { msg ->
+                    val key = msg.key ?: return@mapNotNull null
+                    val byUser = msg.children.mapNotNull { u -> (u.value as? String)?.let { v -> (u.key ?: "") to v } }
+                        .filter { it.first.isNotBlank() && it.second.isNotBlank() }.toMap()
+                    if (byUser.isEmpty()) null else key to byUser
+                }.toMap()
+            }
+            override fun onCancelled(error: DatabaseError) {}
+        }
+        reactionsRef.addValueEventListener(reactionsListener)
+        activeReactionsListener = reactionsRef to reactionsListener
     }
 
     fun updateChatTheme(theme: String) {
@@ -3257,9 +3449,17 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         senderId = currentUser.uid,
                         senderProfileUrl = currentUser.profileImageUrl,
                         notificationType = "message",
-                        targetId = messageId
+                        targetId = messageId,
+                        // Rich notification: the recipient's phone shows the photo itself.
+                        extraData = imageUrl?.takeIf { it.startsWith("https://") }
+                            ?.let { mapOf("imageUrl" to it, "previewKind" to "photo") } ?: emptyMap()
                     )
                 }
+                registerOnlineWatchIfOffline(recipientUser.uid, currentUser)
+                if (text.isNotBlank() && imageUrl == null && voiceUrl == null && fileUrl == null) {
+                    maybeRequestAdminAutoReply(recipientUser, chatId, messageId, text, currentUser)
+                }
+                maybeRequestAwayReply(recipientUser, chatId, currentUser)
             }
             .addOnFailureListener { error ->
                 _messageDeliveryStates.update { it + (messageId to "failed") }
@@ -3451,13 +3651,19 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val sortedUids = listOf(currentUid, recipientUid).sorted()
         val chatId = "${sortedUids[0]}_${sortedUids[1]}"
 
-        val messageRef = getDatabaseInstance().getReference("chats")
-            .child(chatId)
-            .child("messages")
-            .child(messageId)
-            .child("reactions")
-            
-        messageRef.child(currentUid).setValue(reaction)
+        val current = _chatReactions.value[messageId]?.get(currentUid)
+            ?: _chatMessagesState.value.firstOrNull { it.messageId == messageId }?.reactions?.get(currentUid)
+        val removing = current == reaction
+        // Optimistic: show immediately, the listener confirms a moment later.
+        val updated = _chatReactions.value.toMutableMap()
+        val forMessage = (updated[messageId] ?: emptyMap()).toMutableMap()
+        if (removing) forMessage.remove(currentUid) else forMessage[currentUid] = reaction
+        if (forMessage.isEmpty()) updated.remove(messageId) else updated[messageId] = forMessage
+        _chatReactions.value = updated
+        val ref = getDatabaseInstance().getReference("chat_settings").child(chatId)
+            .child("reactions").child(messageId).child(currentUid)
+        val task = if (removing) ref.removeValue() else ref.setValue(reaction)
+        task.addOnFailureListener { e -> Log.w("REACTIONS", "Reaction write failed", e) }
     }
 
     // Profile Settings Customization
@@ -3870,6 +4076,159 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 withContext(Dispatchers.Main) {
                     onFailure(e.localizedMessage ?: "Unknown network upload error")
                 }
+            }
+        }
+    }
+
+    // ---- Visible outgoing uploads (photo / voice / file bubbles with progress + ETA) ----
+    private val _outgoingUploads = MutableStateFlow<List<OutgoingUpload>>(emptyList())
+    val outgoingUploads: StateFlow<List<OutgoingUpload>> = _outgoingUploads.asStateFlow()
+    private val outgoingRetries = ConcurrentHashMap<String, () -> Unit>()
+
+    private fun patchUpload(id: String, block: (OutgoingUpload) -> OutgoingUpload) {
+        _outgoingUploads.update { list -> list.map { if (it.id == id) block(it) else it } }
+    }
+
+    /** For streamed uploads (files) that report their own progress. Returns the bubble id. */
+    fun startOutgoingUpload(kind: String, label: String, totalBytes: Long, preview: String? = null): String {
+        val id = "up_${System.currentTimeMillis()}_${(1000..9999).random()}"
+        _outgoingUploads.update { it + OutgoingUpload(id, activeChatId.orEmpty(), kind, label, preview, totalBytes.coerceAtLeast(0L)) }
+        return id
+    }
+    fun updateOutgoingUpload(id: String, percent: Int, etaSeconds: Long) = patchUpload(id) { it.copy(percent = percent, etaSeconds = etaSeconds) }
+    fun failOutgoingUpload(id: String, error: String, retry: (() -> Unit)? = null) {
+        if (retry != null) outgoingRetries[id] = retry
+        patchUpload(id) { it.copy(failed = true, error = WorkerHealth.friendly(error)) }
+    }
+    fun isOutgoingUploadActive(id: String): Boolean = _outgoingUploads.value.any { it.id == id }
+
+    fun dismissOutgoingUpload(id: String) {
+        outgoingRetries.remove(id)
+        _outgoingUploads.update { list -> list.filterNot { it.id == id } }
+    }
+
+    fun retryOutgoingUpload(id: String) {
+        val retry = outgoingRetries[id] ?: return
+        patchUpload(id) { it.copy(failed = false, error = "", percent = 0, etaSeconds = -1L, startedAt = System.currentTimeMillis()) }
+        retry()
+    }
+
+    /**
+     * Uploads [bytes] while a placeholder bubble shows progress and the estimated time left.
+     * On success [onUploaded] receives the public URL (send the message there) and the bubble
+     * disappears as the real message takes its place. Failures stay visible with Retry.
+     */
+    fun sendTrackedUpload(
+        kind: String,
+        label: String,
+        bucket: String,
+        fileName: String,
+        bytes: ByteArray,
+        contentType: String,
+        preview: String? = null,
+        durationSec: Int = 0,
+        onUploaded: (String) -> Unit
+    ) {
+        val id = "up_${System.currentTimeMillis()}_${(1000..9999).random()}"
+        val chatId = activeChatId.orEmpty()
+        _outgoingUploads.update { it + OutgoingUpload(id, chatId, kind, label, preview, bytes.size.toLong(), durationSec = durationSec) }
+        val attempt: () -> Unit = {
+            uploadBytesWithProgress(
+                bucket, fileName, bytes, contentType,
+                onProgress = { percent, eta -> patchUpload(id) { it.copy(percent = percent, etaSeconds = eta) } },
+                onSuccess = { url ->
+                    // Cancelled while uploading → don't send.
+                    val stillWanted = isOutgoingUploadActive(id)
+                    dismissOutgoingUpload(id)
+                    if (stillWanted) onUploaded(url)
+                },
+                onFailure = { err -> patchUpload(id) { it.copy(failed = true, error = WorkerHealth.friendly(err)) } }
+            )
+        }
+        outgoingRetries[id] = attempt
+        attempt()
+    }
+
+    /**
+     * Suspending variant used for albums (keeps photo order). Returns the URL when the first
+     * attempt succeeds; on failure returns null and leaves a Retry bubble whose later success
+     * is delivered to [onLateUpload].
+     */
+    suspend fun awaitTrackedUpload(
+        kind: String, label: String, bucket: String, fileName: String, bytes: ByteArray,
+        contentType: String, preview: String? = null, onLateUpload: (String) -> Unit
+    ): String? {
+        val id = startOutgoingUpload(kind, label, bytes.size.toLong(), preview)
+        val url = kotlinx.coroutines.suspendCancellableCoroutine<String?> { cont ->
+            uploadBytesWithProgress(
+                bucket, fileName, bytes, contentType,
+                onProgress = { p, eta -> updateOutgoingUpload(id, p, eta) },
+                onSuccess = { if (cont.isActive) cont.resumeWith(Result.success(it)) },
+                onFailure = { err ->
+                    failOutgoingUpload(id, err) {
+                        uploadBytesWithProgress(
+                            bucket, fileName, bytes, contentType,
+                            onProgress = { p, eta -> updateOutgoingUpload(id, p, eta) },
+                            onSuccess = { late -> val wanted = isOutgoingUploadActive(id); dismissOutgoingUpload(id); if (wanted) onLateUpload(late) },
+                            onFailure = { again -> failOutgoingUpload(id, again) }
+                        )
+                    }
+                    if (cont.isActive) cont.resumeWith(Result.success(null))
+                }
+            )
+        }
+        if (url == null) return null
+        val wanted = isOutgoingUploadActive(id)
+        dismissOutgoingUpload(id)
+        return if (wanted) url else null
+    }
+
+    /** Same storage routing as [uploadFileToSupabase] but reports progress (percent, seconds left). */
+    fun uploadBytesWithProgress(
+        bucket: String,
+        fileName: String,
+        fileBytes: ByteArray,
+        contentType: String,
+        onProgress: (Int, Long) -> Unit,
+        onSuccess: (String) -> Unit,
+        onFailure: (String) -> Unit
+    ) {
+        val progressBody = ProgressBytesRequestBody(fileBytes, contentType.toMediaTypeOrNull()) { percent, eta ->
+            viewModelScope.launch(Dispatchers.Main) { onProgress(percent, eta) }
+        }
+        if (_storageRoutingConfig.value.provider.equals("supabase", true)) {
+            uploadThroughStorageWorker(
+                progressBody, bucket, fileName, contentType, "attachment",
+                onSuccess = { json ->
+                    val publicUrl = json.optString("publicUrl")
+                    if (publicUrl.isBlank()) onFailure("Storage Worker returned no public URL")
+                    else { cacheOutgoingMedia(publicUrl, fileName, fileBytes); onSuccess(publicUrl) }
+                },
+                onFailure = onFailure
+            )
+            return
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val url = "https://srfztgcdejfaesrvkarg.supabase.co/storage/v1/object/$bucket/$fileName"
+                val request = Request.Builder()
+                    .url(url)
+                    .header("apikey", "sb_publishable_BcH2xwywnUCVG48LYjPOLQ_8-y2InGA")
+                    .header("Authorization", "Bearer sb_publishable_BcH2xwywnUCVG48LYjPOLQ_8-y2InGA")
+                    .post(progressBody)
+                    .build()
+                OkHttpClient.Builder().callTimeout(10, TimeUnit.MINUTES).build().newCall(request).execute().use { response ->
+                    val bodyStr = response.body?.string().orEmpty()
+                    if (response.isSuccessful || (response.code == 400 && bodyStr.contains("Duplicate"))) {
+                        val publicUrl = "https://srfztgcdejfaesrvkarg.supabase.co/storage/v1/object/public/$bucket/$fileName"
+                        cacheOutgoingMedia(publicUrl, fileName, fileBytes)
+                        withContext(Dispatchers.Main) { onSuccess(publicUrl) }
+                    } else {
+                        withContext(Dispatchers.Main) { onFailure("Upload failed [${response.code}]: ${bodyStr.take(160)}") }
+                    }
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) { onFailure(e.localizedMessage ?: "Network upload error") }
             }
         }
     }
@@ -5184,6 +5543,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         activeChatListener?.let { listener -> if (database != null && chatId != null) database.getReference("chats").child(chatId).child("messages").removeEventListener(listener) }
         activeReceiptListener?.let { listener -> if (database != null && chatId != null && currentUid != null) database.getReference("delivery_receipts").child(currentUid).child(chatId).removeEventListener(listener) }
         activeChatThemeListener?.let { listener -> if (database != null && chatId != null) database.getReference("chat_settings").child(chatId).child("theme").removeEventListener(listener) }
+        activeQuickReactionListener?.let { (ref, l) -> ref.removeEventListener(l) }; activeQuickReactionListener = null
+        activeReactionsListener?.let { (ref, l) -> ref.removeEventListener(l) }; activeReactionsListener = null
         globalNotificationListener?.let { listener -> if (database != null && currentUid != null) database.getReference("notifications").child(currentUid).removeEventListener(listener) }
         flagshipRtdbListener?.let { listener -> flagshipRtdbRef?.removeEventListener(listener) }
 

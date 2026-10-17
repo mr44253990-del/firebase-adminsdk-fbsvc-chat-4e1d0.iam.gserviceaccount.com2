@@ -64,6 +64,16 @@ object SmartPrefs {
     }
 }
 
+/** Notification extras: "came online" alerts and photo previews. Device-local. */
+object NotificationExtrasPrefs {
+    private const val FILE = "convo_notification_extras"
+    private fun p(ctx: Context) = ctx.applicationContext.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+    fun onlineAlertsEnabled(ctx: Context) = p(ctx).getBoolean("online_alerts", true)
+    fun setOnlineAlerts(ctx: Context, on: Boolean) = p(ctx).edit().putBoolean("online_alerts", on).apply()
+    fun richImagesEnabled(ctx: Context) = p(ctx).getBoolean("rich_images", true)
+    fun setRichImages(ctx: Context, on: Boolean) = p(ctx).edit().putBoolean("rich_images", on).apply()
+}
+
 private fun hourLabel(h: Int): String = when {
     h == 0 -> "12 AM"; h < 12 -> "$h AM"; h == 12 -> "12 PM"; else -> "${h - 12} PM"
 }
@@ -103,6 +113,24 @@ fun SmartSettingsPage() {
             if (quietOn) {
                 HourStepper("Starts", quietStart) { quietStart = it; SmartPrefs.setQuiet(context, true, it, quietEnd) }
                 HourStepper("Ends", quietEnd) { quietEnd = it; SmartPrefs.setQuiet(context, true, quietStart, it) }
+            }
+        }
+        var onlineAlerts by remember { mutableStateOf(NotificationExtrasPrefs.onlineAlertsEnabled(context)) }
+        var richImages by remember { mutableStateOf(NotificationExtrasPrefs.richImagesEnabled(context)) }
+        SmartCard(Icons.Default.NotificationsActive, Color(0xFF00897B), "Smart notifications", "Online alerts and photo previews") {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Tell me when they come online", fontWeight = FontWeight.SemiBold)
+                    Text("If you message someone who is offline, get a notification when they open Convo.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Switch(onlineAlerts, { onlineAlerts = it; NotificationExtrasPrefs.setOnlineAlerts(context, it) })
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Show photos in notifications", fontWeight = FontWeight.SemiBold)
+                    Text("Photo messages show a preview. Hidden while \"Hide notification content\" or App lock is on.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Switch(richImages, { richImages = it; NotificationExtrasPrefs.setRichImages(context, it) })
             }
         }
         SmartCard(Icons.Default.Animation, Color(0xFFEC407A), "Motion & effects", "Full-screen reaction effects, animated stickers and covers") {

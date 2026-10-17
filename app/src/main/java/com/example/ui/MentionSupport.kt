@@ -5,7 +5,10 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.ClickableText
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material3.*
@@ -108,23 +111,64 @@ fun RichMessageText(
     showLinkPreview: Boolean = true,
     compactPreview: Boolean = false,
     mentionColor: Color = Color(0xFF8AB4FF),
-    maxLines: Int = Int.MAX_VALUE
+    maxLines: Int = Int.MAX_VALUE,
+    onPlainClick: (() -> Unit)? = null,
+    onLongPress: (() -> Unit)? = null,
+    onDoubleTap: (() -> Unit)? = null
 ) {
     val uriHandler = LocalUriHandler.current
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val haptics = androidx.compose.ui.platform.LocalHapticFeedback.current
     val annotated = remember(text, mentionColor) { Mentions.annotate(text, Color(0xFF71C7FF), mentionColor) }
     val firstUrl = remember(text) { LinkPreviewRepository.firstUrl(text) }
+    var layout by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<androidx.compose.ui.text.TextLayoutResult?>(null) }
+    val latestPlain = androidx.compose.runtime.rememberUpdatedState(onPlainClick)
+    val latestLong = androidx.compose.runtime.rememberUpdatedState(onLongPress)
+    val latestDouble = androidx.compose.runtime.rememberUpdatedState(onDoubleTap)
     Column(modifier) {
-        ClickableText(
+        // Plain Text + our own gesture detector: taps open links/mentions, long-press on a link
+        // copies it, and every other gesture is forwarded to the bubble (menu, copy, …). The
+        // old ClickableText swallowed long-presses, so bubbles with text could not be copied.
+        Text(
             text = annotated,
             style = style.copy(color = color),
             maxLines = maxLines,
             overflow = TextOverflow.Ellipsis,
-            onClick = { offset ->
-                annotated.getStringAnnotations("URL", offset, offset).firstOrNull()?.let {
-                    runCatching { uriHandler.openUri(it.item) }
-                    return@ClickableText
-                }
-                annotated.getStringAnnotations("MENTION", offset, offset).firstOrNull()?.let { onMentionClick(it.item) }
+            onTextLayout = { layout = it },
+            modifier = Modifier.pointerInput(annotated) {
+                detectTapGestures(
+                    onTap = { pos ->
+                        val offset = layout?.getOffsetForPosition(pos)
+                        val url = offset?.let { annotated.getStringAnnotations("URL", it, it).firstOrNull() }
+                        val mention = offset?.let { annotated.getStringAnnotations("MENTION", it, it).firstOrNull() }
+                        when {
+                            url != null -> runCatching { uriHandler.openUri(url.item) }
+                            mention != null -> onMentionClick(mention.item)
+                            else -> latestPlain.value?.invoke()
+                        }
+                    },
+                    onLongPress = { pos ->
+                        val offset = layout?.getOffsetForPosition(pos)
+                        val url = offset?.let { annotated.getStringAnnotations("URL", it, it).firstOrNull() }
+                        if (url != null) {
+                            haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                            val cm = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                            cm.setPrimaryClip(android.content.ClipData.newPlainText("Link", url.item))
+                            android.widget.Toast.makeText(context, "Link copied", android.widget.Toast.LENGTH_SHORT).show()
+                        } else {
+                            val handler = latestLong.value
+                            if (handler != null) {
+                                haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                                handler()
+                            } else {
+                                val cm = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                                cm.setPrimaryClip(android.content.ClipData.newPlainText("Text", text))
+                                android.widget.Toast.makeText(context, "Text copied", android.widget.Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    },
+                    onDoubleTap = if (onDoubleTap != null) { _ -> latestDouble.value?.invoke() } else null
+                )
             }
         )
         if (showLinkPreview && !firstUrl.isNullOrBlank()) {

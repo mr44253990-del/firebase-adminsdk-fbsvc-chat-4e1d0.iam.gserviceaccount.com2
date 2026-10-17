@@ -144,9 +144,44 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
                 videoCall = remoteMessage.data["videoCall"].toBoolean()
             )
         } else {
-            sendNotification(title, body, senderId, notificationType, senderProfileUrl, targetId, sentAt, senderName)
+            val imageUrl = remoteMessage.data["imageUrl"].orEmpty()
+                .takeIf { !hideContent && it.startsWith("https://") && com.example.ui.NotificationExtrasPrefs.richImagesEnabled(applicationContext) }
+                .orEmpty()
+            sendNotification(title, body, senderId, notificationType, senderProfileUrl, targetId, sentAt, senderName, imageUrl)
         }
     }
+
+    /** Downloads a photo for a rich notification (bounded size/time) and exposes it via FileProvider. */
+    private fun notificationImage(url: String): Pair<android.graphics.Bitmap, Uri>? = runCatching {
+        val conn = (java.net.URL(url).openConnection() as java.net.HttpURLConnection).apply {
+            connectTimeout = 5_000; readTimeout = 7_000; instanceFollowRedirects = true
+        }
+        val bytes = conn.inputStream.use { input ->
+            val out = java.io.ByteArrayOutputStream()
+            val buf = ByteArray(16 * 1024)
+            var total = 0
+            while (true) {
+                val n = input.read(buf); if (n < 0) break
+                total += n; if (total > 6 * 1024 * 1024) error("image too large")
+                out.write(buf, 0, n)
+            }
+            out.toByteArray()
+        }
+        conn.disconnect()
+        val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+        var sample = 1
+        while (bounds.outWidth / (sample * 2) >= 720 || bounds.outHeight / (sample * 2) >= 720) sample *= 2
+        val bitmap = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, android.graphics.BitmapFactory.Options().apply { inSampleSize = sample })
+            ?: return@runCatching null
+        val dir = java.io.File(cacheDir, "notif_images").apply { mkdirs() }
+        dir.listFiles()?.sortedBy { it.lastModified() }?.dropLast(20)?.forEach { it.delete() }
+        val file = java.io.File(dir, "img_${url.hashCode().toUInt()}.jpg")
+        file.outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, it) }
+        val uri = androidx.core.content.FileProvider.getUriForFile(this, "$packageName.files", file)
+        runCatching { grantUriPermission("com.android.systemui", uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+        bitmap to uri
+    }.getOrNull()
 
     private fun markDeviceReachableFromPush(notificationType: String, probeId: String?) {
         val uid = FirebaseAuth.getInstance().currentUser?.uid ?: return
@@ -364,8 +399,10 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         senderProfileUrl: String,
         targetId: String,
         sentAt: Long = System.currentTimeMillis(),
-        senderName: String = title
+        senderName: String = title,
+        imageUrl: String = ""
     ) {
+        val richImage = if (imageUrl.isNotBlank()) notificationImage(imageUrl) else null
         val intent = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
             putExtra("senderId", senderId)
@@ -432,7 +469,10 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
             } else null
             val style = NotificationCompat.MessagingStyle(me).setGroupConversation(false)
             previous?.messages?.takeLast(6)?.forEach { style.addMessage(it) }
-            style.addMessage(NotificationCompat.MessagingStyle.Message(messageBody, sentAt, sender))
+            val newMessage = NotificationCompat.MessagingStyle.Message(if (richImage != null) "📷 $messageBody" else messageBody, sentAt, sender)
+            // Rich notification: the photo itself is shown inside the conversation bubble.
+            richImage?.let { (_, uri) -> newMessage.setData("image/jpeg", uri) }
+            style.addMessage(newMessage)
             val count = style.messages.size
             notificationBuilder
                 .setStyle(style)
@@ -457,7 +497,11 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
             notificationBuilder
                 .setContentTitle(title)
                 .setContentText(messageBody)
-                .setStyle(NotificationCompat.BigTextStyle().bigText(messageBody))
+                .setStyle(
+                    richImage?.let { (bitmap, _) ->
+                        NotificationCompat.BigPictureStyle().bigPicture(bitmap).setSummaryText(messageBody)
+                    } ?: NotificationCompat.BigTextStyle().bigText(messageBody)
+                )
                 .setNumber(1)
         }
         if (notificationType == "message") {
@@ -561,7 +605,8 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
                 val activeUntil = profile.getLong("awayReplyUntil") ?: 0L
                 if (!enabled || replyText.isBlank() || (activeUntil > 0L && activeUntil <= now)) return@addOnSuccessListener
 
-                val messageId = "away_${receiverUid}_${senderUid}_$now"
+                // Same deterministic id as the Worker's server-side away reply → never duplicated.
+                val messageId = "away_${receiverUid}_${senderUid}_${now / (6 * 3600 * 1000L)}"
                 val message = mapOf(
                     "messageId" to messageId,
                     "senderId" to receiverUid,
