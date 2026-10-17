@@ -68,6 +68,12 @@ jobs:
           fi
           chmod +x gradlew
 
+      - name: Bundle the latest Worker code into the app
+        run: |
+          node --check cloudflare-worker.js
+          mkdir -p app/src/main/assets/worker
+          cp cloudflare-worker.js app/src/main/assets/worker/cloudflare-worker.js
+
       - name: Compile release Kotlin sources
         run: ./gradlew --no-daemon :app:compileReleaseKotlin
 
@@ -113,6 +119,12 @@ jobs:
             -alias "$RELEASE_KEY_ALIAS" \
             -storepass "$RELEASE_STORE_PASSWORD" \
             | grep -E "SHA1:|SHA-1:|SHA256:|SHA-256:"
+
+      - name: Bundle the latest Worker code into the app
+        run: |
+          node --check cloudflare-worker.js
+          mkdir -p app/src/main/assets/worker
+          cp cloudflare-worker.js app/src/main/assets/worker/cloudflare-worker.js
 
       - name: Build signed arm64-v8a release APK
         env:

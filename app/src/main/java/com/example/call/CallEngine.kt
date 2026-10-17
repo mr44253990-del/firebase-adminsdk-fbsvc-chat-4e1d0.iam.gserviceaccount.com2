@@ -41,7 +41,10 @@ data class CallState(
     val screenSharing: Boolean = false,
     val remoteScreenSharing: Boolean = false,
     val connectedAt: Long = 0L,
-    val error: String? = null
+    val error: String? = null,
+    val frontCamera: Boolean = true,
+    val torchOn: Boolean = false,
+    val filter: CallFilter = CallFilter.NONE
 )
 
 /** 1:1 audio engine. RTDB transports signaling only; Cloudflare TURN transports media when P2P fails. */
@@ -193,9 +196,38 @@ object CallEngine {
         _state.value = _state.value.copy(muted = muted)
     }
 
+    private val filterProcessor = CallFilterProcessor()
+
     fun switchCamera() {
-        runCatching { (videoCapturer as? CameraVideoCapturer)?.switchCamera(null) }
-            .onFailure { Log.w("CALL_ENGINE", "Camera switch failed", it) }
+        if (_state.value.screenSharing) return
+        runCatching {
+            (videoCapturer as? CameraVideoCapturer)?.switchCamera(object : CameraVideoCapturer.CameraSwitchHandler {
+                override fun onCameraSwitchDone(isFrontCamera: Boolean) {
+                    mainHandler.post {
+                        // Only the selfie camera is mirrored; the back camera shows the real world as-is.
+                        localRenderer?.setMirror(isFrontCamera)
+                        _state.value = _state.value.copy(frontCamera = isFrontCamera, torchOn = false)
+                    }
+                }
+                override fun onCameraSwitchError(errorDescription: String?) { Log.w("CALL_ENGINE", "Camera switch failed: $errorDescription") }
+            })
+        }.onFailure { Log.w("CALL_ENGINE", "Camera switch failed", it) }
+    }
+
+    /** Flashlight for the back camera (best effort, depends on the phone). */
+    fun toggleTorch(): Boolean {
+        val st = _state.value
+        if (st.screenSharing || st.cameraOff) return false
+        if (st.frontCamera) { notice("Switch to the back camera to use the flashlight"); return false }
+        val target = !st.torchOn
+        val ok = CallTorch.set(videoCapturer, target)
+        if (ok) _state.value = st.copy(torchOn = target) else notice("Flashlight isn't available on this phone during calls")
+        return ok
+    }
+
+    fun setFilter(filter: CallFilter) {
+        filterProcessor.filter = filter
+        _state.value = _state.value.copy(filter = filter)
     }
 
     fun toggleCamera() {
@@ -246,6 +278,7 @@ object CallEngine {
             screenCapturer.initialize(surfaceTextureHelper, context, source.capturerObserver)
             screenCapturer.startCapture(width, height, 15)
             videoCapturer = screenCapturer
+            localRenderer?.setMirror(false)
             localVideoTrack?.setEnabled(true)
             _state.value = _state.value.copy(video = true, screenSharing = true, cameraOff = false)
             callRef?.child(if (_state.value.direction == "outgoing") "callerCameraOff" else "calleeCameraOff")?.setValue(false)
@@ -364,6 +397,8 @@ object CallEngine {
         val context = appContext ?: throw IllegalStateException("Missing call context")
         surfaceTextureHelper = SurfaceTextureHelper.create("Convo ChatVideo", eglBase!!.eglBaseContext)
         videoSource = factory?.createVideoSource(false) ?: throw IllegalStateException("Could not create video source")
+        filterProcessor.filter = CallFilter.NONE
+        videoSource?.setVideoProcessor(filterProcessor)
         localVideoTrack = factory?.createVideoTrack("firechat_video_$myUid", videoSource)?.also { track ->
             track.setEnabled(false)
             peer?.addTrack(track, listOf("firechat"))
@@ -386,13 +421,19 @@ object CallEngine {
     private fun createCameraCapturer(context: Context): VideoCapturer? {
         val enumerator: CameraEnumerator = if (Camera2Enumerator.isSupported(context)) Camera2Enumerator(context) else Camera1Enumerator(false)
         val names = enumerator.deviceNames
-        names.firstOrNull { enumerator.isFrontFacing(it) }?.let { enumerator.createCapturer(it, null)?.let { capturer -> return capturer } }
-        names.firstOrNull()?.let { return enumerator.createCapturer(it, null) }
+        names.firstOrNull { enumerator.isFrontFacing(it) }?.let { enumerator.createCapturer(it, null)?.let { capturer ->
+            _state.value = _state.value.copy(frontCamera = true, torchOn = false); localRenderer?.setMirror(true); return capturer
+        } }
+        names.firstOrNull()?.let { name ->
+            val front = enumerator.isFrontFacing(name)
+            _state.value = _state.value.copy(frontCamera = front, torchOn = false); localRenderer?.setMirror(front)
+            return enumerator.createCapturer(name, null)
+        }
         return null
     }
 
     fun attachLocalRenderer(renderer: SurfaceViewRenderer) {
-        try { localRenderer = renderer; renderer.init(eglBase?.eglBaseContext, null); renderer.setMirror(true); localVideoTrack?.addSink(renderer) } catch (e: Throwable) { Log.w("CALL_ENGINE", "Local renderer unavailable", e) }
+        try { localRenderer = renderer; renderer.init(eglBase?.eglBaseContext, null); renderer.setMirror(_state.value.frontCamera && !_state.value.screenSharing); localVideoTrack?.addSink(renderer) } catch (e: Throwable) { Log.w("CALL_ENGINE", "Local renderer unavailable", e) }
     }
     fun attachRemoteRenderer(renderer: SurfaceViewRenderer) {
         try { remoteRenderer = renderer; renderer.init(eglBase?.eglBaseContext, null); renderer.setMirror(false); remoteVideoTrack?.addSink(renderer) } catch (e: Throwable) { Log.w("CALL_ENGINE", "Remote renderer unavailable", e) }
@@ -563,8 +604,9 @@ object CallEngine {
         audioTrack?.dispose(); audioTrack = null
         if (wasConnected) vibrateCallEnded()
         startedAsVideoCall = false
+        filterProcessor.filter = CallFilter.NONE
         lastPacketsLost = 0L; lastPacketsReceived = 0L
-        _state.value = _state.value.copy(status = finalStatus, video = false, cameraOff = false, screenSharing = false, remoteScreenSharing = false)
+        _state.value = _state.value.copy(status = finalStatus, video = false, cameraOff = false, screenSharing = false, remoteScreenSharing = false, torchOn = false, filter = CallFilter.NONE)
     }
 
     /** Live reactions travel through the existing calls/{callId} node, so no extra RTDB rules are needed. */

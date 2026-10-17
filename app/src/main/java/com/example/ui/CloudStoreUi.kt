@@ -51,7 +51,7 @@ internal suspend fun convoWorkerPost(service: String, path: String, body: JSONOb
     val req = Request.Builder().url(base + path).header("Authorization", "Bearer $token")
         .post(body.toString().toRequestBody("application/json".toMediaTypeOrNull())).build()
     workerHttp.newCall(req).execute().use { r ->
-        r.code to (runCatching { JSONObject(r.body?.string().orEmpty()) }.getOrNull() ?: JSONObject())
+        r.code to com.example.data.WorkerHealth.normalize(r.code, runCatching { JSONObject(r.body?.string().orEmpty()) }.getOrNull() ?: JSONObject())
     }
 }
 
@@ -229,7 +229,7 @@ fun AdminCloudStorePanel() {
                     result.onSuccess { (code, json) ->
                         testedOk = code in 200..299 && json.optBoolean("success")
                         status = if (testedOk) true to "✓ Connected · table ready · ${json.optInt("messages")} messages stored · ${json.optLong("latencyMs")} ms"
-                        else false to "✗ ${json.optString("error").ifBlank { "HTTP $code" }}" + if (code == 404 || code == 405) " — redeploy the Worker (v4.3.3) once" else ""
+                        else false to "✗ ${json.optString("error").ifBlank { "HTTP $code" }}" + if ((code == 404 || code == 405) && !json.optBoolean("outdatedWorker")) " — redeploy the Worker (v4.3.3) once" else ""
                     }.onFailure { status = false to "✗ ${it.localizedMessage}" }
                 }
             }, enabled = !busy && accountId.isNotBlank() && databaseId.isNotBlank() && apiToken.length > 10, modifier = Modifier.weight(1f)) {

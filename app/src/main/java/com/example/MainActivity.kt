@@ -16,6 +16,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.animation.fadeIn
@@ -111,16 +112,26 @@ class MainActivity : FragmentActivity() {
 
     private fun minimizeActiveCall() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val privateState = CallEngine.state.value
+            val privateActive = privateState.status !in listOf("idle", "ended", "declined", "missed", "failed")
+            // Show the call itself in PiP: bring the 1:1 call screen to the front first.
+            if (privateActive) pendingOpenCall.value = true
+            val video = if (privateActive) privateState.video && !privateState.remoteCameraOff else GroupCallEngine.state.value.video
             runCatching {
                 enterPictureInPictureMode(
                     PictureInPictureParams.Builder()
-                        .setAspectRatio(Rational(9, 16))
+                        .setAspectRatio(if (video) Rational(9, 16) else Rational(1, 1))
                         .build()
                 )
             }.onFailure { onBackPressedDispatcher.onBackPressed() }
         } else {
             onBackPressedDispatcher.onBackPressed()
         }
+    }
+
+    override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: android.content.res.Configuration) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        com.example.call.CallPipState.set(isInPictureInPictureMode)
     }
 
     override fun onUserLeaveHint() {
@@ -658,7 +669,15 @@ class MainActivity : FragmentActivity() {
                             navController.navigate("call") { launchSingleTop = true }
                         } else if (openCallRequest && callState.status in listOf("ended", "declined", "missed", "failed")) pendingOpenCall.value = false
                     }
-                    if (currentRoute != "call" && callState.status !in listOf("idle", "ended", "declined", "missed", "failed")) {
+                    val inCallPip by com.example.call.CallPipState.inPip.collectAsState()
+                    if (inCallPip) {
+                        // PiP while not on a call screen: cover the app with a compact call card.
+                        val privateLive = callState.status !in listOf("idle", "ended", "declined", "missed", "failed")
+                        val groupLive = groupCallState.status !in listOf("idle", "ended", "failed")
+                        if (privateLive && currentRoute != "call") Box(Modifier.fillMaxSize().clickable(enabled = false) {}) { com.example.call.PrivateCallPipContent(callState.copy(video = false)) }
+                        else if (!privateLive && groupLive && currentRoute != "group_call") Box(Modifier.fillMaxSize().clickable(enabled = false) {}) { com.example.call.GroupCallPipContent(groupCallState) }
+                    }
+                    if (!inCallPip && currentRoute != "call" && callState.status !in listOf("idle", "ended", "declined", "missed", "failed")) {
                         Box(Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(12.dp)) {
                             CallMiniOverlay(
                                 state = callState,

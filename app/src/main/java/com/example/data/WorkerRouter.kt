@@ -43,6 +43,10 @@ object WorkerRouter {
 
     private const val COOLDOWN_MS = 120_000L
     private val down = ConcurrentHashMap<String, Long>()
+    /** Pool workers whose health JSON reports an API older than the app needs. */
+    private val outdated = ConcurrentHashMap.newKeySet<String>()
+    fun setOutdated(url: String, value: Boolean) { val c = url.trim().trimEnd('/'); if (value && !isPrimary(c)) outdated.add(c) else outdated.remove(c) }
+    fun isOutdated(url: String): Boolean = url.trim().trimEnd('/') in outdated
 
     private val _primary = MutableStateFlow("")
     val primary: StateFlow<String> = _primary.asStateFlow()
@@ -55,7 +59,7 @@ object WorkerRouter {
     /** Base URL (no trailing slash) that should serve [service]. */
     fun resolve(service: String, fallback: String = _primary.value): String {
         val now = System.currentTimeMillis()
-        val node = _nodes.value.firstOrNull { it.enabled && it.valid && service in it.services && (down[it.url] ?: 0L) < now }
+        val node = _nodes.value.firstOrNull { it.enabled && it.valid && service in it.services && (down[it.url] ?: 0L) < now && it.url !in outdated }
         return (node?.url ?: fallback).trim().trimEnd('/')
     }
 

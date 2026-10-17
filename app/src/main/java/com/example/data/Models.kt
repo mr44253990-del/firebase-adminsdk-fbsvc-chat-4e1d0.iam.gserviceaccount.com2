@@ -43,7 +43,13 @@ data class User(
     val staffRole: String = "",
     val staffPermissions: List<String> = emptyList(),
     val staffTitle: String = "",
-    val mfaEnabled: Boolean = false
+    val mfaEnabled: Boolean = false,
+    /** Convo build the user last opened (written by the app on every launch). */
+    val appVersion: String = "",
+    val appVersionCode: Long = 0L,
+    val appVersionAt: Long = 0L,
+    val deviceModel: String = "",
+    val androidVersion: String = ""
 )
 
 data class MessageEditRecord(

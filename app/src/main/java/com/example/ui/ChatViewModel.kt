@@ -1069,8 +1069,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         firstTry?.close(); WorkerRouter.markFailed(base); client.newCall(build(primary)).execute()
                     } else firstTry ?: client.newCall(build(base)).execute()
                     responseUsed.use { response ->
-                        val json = runCatching { JSONObject(response.body?.string().orEmpty()) }.getOrDefault(JSONObject())
-                        withContext(Dispatchers.Main) { onResult(response.isSuccessful, json) }
+                        val json = com.example.data.WorkerHealth.normalize(response.code, runCatching { JSONObject(response.body?.string().orEmpty()) }.getOrDefault(JSONObject()))
+                        withContext(Dispatchers.Main) { onResult(response.isSuccessful && !json.optBoolean("outdatedWorker"), json) }
                     }
                 } catch (e: Throwable) { withContext(Dispatchers.Main) { onResult(false, JSONObject().put("error", e.localizedMessage ?: "Request failed")) } }
             }
@@ -1123,7 +1123,13 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun registerDeviceSession() {
-        if (FirebaseAuth.getInstance().currentUser == null) return
+        val authUid = FirebaseAuth.getInstance().currentUser?.uid ?: return
+        // Lets the admin see which Convo version every user runs (Admin → Users).
+        FirebaseFirestore.getInstance().collection("users").document(authUid).update(mapOf(
+            "appVersion" to BuildConfig.VERSION_NAME, "appVersionCode" to BuildConfig.VERSION_CODE.toLong(),
+            "appVersionAt" to System.currentTimeMillis(), "deviceModel" to "${Build.MANUFACTURER} ${Build.MODEL}".take(80),
+            "androidVersion" to "Android ${Build.VERSION.RELEASE}"
+        ))
         val prefs = getApplication<Application>().getSharedPreferences("convo_device_session", Context.MODE_PRIVATE)
         val id = prefs.getString("id", null) ?: UUID.randomUUID().toString().also { prefs.edit().putString("id", it).putLong("firstSeen", System.currentTimeMillis()).apply() }
         val localSession = DeviceSession(id, "${Build.MANUFACTURER} ${Build.MODEL}", "Android ${Build.VERSION.RELEASE}", BuildConfig.VERSION_NAME, prefs.getLong("firstSeen", System.currentTimeMillis()), System.currentTimeMillis(), true, "Protected", "Waiting for secure sync")
@@ -1154,6 +1160,16 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun logoutAllDevices(onComplete: (Boolean, String) -> Unit) = workerSecurityPost("/sessions/revoke-all", JSONObject()) { ok, json ->
+        if (!ok && json.optBoolean("outdatedWorker")) {
+            // Outdated Worker: fall back to the app-level sign-out signal every device listens to.
+            val uid = FirebaseAuth.getInstance().currentUser?.uid
+            if (uid != null) {
+                FirebaseFirestore.getInstance().collection("users").document(uid).update("forceLogoutAt", System.currentTimeMillis())
+                    .addOnSuccessListener { onComplete(true, "Signed out on every device"); logout {} }
+                    .addOnFailureListener { onComplete(false, json.optString("error")) }
+                return@workerSecurityPost
+            }
+        }
         onComplete(ok, if (ok) "All device sessions revoked" else json.optString("error", "Could not revoke sessions"))
         if (ok) logout {}
     }
@@ -1165,7 +1181,17 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val a = json.optJSONArray("reports") ?: JSONArray(); _adminReports.value = (0 until a.length()).mapNotNull { a.optJSONObject(it) }.map { UserReport(it.optString("id"), it.optString("reporterId"), it.optString("reporterEmail"), it.optString("targetUid"), it.optString("category"), it.optString("description"), it.optString("status", "pending"), it.optLong("createdAt")) }
     }
 
-    fun setUserBanned(uid: String, banned: Boolean, reason: String = "", onComplete: (Boolean, String) -> Unit) = workerSecurityPost(if (banned) "/admin/user/ban" else "/admin/user/unban", JSONObject().put("uid", uid).put("reason", reason)) { ok, json -> onComplete(ok, if (ok) if (banned) "Account banned" else "Account restored" else json.optString("error", "Action failed")) }
+    fun setUserBanned(uid: String, banned: Boolean, reason: String = "", onComplete: (Boolean, String) -> Unit) = workerSecurityPost(if (banned) "/admin/user/ban" else "/admin/user/unban", JSONObject().put("uid", uid).put("reason", reason)) { ok, json ->
+        if (!ok && json.optBoolean("outdatedWorker") && isCurrentAdmin()) {
+            val now = System.currentTimeMillis()
+            val fields: Map<String, Any> = if (banned) mapOf("banned" to true, "banReason" to reason.take(500), "bannedAt" to now, "forceLogoutAt" to now) else mapOf("banned" to false, "bannedAt" to 0L)
+            FirebaseFirestore.getInstance().collection("users").document(uid).update(fields)
+                .addOnSuccessListener { onComplete(true, if (banned) "Account banned (app-level)" else "Account restored") }
+                .addOnFailureListener { onComplete(false, json.optString("error")) }
+            return@workerSecurityPost
+        }
+        onComplete(ok, if (ok) if (banned) "Account banned" else "Account restored" else json.optString("error", "Action failed"))
+    }
 
     fun sendAdminTestNotification() {
         val admin = getCurrentUserOrFallback() ?: run {

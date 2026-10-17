@@ -68,7 +68,7 @@ object AdminPower {
     suspend fun worker(path: String, body: JSONObject): Pair<Boolean, String> = runCatching {
         val (code, json) = convoWorkerPost("database", path, body)
         val ok = code in 200..299 && json.optBoolean("success", true) && !json.has("error")
-        ok to (if (ok) json.toString().take(160) else json.optString("error").ifBlank { "HTTP $code" } + if (code == 404) " — redeploy the Worker (v4.3.3)" else "")
+        ok to (if (ok) json.toString().take(160) else json.optString("error").ifBlank { "HTTP $code" } + if (code == 404 && !json.optBoolean("outdatedWorker")) " — redeploy the Worker (v4.3.3)" else "")
     }.getOrElse { false to (it.localizedMessage ?: "Request failed") }
 
     suspend fun push(tokens: List<String>, title: String, body: String): Pair<Boolean, String> {
@@ -134,16 +134,16 @@ fun AdminUserPowerActions(person: User, onDone: () -> Unit = {}, permissions: Se
             "users" to Triple("Reset photo", Icons.Default.HideImage, Color(0xFF6D4C41) to { run("photo") { AdminPower.updateProfile(person.uid, mapOf("profileImageUrl" to "", "coverImageUrl" to "")); "Photo and cover reset" } }),
             "announce" to Triple("Send push", Icons.Default.NotificationsActive, Color(0xFF7C4DFF) to { pushOpen = true }),
             "users" to Triple("Force logout", Icons.Default.Logout, Color(0xFFE65100) to {
-                confirm = "Sign ${person.name} out of every device?" to suspend { runCatching { AdminPower.updateProfile(person.uid, mapOf("forceLogoutAt" to System.currentTimeMillis())) }; val (ok, m) = AdminPower.worker("/admin/user/revoke", JSONObject().put("uid", person.uid)); AdminAudit.log("user_force_logout", person.uid); if (ok) "All sessions revoked" else m }
+                confirm = "Sign ${person.name} out of every device?" to suspend { runCatching { AdminPower.updateProfile(person.uid, mapOf("forceLogoutAt" to System.currentTimeMillis())) }; val (ok, m) = AdminPower.worker("/admin/user/revoke", JSONObject().put("uid", person.uid)); AdminAudit.log("user_force_logout", person.uid); if (ok) "All sessions revoked" else if (m == com.example.data.WorkerHealth.OUTDATED_MESSAGE) "Signed out on every device (app-level). Update the Worker to also revoke server tokens." else m }
             }),
             "posts" to Triple("Delete posts", Icons.Default.DeleteSweep, Color(0xFFD32F2F) to {
                 confirm = "Delete ALL posts and stories of ${person.name}? This cannot be undone." to suspend { "Deleted ${AdminPower.deleteAllPosts(person.uid)} items" }
             }),
             "users" to Triple("Ban", Icons.Default.Block, Color(0xFFC62828) to {
-                confirm = "Ban ${person.name}? The account is disabled and signed out." to suspend { val (ok, m) = AdminPower.worker("/admin/user/ban", JSONObject().put("uid", person.uid).put("reason", "Admin action")); AdminAudit.log("user_ban", person.uid); if (ok) "User banned" else m }
+                confirm = "Ban ${person.name}? The account is disabled and signed out." to suspend { val (ok, m) = AdminPower.worker("/admin/user/ban", JSONObject().put("uid", person.uid).put("reason", "Admin action")); AdminAudit.log("user_ban", person.uid); if (ok) "User banned" else if (m == com.example.data.WorkerHealth.OUTDATED_MESSAGE && runCatching { AdminPower.updateProfile(person.uid, mapOf("banned" to true, "banReason" to "Admin action", "bannedAt" to System.currentTimeMillis(), "forceLogoutAt" to System.currentTimeMillis())) }.isSuccess) "User banned (app-level). Update the Worker to also disable the login." else m }
             }),
             "users" to Triple("Unban", Icons.Default.LockOpen, Color(0xFF2E7D32) to {
-                run("unban") { val (ok, m) = AdminPower.worker("/admin/user/unban", JSONObject().put("uid", person.uid)); AdminAudit.log("user_unban", person.uid); if (ok) "User unbanned" else m }
+                run("unban") { val (ok, m) = AdminPower.worker("/admin/user/unban", JSONObject().put("uid", person.uid)); AdminAudit.log("user_unban", person.uid); if (ok) "User unbanned" else if (m == com.example.data.WorkerHealth.OUTDATED_MESSAGE && runCatching { AdminPower.updateProfile(person.uid, mapOf("banned" to false, "bannedAt" to 0L)) }.isSuccess) "User unbanned (app-level)" else m }
             }),
             "users" to Triple("Clear bio", Icons.Default.FormatClear, Color(0xFF546E7A) to { run("bio") { AdminPower.updateProfile(person.uid, mapOf("bio" to "")); "Bio cleared" } }),
             "admin" to Triple(if (person.staffRole.isNotBlank()) "Staff access" else "Make sub-admin", Icons.Default.AdminPanelSettings, Color(0xFF3949AB) to { staffOpen = true })

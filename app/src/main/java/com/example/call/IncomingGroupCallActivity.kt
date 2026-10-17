@@ -95,6 +95,11 @@ class IncomingGroupCallActivity : ComponentActivity() {
         } else finish()
     }
 
+    override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: android.content.res.Configuration) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        CallPipState.set(isInPictureInPictureMode)
+    }
+
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
         val active = accepted && GroupCallEngine.state.value.status !in listOf("idle", "ended", "failed")

@@ -131,6 +131,12 @@ fun GroupCallScreen(
         }
     }
 
+    val inPip by CallPipState.inPip.collectAsState()
+    if (inPip && state.status !in listOf("idle", "ended", "failed")) {
+        GroupCallPipContent(state, callPalette.accent)
+        return
+    }
+
     Scaffold(
         containerColor = Color.Transparent,
         contentColor = Color.White,

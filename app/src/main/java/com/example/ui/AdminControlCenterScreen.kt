@@ -195,7 +195,12 @@ fun AdminControlCenterScreen(
         }
     }
 
+    val workerReports by com.example.data.WorkerHealth.reports.collectAsState()
+    val workerOutdatedSeen by com.example.data.WorkerHealth.outdatedSeen.collectAsState()
+    LaunchedEffect(Unit) { if (staffPermissions == null) com.example.data.WorkerHealth.checkAll() }
+    val workerNeedsUpdate = workerReports.firstOrNull()?.let { !it.reachable || it.outdated || !it.serviceAccount } ?: workerOutdatedSeen
     val allMenuItems = listOf(
+        AdminMenuEntry("server_health", "Server health & updater", "Worker version, secrets, one-tap Worker update", Icons.Outlined.Dns, Color(0xFF00897B), if (workerNeedsUpdate) "FIX" else "OK"),
         AdminMenuEntry("staff", "Sub-admins & roles", "Delegate access: users, posts, reports, Premium…", Icons.Outlined.AdminPanelSettings, Color(0xFF3949AB), users.count { it.staffRole.isNotBlank() }.takeIf { it > 0 }?.toString().orEmpty()),
         AdminMenuEntry("email_security", "Email & 2FA", "OTP e-mail sender (Brevo / Resend) and test", Icons.Outlined.MarkEmailRead, Color(0xFF00897B)),
         AdminMenuEntry("updates", "App updates", "Signed APK, release notes and rollout", Icons.Outlined.Publish, Color(0xFF635BFF), if (flagshipConfig.updateEnabled) "LIVE" else ""),
@@ -240,6 +245,23 @@ fun AdminControlCenterScreen(
             ) {
                 Spacer(Modifier.height(2.dp))
                 if (isStaffMode) StaffPanelHeader(viewModel, staffPermissions.orEmpty())
+                if (!isStaffMode && workerNeedsUpdate) {
+                    Surface(
+                        onClick = { selectedPage = "server_health" },
+                        shape = RoundedCornerShape(20.dp),
+                        color = Color(0xFFFFF3E0)
+                    ) {
+                        Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Outlined.Dns, null, tint = Color(0xFFE65100))
+                            Spacer(Modifier.width(10.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text("Server needs an update", fontWeight = FontWeight.Bold, color = Color(0xFFBF360C))
+                                Text("Some actions fail with \"Missing required fields\". Tap to fix in one step.", fontSize = 11.sp, color = Color(0xFF6D4C41))
+                            }
+                            Icon(Icons.Default.ChevronRight, null, tint = Color(0xFFE65100))
+                        }
+                    }
+                }
                 if (!isStaffMode) {
                 Box(
                     Modifier.fillMaxWidth()
@@ -540,6 +562,9 @@ fun AdminControlCenterScreen(
                     }
                     "staff" -> {
                         AdminPanelCard("Sub-admins & roles", "Give trusted people only the access they need", Icons.Outlined.AdminPanelSettings) { AdminStaffPanel(users) }
+                    }
+                    "server_health" -> {
+                        AdminPanelCard("Server health & updater", "Fixes \"Missing required fields\" by updating the Worker", Icons.Outlined.Dns) { AdminServerHealthPanel(users) }
                     }
                     "email_security" -> {
                         AdminPanelCard("Email & 2FA", "Sender for login codes, new-device alerts and recovery", Icons.Outlined.MarkEmailRead) { AdminEmailSecurityPanel() }
@@ -1063,6 +1088,7 @@ fun AdminControlCenterScreen(
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Text("UID: ${person.uid}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (person.appVersion.isNotBlank()) Text("Convo ${person.appVersion} (${person.appVersionCode}) · ${person.deviceModel} · ${person.androidVersion}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text("Status: ${if (onlineNow) "Online" else "Offline"} • ${if (premiumNow) "Premium" else "Standard"}", fontWeight = FontWeight.SemiBold)
                     if (person.bio.isNotBlank()) Text(person.bio, style = MaterialTheme.typography.bodySmall)
                     Text("Role: ${person.role.ifBlank { "user" }}", fontSize = 11.sp)
@@ -1151,6 +1177,7 @@ private fun AdminUserManagementRow(
                 IconButton(onClick = onCopyUid) { Icon(Icons.Default.ContentCopy, contentDescription = "Copy user UID") }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                AppVersionChip(user)
                 Surface(shape = CircleShape, color = if (onlineNow) Color(0xFF2CBF79).copy(alpha = .15f) else MaterialTheme.colorScheme.outline.copy(alpha = .12f)) {
                     Text(
                         if (onlineNow) "ONLINE" else "OFFLINE",
@@ -1395,5 +1422,20 @@ private fun saveStorageSettings(
                 }
             }
         }
+    }
+}
+
+
+/** Small "v4.3.4" chip; green when the user runs the same build as this admin app, amber when older. */
+@Composable
+fun AppVersionChip(user: User) {
+    val current = com.example.BuildConfig.VERSION_CODE.toLong()
+    val (label, color) = when {
+        user.appVersion.isBlank() -> "v?" to MaterialTheme.colorScheme.outline
+        user.appVersionCode >= current -> "v${user.appVersion}" to Color(0xFF2E7D32)
+        else -> "v${user.appVersion} · old" to Color(0xFFEF6C00)
+    }
+    Surface(shape = CircleShape, color = color.copy(alpha = .14f)) {
+        Text(label, Modifier.padding(horizontal = 8.dp, vertical = 4.dp), fontSize = 9.sp, fontWeight = FontWeight.Bold, color = color)
     }
 }

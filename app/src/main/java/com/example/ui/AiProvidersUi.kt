@@ -146,7 +146,7 @@ object AiProviderStore {
         val (code, json) = convoWorkerPost("ai", "/ai/test", JSONObject())
         if (code in 200..299 && json.optBoolean("success"))
             true to "✓ Server uses ${json.optString("provider")} · ${json.optString("model")} · replied \"${json.optString("reply").trim()}\" in ${json.optLong("latencyMs")} ms"
-        else false to "✗ ${json.optString("error").ifBlank { "HTTP $code" }}" + if (code == 404 || code == 401) " — redeploy the Worker (v4.3.3) once" else ""
+        else false to "✗ ${json.optString("error").ifBlank { "HTTP $code" }}" + if ((code == 404 || code == 401) && !json.optBoolean("outdatedWorker")) " — redeploy the Worker (v4.3.3) once" else ""
     }.getOrElse { false to "✗ ${it.localizedMessage}" }
 
     private val http by lazy { OkHttpClient.Builder().callTimeout(40, TimeUnit.SECONDS).build() }
@@ -205,7 +205,7 @@ object AiProviderStore {
         http.newCall(req).execute().use { r ->
             val body = r.body?.string().orEmpty()
             val json = runCatching { JSONObject(body) }.getOrDefault(JSONObject())
-            if (!r.isSuccessful) error(json.optString("error").ifBlank { "Worker HTTP ${r.code}" })
+            if (!r.isSuccessful) error(com.example.data.WorkerHealth.friendly(json.optString("error")).ifBlank { "Worker HTTP ${r.code}" })
             json.optString("reply")
         }
     }

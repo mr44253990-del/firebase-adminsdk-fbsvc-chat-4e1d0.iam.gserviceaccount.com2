@@ -26,6 +26,12 @@ service cloud.firestore {
       allow update: if (owner(uid)
         && request.resource.data.role == resource.data.role
         && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['isPremium', 'premiumPlan', 'premiumUntil', 'premiumApprovedAt', 'premiumTrialClaimed', 'premiumSource', 'staffRole', 'staffPermissions', 'staffTitle', 'mfaEnabled', 'mfaMethod', 'banned', 'forceLogoutAt']))
+        // "Sign out of all devices" fallback: an owner may only move their own forceLogoutAt forward to ~now.
+        || (owner(uid)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['forceLogoutAt'])
+          && request.resource.data.forceLogoutAt is int
+          && request.resource.data.forceLogoutAt > resource.data.get('forceLogoutAt', 0)
+          && request.resource.data.forceLogoutAt <= request.time.toMillis() + 120000)
         || request.auth.token.email == 'mr4425390@gmail.com'
         // Sub-admins: profile moderation with "users", Premium changes with "premium"; never other staff.
         || (staffCan('users') && resource.data.get('staffRole', '') == '' && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['role', 'name', 'username', 'profileImageUrl', 'coverImageUrl', 'bio', 'forceLogoutAt']))

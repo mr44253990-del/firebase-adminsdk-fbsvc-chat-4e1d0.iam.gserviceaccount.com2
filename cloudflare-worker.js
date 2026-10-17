@@ -10,7 +10,16 @@
  * - FIREBASE_SERVICE_ACCOUNT: The entire JSON string of your Firebase Service Account Private Key.
  */
 
+// Bump WORKER_API_VERSION whenever routes change; the Android app compares it with
+// the version it expects and tells the admin to redeploy when the Worker is older.
+const WORKER_API_VERSION = 44;
+const WORKER_ROUTES = ["push", "sessions", "mfa", "admin", "clouddb", "ai", "media", "presence", "link-preview", "profile", "post", "turn", "sfu", "auto-reply"];
+
 export default {
+  async scheduled(controller, env, ctx) {
+    // Best-effort cleanup of expired presence leases (kept from the legacy gateway).
+    ctx.waitUntil(expireStalePresence(env));
+  },
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const path = url.pathname.replace(/\/+$/, "") || "/";
@@ -85,6 +94,122 @@ export default {
       } catch(e) { return htmlResponse("Could not load this post",500); }
     }
 
+    // Public profile landing page used by generated QR codes and shared profile links.
+    // The Android app still owns the actual profile view; this route provides a safe
+    // web preview and an explicit deep-link button instead of returning the Worker
+    // health response for /profile?uid=... .
+    if (request.method === "GET" && path === "/profile") {
+      const uid = String(url.searchParams.get("uid") || "").trim();
+      if (!/^[A-Za-z0-9_-]{6,180}$/.test(uid)) return htmlResponse("Invalid profile link", 400);
+      try {
+        const profile = await firestoreGet(env, `users/${uid}`);
+        if (!profile) return htmlResponse("Profile not found", 404);
+        if (profile.profileHidden === true || profile.profileVisibility === "hidden") {
+          return htmlResponse("This profile is not publicly discoverable", 404);
+        }
+        const name = escapeHtml(String(profile.name || profile.username || "Convo Chat user").slice(0, 120));
+        const username = escapeHtml(String(profile.username || "").slice(0, 80));
+        const bio = escapeHtml(String(profile.bio || "Open this profile in Convo Chat").slice(0, 320));
+        const image = escapeHtml(String(profile.profileImageUrl || profile.image || ""));
+        const appLink = `convochat://profile?uid=${encodeURIComponent(uid)}`;
+        const fallback = escapeHtml(env.APP_DOWNLOAD_URL || new URL(request.url).origin);
+        const intentLink = `intent://profile?uid=${encodeURIComponent(uid)}#Intent;scheme=convochat;package=com.ebchat;S.browser_fallback_url=${encodeURIComponent(env.APP_DOWNLOAD_URL || new URL(request.url).origin)};end`;
+        const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${name} — Convo Chat</title><meta name="description" content="${bio}"><meta property="og:site_name" content="Convo Chat"><meta property="og:type" content="profile"><meta property="og:title" content="${name}${username ? ` (@${username})` : ""}"><meta property="og:description" content="${bio}">${image ? `<meta property="og:image" content="${image}">` : ""}<style>body{margin:0;background:#070814;color:#fff;font-family:system-ui;display:grid;place-items:center;min-height:100vh}.card{width:min(620px,calc(100% - 40px));padding:30px;border-radius:30px;background:linear-gradient(145deg,#211c45,#08192b);border:1px solid #806fff77;box-sizing:border-box;text-align:center;position:relative;overflow:hidden;animation:cardIn .72s cubic-bezier(.2,.8,.2,1) both;box-shadow:0 18px 70px #09001f99}.card:before{content:"";position:absolute;inset:-60% -20%;background:linear-gradient(110deg,transparent 42%,#ffffff22 50%,transparent 58%);transform:translateX(-70%) rotate(8deg);animation:sheen 4.8s ease-in-out infinite;pointer-events:none}.card>*{position:relative;z-index:1}.avatar{width:112px;height:112px;border-radius:50%;object-fit:cover;background:#ffffff18;border:4px solid #ffffff44;animation:avatarPulse 2.8s ease-in-out infinite}.name{font-size:28px;font-weight:800;margin:18px 0 4px}.user{color:#b8b6d8}.bio{color:#e4e1ff;line-height:1.55}.btn{display:block;margin-top:16px;padding:15px;border-radius:999px;text-decoration:none;color:white;font-weight:800;background:linear-gradient(90deg,#6757ff,#ef3fac);transition:transform .2s ease,filter .2s ease}.btn:hover{transform:translateY(-2px);filter:brightness(1.12)}.secondary{background:#ffffff18}@keyframes cardIn{from{opacity:0;transform:translateY(18px) scale(.98)}to{opacity:1;transform:translateY(0) scale(1)}}@keyframes sheen{0%,35%{transform:translateX(-75%) rotate(8deg)}70%,100%{transform:translateX(75%) rotate(8deg)}}@keyframes avatarPulse{0%,100%{box-shadow:0 0 0 0 #7ee7ff22}50%{box-shadow:0 0 0 12px #7ee7ff00}}@media (prefers-reduced-motion:reduce){.card,.avatar,.card:before{animation:none}.btn{transition:none}}</style></head><body><main class="card">${image ? `<img class="avatar" src="${image}" alt="${name}">` : `<div class="avatar" aria-hidden="true"></div>`}<div class="name">${name}</div>${username ? `<div class="user">@${username}</div>` : ""}<p class="bio">${bio}</p><a class="btn" href="${intentLink}">Open profile in Convo Chat</a><a class="btn secondary" href="${fallback}">Download or open Convo Chat</a></main><script>setTimeout(()=>{location.href=${JSON.stringify(appLink)}},350)</script></body></html>`;
+        return new Response(html, { status: 200, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "public,max-age=120", "Access-Control-Allow-Origin": "*" } });
+      } catch (error) {
+        return htmlResponse("Could not load this profile", 500);
+      }
+    }
+
+    // Lightweight, cacheable Open Graph preview proxy for chat links.
+    // Only public http(s) URLs are accepted; responses are capped to avoid SSRF-style abuse.
+    if (request.method === "GET" && path === "/link-preview") {
+      const rawTarget = String(url.searchParams.get("url") || "").trim();
+      let target;
+      try { target = new URL(rawTarget); } catch (_) { return jsonResponse({ error: "Invalid URL" }, 400); }
+      if (!["http:", "https:"].includes(target.protocol) || target.username || target.password) {
+        return jsonResponse({ error: "Only public http(s) URLs are supported" }, 400);
+      }
+      try {
+        const response = await fetch(target.toString(), {
+          headers: { "User-Agent": "ConvoChatLinkPreview/1.0", "Accept": "text/html,application/xhtml+xml" },
+          redirect: "follow",
+          cf: { cacheTtl: 600, cacheEverything: true }
+        });
+        if (!response.ok) return jsonResponse({ url: target.toString(), title: target.hostname, description: "Open link", image: "" });
+        const contentType = response.headers.get("content-type") || "";
+        if (!contentType.includes("text/html")) return jsonResponse({ url: target.toString(), title: target.hostname, description: contentType.split(";")[0], image: "" });
+        const html = (await response.text()).slice(0, 180000);
+        const meta = (name) => {
+          const escaped = name.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\\\$&");
+          const re = new RegExp(`<meta[^>]+(?:property|name)=["']${escaped}["'][^>]+content=["']([^"']*)["'][^>]*>|<meta[^>]+content=["']([^"']*)["'][^>]+(?:property|name)=["']${escaped}["'][^>]*>`, "i");
+          const m = html.match(re); return m ? (m[1] || m[2] || "").trim() : "";
+        };
+        const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+        const title = decodeHtml(meta("og:title") || meta("twitter:title") || (titleMatch?.[1] || "").trim() || target.hostname).slice(0, 180);
+        const description = decodeHtml(meta("og:description") || meta("twitter:description") || meta("description") || "Open link").slice(0, 320);
+        const imageMeta = (name) => meta(name);
+        let image = imageMeta("og:image") || imageMeta("og:image:secure_url") || imageMeta("twitter:image") || imageMeta("twitter:image:src") || imageMeta("image_src");
+        if (!image) {
+          const linkImage = html.match(/<link[^>]+rel=["'][^"']*image_src[^"']*["'][^>]+href=["']([^"']+)["'][^>]*>/i)
+            || html.match(/<link[^>]+href=["']([^"']+)["'][^>]+rel=["'][^"']*image_src[^"']*["'][^>]*>/i);
+          image = linkImage?.[1] || "";
+        }
+        if (!image) {
+          const firstImage = html.match(/<img[^>]+(?:src|data-src)=["']([^"']+)["'][^>]*>/i);
+          image = firstImage?.[1] || "";
+        }
+        try { if (image) image = new URL(decodeHtml(image), target).toString(); } catch (_) { image = ""; }
+        return jsonResponse({ url: target.toString(), title, description, image, site: target.hostname }, 200, 600);
+      } catch (_) {
+        return jsonResponse({ url: target.toString(), title: target.hostname, description: "Open link", image: "" }, 200, 60);
+      }
+    }
+
+    // Presence is an authenticated, short-lived Firestore lease. The Android client
+    // still writes its primary RTDB status heartbeat; this endpoint is the Worker-side
+    // mirror used by web/profile integrations and diagnostics. This is the only
+    // heartbeat route; the authenticated branch below must never duplicate it.
+    if (request.method === "POST" && path === "/presence/heartbeat") {
+      const auth = await authenticateCaller(request, env);
+      if (!auth.ok) return auth.response;
+      try {
+        const body = await request.json().catch(() => ({}));
+        const now = Date.now();
+        const active = body.active !== false;
+        const onlineUntil = active
+          ? Math.max(Number(body.onlineUntil) || 0, now + 5 * 60 * 1000)
+          : 0;
+        const state = {
+          uid: auth.caller.sub,
+          isOnline: active,
+          foreground: body.foreground !== false,
+          lastActive: now,
+          onlineUntil,
+          offlineSince: active ? null : now,
+          source: "worker-heartbeat"
+        };
+        await firestoreSet(env, `presence/${auth.caller.sub}`, state);
+        return jsonResponse({ ok: true, ...state }, 200);
+      } catch (error) {
+        return jsonResponse({ ok: false, error: error?.message || "Presence write failed" }, 500);
+      }
+    }
+
+    if (request.method === "POST" && path === "/presence/me") {
+      const auth = await authenticateCaller(request, env);
+      if (!auth.ok) return auth.response;
+      try {
+        const state = await firestoreGet(env, `presence/${auth.caller.sub}`);
+        if (!state) return jsonResponse({ ok: true, uid: auth.caller.sub, isOnline: false, offlineSince: null }, 200);
+        const now = Date.now();
+        const isOnline = state.isOnline === true && Number(state.onlineUntil || 0) > now;
+        return jsonResponse({ ok: true, ...state, isOnline }, 200);
+      } catch (error) {
+        return jsonResponse({ ok: false, error: error?.message || "Presence read failed" }, 500);
+      }
+    }
+
     if (request.method === "GET") {
       let projectId = null;
       let serviceAccountConfigured = false;
@@ -96,7 +221,10 @@ export default {
       return new Response(JSON.stringify({
         ok: serviceAccountConfigured,
         service: "Convo Chat Direct FCM Gateway",
-        version: "4.5.0",
+        version: "4.6.0",
+        apiVersion: WORKER_API_VERSION,
+        routes: WORKER_ROUTES,
+        emailConfigured: true,
         projectId,
         serviceAccountConfigured,
         turnConfigured: Boolean(env.TURN_TOKEN_ID && env.TURN_API_TOKEN),
@@ -202,6 +330,8 @@ export default {
         return jsonResponse({success:true,session:record,newDevice:!previous,alertedDevices:alerted});
       }
       if(path==="/sessions/list") return jsonResponse({success:true,sessions:(await firestoreList(env,`user_sessions/${caller.sub}/devices`)).map(({fcmToken,...rest})=>rest).sort((a,b)=>(b.lastSeenAt||0)-(a.lastSeenAt||0))});
+      if(path==="/sessions/delete") { const id=String(payload.sessionId||"").replace(/[^A-Za-z0-9_-]/g,"").slice(0,100); if(!id)return jsonResponse({error:"sessionId required"},400); const existing=await firestoreGet(env,`user_sessions/${caller.sub}/devices/${id}`); if(!existing)return jsonResponse({success:true,deleted:false}); await firestoreDelete(env,`user_sessions/${caller.sub}/devices/${id}`); return jsonResponse({success:true,deleted:true,sessionId:id}); }
+      if(path==="/sessions/clear") { const sessions=await firestoreList(env,`user_sessions/${caller.sub}/devices`); await Promise.all(sessions.map(x=>x.sessionId?firestoreDelete(env,`user_sessions/${caller.sub}/devices/${String(x.sessionId).replace(/[^A-Za-z0-9_-]/g,"").slice(0,100)}`):null)); return jsonResponse({success:true,deleted:sessions.length}); }
       if(path==="/sessions/revoke-all") { const auth=await updateFirebaseAccount(env,caller.sub,{validSince:String(Math.floor(Date.now()/1000))}); const sessions=await firestoreList(env,`user_sessions/${caller.sub}/devices`); await Promise.all(sessions.map(x=>firestoreSet(env,`user_sessions/${caller.sub}/devices/${x.sessionId}`,{...x,active:false,revokedAt:Date.now()}))); return jsonResponse({success:true,authRevoked:auth.ok}); }
       if(path==="/reports/create") { const id=crypto.randomUUID(); const report={id,reporterId:caller.sub,reporterEmail:caller.email||"",targetUid:String(payload.targetUid||""),category:String(payload.category||"other").slice(0,60),description:String(payload.description||"").slice(0,3000),status:"pending",createdAt:Date.now()}; await firestoreSet(env,`user_reports/${id}`,report); return jsonResponse({success:true,report}); }
       if(path==="/admin/reports/list") { if(!(await callerCan(env,caller,"reports")))return jsonResponse({error:"Admin only"},403); return jsonResponse({success:true,reports:await firestoreList(env,"user_reports")}); }
@@ -552,10 +682,13 @@ export default {
       }
 
       if (!token || !title || !body) {
-        return new Response(JSON.stringify({ error: "Missing required fields: token, title, body" }), {
-          status: 400,
-          headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
-        });
+        // Only the root/push route sends notifications. Every other unknown path used to
+        // fall through to here and fail with a confusing "Missing required fields" error.
+        if (path !== "/" && path !== "/send" && path !== "/push") {
+          return jsonResponse({ error: `Unknown API route ${path}. Redeploy the latest cloudflare-worker.js.`, code: "UNKNOWN_ROUTE", apiVersion: WORKER_API_VERSION }, 404);
+        }
+        if (!token) return jsonResponse({ success: false, skipped: true, code: "NO_DEVICE_TOKEN", error: "The recipient has no registered device yet" }, 200);
+        return jsonResponse({ error: "Missing required fields: title, body", code: "MISSING_PUSH_FIELDS" }, 400);
       }
 
       // 2. Fetch Google OAuth2 Access Token using Web Crypto API
@@ -968,4 +1101,29 @@ async function canActOn(env, caller, targetUid) {
   if (targetUid === __adminUidCache || targetUid === caller.sub) return false;
   const t = await firestoreGet(env, `users/${targetUid}`).catch(() => null);
   return !(t && t.staffRole);
+}
+
+// ---- Merged from the legacy firechat-fcm-worker.js (single source of truth) ----
+function decodeHtml(value) {
+  return String(value || "").replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">");
+}
+
+async function firestoreDelete(env,path){const{a,t}=await fsAuth(env);const r=await fetch(`https://firestore.googleapis.com/v1/projects/${a.project_id}/databases/(default)/documents/${path}`,{method:"DELETE",headers:{Authorization:`Bearer ${t}`}});if(r.status===404)return true;if(!r.ok)throw Error(`Firestore delete ${r.status}`);return true;}
+
+async function expireStalePresence(env){
+  try {
+    const now = Date.now();
+    const records = await firestoreList(env, "presence");
+    await Promise.all(records.filter(record => {
+      const leaseUntil = Number(record.onlineUntil || 0) || (Number(record.lastActive || 0) + 5 * 60 * 1000);
+      return record.isOnline === true && leaseUntil <= now;
+    }).map(record => {
+      const uid = String(record.uid || record.__name || "").replace(/[^A-Za-z0-9_-]/g, "");
+      if (!uid) return null;
+      const { __name, ...presence } = record;
+      return firestoreSet(env, `presence/${uid}`, {...presence, isOnline: false, offlineSince: Number(presence.offlineSince || now), leaseExpiredAt: now});
+    }));
+  } catch (_) {
+    // Scheduled cleanup is best-effort; authenticated client heartbeats remain authoritative.
+  }
 }

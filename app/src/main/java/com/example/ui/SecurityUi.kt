@@ -98,7 +98,7 @@ object MfaClient {
             val body = JSONObject().put("email", email.trim()).put("backupCode", backupCode.trim()).put("newPassword", newPassword)
             val req = Request.Builder().url("$base/mfa/recover").post(body.toString().toRequestBody("application/json".toMediaTypeOrNull())).build()
             OkHttpClient.Builder().callTimeout(30, TimeUnit.SECONDS).build().newCall(req).execute().use { r ->
-                val j = runCatching { JSONObject(r.body?.string().orEmpty()) }.getOrDefault(JSONObject())
+                val j = com.example.data.WorkerHealth.normalize(r.code, runCatching { JSONObject(r.body?.string().orEmpty()) }.getOrDefault(JSONObject()))
                 if (r.isSuccessful && j.optBoolean("success")) true to "Password changed. ${j.optInt("backupRemaining")} backup codes left — sign in with your new password."
                 else false to j.optString("error").ifBlank { "HTTP ${r.code}" }
             }
