@@ -360,7 +360,7 @@ fun ChatAppearancePreview(appearance: ChatAppearance, spec: ChatThemeSpec?) {
             Modifier.fillMaxSize().padding(horizontal = appearance.sidePadding.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(appearance.messageSpacing.dp, Alignment.Bottom)
         ) {
-            PreviewBubble("Did you see the new theme? 😍", false, appearance, previewSpec, "Maya")
+            PreviewBubble("Did you see the new theme?", false, appearance, previewSpec, "Maya")
             PreviewBubble("Yes! The liquid glass looks amazing", true, appearance, previewSpec, null)
             PreviewBubble("Let's call tonight", false, appearance, previewSpec, "Maya")
         }

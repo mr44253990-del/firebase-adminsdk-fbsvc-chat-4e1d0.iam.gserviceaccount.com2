@@ -1876,7 +1876,7 @@ fun MessageBubbleItem(
                 ) {
                     Column {
                         Text(
-                            text = "💬 Replied to ${message.replyToSenderName ?: "User"}",
+                            text = "Replied to ${message.replyToSenderName ?: "User"}",
                             color = MaterialTheme.colorScheme.primary,
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold

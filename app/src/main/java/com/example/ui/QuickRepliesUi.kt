@@ -37,7 +37,7 @@ import org.json.JSONArray
  */
 object QuickReplyStore {
     private const val PREFS = "convo_quick_replies"
-    val defaults = listOf("On my way! 🚗", "I'll call you back soon 📞", "Thanks a lot 🙏", "Okay 👍", "আসছি 🚶", "পরে কথা বলি 🙂", "ধন্যবাদ ❤️")
+    val defaults = listOf("On my way!", "I'll call you back soon", "Thanks a lot", "Okay", "আসছি", "পরে কথা বলি", "ধন্যবাদ")
     private val _items = MutableStateFlow<List<String>>(emptyList())
     val items: StateFlow<List<String>> = _items.asStateFlow()
     private var loadedFor: String? = null

@@ -84,18 +84,6 @@ fun PremiumScreen(viewModel: ChatViewModel, onBack: () -> Unit, onChatAdmin: (Us
         if (config.premiumNagadEnabled) add("nagad" to "নগদ")
         if (config.premiumRocketEnabled) add("rocket" to "রকেট")
     }
-    val premiumBenefits = listOf(
-        "✅ প্রোফাইল ও চ্যাটে Premium verified badge",
-        "🤖 AI Assistant-এ অগ্রাধিকার ও উন্নত সহায়তা",
-        "💬 সরাসরি Admin support chat",
-        "🔝 People search ও friends তালিকায় অগ্রাধিকার",
-        "📊 Story rewatch ও উন্নত viewer insights-এর entitlement",
-        "❤️ Animated Super Heart ও Premium reactions-এর entitlement",
-        "🎨 অতিরিক্ত theme, font, sticker ও customization entitlement",
-        "📌 বেশি chat/post pin এবং profile-only publishing entitlement",
-        "🎵 Custom ringtone/ringback entitlement",
-        "📹 সম্মতিসহ call recording ও screenshot entitlement"
-    )
     val premiumMotion = rememberInfiniteTransition(label = "premium_hero_motion")
     val heroGlow by premiumMotion.animateFloat(
         initialValue = .20f,
@@ -113,11 +101,15 @@ fun PremiumScreen(viewModel: ChatViewModel, onBack: () -> Unit, onChatAdmin: (Us
         (100 - (config.premiumYearlyPrice * 100) / (config.premiumMonthlyPrice * 12)).coerceAtLeast(0) else 0
     val step = when { plan.isBlank() -> 1; transaction.length < 6 -> 2; else -> 3 }
 
-    Scaffold(modifier = Modifier.modernBackdrop(), containerColor = Color.Transparent, topBar = { TopAppBar(colors = modernTopBarColors(), title = { ModernTitle("Convo Chat Premium", if (activePremium) "Active ✨" else "Unlock every feature") }, navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } }) }) { padding ->
+    Scaffold(modifier = Modifier.modernBackdrop(), containerColor = Color.Transparent, topBar = { TopAppBar(colors = modernTopBarColors(), title = { ModernTitle("Convo Chat Premium", if (activePremium) "Active" else "Unlock every feature") }, navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } }) }) { padding ->
         LazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             item { PremiumHero(activePremium, me, heroGlow) }
             item {
-                Text("🌟 Premium সুবিধাসমূহ", fontWeight = FontWeight.ExtraBold, style = MaterialTheme.typography.titleLarge, color = ink)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(30.dp).clip(RoundedCornerShape(10.dp)).background(Brush.linearGradient(listOf(Color(0xFFFFC233), Color(0xFFFF7A59)))), contentAlignment = Alignment.Center) { Icon(Icons.Default.Diamond, null, tint = Color.White, modifier = Modifier.size(18.dp)) }
+                    Spacer(Modifier.width(10.dp))
+                    Text("Premium সুবিধাসমূহ", fontWeight = FontWeight.ExtraBold, style = MaterialTheme.typography.titleLarge, color = ink)
+                }
                 Spacer(Modifier.height(10.dp))
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     PREMIUM_PERKS.chunked(2).forEachIndexed { rowIndex, row ->
@@ -128,7 +120,9 @@ fun PremiumScreen(viewModel: ChatViewModel, onBack: () -> Unit, onChatAdmin: (Us
                     }
                 }
             }
+            item { PremiumComparisonCard() }
             if (activePremium) {
+                item { PremiumMemberCard(me) }
                 item {
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Text("আপনার Premium টুলস", fontWeight = FontWeight.ExtraBold, style = MaterialTheme.typography.titleMedium, color = ink)
@@ -257,19 +251,21 @@ fun PremiumScreen(viewModel: ChatViewModel, onBack: () -> Unit, onChatAdmin: (Us
     }
 }
 
-private data class PremiumPerk(val emoji: String, val title: String, val detail: String, val color: Color)
+private data class PremiumPerk(val icon: androidx.compose.ui.graphics.vector.ImageVector, val title: String, val detail: String, val color: Color)
 
 private val PREMIUM_PERKS = listOf(
-    PremiumPerk("✅", "Verified badge", "প্রোফাইল ও চ্যাটে Premium ব্যাজ", Color(0xFF2F80ED)),
-    PremiumPerk("🤖", "AI অগ্রাধিকার", "AI Assistant-এ দ্রুত ও উন্নত সহায়তা", Color(0xFF7C4DFF)),
-    PremiumPerk("💬", "Admin support", "সরাসরি Admin-এর সাথে চ্যাট", Color(0xFF00ACC1)),
-    PremiumPerk("🔝", "Search boost", "People search ও friends-এ অগ্রাধিকার", Color(0xFF43A047)),
-    PremiumPerk("📊", "Story insights", "Rewatch ও উন্নত viewer তথ্য", Color(0xFFFB8C00)),
-    PremiumPerk("❤️", "Super reactions", "Animated Super Heart ও প্রিমিয়াম রিঅ্যাকশন", Color(0xFFE53935)),
-    PremiumPerk("🎨", "Customization", "অতিরিক্ত theme, font ও sticker", Color(0xFFD81B60)),
-    PremiumPerk("📌", "More pins", "বেশি chat/post pin, profile-only post", Color(0xFF5E35B1)),
-    PremiumPerk("🎵", "Custom ringtone", "নিজের ringtone/ringback", Color(0xFF00897B)),
-    PremiumPerk("📹", "Call recording", "সম্মতিসহ call recording ও screenshot", Color(0xFF546E7A))
+    PremiumPerk(Icons.Default.Verified, "Verified badge", "প্রোফাইল ও চ্যাটে Premium ব্যাজ", Color(0xFF2F80ED)),
+    PremiumPerk(Icons.Default.SmartToy, "AI অগ্রাধিকার", "AI Assistant-এ দ্রুত ও উন্নত সহায়তা", Color(0xFF7C4DFF)),
+    PremiumPerk(Icons.Default.SupportAgent, "Admin support", "সরাসরি Admin-এর সাথে চ্যাট", Color(0xFF00ACC1)),
+    PremiumPerk(Icons.Default.TrendingUp, "Search boost", "People search ও friends-এ অগ্রাধিকার", Color(0xFF43A047)),
+    PremiumPerk(Icons.Default.Insights, "Story insights", "Rewatch ও উন্নত viewer তথ্য", Color(0xFFFB8C00)),
+    PremiumPerk(Icons.Default.Favorite, "Super reactions", "Animated Super Heart ও প্রিমিয়াম রিঅ্যাকশন", Color(0xFFE53935)),
+    PremiumPerk(Icons.Default.Palette, "Customization", "অতিরিক্ত theme, font ও sticker", Color(0xFFD81B60)),
+    PremiumPerk(Icons.Default.PushPin, "More pins", "বেশি chat/post pin, profile-only post", Color(0xFF5E35B1)),
+    PremiumPerk(Icons.Default.MusicNote, "Custom ringtone", "নিজের ringtone/ringback", Color(0xFF00897B)),
+    PremiumPerk(Icons.Default.Videocam, "Call recording", "সম্মতিসহ call recording ও screenshot", Color(0xFF546E7A)),
+    PremiumPerk(Icons.Default.Wallpaper, "Exclusive looks", "Premium chat theme ও animated cover", Color(0xFF8E24AA)),
+    PremiumPerk(Icons.Default.Bolt, "Fast lane", "Upload ও AI request-এ অগ্রাধিকার", Color(0xFFF4511E))
 )
 
 private val PREMIUM_FAQ = listOf(
@@ -313,8 +309,8 @@ private fun PremiumHero(activePremium: Boolean, me: User?, glow: Float) {
             }
         }
         Column(Modifier.fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("👑", fontSize = 54.sp, modifier = Modifier.offset(y = float.dp))
-            Text(if (activePremium) "Premium Active ✨" else "আপনার Convo Chat আরও শক্তিশালী করুন", color = Color.White, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold, textAlign = TextAlign.Center)
+            PremiumGem(Modifier.size(86.dp).offset(y = float.dp), sparkle)
+            Text(if (activePremium) "Premium Active" else "আপনার Convo Chat আরও শক্তিশালী করুন", color = Color.White, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold, textAlign = TextAlign.Center)
             if (activePremium) {
                 val lifetime = me?.premiumPlan == "lifetime"
                 val expiry = if (lifetime) "Lifetime" else SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(me?.premiumUntil ?: 0L))
@@ -340,7 +336,7 @@ private fun PremiumPerkTile(perk: PremiumPerk, index: Int, modifier: Modifier = 
     val lift by animateFloatAsState(if (shown) 0f else 18f, tween(420, easing = FastOutSlowInEasing), label = "perk_lift")
     Card(shape = RoundedCornerShape(20.dp), modifier = modifier.alpha(alpha).offset(y = lift.dp)) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Box(Modifier.size(38.dp).clip(RoundedCornerShape(12.dp)).background(perk.color.copy(alpha = .15f)), contentAlignment = Alignment.Center) { Text(perk.emoji, fontSize = 19.sp) }
+            Box(Modifier.size(40.dp).clip(RoundedCornerShape(13.dp)).background(Brush.linearGradient(listOf(perk.color, perk.color.copy(alpha = .62f)))), contentAlignment = Alignment.Center) { Icon(perk.icon, null, tint = Color.White, modifier = Modifier.size(21.dp)) }
             Text(perk.title, fontWeight = FontWeight.Bold, fontSize = 13.sp, maxLines = 1)
             Text(perk.detail, fontSize = 11.sp, lineHeight = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2)
         }
@@ -415,6 +411,99 @@ private fun PremiumActionCard(icon: androidx.compose.ui.graphics.vector.ImageVec
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) { Text(title, fontWeight = FontWeight.Bold); Text(subtitle, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
             Icon(Icons.Default.ChevronRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+/** Coded crown-and-gem emblem (no emoji): gradient crown, faceted gem and a moving shine. */
+@Composable
+private fun PremiumGem(modifier: Modifier = Modifier, shine: Float) {
+    androidx.compose.foundation.Canvas(modifier) {
+        val w = size.width; val h = size.height
+        val glow = Brush.radialGradient(listOf(Color.White.copy(alpha = .55f), Color.Transparent), center = androidx.compose.ui.geometry.Offset(w / 2, h / 2), radius = w * .62f)
+        drawCircle(glow, w * .62f, androidx.compose.ui.geometry.Offset(w / 2, h / 2))
+        val crown = androidx.compose.ui.graphics.Path().apply {
+            moveTo(w * .12f, h * .72f); lineTo(w * .08f, h * .28f); lineTo(w * .32f, h * .48f); lineTo(w * .5f, h * .16f)
+            lineTo(w * .68f, h * .48f); lineTo(w * .92f, h * .28f); lineTo(w * .88f, h * .72f); close()
+        }
+        drawPath(crown, Brush.linearGradient(listOf(Color(0xFFFFF3B0), Color(0xFFFFC233), Color(0xFFFF8F00)), start = androidx.compose.ui.geometry.Offset(0f, 0f), end = androidx.compose.ui.geometry.Offset(w, h)))
+        drawRoundRect(Brush.horizontalGradient(listOf(Color(0xFFFFB300), Color(0xFFFFE082), Color(0xFFFFB300))), topLeft = androidx.compose.ui.geometry.Offset(w * .12f, h * .72f), size = androidx.compose.ui.geometry.Size(w * .76f, h * .12f), cornerRadius = androidx.compose.ui.geometry.CornerRadius(w * .04f))
+        listOf(.08f to .28f, .5f to .16f, .92f to .28f).forEach { (fx, fy) -> drawCircle(Color.White, w * .045f, androidx.compose.ui.geometry.Offset(w * fx, h * fy)) }
+        val gem = androidx.compose.ui.graphics.Path().apply {
+            moveTo(w * .5f, h * .44f); lineTo(w * .6f, h * .54f); lineTo(w * .5f, h * .68f); lineTo(w * .4f, h * .54f); close()
+        }
+        drawPath(gem, Brush.linearGradient(listOf(Color(0xFFE1BEE7), Color(0xFF7C4DFF), Color(0xFF00E5FF))))
+        // Shine sweep.
+        val x = w * (-.3f + shine * 1.6f)
+        drawLine(Color.White.copy(alpha = .55f), androidx.compose.ui.geometry.Offset(x, h * .2f), androidx.compose.ui.geometry.Offset(x + w * .18f, h * .85f), strokeWidth = w * .05f)
+    }
+}
+
+@Composable
+private fun PremiumComparisonCard() {
+    val rows = listOf(
+        Triple("Chat, calls, stories", true, true), Triple("Verified Premium badge", false, true),
+        Triple("Premium chat themes & covers", false, true), Triple("AI priority & smart tools", false, true),
+        Triple("Custom call ringtone", false, true), Triple("Anonymous story preview", false, true),
+        Triple("Direct Admin support", false, true)
+    )
+    Card(shape = RoundedCornerShape(26.dp), modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Free vs Premium", fontWeight = FontWeight.ExtraBold, modifier = Modifier.weight(1f))
+                Text("Free", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.width(52.dp), textAlign = TextAlign.Center)
+                Text("Premium", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFFFF8F00), modifier = Modifier.width(64.dp), textAlign = TextAlign.Center)
+            }
+            rows.forEach { (label, free, premium) ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(label, fontSize = 13.sp, modifier = Modifier.weight(1f))
+                    Box(Modifier.width(52.dp), contentAlignment = Alignment.Center) {
+                        Icon(if (free) Icons.Default.CheckCircle else Icons.Default.RemoveCircleOutline, null, tint = if (free) Color(0xFF43A047) else MaterialTheme.colorScheme.outline, modifier = Modifier.size(18.dp))
+                    }
+                    Box(Modifier.width(64.dp), contentAlignment = Alignment.Center) {
+                        Icon(if (premium) Icons.Default.CheckCircle else Icons.Default.RemoveCircleOutline, null, tint = Color(0xFFFF8F00), modifier = Modifier.size(18.dp))
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** Glossy membership card shown to active Premium users. */
+@Composable
+private fun PremiumMemberCard(me: User?) {
+    val motion = rememberInfiniteTransition(label = "member_card")
+    val sweep by motion.animateFloat(0f, 1f, infiniteRepeatable(tween(3600, easing = LinearEasing)), label = "member_sweep")
+    Box(
+        Modifier.fillMaxWidth().aspectRatio(1.72f).clip(RoundedCornerShape(26.dp))
+            .background(Brush.linearGradient(listOf(Color(0xFF1A1033), Color(0xFF3A1C71), Color(0xFF0F3B5F))))
+            .border(1.dp, Brush.linearGradient(listOf(Color(0xFFFFE082), Color(0xFFFF7AB6), Color(0xFF7FDBFF))), RoundedCornerShape(26.dp))
+    ) {
+        androidx.compose.foundation.Canvas(Modifier.matchParentSize()) {
+            val x = size.width * (-.4f + sweep * 1.8f)
+            drawRect(Brush.linearGradient(listOf(Color.Transparent, Color.White.copy(alpha = .14f), Color.Transparent), start = androidx.compose.ui.geometry.Offset(x - 120f, 0f), end = androidx.compose.ui.geometry.Offset(x + 120f, size.height)))
+            drawCircle(Color(0xFFFFC233).copy(alpha = .16f), size.height * .7f, androidx.compose.ui.geometry.Offset(size.width * .95f, size.height * .05f))
+        }
+        Column(Modifier.fillMaxSize().padding(20.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                PremiumGem(Modifier.size(34.dp), sweep)
+                Spacer(Modifier.width(8.dp))
+                Text("CONVO PREMIUM", color = Color(0xFFFFE082), fontWeight = FontWeight.Black, letterSpacing = 2.sp, fontSize = 13.sp)
+            }
+            Spacer(Modifier.weight(1f))
+            Text(me?.name.orEmpty().ifBlank { "Member" }, color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 20.sp)
+            Text("@" + me?.username.orEmpty(), color = Color.White.copy(alpha = .7f), fontSize = 12.sp)
+            Spacer(Modifier.height(8.dp))
+            Row {
+                Column(Modifier.weight(1f)) {
+                    Text("PLAN", color = Color.White.copy(alpha = .55f), fontSize = 9.sp, letterSpacing = 1.5.sp)
+                    Text(me?.premiumPlan.orEmpty().uppercase().ifBlank { "PREMIUM" }, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                }
+                Column(horizontalAlignment = Alignment.End) {
+                    Text("VALID UNTIL", color = Color.White.copy(alpha = .55f), fontSize = 9.sp, letterSpacing = 1.5.sp)
+                    Text(if (me?.premiumPlan == "lifetime") "LIFETIME" else SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(me?.premiumUntil ?: 0L)), color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                }
+            }
         }
     }
 }

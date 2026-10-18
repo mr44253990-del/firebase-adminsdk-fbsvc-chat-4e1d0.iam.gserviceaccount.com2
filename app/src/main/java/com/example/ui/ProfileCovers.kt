@@ -62,12 +62,16 @@ val BaseCoverPresets = listOf(
     CoverPreset("forest", "Misty forest", listOf(Color(0xFF0B3D2E), Color(0xFF2E8B57), Color(0xFFA8E6CF), Color(0xFF052016)))
 )
 
-val CoverPresets: List<CoverPreset> by lazy { BaseCoverPresets + ExtraCoverPresets }
+val CoverPresets: List<CoverPreset> by lazy { NewCoverPresets + BaseCoverPresets + ExtraCoverPresets }
 
 fun coverPresetFor(url: String, uid: String): CoverPreset? {
     if (url.startsWith("preset:")) return CoverPresets.firstOrNull { it.id == url.removePrefix("preset:") } ?: CoverPresets.first()
     if (url.isNotBlank()) return null
-    return BaseCoverPresets[abs(uid.hashCode()) % BaseCoverPresets.size]
+    // New default: about 1 in 5 profiles without a cover get "Convo Signature"; the rest keep
+    // the default they already had, so nobody's profile suddenly changes.
+    val hash = abs(uid.hashCode())
+    if (hash % 5 == 0) return NewCoverPresets.first()
+    return BaseCoverPresets[hash % BaseCoverPresets.size]
 }
 
 /** Draws a user's cover: an uploaded photo, a chosen preset, or their automatic default. */

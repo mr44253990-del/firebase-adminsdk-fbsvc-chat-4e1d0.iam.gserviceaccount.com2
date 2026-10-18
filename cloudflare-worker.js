@@ -469,8 +469,20 @@ export default {
         if (!isAdminCaller) return jsonResponse({ error: "Admin only" }, 403);
         __emailCfgCache = { at: 0, value: null };
         const to = String(payload.to || caller.email || "").trim();
-        const sent = await sendMail(env, to, "Convo Chat e-mail test ✓", mailHtml("E-mail delivery works", "Security codes, new sign-in alerts and recovery e-mails will be sent like this one.", "123456"));
-        return sent.ok ? jsonResponse({ success: true, to: maskEmail(to), provider: sent.provider }) : jsonResponse({ error: sent.error }, 502);
+        const sent = await sendMail(env, to, "Convo Chat e-mail delivery test", mailHtml("E-mail delivery works", "Security codes, new sign-in alerts and recovery e-mails will be sent like this one.", "123456"), { only: String(payload.providerId || "") || undefined });
+        return sent.ok ? jsonResponse({ success: true, to: maskEmail(to), provider: sent.provider, providerId: sent.providerId, tried: sent.tried }) : jsonResponse({ error: sent.error }, 502);
+      }
+      if (path === "/admin/email/providers") {
+        if (!isAdminCaller) return jsonResponse({ error: "Admin only" }, 403);
+        __emailCfgCache = { at: 0, value: null };
+        const cfg = await emailConfig(env);
+        const stats = await firestoreGet(env, "admin_secrets/email_stats").catch(() => null) || {};
+        const now = Date.now();
+        return jsonResponse({ success: true, enabled: Boolean(cfg && cfg.enabled), strategy: cfg?.strategy || "random", providers: (cfg?.providers || []).map(p => ({
+          id: p.id, type: p.type, fromEmail: p.fromEmail, source: p.source, weight: p.weight,
+          coolingDownSec: Math.max(0, Math.round(((__mailCooldown.get(p.id) || 0) - now) / 1000)),
+          stats: stats[`p_${String(p.id).replace(/[^A-Za-z0-9_]/g, "_")}`] || null
+        })) });
       }
 
       if (path === "/admin/push") {
@@ -1011,7 +1023,7 @@ async function updateFirebaseAccount(env,uid,changes){const a=JSON.parse(env.FIR
 /**
  * Signs a RS256 JWT claim and exchanges it for a Google OAuth2 access token.
  */
-async function getGoogleAccessToken(clientEmail, privateKeyPem, scope = "https://www.googleapis.com/auth/firebase.messaging") {
+async function getGoogleAccessToken(clientEmail, privateKeyPem, scope = "https://www.googleapis.com/auth/firebase.messaging", sub = "") {
   const iat = Math.floor(Date.now() / 1000);
   const exp = iat + 3600; // 1 hour token validity
 
@@ -1025,7 +1037,8 @@ async function getGoogleAccessToken(clientEmail, privateKeyPem, scope = "https:/
     scope: scope,
     aud: "https://oauth2.googleapis.com/token",
     exp: exp,
-    iat: iat
+    iat: iat,
+    ...(sub ? { sub } : {})
   };
 
   // Base64Url helper encoding
@@ -1178,30 +1191,291 @@ async function lookupUidByEmail(env, email) {
   const j = await r.json().catch(() => ({}));
   return String(j?.users?.[0]?.localId || "");
 }
+// ---- E-mail delivery: multi-provider pool with random selection + automatic failover ----------
+// Config: Firestore admin_secrets/email (admin-only). Legacy single-provider fields keep working:
+//   { provider, apiKey, fromEmail, fromName, enabled }
+// New optional fields:
+//   providers: [{ id, type, apiKey, secret, domain, region, clientId, fromEmail, fromName, enabled, weight }]
+//   strategy: "random" | "ordered", replyTo, brandName, brandUrl, sponsorLine, supportEmail, accent
+// Worker-secret providers are added automatically when present:
+//   GMAIL_CLIENT_ID + GMAIL_CLIENT_SECRET + GMAIL_REFRESH_TOKEN + GMAIL_SENDER   (personal Gmail, OAuth)
+//   GMAIL_DELEGATED_SENDER (+ optional GMAIL_SERVICE_ACCOUNT, otherwise FIREBASE_SERVICE_ACCOUNT)
+//                                                                (Google Workspace, domain-wide delegation)
+//   BREVO_API_KEY / RESEND_API_KEY / SENDGRID_API_KEY / POSTMARK_SERVER_TOKEN / SMTP2GO_API_KEY /
+//   MAILTRAP_API_TOKEN / MAILERSEND_API_KEY / ZEPTOMAIL_TOKEN / SEQUENZY_API_KEY / PLUNK_API_KEY
+//   + MAIL_FROM_EMAIL (and optional MAIL_FROM_NAME); MAILGUN_API_KEY + MAILGUN_DOMAIN;
+//   MAILJET_API_KEY + MAILJET_SECRET_KEY
+const EMAIL_PROVIDER_TYPES = ["brevo", "resend", "sendgrid", "mailgun", "postmark", "mailjet", "smtp2go", "mailtrap", "mailersend", "zeptomail", "sequenzy", "plunk", "gmail_oauth", "gmail_sa"];
 let __emailCfgCache = { at: 0, value: null };
+const __mailCooldown = new Map(); // providerId -> until (ms)
+const __gmailTok = new Map();     // providerId -> { t, exp }
+
+function envMailProviders(env) {
+  const out = [];
+  const from = String(env.MAIL_FROM_EMAIL || "");
+  const name = String(env.MAIL_FROM_NAME || "Convo Chat");
+  const add = (type, extra) => out.push({ id: `env_${type}`, type, fromEmail: from, fromName: name, enabled: true, weight: 1, source: "secret", ...extra });
+  if (env.GMAIL_REFRESH_TOKEN && env.GMAIL_CLIENT_ID && env.GMAIL_CLIENT_SECRET) add("gmail_oauth", { apiKey: env.GMAIL_REFRESH_TOKEN, secret: env.GMAIL_CLIENT_SECRET, clientId: env.GMAIL_CLIENT_ID, fromEmail: String(env.GMAIL_SENDER || from) });
+  if (env.GMAIL_DELEGATED_SENDER) add("gmail_sa", { fromEmail: String(env.GMAIL_DELEGATED_SENDER) });
+  if (!from) return out.filter(p => p.fromEmail);
+  if (env.BREVO_API_KEY) add("brevo", { apiKey: env.BREVO_API_KEY });
+  if (env.RESEND_API_KEY) add("resend", { apiKey: env.RESEND_API_KEY });
+  if (env.SENDGRID_API_KEY) add("sendgrid", { apiKey: env.SENDGRID_API_KEY });
+  if (env.POSTMARK_SERVER_TOKEN) add("postmark", { apiKey: env.POSTMARK_SERVER_TOKEN });
+  if (env.SMTP2GO_API_KEY) add("smtp2go", { apiKey: env.SMTP2GO_API_KEY });
+  if (env.MAILTRAP_API_TOKEN) add("mailtrap", { apiKey: env.MAILTRAP_API_TOKEN });
+  if (env.MAILERSEND_API_KEY) add("mailersend", { apiKey: env.MAILERSEND_API_KEY });
+  if (env.ZEPTOMAIL_TOKEN) add("zeptomail", { apiKey: env.ZEPTOMAIL_TOKEN });
+  if (env.SEQUENZY_API_KEY) add("sequenzy", { apiKey: env.SEQUENZY_API_KEY });
+  if (env.PLUNK_API_KEY) add("plunk", { apiKey: env.PLUNK_API_KEY });
+  if (env.MAILGUN_API_KEY && env.MAILGUN_DOMAIN) add("mailgun", { apiKey: env.MAILGUN_API_KEY, domain: env.MAILGUN_DOMAIN, region: String(env.MAILGUN_REGION || "us") });
+  if (env.MAILJET_API_KEY && env.MAILJET_SECRET_KEY) add("mailjet", { apiKey: env.MAILJET_API_KEY, secret: env.MAILJET_SECRET_KEY });
+  return out;
+}
+
 async function emailConfig(env) {
   if (Date.now() - __emailCfgCache.at < 60000) return __emailCfgCache.value;
-  const c = await firestoreGet(env, "admin_secrets/email").catch(() => null);
-  const value = c && c.apiKey && c.fromEmail ? { provider: c.provider === "resend" ? "resend" : "brevo", apiKey: String(c.apiKey), fromEmail: String(c.fromEmail), fromName: String(c.fromName || "Convo Chat"), enabled: c.enabled !== false } : null;
+  const c = await firestoreGet(env, "admin_secrets/email").catch(() => null) || {};
+  const list = [];
+  const seen = new Set();
+  const push = (p, i) => {
+    const type = EMAIL_PROVIDER_TYPES.includes(String(p.type || p.provider)) ? String(p.type || p.provider) : "";
+    if (!type || p.enabled === false) return;
+    const needsKey = !["gmail_sa"].includes(type);
+    if (needsKey && !p.apiKey) return;
+    if (!String(p.fromEmail || c.fromEmail || "").includes("@")) return;
+    const key = `${type}:${p.apiKey || p.fromEmail}`;
+    if (seen.has(key)) return; seen.add(key);
+    list.push({
+      id: String(p.id || `${type}_${i}`), type, apiKey: String(p.apiKey || ""), secret: String(p.secret || ""),
+      domain: String(p.domain || ""), region: String(p.region || ""), clientId: String(p.clientId || ""),
+      fromEmail: String(p.fromEmail || c.fromEmail), fromName: String(p.fromName || c.fromName || "Convo Chat"),
+      weight: Math.max(1, Math.min(10, Number(p.weight || 1))), source: p.source || "admin"
+    });
+  };
+  if (c.apiKey && c.fromEmail) push({ id: "primary", type: c.provider === "resend" ? "resend" : (EMAIL_PROVIDER_TYPES.includes(c.provider) ? c.provider : "brevo"), apiKey: c.apiKey, fromEmail: c.fromEmail, fromName: c.fromName, enabled: true }, 0);
+  (Array.isArray(c.providers) ? c.providers : []).forEach((p, i) => p && typeof p === "object" && push(p, i + 1));
+  envMailProviders(env).forEach((p, i) => push(p, 100 + i));
+  const value = list.length ? {
+    enabled: c.enabled !== false, providers: list, strategy: c.strategy === "ordered" ? "ordered" : "random",
+    provider: list[0].type, fromEmail: list[0].fromEmail, fromName: list[0].fromName,
+    replyTo: String(c.replyTo || ""), brandName: String(c.brandName || "Convo Chat"), brandUrl: String(c.brandUrl || ""),
+    sponsorLine: String(c.sponsorLine || ""), supportEmail: String(c.supportEmail || ""), accent: /^#[0-9a-fA-F]{6}$/.test(String(c.accent || "")) ? String(c.accent) : "#6C4DFF"
+  } : null;
   __emailCfgCache = { at: Date.now(), value };
   return value;
 }
+
+/** Branded, table-based (mail-client safe) HTML. Placeholders are filled in by sendMail from the admin branding. */
 function mailHtml(heading, text, code = "") {
   const esc = s => escapeHtml(s);
-  return `<div style="font-family:system-ui,Segoe UI,Roboto,sans-serif;background:#0b0c1a;padding:28px"><div style="max-width:460px;margin:auto;background:#15172b;border-radius:20px;padding:28px;color:#fff"><div style="font-size:13px;letter-spacing:.12em;color:#9d8cff;font-weight:700">CONVO CHAT • SECURITY</div><h2 style="margin:12px 0 8px">${esc(heading)}</h2><p style="color:#c9cbe0;line-height:1.5">${esc(text)}</p>${code ? `<div style="margin:18px 0;font-size:34px;letter-spacing:.35em;font-weight:800;text-align:center;background:#23264a;border-radius:14px;padding:14px">${esc(code)}</div><p style="color:#8f92b3;font-size:12px">The code expires in 10 minutes. Never share it with anyone — Convo Chat staff will never ask for it.</p>` : ""}</div></div>`;
+  const codeBlock = code ? `
+<tr><td style="padding:6px 32px 4px">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" style="background:#F4F2FF;border:1px solid #E1DBFF;border-radius:14px;padding:18px 10px">
+    <div style="font-size:12px;letter-spacing:.14em;color:#6B6790;font-weight:700;text-transform:uppercase">Your code</div>
+    <div style="font-family:'SFMono-Regular',Consolas,'Liberation Mono',monospace;font-size:34px;letter-spacing:.32em;font-weight:800;color:#1B1736;padding-top:6px">${esc(code)}</div>
+  </td></tr></table>
+</td></tr>
+<tr><td style="padding:12px 32px 0;color:#5E5A7A;font-size:13px;line-height:1.6">
+  This code expires in <b>10 minutes</b> and can be used once. Never share it with anyone. The {{BRAND}} team will never ask you for it.
+</td></tr>` : "";
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light"><title>${esc(heading)}</title></head>
+<body style="margin:0;padding:0;background:#F3F4F8">
+<div style="display:none;max-height:0;overflow:hidden;opacity:0">${esc(heading)}. ${esc(String(text).slice(0, 90))}</div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#F3F4F8;padding:28px 12px;font-family:-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
+<tr><td align="center">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background:#FFFFFF;border-radius:20px;overflow:hidden;border:1px solid #E6E7EF">
+<tr><td style="background:{{ACCENT}};background-image:linear-gradient(135deg,{{ACCENT}},#2D9CDB);padding:22px 32px">
+  <table role="presentation" cellpadding="0" cellspacing="0"><tr>
+    <td style="width:40px;height:40px;border-radius:12px;background:rgba(255,255,255,.18);text-align:center;vertical-align:middle;color:#fff;font-weight:800;font-size:18px">{{INITIAL}}</td>
+    <td style="padding-left:12px;color:#FFFFFF"><div style="font-size:17px;font-weight:800">{{BRAND}}</div><div style="font-size:12px;opacity:.85;letter-spacing:.08em">ACCOUNT SECURITY</div></td>
+  </tr></table>
+</td></tr>
+<tr><td style="padding:28px 32px 6px"><h1 style="margin:0;font-size:22px;line-height:1.3;color:#1B1736">${esc(heading)}</h1></td></tr>
+<tr><td style="padding:6px 32px 12px;color:#3F3B5C;font-size:15px;line-height:1.6">${esc(text)}</td></tr>
+${codeBlock}
+<tr><td style="padding:18px 32px 0">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#FAFAFC;border:1px solid #EEEFF5;border-radius:12px"><tr><td style="padding:12px 14px;color:#5E5A7A;font-size:12px;line-height:1.6">
+    <b style="color:#1B1736">Details</b><br>Account: {{TO}}<br>Requested: {{TIME}} (UTC)<br>Reference: {{REF}}
+  </td></tr></table>
+</td></tr>
+<tr><td style="padding:16px 32px 26px;color:#7A7696;font-size:12px;line-height:1.6">
+  Didn't request this? You can ignore this e-mail; your account stays safe. If you keep getting these, change your password in {{BRAND}} → Settings → Security.
+</td></tr>
+<tr><td style="border-top:1px solid #EEEFF5;padding:16px 32px;color:#9A97B2;font-size:11px;line-height:1.6">
+  {{SPONSOR}}This is an automated security message from {{BRAND}}{{BRANDURL}}. {{SUPPORT}}<br>&copy; {{YEAR}} {{BRAND}}. All rights reserved.
+</td></tr>
+</table>
+</td></tr></table>
+</body></html>`;
 }
-async function sendMail(env, to, subject, html) {
+
+function mailText(html) {
+  return String(html)
+    .replace(/<head[\s\S]*?<\/head>/gi, "")
+    .replace(/<div style="display:none[\s\S]*?<\/div>/i, "")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/(p|div|tr|h1|h2|table)>/gi, "\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&copy;/g, "(c)")
+    .split("\n").map(l => l.trim()).filter((l, i, arr) => l || (arr[i - 1] || "").trim()).join("\n").trim();
+}
+
+function pickMailOrder(cfg) {
+  const now = Date.now();
+  const ready = cfg.providers.filter(p => (__mailCooldown.get(p.id) || 0) < now);
+  const cooling = cfg.providers.filter(p => (__mailCooldown.get(p.id) || 0) >= now);
+  let order;
+  if (cfg.strategy === "ordered") order = ready.slice();
+  else {
+    // Weighted random shuffle so load (and free-tier limits) spread across every provider.
+    const pool = ready.map(p => ({ p, k: Math.pow(Math.random(), 1 / p.weight) }));
+    order = pool.sort((a, b) => b.k - a.k).map(x => x.p);
+  }
+  return order.concat(cooling); // cooling providers are a last resort, never skipped entirely
+}
+
+function b64url(str) {
+  const bytes = new TextEncoder().encode(str);
+  let bin = ""; for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+function mimeWord(s) { return /^[\x20-\x7E]*$/.test(s) ? s : `=?UTF-8?B?${btoa(unescape(encodeURIComponent(s)))}?=`; }
+function rfc822({ fromName, fromEmail, to, subject, html, text, replyTo, ref }) {
+  const boundary = `cc_${crypto.randomUUID().replace(/-/g, "")}`;
+  const enc = s => btoa(unescape(encodeURIComponent(s))).replace(/.{1,76}/g, "$&\r\n").trimEnd();
+  const headers = [
+    `From: ${mimeWord(fromName)} <${fromEmail}>`, `To: <${to}>`, `Subject: ${mimeWord(subject)}`,
+    ...(replyTo ? [`Reply-To: <${replyTo}>`] : []), `Date: ${new Date().toUTCString()}`,
+    `Message-ID: <${ref}@${fromEmail.split("@")[1] || "convo.chat"}>`, `X-Entity-Ref-ID: ${ref}`, "Auto-Submitted: auto-generated",
+    "MIME-Version: 1.0", `Content-Type: multipart/alternative; boundary="${boundary}"`
+  ];
+  return [
+    ...headers, "",
+    `--${boundary}`, "Content-Type: text/plain; charset=UTF-8", "Content-Transfer-Encoding: base64", "", enc(text),
+    `--${boundary}`, "Content-Type: text/html; charset=UTF-8", "Content-Transfer-Encoding: base64", "", enc(html),
+    `--${boundary}--`, ""
+  ].join("\r\n");
+}
+
+async function gmailAccessToken(env, p) {
+  const cached = __gmailTok.get(p.id);
+  if (cached && Date.now() < cached.exp) return cached.t;
+  let t;
+  if (p.type === "gmail_oauth") {
+    const r = await fetch("https://oauth2.googleapis.com/token", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ client_id: p.clientId, client_secret: p.secret, refresh_token: p.apiKey, grant_type: "refresh_token" }) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || !j.access_token) throw Error(`Gmail OAuth: ${j.error_description || j.error || r.status}`);
+    t = j.access_token;
+  } else {
+    const sa = JSON.parse(env.GMAIL_SERVICE_ACCOUNT || env.FIREBASE_SERVICE_ACCOUNT || "{}");
+    t = await getGoogleAccessToken(sa.client_email, sa.private_key, "https://www.googleapis.com/auth/gmail.send", p.fromEmail);
+  }
+  __gmailTok.set(p.id, { t, exp: Date.now() + 50 * 60 * 1000 });
+  return t;
+}
+
+async function sendViaProvider(env, p, m) {
+  const J = { "Content-Type": "application/json", accept: "application/json" };
+  const from = `${m.fromName} <${p.fromEmail}>`;
+  const hdr = { "X-Entity-Ref-ID": m.ref };
+  const post = (url, headers, body) => fetch(url, { method: "POST", headers: { ...J, ...headers }, body: JSON.stringify(body) });
+  switch (p.type) {
+    case "brevo": return post("https://api.brevo.com/v3/smtp/email", { "api-key": p.apiKey },
+      { sender: { name: m.fromName, email: p.fromEmail }, to: [{ email: m.to }], subject: m.subject, htmlContent: m.html, textContent: m.text, headers: hdr, tags: ["security"], ...(m.replyTo ? { replyTo: { email: m.replyTo } } : {}) });
+    case "resend": return post("https://api.resend.com/emails", { Authorization: `Bearer ${p.apiKey}` },
+      { from, to: [m.to], subject: m.subject, html: m.html, text: m.text, headers: hdr, ...(m.replyTo ? { reply_to: m.replyTo } : {}) });
+    case "sendgrid": return post("https://api.sendgrid.com/v3/mail/send", { Authorization: `Bearer ${p.apiKey}` },
+      { personalizations: [{ to: [{ email: m.to }] }], from: { email: p.fromEmail, name: m.fromName }, subject: m.subject, headers: hdr,
+        content: [{ type: "text/plain", value: m.text }, { type: "text/html", value: m.html }], ...(m.replyTo ? { reply_to: { email: m.replyTo } } : {}),
+        tracking_settings: { click_tracking: { enable: false }, open_tracking: { enable: false } } });
+    case "postmark": return post("https://api.postmarkapp.com/email", { "X-Postmark-Server-Token": p.apiKey },
+      { From: from, To: m.to, Subject: m.subject, HtmlBody: m.html, TextBody: m.text, MessageStream: "outbound", TrackOpens: false, Headers: [{ Name: "X-Entity-Ref-ID", Value: m.ref }], ...(m.replyTo ? { ReplyTo: m.replyTo } : {}) });
+    case "mailjet": return post("https://api.mailjet.com/v3.1/send", { Authorization: `Basic ${btoa(`${p.apiKey}:${p.secret}`)}` },
+      { Messages: [{ From: { Email: p.fromEmail, Name: m.fromName }, To: [{ Email: m.to }], Subject: m.subject, TextPart: m.text, HTMLPart: m.html, Headers: hdr, ...(m.replyTo ? { ReplyTo: { Email: m.replyTo } } : {}) }] });
+    case "smtp2go": return post("https://api.smtp2go.com/v3/email/send", { "X-Smtp2go-Api-Key": p.apiKey },
+      { sender: from, to: [m.to], subject: m.subject, html_body: m.html, text_body: m.text, custom_headers: [{ header: "X-Entity-Ref-ID", value: m.ref }, ...(m.replyTo ? [{ header: "Reply-To", value: m.replyTo }] : [])] });
+    case "mailtrap": return post("https://send.api.mailtrap.io/api/send", { Authorization: `Bearer ${p.apiKey}` },
+      { from: { email: p.fromEmail, name: m.fromName }, to: [{ email: m.to }], subject: m.subject, text: m.text, html: m.html, category: "security", headers: hdr, ...(m.replyTo ? { reply_to: { email: m.replyTo } } : {}) });
+    case "mailersend": return post("https://api.mailersend.com/v1/email", { Authorization: `Bearer ${p.apiKey}` },
+      { from: { email: p.fromEmail, name: m.fromName }, to: [{ email: m.to }], subject: m.subject, text: m.text, html: m.html, ...(m.replyTo ? { reply_to: { email: m.replyTo } } : {}) });
+    case "zeptomail": return post(`https://${p.region === "eu" ? "api.zeptomail.eu" : p.region === "in" ? "api.zeptomail.in" : "api.zeptomail.com"}/v1.1/email`, { Authorization: p.apiKey.startsWith("Zoho-") ? p.apiKey : `Zoho-enczapikey ${p.apiKey}` },
+      { from: { address: p.fromEmail, name: m.fromName }, to: [{ email_address: { address: m.to } }], subject: m.subject, htmlbody: m.html, textbody: m.text, ...(m.replyTo ? { reply_to: [{ address: m.replyTo }] } : {}) });
+    case "sequenzy": return post("https://api.sequenzy.com/v1/emails", { Authorization: `Bearer ${p.apiKey}` },
+      { from, to: m.to, subject: m.subject, html: m.html, text: m.text });
+    case "plunk": return post("https://api.useplunk.com/v1/send", { Authorization: `Bearer ${p.apiKey}` },
+      { to: m.to, subject: m.subject, body: m.html, from: p.fromEmail, name: m.fromName, subscribed: false, ...(m.replyTo ? { reply: m.replyTo } : {}) });
+    case "mailgun": {
+      const form = new FormData();
+      form.set("from", from); form.set("to", m.to); form.set("subject", m.subject); form.set("text", m.text); form.set("html", m.html);
+      form.set("h:X-Entity-Ref-ID", m.ref); form.set("o:tracking", "no"); if (m.replyTo) form.set("h:Reply-To", m.replyTo);
+      return fetch(`https://${p.region === "eu" ? "api.eu.mailgun.net" : "api.mailgun.net"}/v3/${encodeURIComponent(p.domain)}/messages`, { method: "POST", headers: { Authorization: `Basic ${btoa(`api:${p.apiKey}`)}` }, body: form });
+    }
+    case "gmail_oauth":
+    case "gmail_sa": {
+      const token = await gmailAccessToken(env, p);
+      const raw = b64url(rfc822({ fromName: m.fromName, fromEmail: p.fromEmail, to: m.to, subject: m.subject, html: m.html, text: m.text, replyTo: m.replyTo, ref: m.ref }));
+      return post("https://gmail.googleapis.com/gmail/v1/users/me/messages/send", { Authorization: `Bearer ${token}` }, { raw });
+    }
+  }
+  throw Error(`Unknown provider ${p.type}`);
+}
+
+async function recordMailStat(env, p, ok, error) {
+  const day = new Date().toISOString().slice(0, 10);
+  const key = `p_${String(p.id).replace(/[^A-Za-z0-9_]/g, "_")}`;
+  const prev = (await firestoreGet(env, "admin_secrets/email_stats").catch(() => null) || {})[key] || {};
+  const sameDay = prev.day === day;
+  await fsPatch(env, "admin_secrets/email_stats", { [key]: {
+    type: p.type, fromEmail: p.fromEmail, day,
+    sentToday: (sameDay ? Number(prev.sentToday || 0) : 0) + (ok ? 1 : 0), failedToday: (sameDay ? Number(prev.failedToday || 0) : 0) + (ok ? 0 : 1),
+    sentTotal: Number(prev.sentTotal || 0) + (ok ? 1 : 0), lastAt: Date.now(), lastOk: ok, lastError: ok ? "" : String(error || "").slice(0, 200)
+  } }).catch(() => null);
+}
+
+async function sendMail(env, to, subject, html, opts = {}) {
   const cfg = await emailConfig(env);
   if (!cfg || !cfg.enabled) return { ok: false, error: "E-mail delivery is not set up yet (Admin → Email & 2FA)" };
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(to || ""))) return { ok: false, error: "Invalid recipient e-mail" };
-  const text = subject;
-  const r = cfg.provider === "resend"
-    ? await fetch("https://api.resend.com/emails", { method: "POST", headers: { Authorization: `Bearer ${cfg.apiKey}`, "Content-Type": "application/json" }, body: JSON.stringify({ from: `${cfg.fromName} <${cfg.fromEmail}>`, to: [to], subject, html, text }) })
-    : await fetch("https://api.brevo.com/v3/smtp/email", { method: "POST", headers: { "api-key": cfg.apiKey, "Content-Type": "application/json", accept: "application/json" }, body: JSON.stringify({ sender: { name: cfg.fromName, email: cfg.fromEmail }, to: [{ email: to }], subject, htmlContent: html, textContent: text }) });
-  const j = await r.json().catch(() => ({}));
-  if (!r.ok) return { ok: false, error: `${cfg.provider}: ${j?.message || j?.error?.message || j?.name || `HTTP ${r.status}`}` };
-  return { ok: true, provider: cfg.provider };
+  const ref = crypto.randomUUID();
+  const brand = cfg.brandName || "Convo Chat";
+  const filled = String(html)
+    .replace(/\{\{BRAND\}\}/g, escapeHtml(brand)).replace(/\{\{INITIAL\}\}/g, escapeHtml(brand.trim().charAt(0).toUpperCase() || "C"))
+    .replace(/\{\{ACCENT\}\}/g, cfg.accent).replace(/\{\{TO\}\}/g, escapeHtml(maskEmail(to))).replace(/\{\{TIME\}\}/g, new Date().toISOString().replace("T", " ").slice(0, 16))
+    .replace(/\{\{REF\}\}/g, ref.slice(0, 8).toUpperCase()).replace(/\{\{YEAR\}\}/g, String(new Date().getUTCFullYear()))
+    .replace(/\{\{BRANDURL\}\}/g, cfg.brandUrl ? ` (<a href="${escapeHtml(cfg.brandUrl)}" style="color:#7A7696">${escapeHtml(cfg.brandUrl.replace(/^https?:\/\//, ""))}</a>)` : "")
+    .replace(/\{\{SUPPORT\}\}/g, cfg.supportEmail ? `Need help? Write to ${escapeHtml(cfg.supportEmail)}.` : "")
+    .replace(/\{\{SPONSOR\}\}/g, cfg.sponsorLine ? `${escapeHtml(cfg.sponsorLine)}<br>` : "");
+  const cleanSubject = String(subject).replace(/[\u2600-\u27BF\u2B50\u2705\u2713\u2714\u{1F300}-\u{1FAFF}]/gu, "").replace(/\s+/g, " ").trim();
+  const msg = { to, subject: cleanSubject, html: filled, text: mailText(filled), fromName: brand, replyTo: cfg.replyTo || cfg.supportEmail || "", ref };
+  const errors = [];
+  const order = opts.only ? cfg.providers.filter(p => p.id === opts.only) : pickMailOrder(cfg);
+  if (!order.length) return { ok: false, error: "That provider is not configured or is switched off" };
+  for (const p of order) {
+    msg.fromName = p.fromName || brand;
+    try {
+      const r = await sendViaProvider(env, p, msg);
+      const j = await r.json().catch(() => ({}));
+      if (r.ok && j?.success !== false && !(Array.isArray(j?.Messages) && j.Messages.some(x => x.Status === "error"))) {
+        __mailCooldown.delete(p.id);
+        await recordMailStat(env, p, true, "");
+        return { ok: true, provider: p.type, providerId: p.id, tried: errors.length + 1 };
+      }
+      const err = `${p.type}: ${j?.message || j?.error?.message || j?.error || j?.errors?.[0]?.message || j?.Message || j?.data?.error || j?.name || `HTTP ${r.status}`}`;
+      errors.push(typeof err === "string" ? err : JSON.stringify(err));
+      // Quota / rate-limit / auth problems: rest that provider longer so the pool keeps flowing.
+      __mailCooldown.set(p.id, Date.now() + ([401, 402, 403, 429].includes(r.status) ? 30 : 5) * 60 * 1000);
+      await recordMailStat(env, p, false, err);
+    } catch (e) {
+      errors.push(`${p.type}: ${e.message || e}`);
+      __mailCooldown.set(p.id, Date.now() + 5 * 60 * 1000);
+      await recordMailStat(env, p, false, e.message || String(e));
+    }
+  }
+  return { ok: false, error: errors.slice(0, 4).join(" | ") || "No e-mail provider accepted the message" };
 }
+
 async function sendSecurityPush(env, tokens, title, body) {
   const list = [...new Set(tokens.filter(t => String(t || "").length > 20))].slice(0, 20);
   if (!list.length) return 0;

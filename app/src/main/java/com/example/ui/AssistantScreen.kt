@@ -81,7 +81,7 @@ fun AssistantScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenUser: (U
         when {
             normalized.contains("who created") || normalized.contains("who made") || normalized.contains("কে তৈরি") || normalized.contains("creator") -> {
                 matches = users.filter { it.role == "moderator" || it.name.contains("Rakib", true) }.take(3)
-                answer("✨ Convo Chat is created and maintained by ADMIN RAKIB. The verified profile is shown below; open it to view the profile or start a chat.")
+                answer("Convo Chat is created and maintained by ADMIN RAKIB. The verified profile is shown below; open it to view the profile or start a chat.")
             }
             normalized.contains("delete post") || normalized.contains("পোস্ট ডিলিট") || normalized.contains("পোস্ট মুছ") -> {
                 deleteChoices = myPosts.sortedByDescending { it.timestamp }.take(12)
@@ -90,7 +90,7 @@ fun AssistantScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenUser: (U
             listOf("my account", "আমার অ্যাকাউন্ট", "পোস্ট", "post", "like", "লাইক", "followers", "কবে অ্যাকাউন্ট").any(normalized::contains) -> {
                 val likes = myPosts.sumOf { post -> post.reactions.size + post.mediaReactions.values.sumOf { reactions -> reactions.size } }
                 val joined = currentUser?.createdAt?.takeIf { it > 0 }?.let { SimpleDateFormat("dd MMMM yyyy", Locale.getDefault()).format(Date(it)) } ?: "unknown"
-                answer("📊 Account report\n• Posts: ${myPosts.size}\n• Total likes/reactions: $likes\n• Followers: ${currentUser?.followers?.size ?: 0}\n• Friends: ${currentUser?.friends?.size ?: 0}\n• Account created: $joined")
+                answer("Account report\n• Posts: ${myPosts.size}\n• Total likes/reactions: $likes\n• Followers: ${currentUser?.followers?.size ?: 0}\n• Friends: ${currentUser?.friends?.size ?: 0}\n• Account created: $joined")
             }
             normalized.contains("find") || normalized.contains("search") || normalized.contains("খুঁজ") || normalized.contains("ইউজার") || normalized.contains("user") -> {
                 val stopWords = setOf("find","search","user","please","show","me","ইউজার","খুঁজে","খুঁজ","বের","করো","দাও","নামে","নাম","কে","আছে")
@@ -141,7 +141,7 @@ fun AssistantScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenUser: (U
                             Box(Modifier.size(46.dp).clip(CircleShape).background(Brush.linearGradient(listOf(Color(0xFF7C5CFC), Color(0xFF19D5C5), Color(0xFFFF65B3)))), contentAlignment = Alignment.Center) { Icon(Icons.Default.AutoAwesome, null, tint = Color.White) }
                             Spacer(Modifier.width(10.dp)); Text("What I can do", fontWeight = FontWeight.ExtraBold)
                         }
-                        Text("📊 Account stats and reactions  •  🔎 User search  •  🗑️ Delete your posts with confirmation  •  💬 Convo Chat help  •  🧠 On-device assistant memory", fontSize = 12.sp)
+                        Text("Account stats and reactions  •  User search  •  Delete your posts with confirmation  •  Convo Chat help  •  On-device assistant memory", fontSize = 12.sp)
                         Text("General AI replies send your prompt and selected account context to the configured AI provider only when Allow AI processing is enabled. In-app account actions use Convo Chat services and are separate from AI requests.", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Text("Premium quick actions", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
                         if (config.assistantEnabled && config.smartReplyEnabled) {
@@ -208,7 +208,7 @@ fun AssistantScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenUser: (U
         AlertDialog(
             onDismissRequest = { confirmDelete = null }, title = { Text("Delete this post?") },
             text = { Text("This action cannot be undone. The Assistant will never perform a destructive action without your confirmation.") },
-            confirmButton = { Button(onClick = { viewModel.deletePost(post.id); deleteChoices = deleteChoices.filterNot { it.id == post.id }; confirmDelete = null; answer("✅ The post was deleted successfully.") }) { Text("Confirm delete") } },
+            confirmButton = { Button(onClick = { viewModel.deletePost(post.id); deleteChoices = deleteChoices.filterNot { it.id == post.id }; confirmDelete = null; answer("The post was deleted successfully.") }) { Text("Confirm delete") } },
             dismissButton = { TextButton(onClick = { confirmDelete = null }) { Text("Cancel") } }
         )
     }

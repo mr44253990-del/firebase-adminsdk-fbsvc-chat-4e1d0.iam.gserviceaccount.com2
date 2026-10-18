@@ -1543,7 +1543,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         batch.update(firestore.collection("premium_requests").document(request.id), mapOf("status" to if (approve) "approved" else "rejected", "reviewedAt" to now, "reviewedBy" to admin.uid, "adminNote" to note.take(500)))
         if (approve) batch.update(firestore.collection("users").document(request.userId), mapOf("isPremium" to true, "premiumPlan" to request.plan, "premiumUntil" to until, "premiumApprovedAt" to now))
         batch.commit().addOnSuccessListener {
-            createActivityNotification(request.userId, if (approve) "premium_approved" else "premium_rejected", request.id, if (approve) "আপনার Convo Chat Premium চালু হয়েছে 🎉" else "Premium request was not approved")
+            createActivityNotification(request.userId, if (approve) "premium_approved" else "premium_rejected", request.id, if (approve) "আপনার Convo Chat Premium চালু হয়েছে " else "Premium request was not approved")
             onComplete(true)
         }.addOnFailureListener { onComplete(false) }
     }
@@ -2234,7 +2234,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                             gatewayUrl = routed("push"),
                             targetToken = token,
                             senderName = me.name,
-                            messageBody = "${me.name.substringBefore(' ').ifBlank { "Your friend" }} is online now 🟢 — your message can be seen",
+                            messageBody = "${me.name.substringBefore(' ').ifBlank { "Your friend" }} is online now - your message can be seen",
                             senderId = me.uid,
                             senderProfileUrl = me.profileImageUrl,
                             notificationType = "online_alert",
@@ -3434,7 +3434,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     .setValue(mapOf(
                         "senderId" to currentUser.uid,
                         "senderName" to currentUser.name,
-                        "text" to if (payload.cloudText) "💬 New message" else if (fileUrl != null) "File: ${fileName ?: "attachment"}" else if (voiceUrl != null) "Voice message" else if (imageUrl != null) "Photo" else if (com.example.location.LocationShare.parse(text) != null) (if (com.example.location.LocationShare.parse(text)!!.isLive) "Shared a live location" else "Shared a location") else text,
+                        "text" to if (payload.cloudText) "New message" else if (fileUrl != null) "File: ${fileName ?: "attachment"}" else if (voiceUrl != null) "Voice message" else if (imageUrl != null) "Photo" else if (com.example.location.LocationShare.parse(text) != null) (if (com.example.location.LocationShare.parse(text)!!.isLive) "Shared a live location" else "Shared a location") else text,
                         "timestamp" to System.currentTimeMillis()
                     ))
 

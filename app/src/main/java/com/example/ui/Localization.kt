@@ -42,8 +42,8 @@ data class AppLanguageOption(val code: String, val nativeName: String, val engli
 object AppLanguage {
     private const val PREFS = "convo_language"
     val options = listOf(
-        AppLanguageOption("en", "English", "English", "🇬🇧", "Hi! Ready to chat?"),
-        AppLanguageOption("bn", "বাংলা", "Bengali", "🇧🇩", "হাই! চ্যাট করতে প্রস্তুত?")
+        AppLanguageOption("en", "English", "English", "EN", "Hi! Ready to chat?"),
+        AppLanguageOption("bn", "বাংলা", "Bengali", "বা", "হাই! চ্যাট করতে প্রস্তুত?")
     )
     private val _code = MutableStateFlow("en")
     val code: StateFlow<String> = _code.asStateFlow()
@@ -127,7 +127,7 @@ fun LanguagePickerScreen(onDone: () -> Unit) {
                         .padding(18.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(option.flag, fontSize = 34.sp)
+                    LanguageBadge(option.flag, isSel, 52)
                     Spacer(Modifier.width(14.dp))
                     Column(Modifier.weight(1f)) {
                         Text(option.nativeName, color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
@@ -158,6 +158,16 @@ fun LanguagePickerScreen(onDone: () -> Unit) {
     }
 }
 
+@Composable
+private fun LanguageBadge(text: String, selected: Boolean, sizeDp: Int) {
+    Box(
+        Modifier.size(sizeDp.dp).clip(RoundedCornerShape((sizeDp / 3).dp))
+            .background(Brush.linearGradient(if (selected) listOf(Color(0xFFFFD36E), Color(0xFFFF7AB6)) else listOf(Color(0xFF7C5CFF), Color(0xFF3DD6FF))))
+            .border(1.dp, Color.White.copy(alpha = .5f), RoundedCornerShape((sizeDp / 3).dp)),
+        contentAlignment = Alignment.Center
+    ) { Text(text, color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = (sizeDp / 2.6f).sp) }
+}
+
 /** Compact list for Settings → Language. */
 @Composable
 fun LanguageSettingsPage() {
@@ -174,7 +184,7 @@ fun LanguageSettingsPage() {
                 border = if (isSel) androidx.compose.foundation.BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else null
             ) {
                 Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text(option.flag, fontSize = 28.sp)
+                    LanguageBadge(option.flag, isSel, 44)
                     Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
                         Text(option.nativeName, fontWeight = FontWeight.Bold, fontSize = 17.sp)
@@ -409,6 +419,7 @@ private val BENGALI: Map<String, String> = mapOf(
     "Friend requests and people you may know." to "ফ্রেন্ড রিকোয়েস্ট ও পরিচিত হতে পারে এমন মানুষ।",
     "You're all set!" to "সব প্রস্তুত!", "Change the language or replay this tour any time in Settings." to "সেটিংসে যেকোনো সময় ভাষা বদলাতে বা ট্যুর আবার দেখতে পারবেন।",
     "Replay app tour" to "অ্যাপ ট্যুর আবার দেখুন", "Show the guided tour of the main buttons again" to "মূল বাটনগুলোর গাইডেড ট্যুর আবার দেখান",
+    "Surprise me" to "চমক দিন", "Uppercase" to "বড় হাতের", "Title case" to "টাইটেল কেস", "Clean spacing" to "স্পেস ঠিক করুন", "characters" to "অক্ষর",
     // Navigation
     "Home" to "হোম", "Chats" to "চ্যাট", "Reels" to "রিলস", "Groups" to "গ্রুপ", "Friends" to "বন্ধুরা",
     "Settings" to "সেটিংস", "Profile" to "প্রোফাইল", "Search" to "খুঁজুন", "Notifications" to "নোটিফিকেশন",

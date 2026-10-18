@@ -13,6 +13,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -48,7 +50,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
-data class CoachStep(val key: String?, val emoji: String, val title: String, val body: String)
+data class CoachStep(val key: String?, val icon: androidx.compose.ui.graphics.vector.ImageVector, val title: String, val body: String)
 
 /** First-launch guided tour: spotlight on a real UI element, blurred/dimmed surroundings. */
 object CoachTour {
@@ -69,13 +71,13 @@ object CoachTour {
     fun requestReplay() { _replay.value = _replay.value + 1 }
 
     val homeSteps = listOf(
-        CoachStep(null, "👋", "Welcome to Convo", "A quick tour of the main buttons. It takes 20 seconds."),
-        CoachStep("nav_home", "🏠", "Home feed", "Posts, stories and updates from your friends."),
-        CoachStep("nav_chats", "💬", "Chats", "All your conversations. In a chat, type / for quick replies."),
-        CoachStep("nav_create", "✨", "Create", "Post, story, reel or poll — everything starts here."),
-        CoachStep("nav_slot4", "🎬", "Reels & groups", "Watch reels or open your groups from here."),
-        CoachStep("nav_friends", "🤝", "Friends", "Friend requests and people you may know."),
-        CoachStep(null, "🎉", "You're all set!", "Change the language or replay this tour any time in Settings.")
+        CoachStep(null, Icons.Default.AutoAwesome, "Welcome to Convo", "A quick tour of the main buttons. It takes 20 seconds."),
+        CoachStep("nav_home", Icons.Default.Home, "Home feed", "Posts, stories and updates from your friends."),
+        CoachStep("nav_chats", Icons.Default.Forum, "Chats", "All your conversations. In a chat, type / for quick replies."),
+        CoachStep("nav_create", Icons.Default.AddCircle, "Create", "Post, story, reel or poll — everything starts here."),
+        CoachStep("nav_slot4", Icons.Default.SmartDisplay, "Reels & groups", "Watch reels or open your groups from here."),
+        CoachStep("nav_friends", Icons.Default.PeopleAlt, "Friends", "Friend requests and people you may know."),
+        CoachStep(null, Icons.Default.Verified, "You're all set!", "Change the language or replay this tour any time in Settings.")
     )
 }
 
@@ -167,7 +169,7 @@ fun CoachMarkOverlay(steps: List<CoachStep>, onFinish: () -> Unit) {
                     Box(
                         Modifier.size(44.dp).clip(CircleShape).background(Brush.linearGradient(listOf(Color(0xFF7C5CFF), Color(0xFFFF4FD8)))),
                         contentAlignment = Alignment.Center
-                    ) { Text(step.emoji, fontSize = 22.sp) }
+                    ) { Icon(step.icon, null, tint = Color.White, modifier = Modifier.size(24.dp)) }
                     Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
                         Text(tr(step.title), fontWeight = FontWeight.ExtraBold, fontSize = 18.sp)

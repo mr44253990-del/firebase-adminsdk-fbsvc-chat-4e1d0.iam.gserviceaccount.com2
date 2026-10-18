@@ -106,8 +106,8 @@ fun AdminAutoPostPanel() {
         Text("Post type", fontWeight = FontWeight.Bold, fontSize = 13.sp)
         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             listOf(
-                "mixed" to "🎲 Mixed", "status" to "👋 Status", "tip" to "💡 Tips", "quote" to "✨ Quotes",
-                "question" to "💬 Questions", "fun_fact" to "🧠 Fun facts", "motivation" to "🔥 Motivation", "poll" to "🗳️ Polls"
+                "mixed" to "Mixed", "status" to "Status", "tip" to "Tips", "quote" to "Quotes",
+                "question" to "Questions", "fun_fact" to "Fun facts", "motivation" to "Motivation", "poll" to "Polls"
             ).forEach { (id, label) -> FilterChip(selected = postType == id, onClick = { postType = id }, label = { Text(label) }) }
         }
         Text("Language", fontWeight = FontWeight.Bold, fontSize = 13.sp)

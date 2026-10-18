@@ -277,7 +277,7 @@ fun DrawScope.drawExtraCover(preset: CoverPreset, phase: Float): Boolean {
             hills(c[2], h * .82f, 1.2f, 0f)
             hills(c[3], h * .92f, 1.8f, 1f)
         }
-        else -> return false
+        else -> return drawNewCover(preset, phase)
     }
     return true
 }

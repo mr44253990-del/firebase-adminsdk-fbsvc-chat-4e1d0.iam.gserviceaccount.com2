@@ -14,7 +14,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
-import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.*
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -40,10 +41,10 @@ import kotlin.math.absoluteValue
 import kotlin.math.cos
 import kotlin.math.sin
 
-/** One onboarding slide: a big emoji hero with orbiting satellites and feature chips. */
+/** One onboarding slide: a glass icon hero with orbiting satellites and feature chips. */
 data class OnboardingPage(
-    val hero: String,
-    val satellites: List<String>,
+    val hero: ImageVector,
+    val satellites: List<ImageVector>,
     val title: String,
     val description: String,
     val chips: List<String>,
@@ -52,38 +53,38 @@ data class OnboardingPage(
 
 private val ONBOARDING_PAGES = listOf(
     OnboardingPage(
-        "💬", listOf("⚡", "🎙️", "😍", "✅"),
+        Icons.Default.Forum, listOf(Icons.Default.Bolt, Icons.Default.Mic, Icons.Default.Favorite, Icons.Default.Done),
         "Make every conversation feel alive",
         "Fast messaging, voice notes, delivery ticks, smart replies and typing indicators — chat that feels instant.",
-        listOf("⚡ Real-time", "🎙️ Voice notes", "🖼️ Photo albums"),
+        listOf("Real-time", "Voice notes", "Photo albums"),
         listOf(Color(0xFF6A5CFF), Color(0xFF2EC5FF))
     ),
     OnboardingPage(
-        "📞", listOf("🎥", "🔊", "🌐", "💫"),
+        Icons.Default.Call, listOf(Icons.Default.Videocam, Icons.Default.VolumeUp, Icons.Default.Language, Icons.Default.ScreenShare),
         "HD calls that just work",
         "Crystal-clear audio and video calls with swipe-to-answer, call reactions, screen share and picture-in-picture.",
-        listOf("🎥 Video", "📲 Swipe to answer", "🖥️ Screen share"),
+        listOf("HD video", "Swipe to answer", "Screen share"),
         listOf(Color(0xFF00C389), Color(0xFF00A3FF))
     ),
     OnboardingPage(
-        "📸", listOf("🎬", "❤️", "🔥", "🎨"),
+        Icons.Default.AutoStories, listOf(Icons.Default.Movie, Icons.Default.Favorite, Icons.Default.Poll, Icons.Default.Brush),
         "Your story, your creativity",
         "Stories, posts, reels and polls with reactions and comments. Share moments with friends in style.",
-        listOf("📖 Stories", "🎬 Reels", "📊 Polls"),
+        listOf("Stories", "Reels", "Polls"),
         listOf(Color(0xFFFF5F8F), Color(0xFFFFA24C))
     ),
     OnboardingPage(
-        "🛡️", listOf("🔐", "🔑", "📵", "👁️"),
+        Icons.Default.Shield, listOf(Icons.Default.Lock, Icons.Default.Key, Icons.Default.NotificationsActive, Icons.Default.VisibilityOff),
         "Security stays in your control",
         "Two-step verification, backup codes, new-device alerts, app lock and screenshot-protected chats.",
-        listOf("🔐 2-step login", "🔔 Device alerts", "🙈 Privacy"),
+        listOf("2-step login", "Device alerts", "Privacy"),
         listOf(Color(0xFF7B5CFF), Color(0xFFE14BFF))
     ),
     OnboardingPage(
-        "🎉", listOf("🤖", "🌟", "👋", "🚀"),
+        Icons.Default.AutoAwesome, listOf(Icons.Default.SmartToy, Icons.Default.Star, Icons.Default.Palette, Icons.Default.WorkspacePremium),
         "Welcome to Convo Chat",
         "Smart AI help, beautiful themes and a friendly community. Let's set up your account in seconds.",
-        listOf("🤖 AI assistant", "🎨 Themes", "👑 Premium"),
+        listOf("AI assistant", "Themes", "Premium"),
         listOf(Color(0xFFFFB300), Color(0xFFFF5F6D))
     )
 )
@@ -146,7 +147,7 @@ fun OnboardingScreen(onFinished: () -> Unit) {
                             val a by animateFloatAsState(if (shown) 1f else 0f, tween(320), label = "chip_a")
                             val dy by animateFloatAsState(if (shown) 0f else 16f, spring(dampingRatio = .55f), label = "chip_y")
                             Text(
-                                chip, color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.SemiBold,
+                                tr(chip), color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.SemiBold,
                                 modifier = Modifier.alpha(a).offset(y = dy.dp).clip(RoundedCornerShape(50))
                                     .background(Color.White.copy(alpha = .14f)).border(1.dp, Color.White.copy(alpha = .22f), RoundedCornerShape(50))
                                     .padding(horizontal = 10.dp, vertical = 6.dp)
@@ -198,12 +199,26 @@ private fun EmojiHero(page: OnboardingPage, active: Boolean) {
     Box(Modifier.size(260.dp), contentAlignment = Alignment.Center) {
         Box(Modifier.size(190.dp).clip(CircleShape).background(Brush.radialGradient(listOf(page.colors[0].copy(alpha = .55f), page.colors[1].copy(alpha = .15f), Color.Transparent))))
         Box(Modifier.size(210.dp).rotate(orbit).border(1.5.dp, Brush.sweepGradient(listOf(Color.Transparent, Color.White.copy(alpha = .6f), Color.Transparent)), CircleShape))
-        page.satellites.forEachIndexed { i, e ->
+        page.satellites.forEachIndexed { i, icon ->
             val angle = (orbit * (if (i % 2 == 0) 1f else -.8f) + i * 90f) * (PI.toFloat() / 180f)
             val r = if (i % 2 == 0) 112f else 92f
-            Text(e, fontSize = 26.sp, modifier = Modifier.offset(x = (cos(angle) * r).dp, y = (sin(angle) * r).dp).scale(pop.value))
+            Box(
+                Modifier.offset(x = (cos(angle) * r).dp, y = (sin(angle) * r).dp).scale(pop.value)
+                    .size(42.dp).clip(CircleShape)
+                    .background(Brush.linearGradient(listOf(Color.White.copy(alpha = .30f), Color.White.copy(alpha = .10f))))
+                    .border(1.dp, Color.White.copy(alpha = .45f), CircleShape),
+                contentAlignment = Alignment.Center
+            ) { Icon(icon, null, tint = Color.White, modifier = Modifier.size(22.dp)) }
         }
-        Text(page.hero, fontSize = 96.sp, modifier = Modifier.offset(y = bob.dp).rotate(wobble).scale(pop.value))
+        Box(
+            Modifier.offset(y = bob.dp).rotate(wobble).scale(pop.value).size(124.dp).clip(RoundedCornerShape(40.dp))
+                .background(Brush.linearGradient(listOf(page.colors[0], page.colors[1])))
+                .border(1.5.dp, Color.White.copy(alpha = .55f), RoundedCornerShape(40.dp)),
+            contentAlignment = Alignment.Center
+        ) {
+            Box(Modifier.align(Alignment.TopStart).fillMaxWidth().height(46.dp).background(Brush.verticalGradient(listOf(Color.White.copy(alpha = .32f), Color.Transparent))))
+            Icon(page.hero, null, tint = Color.White, modifier = Modifier.size(62.dp))
+        }
     }
 }
 

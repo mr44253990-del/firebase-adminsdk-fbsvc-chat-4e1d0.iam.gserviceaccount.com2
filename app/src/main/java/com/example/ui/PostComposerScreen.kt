@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -25,6 +26,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.ui.draw.alpha
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.outlined.AlternateEmail
@@ -45,6 +47,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -58,9 +61,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.User
 
-data class PostCanvasStyle(val id: String, val title: String, val colors: List<Color>)
+data class PostCanvasStyle(val id: String, val title: String, val colors: List<Color>, val texture: String = "none", val textColor: Color = Color.White)
 
-private val postCanvasStyles = listOf(
+val postCanvasStyles = listOf(
     PostCanvasStyle("glass", "Liquid Glass", listOf(Color(0xFF28233F), Color(0xFF6750A4), Color(0xFF15233A))),
     PostCanvasStyle("sunset", "Sunset", listOf(Color(0xFFFF6B6B), Color(0xFFFFB347), Color(0xFF7A3152))),
     PostCanvasStyle("ocean", "Ocean", listOf(Color(0xFF005C97), Color(0xFF00A8CC), Color(0xFF002B5B))),
@@ -80,8 +83,30 @@ private val postCanvasStyles = listOf(
     PostCanvasStyle("berry", "Berry", listOf(Color(0xFFC33764), Color(0xFF1D2671), Color(0xFF4A1942))),
     PostCanvasStyle("galaxy", "Galaxy", listOf(Color(0xFF0F0C29), Color(0xFF302B63), Color(0xFF24243E))),
     PostCanvasStyle("coffee", "Coffee", listOf(Color(0xFF3E2723), Color(0xFF8D6E63), Color(0xFF1B0F0C))),
-    PostCanvasStyle("neon", "Neon", listOf(Color(0xFF0B0612), Color(0xFFFF4DA6), Color(0xFF00B8D4)))
+    PostCanvasStyle("neon", "Neon", listOf(Color(0xFF0B0612), Color(0xFFFF4DA6), Color(0xFF00B8D4))),
+    // New in 4.3.5 — gradients with vector textures
+    PostCanvasStyle("starry", "Starry night", listOf(Color(0xFF050816), Color(0xFF1B2A6B), Color(0xFF3A1C71)), "constellation"),
+    PostCanvasStyle("eid", "Eid moon", listOf(Color(0xFF0B1030), Color(0xFF1B2A6B), Color(0xFF0F3B5F)), "crescent"),
+    PostCanvasStyle("lanterns", "Lanterns", listOf(Color(0xFF2A0A0A), Color(0xFF8B1E12), Color(0xFFFF8F3D)), "lanterns"),
+    PostCanvasStyle("sakura", "Sakura", listOf(Color(0xFFFF8FB8), Color(0xFFE85D9C), Color(0xFF7A2A6B)), "sakura"),
+    PostCanvasStyle("hearts", "Hearts", listOf(Color(0xFFFF4F7B), Color(0xFFD6246E), Color(0xFF6A0D45)), "hearts"),
+    PostCanvasStyle("confetti", "Party", listOf(Color(0xFF7C3AED), Color(0xFFDB2777), Color(0xFFF59E0B)), "confetti"),
+    PostCanvasStyle("rainy", "Rainy day", listOf(Color(0xFF232526), Color(0xFF414345), Color(0xFF1C2833)), "rain"),
+    PostCanvasStyle("snowfall", "Snowfall", listOf(Color(0xFF1C3B57), Color(0xFF3E6A92), Color(0xFF6E9CC4)), "snow"),
+    PostCanvasStyle("cosmos", "Cosmos", listOf(Color(0xFF07021A), Color(0xFF2D0B5A), Color(0xFF0B3A5C)), "galaxy"),
+    PostCanvasStyle("circuit", "Circuit", listOf(Color(0xFF020B10), Color(0xFF04363B), Color(0xFF006064)), "circuitry_glow"),
+    PostCanvasStyle("polka", "Polka", listOf(Color(0xFFFF7E5F), Color(0xFFFEB47B), Color(0xFFE76F51)), "polka"),
+    PostCanvasStyle("music", "Music", listOf(Color(0xFF1D2B64), Color(0xFF6A3093), Color(0xFFA044FF)), "music"),
+    PostCanvasStyle("leaves", "Nature", listOf(Color(0xFF134E5E), Color(0xFF2E8B57), Color(0xFF71B280)), "leaves"),
+    PostCanvasStyle("waves", "Waves", listOf(Color(0xFF00467F), Color(0xFF1C92D2), Color(0xFF00B4DB)), "waves"),
+    PostCanvasStyle("bokeh", "Bokeh", listOf(Color(0xFF41295A), Color(0xFF2F0743), Color(0xFFB24592)), "bokeh"),
+    PostCanvasStyle("doodle", "Doodle", listOf(Color(0xFF355C7D), Color(0xFF6C5B7B), Color(0xFFC06C84)), "doodle")
 )
+
+/** Gradient colours for a saved post background id (unknown ids fall back to Liquid Glass). */
+fun postCanvasColors(id: String): List<Color> = postCanvasStyles.firstOrNull { it.id == id }?.colors ?: postCanvasStyles.first().colors
+
+fun postCanvasTexture(id: String): String = postCanvasStyles.firstOrNull { it.id == id }?.texture ?: "none"
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -270,6 +295,7 @@ fun PostComposerScreen(viewModel: ChatViewModel, onBack: () -> Unit, onPublished
             Box(
                 Modifier.fillMaxWidth().clip(RoundedCornerShape(28.dp))
                     .background(if (styledCanvas) Brush.linearGradient(style.colors) else Brush.linearGradient(listOf(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .55f), MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .35f))))
+                    .drawBehind { if (styledCanvas && style.texture != "none") drawThemeTexture(style.texture, Color.White, 1.2f) }
                     .border(1.dp, if (styledCanvas) Color.White.copy(alpha = .18f) else MaterialTheme.colorScheme.outlineVariant.copy(alpha = .6f), RoundedCornerShape(28.dp))
             ) {
                 Column(Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 6.dp)) {
@@ -391,13 +417,24 @@ fun PostComposerScreen(viewModel: ChatViewModel, onBack: () -> Unit, onPublished
                             }
                         }
                         "background" -> {
-                            Text(tr("Pick a color canvas for text posts"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(tr("Pick a color canvas for text posts"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+                                AssistChip(onClick = { style = postCanvasStyles.drop(1).random() }, label = { Text(tr("Surprise me"), fontSize = 11.sp) }, leadingIcon = { Icon(Icons.Default.Shuffle, null, Modifier.size(15.dp)) })
+                            }
+                            // Quick text tools for the canvas.
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                                AssistChip(onClick = { text = text.uppercase() }, label = { Text(tr("Uppercase"), fontSize = 11.sp) })
+                                AssistChip(onClick = { text = text.split(" ").joinToString(" ") { w -> w.lowercase().replaceFirstChar { it.titlecase() } } }, label = { Text(tr("Title case"), fontSize = 11.sp) })
+                                AssistChip(onClick = { text = text.trim().replace(Regex("[ \\t]+"), " ").replace(Regex("\\n{3,}"), "\n\n") }, label = { Text(tr("Clean spacing"), fontSize = 11.sp) })
+                            }
+                            Text("${text.length} " + tr("characters"), fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             postCanvasStyles.chunked(4).forEach { rowStyles ->
                                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                     rowStyles.forEach { item ->
                                         Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.weight(1f).clip(RoundedCornerShape(16.dp)).clickable { style = item }) {
                                             Box(
                                                 Modifier.fillMaxWidth().aspectRatio(1f).clip(RoundedCornerShape(18.dp)).background(Brush.linearGradient(item.colors))
+                                                    .drawBehind { if (item.texture != "none") drawThemeTexture(item.texture, Color.White, 1.2f) }
                                                     .border(if (style.id == item.id) 3.dp else 1.dp, if (style.id == item.id) MaterialTheme.colorScheme.primary else Color.White.copy(.25f), RoundedCornerShape(18.dp)),
                                                 contentAlignment = Alignment.Center
                                             ) { if (style.id == item.id) Icon(Icons.Default.Check, null, tint = Color.White) else Text("Aa", color = Color.White, fontWeight = FontWeight.Bold) }
@@ -410,8 +447,8 @@ fun PostComposerScreen(viewModel: ChatViewModel, onBack: () -> Unit, onPublished
                         }
                         "feeling" -> {
                             val feelings = listOf(
-                                "😊 Happy", "🥰 Loved", "🎉 Excited", "😎 Cool", "🙏 Blessed", "🤩 Amazed", "💪 Motivated",
-                                "😢 Sad", "😴 Tired", "✈️ Traveling", "🎮 Gaming", "📚 Studying", "🍔 Hungry", "⚽ Sporty"
+                                "Happy", "Loved", "Excited", "Cool", "Blessed", "Amazed", "Motivated",
+                                "Sad", "Tired", "Traveling", "Gaming", "Studying", "Hungry", "Sporty"
                             )
                             feelings.chunked(2).forEach { pair ->
                                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {

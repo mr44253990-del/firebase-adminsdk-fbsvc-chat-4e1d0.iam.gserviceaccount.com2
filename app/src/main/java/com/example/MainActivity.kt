@@ -304,6 +304,7 @@ class MainActivity : FragmentActivity() {
                 val groupCallState by GroupCallEngine.state.collectAsState()
                 val context = LocalContext.current
                 var splashFinished by remember { mutableStateOf(false) }
+                var pendingMfaStatus by remember { mutableStateOf<com.example.ui.MfaStatus?>(null) }
                 var showOverlayPermissionPrompt by remember { mutableStateOf(false) }
                 var overlayPromptShownThisSession by remember { mutableStateOf(false) }
                 LaunchedEffect(splashFinished, currentUser?.uid, callState.status, groupCallState.status) {
@@ -324,7 +325,7 @@ class MainActivity : FragmentActivity() {
                         } else if (!isOnboardingCompleted(context)) {
                             "onboarding"
                         } else if (FirebaseAuth.getInstance().currentUser != null) {
-                            "home"
+                            "session_gate"
                         } else {
                             "auth"
                         }
@@ -408,7 +409,7 @@ class MainActivity : FragmentActivity() {
                             com.example.ui.LanguagePickerScreen(onDone = {
                                 val dest = try {
                                     if (!isOnboardingCompleted(context)) "onboarding"
-                                    else if (FirebaseAuth.getInstance().currentUser != null) "home" else "auth"
+                                    else if (FirebaseAuth.getInstance().currentUser != null) "session_gate" else "auth"
                                 } catch (e: Exception) { "auth" }
                                 navController.navigate(dest) { popUpTo("language") { inclusive = true } }
                             })
@@ -418,7 +419,7 @@ class MainActivity : FragmentActivity() {
                             OnboardingScreen(
                                 onFinished = {
                                     val dest = try {
-                                        if (FirebaseAuth.getInstance().currentUser != null) "home" else "auth"
+                                        if (FirebaseAuth.getInstance().currentUser != null) "session_gate" else "auth"
                                     } catch (e: Exception) {
                                         "auth"
                                     }
@@ -433,9 +434,36 @@ class MainActivity : FragmentActivity() {
                             AuthScreen(
                                 viewModel = viewModel,
                                 onAuthSuccess = {
-                                    navController.navigate("home") {
+                                    navController.navigate("session_gate") {
                                         popUpTo("auth") { inclusive = true }
                                     }
+                                }
+                            )
+                        }
+
+                        // Decides before Home is shown whether two-step verification is needed,
+                        // so Home never flashes and is then covered by the 2FA screen.
+                        composable("session_gate") {
+                            com.example.ui.SessionGateScreen(
+                                onHome = { navController.navigate("home") { popUpTo("session_gate") { inclusive = true } } },
+                                onMfa = { status ->
+                                    pendingMfaStatus = status
+                                    navController.navigate("mfa") { popUpTo("session_gate") { inclusive = true } }
+                                }
+                            )
+                        }
+
+                        composable("mfa") {
+                            val st = pendingMfaStatus
+                            com.example.ui.MfaGateScreen(
+                                method = st?.method.orEmpty().ifBlank { "email" },
+                                maskedEmail = st?.email.orEmpty().ifBlank { "your e-mail" },
+                                onVerified = {
+                                    viewModel.mfaVerified()
+                                    navController.navigate("home") { popUpTo("mfa") { inclusive = true } }
+                                },
+                                onSignOut = {
+                                    viewModel.logout { navController.navigate("auth") { popUpTo("mfa") { inclusive = true } } }
                                 }
                             )
                         }
@@ -647,6 +675,18 @@ class MainActivity : FragmentActivity() {
                                     }
                                 )
                             }
+                        }
+                    }
+                    // Two-step verification also guards screens opened from notifications/deep links.
+                    val globalMfaGate by viewModel.mfaGate.collectAsState()
+                    globalMfaGate?.let { gate ->
+                        if (currentRoute !in listOf("home", "mfa", "session_gate", "auth", "splash", "language", "onboarding")) {
+                            com.example.ui.MfaGateDialog(
+                                method = gate.method.ifBlank { "email" },
+                                maskedEmail = gate.email.ifBlank { "your e-mail" },
+                                onVerified = { viewModel.mfaVerified() },
+                                onSignOut = { viewModel.logout { navController.navigate("auth") { popUpTo(0) } } }
+                            )
                         }
                     }
                     if (showCallParticipantPicker && currentRoute == "call") {

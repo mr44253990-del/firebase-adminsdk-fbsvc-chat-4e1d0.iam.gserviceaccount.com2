@@ -82,9 +82,9 @@ fun ForwardMessageSheet(
                     Text(
                         when {
                             message.text.isNotBlank() -> message.text
-                            image != null -> "📷 Photo"
-                            !message.voiceUrl.isNullOrBlank() -> "🎤 Voice message"
-                            !message.fileName.isNullOrBlank() -> "📎 ${message.fileName}"
+                            image != null -> "Photo"
+                            !message.voiceUrl.isNullOrBlank() -> "Voice message"
+                            !message.fileName.isNullOrBlank() -> "File · ${message.fileName}"
                             else -> "Attachment"
                         },
                         maxLines = 2, overflow = TextOverflow.Ellipsis, fontSize = 13.sp,

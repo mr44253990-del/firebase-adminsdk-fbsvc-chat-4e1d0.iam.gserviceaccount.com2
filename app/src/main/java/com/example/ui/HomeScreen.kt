@@ -61,6 +61,7 @@ import com.example.call.CallSkinPreferences
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
@@ -323,7 +324,7 @@ fun HomeScreen(
     LaunchedEffect(coachReplay) { if (coachReplay > 0) { kotlinx.coroutines.delay(350); coachTourActive = true } }
 
     Scaffold(
-        modifier = Modifier.coachBlurHost(coachTourActive && currentTab != 6, CoachTour.activeKey.value?.let { CoachTour.targets[it] }),
+        modifier = Modifier.fillMaxSize().coachBlurHost(coachTourActive && currentTab != 6, CoachTour.activeKey.value?.let { CoachTour.targets[it] }),
         containerColor = Color.Transparent,
         contentWindowInsets = androidx.compose.foundation.layout.WindowInsets(0, 0, 0, 0),
         topBar = {
@@ -551,8 +552,7 @@ fun HomeScreen(
                     Icon(Icons.Default.AutoAwesome, contentDescription = "Open AI assistant", modifier = Modifier.size(26.dp))
                 }
             }
-        },
-        modifier = Modifier.fillMaxSize()
+        }
     ) { innerPadding ->
         Box(
             modifier = Modifier
@@ -643,7 +643,7 @@ fun HomeScreen(
                                         )
                                         Spacer(Modifier.width(11.dp))
                                         Column(Modifier.weight(1f)) {
-                                            Text("What's on your mind, ${currentUser?.name?.substringBefore(' ') ?: "friend"}? ✨", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp)
+                                            Text("What's on your mind, ${currentUser?.name?.substringBefore(' ') ?: "friend"}?", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp)
                                             Text(tr("Share a moment with your community"), color = MaterialTheme.colorScheme.primary, fontSize = 10.sp)
                                         }
                                         Box(Modifier.size(50.dp).clip(CircleShape).background(Brush.linearGradient(listOf(Color(0xFF5C53FF), Color(0xFFFF35BE)))), contentAlignment = Alignment.Center) { Icon(Icons.Default.Send, "Create post", tint = Color.White) }
@@ -2590,7 +2590,18 @@ fun HomeScreen(
         onDismissRequest = {},
         icon = { Icon(Icons.Default.WorkspacePremium, null, tint = Color(0xFFFFB300), modifier = Modifier.size(50.dp)) },
         title = { Text(tr("Unlock Convo Premium"), fontWeight = FontWeight.Black) },
-        text = { Column(verticalArrangement = Arrangement.spacedBy(7.dp)) { Text("✨ Verified Premium badge"); Text("🤖 Advanced AI and smart tools"); Text("🎨 Exclusive Liquid Glass themes"); Text("📊 Story and creator insights"); Text("🎵 Custom call ringtone"); Text("💬 Priority Admin support") } },
+        text = { Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
+            listOf(
+                Icons.Default.Verified to "Verified Premium badge", Icons.Default.SmartToy to "Advanced AI and smart tools",
+                Icons.Default.Palette to "Exclusive Liquid Glass themes", Icons.Default.Insights to "Story and creator insights",
+                Icons.Default.MusicNote to "Custom call ringtone", Icons.Default.SupportAgent to "Priority Admin support"
+            ).forEach { (icon, label) ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(28.dp).clip(RoundedCornerShape(9.dp)).background(Brush.linearGradient(listOf(Color(0xFFFFC233), Color(0xFFFF7A59)))), contentAlignment = Alignment.Center) { Icon(icon, null, tint = Color.White, modifier = Modifier.size(16.dp)) }
+                    Spacer(Modifier.width(10.dp)); Text(label)
+                }
+            }
+        } },
         confirmButton = { Button(onClick = { showPremiumUpsell = false; onPremium() }) { Text(tr("View Premium")) } },
         dismissButton = { TextButton(onClick = { currentUser?.uid?.let { upsellPrefs.edit().putBoolean("dismissed_$it", true).apply() }; showPremiumUpsell = false }) { Text("Skip forever") } }
     )
@@ -2599,7 +2610,7 @@ fun HomeScreen(
         AlertDialog(
             onDismissRequest = {},
             icon = { Icon(Icons.Default.WorkspacePremium, null, tint = Color(0xFFFFB300), modifier = Modifier.size(54.dp)) },
-            title = { Text("🎉 Congratulations!", fontWeight = FontWeight.Black, textAlign = TextAlign.Center) },
+            title = { Text("Congratulations!", fontWeight = FontWeight.Black, textAlign = TextAlign.Center) },
             text = { Column(horizontalAlignment = Alignment.CenterHorizontally) { Text("${premiumUser.name}, Convo Chat Premium is active!", textAlign = TextAlign.Center); Spacer(Modifier.height(10.dp)); val days = if (premiumUser.premiumPlan == "lifetime") "Lifetime" else "${((premiumUser.premiumUntil - System.currentTimeMillis()).coerceAtLeast(0) / 86_400_000L) + 1} days remaining"; Text(days, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.ExtraBold); if (premiumUser.premiumPlan == "trial") { Spacer(Modifier.height(8.dp)); Text("Your one-time 14-day free trial has started.", textAlign = TextAlign.Center) } } },
             confirmButton = { Button(onClick = { premiumWelcomeKey?.let { context.getSharedPreferences("convo_premium_welcome", Context.MODE_PRIVATE).edit().putBoolean(it, true).apply() }; showPremiumWelcome = false }) { Text(tr("Explore Premium")) } }
         )
@@ -3927,6 +3938,7 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
     val postContainerModifier = (if (styledPost) {
         Modifier.fillMaxWidth()
             .background(Brush.linearGradient(postBackgroundColors(post.backgroundStyle)), postShape)
+            .then(postCanvasTexture(post.backgroundStyle).let { tex -> if (tex == "none") Modifier else Modifier.clip(postShape).drawBehind { drawThemeTexture(tex, Color.White, 1.2f) } })
             .border(1.dp, Color.White.copy(alpha = .24f), postShape)
     } else {
         Modifier.fillMaxWidth().glassmorphic(isDark = isDark, shape = postShape)
@@ -4033,7 +4045,7 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
                 Spacer(Modifier.height(6.dp))
             }
             if (post.feeling.isNotBlank()) {
-                AssistChip(onClick = {}, label = { Text("Feeling ${post.feeling}") }, leadingIcon = { Text("✨") })
+                AssistChip(onClick = {}, label = { Text("Feeling ${post.feeling}") }, leadingIcon = { Icon(Icons.Default.Mood, null, Modifier.size(16.dp)) })
                 Spacer(Modifier.height(6.dp))
             }
 
@@ -4897,28 +4909,7 @@ private fun LinkifiedPostText(
     }
 }
 
-private fun postBackgroundColors(style: String): List<Color> = when (style) {
-    "sunset" -> listOf(Color(0xFFFF6B6B), Color(0xFFFFB347), Color(0xFF7A3152))
-    "ocean" -> listOf(Color(0xFF005C97), Color(0xFF00A8CC), Color(0xFF002B5B))
-    "aurora" -> listOf(Color(0xFF4A148C), Color(0xFF00BFA5), Color(0xFF311B92))
-    "forest" -> listOf(Color(0xFF0B3D2E), Color(0xFF2E8B57), Color(0xFF102A1E))
-    "rose" -> listOf(Color(0xFF8E2DE2), Color(0xFFFF5F6D), Color(0xFF3A1C71))
-    "midnight" -> listOf(Color(0xFF020024), Color(0xFF090979), Color(0xFF111827))
-    "mono" -> listOf(Color(0xFF111111), Color(0xFF424242), Color(0xFF151515))
-    "candy" -> listOf(Color(0xFFFF9A9E), Color(0xFFF6A6C1), Color(0xFFA18CD1))
-    "peach" -> listOf(Color(0xFFFFB88C), Color(0xFFDE6262), Color(0xFF8E3B46))
-    "fire" -> listOf(Color(0xFFF12711), Color(0xFFF5AF19), Color(0xFF7A1F0A))
-    "gold" -> listOf(Color(0xFF8A6100), Color(0xFFE0A526), Color(0xFF4A3400))
-    "lime" -> listOf(Color(0xFF1E5631), Color(0xFF56AB2F), Color(0xFF0E3B1E))
-    "mint" -> listOf(Color(0xFF00B09B), Color(0xFF3FA36B), Color(0xFF0B5345))
-    "sky" -> listOf(Color(0xFF2193B0), Color(0xFF4FB3D9), Color(0xFF0F4C75))
-    "lavender" -> listOf(Color(0xFF8E6CC9), Color(0xFF7D93D6), Color(0xFF4B3B7A))
-    "berry" -> listOf(Color(0xFFC33764), Color(0xFF1D2671), Color(0xFF4A1942))
-    "galaxy" -> listOf(Color(0xFF0F0C29), Color(0xFF302B63), Color(0xFF24243E))
-    "coffee" -> listOf(Color(0xFF3E2723), Color(0xFF8D6E63), Color(0xFF1B0F0C))
-    "neon" -> listOf(Color(0xFF0B0612), Color(0xFFFF4DA6), Color(0xFF00B8D4))
-    else -> listOf(Color(0xFF28233F), Color(0xFF6750A4), Color(0xFF15233A))
-}
+private fun postBackgroundColors(style: String): List<Color> = postCanvasColors(style)
 
 @Composable
 private fun PrivacyToggleRow(label: String, checked: Boolean, onCheckedChange: () -> Unit) {
