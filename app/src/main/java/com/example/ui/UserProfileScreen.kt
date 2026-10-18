@@ -145,7 +145,8 @@ fun UserProfileScreen(
         ) {
             item(key = "hero") {
                 Column {
-                    Box(Modifier.fillMaxWidth().height(210.dp)) {
+                    if (liveUser.isConvoAdmin()) AdminProfileHero(liveUser)
+                    else Box(Modifier.fillMaxWidth().height(210.dp)) {
                         ProfileCoverArt(liveUser.coverImageUrl, liveUser.uid, Modifier.fillMaxSize(), liveUser.coverScale, liveUser.coverOffsetY)
                         Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, MaterialTheme.colorScheme.background.copy(alpha = .18f), MaterialTheme.colorScheme.background.copy(alpha = .88f)))))
                         Box(
@@ -160,7 +161,7 @@ fun UserProfileScreen(
                             Box(Modifier.size(24.dp).clip(CircleShape).background(MaterialTheme.colorScheme.background).padding(4.dp).clip(CircleShape).background(if (liveUser.isOnline) Color(0xFF45D483) else MaterialTheme.colorScheme.outline))
                         }
                     }
-                    Spacer(Modifier.height(66.dp))
+                    Spacer(Modifier.height(if (liveUser.isConvoAdmin()) 74.dp else 66.dp))
                     Column(
                         Modifier.fillMaxWidth().padding(horizontal = 20.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
@@ -176,7 +177,9 @@ fun UserProfileScreen(
                                     }
                                 }
                             }
-                            if (liveUser.role == "moderator") {
+                            if (liveUser.isConvoAdmin()) {
+                                AdminNameBadge()
+                            } else if (liveUser.role == "moderator") {
                                 Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = CircleShape) {
                                     Row(Modifier.padding(horizontal = 10.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                                         Icon(Icons.Outlined.Verified, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)

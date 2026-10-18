@@ -202,7 +202,7 @@ fun AdminControlCenterScreen(
     val allMenuItems = listOf(
         AdminMenuEntry("server_health", "Server health & updater", "Worker version, secrets, one-tap Worker update", Icons.Outlined.Dns, Color(0xFF00897B), if (workerNeedsUpdate) "FIX" else "OK"),
         AdminMenuEntry("staff", "Sub-admins & roles", "Delegate access: users, posts, reports, Premium…", Icons.Outlined.AdminPanelSettings, Color(0xFF3949AB), users.count { it.staffRole.isNotBlank() }.takeIf { it > 0 }?.toString().orEmpty()),
-        AdminMenuEntry("email_security", "Email & 2FA", "OTP e-mail sender (Brevo / Resend) and test", Icons.Outlined.MarkEmailRead, Color(0xFF00897B)),
+        AdminMenuEntry("email_security", "Email & 2FA", "Multi-provider OTP mail pool, Gmail API, failover and test", Icons.Outlined.MarkEmailRead, Color(0xFF00897B)),
         AdminMenuEntry("updates", "App updates", "Signed APK, release notes and rollout", Icons.Outlined.Publish, Color(0xFF635BFF), if (flagshipConfig.updateEnabled) "LIVE" else ""),
         AdminMenuEntry("maintenance", "Maintenance & notice", "Service status and announcements", Icons.Outlined.Build, Color(0xFFE28A22)),
         AdminMenuEntry("announce", "Announcements", "Banner for every user: notices, features, events", Icons.Outlined.Campaign, Color(0xFF2979FF)),
@@ -211,7 +211,8 @@ fun AdminControlCenterScreen(
         AdminMenuEntry("cloud_db", "Cloud backup", "Text messages in Cloudflare D1 · on/off · test", Icons.Outlined.Cloud, Color(0xFFF38020), if (cloudDbOn) "ON" else ""),
         AdminMenuEntry("ai_autoreply", "AI auto-reply (admin)", "AI answers messages sent to you — server side", Icons.Outlined.SmartToy, Color(0xFF7C4DFF)),
         AdminMenuEntry("ai_providers", "AI providers & keys", "Update keys, test models, custom providers, hide AI", Icons.Outlined.Key, Color(0xFF7A4FE0)),
-        AdminMenuEntry("workers", "Multi-worker routing", "Spread services across 2nd/3rd worker URLs", Icons.Outlined.Hub, Color(0xFF2B7FD9)),
+        AdminMenuEntry("workers", "Smart worker pool", "3-4 workers all active: weighted random + automatic failover", Icons.Outlined.Hub, Color(0xFF2B7FD9)),
+        AdminMenuEntry("insights", "Smart insights", "Segments, sign-up chart, health checks, CSV export", Icons.Outlined.Insights, Color(0xFF00A3A3)),
         AdminMenuEntry("ai", "AI & feature flags", "Assistant and staged capabilities", Icons.Outlined.AutoAwesome, Color(0xFF8E5CE6)),
         AdminMenuEntry("premium", "Premium & payments", "Plans, pricing and payment methods", Icons.Outlined.WorkspacePremium, Color(0xFFCF9829)),
         AdminMenuEntry("campaigns", "Campaigns", "One-time Friday Fun message", Icons.Outlined.Campaign, Color(0xFFDB5B8C)),
@@ -232,7 +233,7 @@ fun AdminControlCenterScreen(
     )
     val staffMenuIds = mapOf(
         "users" to "users", "reports" to "reports", "feature_requests" to "support", "premium_requests" to "premium",
-        "premium_access" to "premium", "announce" to "announce", "analytics" to "analytics"
+        "premium_access" to "premium", "announce" to "announce", "analytics" to "analytics", "insights" to "analytics"
     )
     val menuItems = if (staffPermissions == null) allMenuItems
         else allMenuItems.filter { entry -> staffMenuIds[entry.id]?.let { it in staffPermissions } == true }
@@ -579,6 +580,9 @@ fun AdminControlCenterScreen(
                     "cloud_db" -> {
                         AdminPanelCard("Cloud backup", "Store text & emoji message bodies in your Cloudflare D1 database", Icons.Outlined.Cloud) { AdminCloudStorePanel() }
                     }
+                    "insights" -> {
+                        AdminPanelCard("Smart insights", "Live numbers from loaded profiles - no extra database reads", Icons.Outlined.Insights) { AdminInsightsPanel(users) }
+                    }
                     "announce" -> {
                         AdminPanelCard("Announcements", "Publish a banner to every signed-in user", Icons.Outlined.Campaign) { AdminAnnouncementPanel() }
                     }
@@ -586,7 +590,7 @@ fun AdminControlCenterScreen(
                         AdminPanelCard("Audit log", "Latest 100 admin actions", Icons.Outlined.History) { AdminAuditPanel() }
                     }
                     "workers" -> {
-                        AdminPanelCard("Smart multi-worker routing", "Primary + extra workers; each service runs on exactly one, with automatic fallback", Icons.Outlined.Hub) {
+                        AdminPanelCard("Smart worker pool", "All workers active together: weighted random pick per request, automatic failover and cooldown", Icons.Outlined.Hub) {
                             AdminWorkerRoutingPanel(viewModel)
                         }
                     }

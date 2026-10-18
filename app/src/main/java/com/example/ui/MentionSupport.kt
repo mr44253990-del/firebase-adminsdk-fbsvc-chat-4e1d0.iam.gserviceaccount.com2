@@ -71,7 +71,49 @@ object Mentions {
     fun mentionedUsernames(text: String): Set<String> =
         mentionRegex.findAll(text).map { it.groupValues[1].lowercase().trimEnd('.') }.toSet()
 
-    fun annotate(text: String, linkColor: Color, mentionColor: Color): AnnotatedString = buildAnnotatedString {
+    private val formatRules: List<Pair<Regex, SpanStyle>> by lazy {
+        listOf(
+            Regex("(?<![\\w*])\\*(?![\\s*])([^*\\n]+?)(?<!\\s)\\*(?![\\w*])") to SpanStyle(fontWeight = FontWeight.Bold),
+            Regex("(?<![\\w_])_(?![\\s_])([^_\\n]+?)(?<!\\s)_(?![\\w_])") to SpanStyle(fontStyle = androidx.compose.ui.text.font.FontStyle.Italic),
+            Regex("(?<![\\w~])~(?![\\s~])([^~\\n]+?)(?<!\\s)~(?![\\w~])") to SpanStyle(textDecoration = TextDecoration.LineThrough),
+            Regex("`([^`\\n]+)`") to SpanStyle(fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace, background = Color(0x33808080))
+        )
+    }
+
+    /**
+     * WhatsApp/Signal-style inline formatting: *bold*, _italic_, ~strike~ and `code`.
+     * Returns the text without the marker characters plus the style ranges (in the new text).
+     * Markers inside links are ignored so URLs with underscores stay intact.
+     */
+    fun parseFormatting(text: String): Pair<String, List<Triple<Int, Int, SpanStyle>>> {
+        if (text.none { it == '*' || it == '_' || it == '~' || it == '`' }) return text to emptyList()
+        val urls = urlRegex.findAll(text).map { it.range }.toList()
+        data class M(val start: Int, val end: Int, val style: SpanStyle) // end inclusive (closing marker)
+        val found = mutableListOf<M>()
+        formatRules.forEach { (rx, style) ->
+            rx.findAll(text).forEach { m ->
+                val r = m.range
+                if (urls.none { r.first <= it.last && r.last >= it.first } && found.none { r.first <= it.end && r.last >= it.start }) found += M(r.first, r.last, style)
+            }
+        }
+        if (found.isEmpty()) return text to emptyList()
+        found.sortBy { it.start }
+        val out = StringBuilder(text.length)
+        val styles = mutableListOf<Triple<Int, Int, SpanStyle>>()
+        var cursor = 0
+        found.forEach { m ->
+            out.append(text, cursor, m.start)
+            val from = out.length
+            out.append(text, m.start + 1, m.end)
+            styles += Triple(from, out.length, m.style)
+            cursor = m.end + 1
+        }
+        out.append(text, cursor, text.length)
+        return out.toString() to styles
+    }
+
+    fun annotate(rawText: String, linkColor: Color, mentionColor: Color): AnnotatedString = buildAnnotatedString {
+        val (text, formatStyles) = parseFormatting(rawText)
         data class Span(val start: Int, val end: Int, val tag: String, val value: String)
         val spans = mutableListOf<Span>()
         urlRegex.findAll(text).forEach { m ->
@@ -99,6 +141,7 @@ object Mentions {
             cursor = span.end
         }
         if (cursor < text.length) append(text.substring(cursor))
+        formatStyles.forEach { (start, end, style) -> if (start < end && end <= length) addStyle(style, start, end) }
     }
 }
 

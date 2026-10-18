@@ -23,7 +23,7 @@ import java.util.concurrent.TimeUnit
  */
 object WorkerHealth {
     /** Must match WORKER_API_VERSION in cloudflare-worker.js. */
-    const val REQUIRED_API_VERSION = 44
+    const val REQUIRED_API_VERSION = 45
     const val DEFAULT_PRIMARY = "https://solitary-hill-dcdc.mr44253990.workers.dev"
     const val OUTDATED_MESSAGE =
         "Server update needed — the Cloudflare Worker is an older version and doesn't know this feature yet. " +

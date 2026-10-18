@@ -216,7 +216,9 @@ fun CallScreen(
         }
     }
     var accepted by remember { mutableStateOf(initiallyAccepted || !incoming) }
-    BackHandler(enabled = true) { if (accepted) onMinimize() }
+    // Minimize (mini bubble / PiP) only while a call is really running; otherwise just leave.
+    val canMinimize = accepted && activeForLock
+    BackHandler(enabled = true) { if (canMinimize) onMinimize() else if (!activeForLock) onClose() }
     var pendingAccept by remember { mutableStateOf(false) }
     var showMoreControls by remember { mutableStateOf(false) }
     var showReactions by remember { mutableStateOf(false) }
@@ -312,7 +314,7 @@ fun CallScreen(
                 }
             }
         }
-        if (accepted && (controlsVisible || !effectiveVideo)) IconButton(
+        if (canMinimize && (controlsVisible || !effectiveVideo)) IconButton(
             onClick = onMinimize,
             modifier = Modifier.align(Alignment.TopStart).windowInsetsPadding(WindowInsets.statusBars).padding(12.dp).background(Color.Black.copy(.42f), CircleShape)
         ) { Icon(Icons.Default.KeyboardArrowDown, "Minimize call", tint = Color.White, modifier = Modifier.size(30.dp)) }
@@ -327,12 +329,8 @@ fun CallScreen(
             AnimatedVisibility(visible = !effectiveVideo || !accepted) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     if (!accepted && incoming) IncomingCallerAvatar(remoteImage, remoteName, callPalette.accent)
-                    else AsyncImage(
-                        model = remoteImage.ifBlank { null }, contentDescription = remoteName,
-                        error = painterResource(R.drawable.img_app_logo), contentScale = ContentScale.Crop,
-                        modifier = Modifier.size(138.dp).scale(if (state.status == "calling" || state.status == "ringing") callPulse else 1f).clip(CircleShape).border(4.dp, Brush.sweepGradient(listOf(callPalette.accent, Color.White.copy(alpha = .88f), callPalette.accent)), CircleShape)
-                    )
-                    Spacer(Modifier.height(if (!accepted && incoming) 6.dp else 26.dp))
+                    else CallAvatarAura(remoteImage, remoteName, callPalette.accent, state.status, state.muted)
+                    Spacer(Modifier.height(6.dp))
                     Text(remoteName, color = Color.White, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.ExtraBold, textAlign = TextAlign.Center)
                 }
             }

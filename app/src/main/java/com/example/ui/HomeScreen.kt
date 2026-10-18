@@ -1250,6 +1250,18 @@ fun HomeScreen(
                                 AppThemePreview("Teal Light", Color(0xFFF1FBFA), Color.White, Color(0xFF00897B)),
                                 AppThemePreview("Mono Light", Color(0xFFF8F9FA), Color.White, Color(0xFF212529))
                             )),
+                            Triple("Fresh picks", "New hand-tuned themes: aurora, volcano, cyberpunk, paper and more", listOf(
+                                AppThemePreview("Aurora Borealis", Color(0xFF02101A), Color(0xFF0A2230), Color(0xFF5CFFC8)),
+                                AppThemePreview("Midnight Ocean", Color(0xFF020814), Color(0xFF0A1730), Color(0xFF4FC3F7)),
+                                AppThemePreview("Volcano", Color(0xFF120402), Color(0xFF2A0D06), Color(0xFFFF7043)),
+                                AppThemePreview("Lavender Dusk", Color(0xFF110B1E), Color(0xFF221839), Color(0xFFC6A8FF)),
+                                AppThemePreview("Cyberpunk", Color(0xFF07010D), Color(0xFF1A0626), Color(0xFFFFE600)),
+                                AppThemePreview("Deep Forest", Color(0xFF030B06), Color(0xFF0D1F14), Color(0xFF8BD17C)),
+                                AppThemePreview("Graphite", Color(0xFF0E0F11), Color(0xFF1B1D21), Color(0xFFE0E3E8)),
+                                AppThemePreview("Arctic Light", Color(0xFFF2F8FC), Color(0xFFFFFFFF), Color(0xFF0277BD)),
+                                AppThemePreview("Lemonade Light", Color(0xFFFFFCEE), Color(0xFFFFFFFF), Color(0xFFC28A00)),
+                                AppThemePreview("Paper Light", Color(0xFFFAF8F3), Color(0xFFFFFFFF), Color(0xFF3E4A59))
+                            )),
                             Triple("Premium", if (themeUnlocked) "Unlocked with Convo Premium" else "Unlock with Convo Premium", listOf(
                                 AppThemePreview("Royal Gold", Color(0xFF120C02), Color(0xFF241806), Color(0xFFFFD166)),
                                 AppThemePreview("Galaxy", Color(0xFF05030F), Color(0xFF140C2A), Color(0xFFB69CFF)),
