@@ -36,7 +36,11 @@ for step in 1 2 3 4 5 6 7 8; do
   sleep 12
   snap "step$step"
   if ! alive; then echo "APP PROCESS IS NOT RUNNING after step $step"; break; fi
-  tap_text "step$step" "English|Continue|Next|Get started|Skip|Start|Done|Allow|OK" || adb shell input keyevent 66
+  tapped=0
+  for p in "Continue" "Get started" "Next" "Skip" "Start" "Done" "Allow" "OK"; do
+    if tap_text "step$step" "$p"; then tapped=1; break; fi
+  done
+  [ "$tapped" = 1 ] || adb shell input keyevent 66
 done
 
 echo "================ CRASH BUFFER ================"
