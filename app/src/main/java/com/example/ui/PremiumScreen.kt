@@ -420,7 +420,7 @@ private fun PremiumActionCard(icon: androidx.compose.ui.graphics.vector.ImageVec
 private fun PremiumGem(modifier: Modifier = Modifier, shine: Float) {
     androidx.compose.foundation.Canvas(modifier) {
         val w = size.width; val h = size.height
-        val glow = Brush.radialGradient(listOf(Color.White.copy(alpha = .55f), Color.Transparent), center = androidx.compose.ui.geometry.Offset(w / 2, h / 2), radius = w * .62f)
+        val glow = Brush.radialGradient(listOf(Color.White.copy(alpha = .55f), Color.Transparent), center = androidx.compose.ui.geometry.Offset(w / 2, h / 2), radius = (w * .62f).coerceAtLeast(1f))
         drawCircle(glow, w * .62f, androidx.compose.ui.geometry.Offset(w / 2, h / 2))
         val crown = androidx.compose.ui.graphics.Path().apply {
             moveTo(w * .12f, h * .72f); lineTo(w * .08f, h * .28f); lineTo(w * .32f, h * .48f); lineTo(w * .5f, h * .16f)

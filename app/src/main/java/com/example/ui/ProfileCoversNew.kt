@@ -29,6 +29,7 @@ fun DrawScope.drawNewCover(preset: CoverPreset, phase: Float): Boolean {
     val c = preset.colors
     val w = size.width
     val h = size.height
+    if (w <= 1f || h <= 1f) return true // gradients with a 0 radius throw on Android
     val t = phase * 2f * PI.toFloat()
     when (preset.id) {
         "convo_signature" -> {

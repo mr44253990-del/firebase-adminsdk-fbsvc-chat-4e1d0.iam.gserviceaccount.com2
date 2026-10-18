@@ -243,6 +243,7 @@ class MainActivity : FragmentActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        com.example.ui.CrashGuard.install(this)
         installSplashScreen()
         super.onCreate(savedInstanceState)
         pendingChatSenderId.value = intent?.getStringExtra("senderId")?.takeIf { it.isNotBlank() }
@@ -677,6 +678,7 @@ class MainActivity : FragmentActivity() {
                             }
                         }
                     }
+                    if (splashFinished) com.example.ui.CrashReportDialog()
                     // Two-step verification also guards screens opened from notifications/deep links.
                     val globalMfaGate by viewModel.mfaGate.collectAsState()
                     globalMfaGate?.let { gate ->

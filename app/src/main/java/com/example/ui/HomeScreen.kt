@@ -549,8 +549,8 @@ fun HomeScreen(
                 var fabY by remember { mutableFloatStateOf(fabPrefs.getFloat("y", 0f)) }
                 val fabConfig = androidx.compose.ui.platform.LocalConfiguration.current
                 val fabDensity = androidx.compose.ui.platform.LocalDensity.current
-                val maxLeft = with(fabDensity) { (fabConfig.screenWidthDp.dp - 88.dp).toPx() }
-                val maxUp = with(fabDensity) { (fabConfig.screenHeightDp.dp - 220.dp).toPx() }
+                val maxLeft = with(fabDensity) { (fabConfig.screenWidthDp.dp - 88.dp).toPx() }.coerceAtLeast(0f)
+                val maxUp = with(fabDensity) { (fabConfig.screenHeightDp.dp - 220.dp).toPx() }.coerceAtLeast(0f)
                 FloatingActionButton(
                     onClick = onAssistant,
                     shape = CircleShape,

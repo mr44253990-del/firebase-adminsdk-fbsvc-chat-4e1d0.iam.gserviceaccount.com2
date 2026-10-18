@@ -153,7 +153,13 @@ fun CoachMarkOverlay(steps: List<CoachStep>, onFinish: () -> Unit) {
             target == null -> (overlaySize.height - cardHeight) / 2f
             target.center.y < overlaySize.height / 2f -> target.bottom + marginPx
             else -> target.top - marginPx - cardHeight
-        }.coerceIn(with(density) { 40.dp.toPx() }, (overlaySize.height - cardHeight - marginPx).coerceAtLeast(0f))
+        }.let { y ->
+            // Before the first layout pass overlaySize is 0, so the range could be empty
+            // (min > max). coerceIn() throws on an empty range, which crashed Home on launch.
+            val minY = with(density) { 40.dp.toPx() }
+            val maxY = overlaySize.height - cardHeight - marginPx
+            if (maxY <= minY) minY.coerceAtMost(maxOf(0f, maxY)) else y.coerceIn(minY, maxY)
+        }
         Card(
             shape = RoundedCornerShape(26.dp),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
