@@ -522,6 +522,22 @@ export default {
           if (!count.ok) return jsonResponse({ error: count.error, step: "count" }, 502);
           return jsonResponse({ success: true, messages: Number(count.rows?.[0]?.n || 0), latencyMs: schema.ms });
         }
+        if (path === "/clouddb/admin/stats" || path === "/clouddb/admin/prune") {
+          if (!isAdminCaller) return jsonResponse({ error: "Admin only" }, 403);
+          const acfg = await cloudDbConfig(env, Number.MAX_SAFE_INTEGER, true).catch(() => null);
+          if (!acfg) return jsonResponse({ error: "Cloud message store is not configured" }, 503);
+          if (path === "/clouddb/admin/prune") {
+            const limit = Math.max(1, Number(payload.limit || acfg.perUserLimit || 0));
+            if (!limit) return jsonResponse({ error: "Set a per-user limit first" }, 400);
+            await d1Query(acfg, "CREATE INDEX IF NOT EXISTS idx_convo_messages_sender_ts ON convo_messages (sender_id, ts)");
+            const r = await d1Query(acfg, "DELETE FROM convo_messages WHERE id IN (SELECT id FROM (SELECT id, ROW_NUMBER() OVER (PARTITION BY sender_id ORDER BY ts DESC) AS rn FROM convo_messages) WHERE rn > ?)", [String(limit)]);
+            return r.ok ? jsonResponse({ success: true, deleted: Number(r.meta?.changes || 0), limit }) : jsonResponse({ error: r.error }, 502);
+          }
+          const total = await d1Query(acfg, "SELECT COUNT(*) AS n, COUNT(DISTINCT sender_id) AS users FROM convo_messages");
+          const top = await d1Query(acfg, "SELECT sender_id, COUNT(*) AS n, MIN(ts) AS oldest FROM convo_messages GROUP BY sender_id ORDER BY n DESC LIMIT 20");
+          if (!total.ok || !top.ok) return jsonResponse({ error: total.error || top.error }, 502);
+          return jsonResponse({ success: true, messages: Number(total.rows?.[0]?.n || 0), users: Number(total.rows?.[0]?.users || 0), top: top.rows || [], perUserLimit: acfg.perUserLimit });
+        }
         const cfg = await cloudDbConfig(env, Number(payload.v || 0)).catch(() => null);
         if (!cfg) return jsonResponse({ error: "Cloud message store is not configured or disabled" }, 503);
         if (!member) return jsonResponse({ error: "Not a member of this chat" }, 403);
@@ -532,6 +548,12 @@ export default {
           const now = Date.now();
           const r = await d1Query(cfg, "INSERT INTO convo_messages (id, chat_id, sender_id, text, ts, updated_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET text = excluded.text, updated_at = excluded.updated_at WHERE convo_messages.sender_id = excluded.sender_id AND convo_messages.chat_id = excluded.chat_id",
             [id, chatId, caller.sub, text, String(Number(payload.ts || now)), String(now)]);
+          // Admin per-user storage limit: keep only the newest N cloud messages of this sender.
+          const userLimit = Number(cfg.userLimits?.[caller.sub] ?? cfg.perUserLimit ?? 0);
+          if (r.ok && userLimit > 0) ctx.waitUntil((async () => {
+            if (!__cloudIdx) { __cloudIdx = true; await d1Query(cfg, "CREATE INDEX IF NOT EXISTS idx_convo_messages_sender_ts ON convo_messages (sender_id, ts)"); }
+            await d1Query(cfg, "DELETE FROM convo_messages WHERE sender_id = ? AND id NOT IN (SELECT id FROM convo_messages WHERE sender_id = ? ORDER BY ts DESC LIMIT ?)", [caller.sub, caller.sub, String(userLimit)]);
+          })().catch(() => null));
           return r.ok ? jsonResponse({ success: true, id }) : jsonResponse({ error: r.error }, 502);
         }
         if (path === "/clouddb/get") {
@@ -990,12 +1012,17 @@ async function activeAiProvider(env, knownVersion = 0) {
 // Cloud message store (Cloudflare D1) config from Firestore admin_secrets/cloud_db, same caching.
 const D1_SCHEMA = "CREATE TABLE IF NOT EXISTS convo_messages (id TEXT PRIMARY KEY, chat_id TEXT NOT NULL, sender_id TEXT NOT NULL, text TEXT NOT NULL, ts INTEGER NOT NULL, updated_at INTEGER NOT NULL); CREATE INDEX IF NOT EXISTS idx_convo_messages_chat_ts ON convo_messages (chat_id, ts)";
 let __cloudCfgCache = { at: 0, version: 0, value: null };
+let __cloudIdx = false;
 async function cloudDbConfig(env, knownVersion = 0, ignoreEnabled = false) {
   if (!env.FIREBASE_SERVICE_ACCOUNT) return null;
   let entry = __cloudCfgCache;
   if (!(Date.now() - entry.at < 60000 && !(knownVersion > entry.version))) {
     const c = await firestoreGet(env, "admin_secrets/cloud_db").catch(() => null);
-    const value = c && c.accountId && c.databaseId && c.apiToken ? { enabled: c.enabled === true, accountId: String(c.accountId), databaseId: String(c.databaseId), apiToken: String(c.apiToken) } : null;
+    const value = c && c.accountId && c.databaseId && c.apiToken ? {
+      enabled: c.enabled === true, accountId: String(c.accountId), databaseId: String(c.databaseId), apiToken: String(c.apiToken),
+      perUserLimit: Math.max(0, Math.min(1000000, Number(c.perUserLimit || 0))),
+      userLimits: c.userLimits && typeof c.userLimits === "object" ? c.userLimits : {}
+    } : null;
     entry = __cloudCfgCache = { at: Date.now(), version: Number(c?.updatedAt || 0), value };
   }
   if (!entry.value) return null;
@@ -1011,7 +1038,7 @@ async function d1Query(cfg, sql, params = []) {
     const j = await r.json().catch(() => ({}));
     if (!r.ok || j.success === false) return { ok: false, error: (j.errors || []).map(e => e.message).join("; ") || `Cloudflare D1 HTTP ${r.status}`, ms: Date.now() - started };
     const results = Array.isArray(j.result) ? j.result : [];
-    return { ok: true, rows: results.length ? results[results.length - 1].results || [] : [], ms: Date.now() - started };
+    return { ok: true, rows: results.length ? results[results.length - 1].results || [] : [], meta: results.length ? results[results.length - 1].meta || {} : {}, ms: Date.now() - started };
   } catch (e) { return { ok: false, error: e.message || "D1 request failed", ms: Date.now() - started }; }
 }
 async function firestoreGet(env,path){const{a,t}=await fsAuth(env);const r=await fetch(`https://firestore.googleapis.com/v1/projects/${a.project_id}/databases/(default)/documents/${path}`,{headers:{Authorization:`Bearer ${t}`}});if(r.status===404)return null;if(!r.ok)throw Error(`Firestore ${r.status}`);const d=await r.json();return Object.fromEntries(Object.entries(d.fields||{}).map(([k,v])=>[k,fromFV(v)]));}

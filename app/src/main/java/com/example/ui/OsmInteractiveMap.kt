@@ -14,6 +14,10 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.requiredSize
+import androidx.compose.foundation.layout.wrapContentSize
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -84,7 +88,12 @@ fun InteractiveOsmMap(
     modifier: Modifier = Modifier,
     pinColor: Color = Color(0xFFE53935),
     pulse: Boolean = false,
-    accuracyMeters: Double = 0.0
+    accuracyMeters: Double = 0.0,
+    tileStyle: MapTileStyle = MapTileStyle.STANDARD,
+    myLocation: Pair<Double, Double>? = null,
+    route: List<Pair<Double, Double>> = emptyList(),
+    /** Map rotation in degrees (compass heading). 0 = north up. */
+    bearing: Float = 0f
 ) {
     val context = LocalContext.current
     val density = LocalDensity.current
@@ -92,11 +101,24 @@ fun InteractiveOsmMap(
     LaunchedEffect(lat, lng) { if (controller.follow) controller.centerOn(lat, lng) }
 
     BoxWithConstraints(modifier.clipToBounds().background(Color(0xFFE8EEF2))) {
-        val w = constraints.maxWidth.toFloat()
-        val h = constraints.maxHeight.toFloat()
+        val viewW = constraints.maxWidth.toFloat()
+        val viewH = constraints.maxHeight.toFloat()
+        // When rotating, render a square that covers the viewport at any angle.
+        val rotating = bearing != 0f
+        val side = kotlin.math.hypot(viewW, viewH)
+        val w = if (rotating) side else viewW
+        val h = if (rotating) side else viewH
+        val bearingState = rememberUpdatedState(bearing)
         val gestureModifier = Modifier
-            .pointerInput(basePx) {
-                detectTransformGestures { centroid, pan, zoomChange, _ ->
+            .pointerInput(basePx, rotating) {
+                detectTransformGestures { rawCentroid, rawPan, zoomChange, _ ->
+                    // Screen gestures -> map space (undo the compass rotation).
+                    val rad = Math.toRadians(bearingState.value.toDouble())
+                    val cs = cos(rad).toFloat(); val sn = kotlin.math.sin(rad).toFloat()
+                    fun toMap(v: androidx.compose.ui.geometry.Offset) = androidx.compose.ui.geometry.Offset(v.x * cs - v.y * sn, v.x * sn + v.y * cs)
+                    val c0 = rawCentroid - androidx.compose.ui.geometry.Offset(viewW / 2, viewH / 2)
+                    val centroid = toMap(c0) + androidx.compose.ui.geometry.Offset(w / 2, h / 2)
+                    val pan = toMap(rawPan)
                     val worldPx = basePx * 2.0.pow(controller.zoom)
                     // Keep the point under the fingers fixed while zooming.
                     val wx = controller.centerX + (centroid.x - w / 2) / worldPx
@@ -113,8 +135,12 @@ fun InteractiveOsmMap(
                 detectTapGestures(onDoubleTap = { controller.zoomBy(1.0) })
             }
 
-        Box(Modifier.matchParentSize().then(gestureModifier)) {
-            val z = floor(controller.zoom).toInt().coerceIn(2, 19)
+        Box(Modifier.matchParentSize().then(gestureModifier), contentAlignment = Alignment.Center) {
+        Box(
+            Modifier.wrapContentSize(unbounded = true).requiredSize(with(density) { w.toDp() }, with(density) { h.toDp() })
+                .graphicsLayer { rotationZ = -bearing }
+        ) {
+            val z = floor(controller.zoom).toInt().coerceIn(2, tileStyle.maxZoom)
             val n = 1 shl z
             val tilePx = (basePx * 2.0.pow(controller.zoom - z)).toFloat()
             val tileDp = with(density) { tilePx.toDp() }
@@ -126,7 +152,7 @@ fun InteractiveOsmMap(
             val maxY = floor(cty + (h / 2) / tilePx).toInt().coerceAtMost(n - 1)
             for (iy in minY..maxY) for (ix in minX..maxX) {
                 val wrappedX = ((ix % n) + n) % n
-                val url = "https://tile.openstreetmap.org/$z/$wrappedX/$iy.png"
+                val url = tileStyle.url(z, wrappedX, iy)
                 val sx = ((ix - ctx) * tilePx + w / 2).roundToInt()
                 val sy = ((iy - cty) * tilePx + h / 2).roundToInt()
                 AsyncImage(
@@ -152,7 +178,25 @@ fun InteractiveOsmMap(
                 val t = rememberInfiniteTransition(label = "map_pulse")
                 t.animateFloat(.3f, 1f, infiniteRepeatable(tween(1600, easing = LinearOutSlowInEasing)), label = "map_pulse_r").value
             } else 0f
+            fun screenOf(la: Double, lo: Double): androidx.compose.ui.geometry.Offset {
+                val (mx, my) = OsmMapController.mercator(la, lo)
+                var ddx = mx - controller.centerX
+                if (ddx > .5) ddx -= 1.0 else if (ddx < -.5) ddx += 1.0
+                return androidx.compose.ui.geometry.Offset((ddx * worldPx + w / 2).toFloat(), ((my - controller.centerY) * worldPx + h / 2).toFloat())
+            }
             Canvas(Modifier.matchParentSize()) {
+                if (route.size > 1) {
+                    val path = androidx.compose.ui.graphics.Path()
+                    route.forEachIndexed { i, (la, lo) -> val o = screenOf(la, lo); if (i == 0) path.moveTo(o.x, o.y) else path.lineTo(o.x, o.y) }
+                    drawPath(path, Color.White, style = androidx.compose.ui.graphics.drawscope.Stroke(width = 9.dp.toPx(), cap = androidx.compose.ui.graphics.StrokeCap.Round, join = androidx.compose.ui.graphics.StrokeJoin.Round))
+                    drawPath(path, Color(0xFF1A73E8), style = androidx.compose.ui.graphics.drawscope.Stroke(width = 5.5.dp.toPx(), cap = androidx.compose.ui.graphics.StrokeCap.Round, join = androidx.compose.ui.graphics.StrokeJoin.Round))
+                }
+                myLocation?.let { (la, lo) ->
+                    val o = screenOf(la, lo)
+                    drawCircle(Color(0xFF1A73E8).copy(alpha = .18f), 18.dp.toPx(), o)
+                    drawCircle(Color.White, 8.dp.toPx(), o)
+                    drawCircle(Color(0xFF1A73E8), 5.5.dp.toPx(), o)
+                }
                 if (accPx > 4f) {
                     drawCircle(Color(0xFF1E88E5).copy(alpha = .12f), accPx, androidx.compose.ui.geometry.Offset(pinX, pinY))
                 }
@@ -166,8 +210,9 @@ fun InteractiveOsmMap(
                 36.dp
             )
         }
+        }
         Text(
-            "© OpenStreetMap contributors",
+            tileStyle.attribution,
             fontSize = 9.sp,
             color = Color(0xFF37474F),
             modifier = Modifier.align(Alignment.BottomStart).background(Color.White.copy(.75f)).padding(horizontal = 5.dp, vertical = 2.dp)

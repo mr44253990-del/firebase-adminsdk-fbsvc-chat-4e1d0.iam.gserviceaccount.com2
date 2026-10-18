@@ -542,12 +542,31 @@ fun HomeScreen(
         },
         floatingActionButton = {
             if (currentTab == 0 && flagshipConfig.assistantEnabled) {
+                // Draggable: long-press-free drag moves the AI button anywhere; position is remembered.
+                val fabPrefs = remember { context.getSharedPreferences("convo_ai_fab", android.content.Context.MODE_PRIVATE) }
+                var fabX by remember { mutableFloatStateOf(fabPrefs.getFloat("x", 0f)) }
+                var fabY by remember { mutableFloatStateOf(fabPrefs.getFloat("y", 0f)) }
+                val fabConfig = androidx.compose.ui.platform.LocalConfiguration.current
+                val fabDensity = androidx.compose.ui.platform.LocalDensity.current
+                val maxLeft = with(fabDensity) { (fabConfig.screenWidthDp.dp - 88.dp).toPx() }
+                val maxUp = with(fabDensity) { (fabConfig.screenHeightDp.dp - 220.dp).toPx() }
                 FloatingActionButton(
                     onClick = onAssistant,
                     shape = CircleShape,
                     containerColor = MaterialTheme.colorScheme.primary,
                     contentColor = MaterialTheme.colorScheme.onPrimary,
-                    modifier = Modifier.size(56.dp)
+                    modifier = Modifier
+                        .offset { androidx.compose.ui.unit.IntOffset(fabX.toInt(), fabY.toInt()) }
+                        .pointerInput(Unit) {
+                            androidx.compose.foundation.gestures.detectDragGestures(
+                                onDragEnd = { fabPrefs.edit().putFloat("x", fabX).putFloat("y", fabY).apply() }
+                            ) { change, drag ->
+                                change.consume()
+                                fabX = (fabX + drag.x).coerceIn(-maxLeft, 0f)
+                                fabY = (fabY + drag.y).coerceIn(-maxUp, 0f)
+                            }
+                        }
+                        .size(52.dp)
                 ) {
                     Icon(Icons.Default.AutoAwesome, contentDescription = "Open AI assistant", modifier = Modifier.size(26.dp))
                 }
@@ -2313,7 +2332,7 @@ fun HomeScreen(
                                         Column(Modifier.weight(1f)) {
                                             Text(person.name, fontWeight = FontWeight.Bold)
                                             Text("@${person.username}", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
-                                            Text("${person.friends.size} friends", color = MaterialTheme.colorScheme.primary, fontSize = 11.sp)
+                                            MutualFriendsLine(person, currentUser?.friends?.toSet().orEmpty(), allUsers, fallback = "${person.friends.size} friends")
                                         }
                                         IconButton(onClick = { viewModel.toggleFollow(person) }) {
                                             Icon(if (isFollowing) Icons.Default.PersonRemove else Icons.Default.PersonAdd, if (isFollowing) "Unfollow" else "Follow", tint = MaterialTheme.colorScheme.primary)
@@ -2802,7 +2821,7 @@ fun SmartSearchDialog(
                                 ) {
                                     AsyncImage(user.profileImageUrl.ifBlank { null }, user.name, error = painterResource(R.drawable.img_app_logo), modifier = Modifier.size(46.dp).clip(CircleShape))
                                     Spacer(Modifier.width(10.dp))
-                                    Column { Text(user.name, fontWeight = FontWeight.Bold); Text("@${user.username}", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                                    Column { Text(user.name, fontWeight = FontWeight.Bold); Text("@${user.username}", color = MaterialTheme.colorScheme.onSurfaceVariant); MutualFriendsLine(user, Mentions.friendIds, users) }
                                 }
                             }
                         }
@@ -3430,6 +3449,7 @@ private fun ImmersiveVideoPage(
         }
     }
 
+    var reelStickersOpen by remember(post.id) { mutableStateOf(false) }
     if (showComments) {
         val commentsSheet = rememberModalBottomSheetState(skipPartiallyExpanded = false)
         ModalBottomSheet(
@@ -3456,9 +3476,9 @@ private fun ImmersiveVideoPage(
                                 Column(Modifier.padding(11.dp)) {
                                     Text(item.senderName, fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.primary, modifier = Modifier.clickable { person?.let(onProfileSelected) })
                                     if (item.replyToName.isNotBlank()) Text("Replying to ${item.replyToName}", color = MaterialTheme.colorScheme.secondary, fontSize = 9.sp)
-                                    Spacer(Modifier.height(2.dp)); Text(item.text)
+                                    Spacer(Modifier.height(2.dp)); CommentBody(item.text)
                                     Row(verticalAlignment = Alignment.CenterVertically) {
-                                        TextButton(onClick = { viewModel.reactToPostComment(post.id,item.commentId) }, contentPadding = PaddingValues(horizontal=4.dp)) { Text(if (item.reactions.containsKey(currentUser?.uid.orEmpty())) "♥ ${item.reactions.size}" else "♡ ${item.reactions.size}") }
+                                        CommentReactionControl(item.reactions, currentUser?.uid.orEmpty()) { emoji -> viewModel.reactToPostComment(post.id, item.commentId, emoji) }
                                         TextButton(onClick = { replyingToComment = item }, contentPadding = PaddingValues(horizontal=6.dp)) { Text(tr("Reply")) }
                                     }
                                 }
@@ -3467,9 +3487,16 @@ private fun ImmersiveVideoPage(
                     }
                 }
                 replyingToComment?.let { target -> AssistChip(onClick = { replyingToComment = null }, label = { Text("Replying to ${target.senderName} • tap to cancel") }, leadingIcon = { Icon(Icons.Default.Reply,null) }) }
+                CommentStickerTray(reelStickersOpen) { token ->
+                    val target = replyingToComment
+                    viewModel.commentOnPost(post.id, token, target?.commentId.orEmpty(), target?.senderName.orEmpty())
+                    replyingToComment = null; reelStickersOpen = false
+                }
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    OutlinedTextField(comment, { comment = it.take(600) }, modifier = Modifier.weight(1f), placeholder = { Text(if(replyingToComment==null)"Add a comment…" else "Write a reply…") }, maxLines = 3, shape = RoundedCornerShape(24.dp))
+                    AsyncImage(currentUser?.profileImageUrl?.ifBlank { null }, "Me", error = painterResource(R.drawable.img_app_logo), contentScale = ContentScale.Crop, modifier = Modifier.size(34.dp).clip(CircleShape))
                     Spacer(Modifier.width(6.dp))
+                    OutlinedTextField(comment, { comment = it.take(600) }, modifier = Modifier.weight(1f), placeholder = { Text(if(replyingToComment==null)"Add a comment…" else "Write a reply…") }, maxLines = 3, shape = RoundedCornerShape(24.dp))
+                    CommentStickerToggle(reelStickersOpen) { reelStickersOpen = !reelStickersOpen }
                     FilledIconButton(onClick = { if (comment.isNotBlank()) { val target=replyingToComment; viewModel.commentOnPost(post.id, comment.trim(), target?.commentId.orEmpty(), target?.senderName.orEmpty()); comment = ""; replyingToComment=null } }) { Icon(Icons.Default.Send, "Send") }
                 }
             }
@@ -3926,7 +3953,10 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
     }
 
     // Get commenters' profiles
-    val currentUserProfile = allUsers.find { it.uid == currentUserId }
+    // The users list may not contain the signed-in account, so read "me" from the live profile.
+    val liveMe by viewModel.currentUserState.collectAsState()
+    var feedStickersOpen by remember(post.id) { mutableStateOf(false) }
+    val currentUserProfile = liveMe?.takeIf { it.uid == currentUserId } ?: allUsers.find { it.uid == currentUserId }
     val currentUserPic = currentUserProfile?.profileImageUrl ?: ""
     val postOwner = allUsers.find { it.uid == post.senderId }
     val mediaImages = post.imageUrls.ifEmpty { post.imageUrl.takeIf { it.isNotBlank() }?.let(::listOf).orEmpty() }
@@ -4372,7 +4402,7 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
 
                     // Facebook dense style comment items
                     post.comments.takeLast(commentLimit).forEach { c ->
-                        val commenter = allUsers.find { it.uid == c.senderId }
+                        val commenter = if (c.senderId == currentUserId) currentUserProfile else allUsers.find { it.uid == c.senderId }
                         val avatarUrl = commenter?.profileImageUrl ?: ""
 
                         Row(
@@ -4412,11 +4442,7 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
                                         )
                                         if(c.replyToName.isNotBlank()) Text("Replying to ${c.replyToName}",fontSize=9.sp,color=MaterialTheme.colorScheme.secondary)
                                         Spacer(modifier = Modifier.height(2.dp))
-                                        Text(
-                                            text = c.text,
-                                            fontSize = 13.sp,
-                                            color = MaterialTheme.colorScheme.onSurface
-                                        )
+                                        CommentBody(c.text)
                                     }
                                 }
                                 
@@ -4438,13 +4464,7 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
                                         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
                                     )
                                     Spacer(modifier = Modifier.width(12.dp))
-                                    Text(
-                                        text = if (c.reactions.containsKey(currentUserId)) "♥ ${c.reactions.size}" else "Like ${c.reactions.size.takeIf { it > 0 } ?: ""}",
-                                        fontSize = 10.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = if (c.reactions.containsKey(currentUserId)) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.clickable { viewModel.reactToPostComment(post.id,c.commentId) }
-                                    )
+                                    CommentReactionControl(c.reactions, currentUserId) { emoji -> viewModel.reactToPostComment(post.id, c.commentId, emoji) }
                                     Spacer(modifier = Modifier.width(12.dp))
                                     Text(
                                         text = "Reply",
@@ -4460,6 +4480,11 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
 
                     if(post.comments.size>commentLimit) TextButton(onClick={commentLimit=(commentLimit+12).coerceAtMost(post.comments.size)},modifier=Modifier.fillMaxWidth()){Text("Load older comments (${post.comments.size-commentLimit})")}
                     replyingFeedComment?.let { target -> AssistChip(onClick={replyingFeedComment=null},label={Text("Replying to ${target.senderName} • cancel")},leadingIcon={Icon(Icons.Default.Reply,null)}) }
+                    CommentStickerTray(feedStickersOpen) { token ->
+                        val target = replyingFeedComment
+                        viewModel.commentOnPost(post.id, token, target?.commentId.orEmpty(), target?.senderName.orEmpty())
+                        replyingFeedComment = null; feedStickersOpen = false
+                    }
                     // Add comment text row (Facebook-like style)
                     Row(
                         modifier = Modifier
@@ -4493,7 +4518,7 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
                                 unfocusedContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.3f)
                             )
                         )
-                        Spacer(modifier = Modifier.width(6.dp))
+                        CommentStickerToggle(feedStickersOpen) { feedStickersOpen = !feedStickersOpen }
                         IconButton(
                             onClick = {
                                 if (commentInputText.isNotBlank()) {

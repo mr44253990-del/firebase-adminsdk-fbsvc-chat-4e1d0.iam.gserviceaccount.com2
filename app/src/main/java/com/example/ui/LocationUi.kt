@@ -21,6 +21,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -43,6 +44,7 @@ import com.example.location.LocationShare
 import com.example.location.SharedLocation
 import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import java.util.Locale
 import kotlin.math.floor
 
@@ -185,15 +187,52 @@ private fun minutesLeft(until: Long, now: Long): String {
     return if (m >= 60) "${m / 60} h ${m % 60} min" else "$m min"
 }
 
-/** Full-screen interactive map: native pinch-zoom/pan OSM tiles, follows live updates. */
+/**
+ * Full-screen interactive map: native pinch-zoom/pan tiles with style picker, distance to the
+ * person, turn-by-turn route (OSRM, best-effort) with time and km, and compass-follow mode.
+ */
 @Composable
 fun LiveMapDialog(loc: SharedLocation, onDismiss: () -> Unit) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val live by rememberLiveLocation(loc)
     val lat = live?.lat ?: loc.lat
     val lng = live?.lng ?: loc.lng
     val acc = live?.accuracy ?: loc.accuracyM.toDouble()
     val controller = remember { OsmMapController(16.0).also { it.centerOn(loc.lat, loc.lng) } }
+    var style by remember { mutableStateOf(MapPrefs.style(context)) }
+    var showStyles by remember { mutableStateOf(false) }
+    var showDistance by remember { mutableStateOf(MapPrefs.showDistance(context)) }
+    var me by remember { mutableStateOf<Pair<Double, Double>?>(null) }
+    var compass by remember { mutableStateOf(false) }
+    val heading by rememberCompassHeading(compass)
+    var routeMode by remember { mutableStateOf("car") }
+    var route by remember { mutableStateOf<RouteResult?>(null) }
+    var routing by remember { mutableStateOf(false) }
+    var routeError by remember { mutableStateOf("") }
+    var showSteps by remember { mutableStateOf(false) }
+    // My position (best-effort, only with location permission), refreshed every 20 s.
+    LaunchedEffect(showDistance, route != null) {
+        if (!showDistance && route == null) return@LaunchedEffect
+        while (true) {
+            if (com.example.location.LocationShare.hasPermission(context)) {
+                com.example.location.LocationShare.currentLocation(context, 8_000L)?.let { me = it.latitude to it.longitude }
+            }
+            kotlinx.coroutines.delay(20_000)
+        }
+    }
+    fun loadRoute(mode: String) {
+        val from = me
+        if (from == null) { routeError = if (com.example.location.LocationShare.hasPermission(context)) "Finding your location…" else "Allow location permission to get a route"; return }
+        routing = true; routeError = ""; routeMode = mode
+        scope.launch {
+            val r = OsrmRouter.route(from.first, from.second, lat, lng, mode)
+            routing = false
+            if (r == null) routeError = "No route found (routing server busy or unreachable). Try again or use Directions."
+            else { route = r; controller.follow = false }
+        }
+    }
+    val distance = me?.let { haversineMeters(it.first, it.second, lat, lng) }
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Box(Modifier.fillMaxSize().background(Color(0xFFE8EEF2))) {
             InteractiveOsmMap(
@@ -201,20 +240,55 @@ fun LiveMapDialog(loc: SharedLocation, onDismiss: () -> Unit) {
                 modifier = Modifier.fillMaxSize(),
                 pinColor = if (loc.isLive) Color(0xFF1E88E5) else Color(0xFFE53935),
                 pulse = loc.isLive,
-                accuracyMeters = acc
+                accuracyMeters = acc,
+                tileStyle = style,
+                myLocation = if (showDistance || route != null) me else null,
+                route = route?.points.orEmpty(),
+                bearing = if (compass) heading else 0f
             )
-            Row(
-                Modifier.align(Alignment.TopStart).fillMaxWidth().statusBarsPadding().padding(12.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                FilledTonalIconButton(onClick = onDismiss) { Icon(Icons.Default.Close, "Close") }
-                Spacer(Modifier.width(8.dp))
-                Surface(shape = RoundedCornerShape(16.dp), color = Color.White.copy(alpha = .94f), shadowElevation = 4.dp) {
-                    Column(Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) {
-                        Text(if (loc.isLive) "Live location" else "Shared location", fontWeight = FontWeight.Bold, color = Color(0xFF1B1B1F))
-                        Text("%.5f, %.5f".format(Locale.US, lat, lng) + if (acc > 0) "  ±${acc.toInt()} m" else "", fontSize = 11.sp, color = Color(0xFF444444))
+            Column(Modifier.align(Alignment.TopStart).fillMaxWidth().statusBarsPadding().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    FilledTonalIconButton(onClick = onDismiss) { Icon(Icons.Default.Close, "Close") }
+                    Spacer(Modifier.width(8.dp))
+                    Surface(shape = RoundedCornerShape(16.dp), color = Color.White.copy(alpha = .94f), shadowElevation = 4.dp, modifier = Modifier.weight(1f)) {
+                        Column(Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) {
+                            Text(if (loc.isLive) "Live location" else "Shared location", fontWeight = FontWeight.Bold, color = Color(0xFF1B1B1F))
+                            Text("%.5f, %.5f".format(Locale.US, lat, lng) + if (acc > 0) "  ±${acc.toInt()} m" else "", fontSize = 11.sp, color = Color(0xFF444444))
+                        }
                     }
                 }
+                if (showDistance && distance != null && route == null) Surface(shape = CircleShape, color = Color(0xFF1A73E8), shadowElevation = 4.dp) {
+                    Row(Modifier.padding(horizontal = 12.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.SocialDistance, null, tint = Color.White, modifier = Modifier.size(16.dp)); Spacer(Modifier.width(6.dp))
+                        Text("${formatDistance(distance)} away (straight line)", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+                    }
+                }
+                route?.let { r ->
+                    Surface(shape = RoundedCornerShape(18.dp), color = Color.White.copy(alpha = .97f), shadowElevation = 6.dp) {
+                        Column(Modifier.fillMaxWidth().padding(12.dp)) {
+                            val next = r.steps.firstOrNull { it.type != "depart" } ?: r.steps.firstOrNull()
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                if (next != null) Box(Modifier.size(42.dp).clip(RoundedCornerShape(12.dp)).background(Color(0xFF1A73E8)), contentAlignment = Alignment.Center) {
+                                    Icon(turnIcon(next), null, tint = Color.White)
+                                }
+                                Spacer(Modifier.width(10.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text(next?.instruction ?: "Route ready", fontWeight = FontWeight.Bold, color = Color(0xFF1B1B1F), maxLines = 2)
+                                    Text("${formatDuration(r.duration)} · ${formatDistance(r.distance)}", color = Color(0xFF1A73E8), fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                                }
+                                IconButton(onClick = { route = null; routeError = "" }) { Icon(Icons.Default.Close, "Clear route", tint = Color(0xFF444444)) }
+                            }
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                listOf(Triple("car", Icons.Default.DirectionsCar, "Car"), Triple("bike", Icons.Default.DirectionsBike, "Bike"), Triple("foot", Icons.Default.DirectionsWalk, "Walk")).forEach { (m, icon, label) ->
+                                    FilterChip(selected = r.mode == m, onClick = { loadRoute(m) }, label = { Text(label, fontSize = 11.sp) }, leadingIcon = { Icon(icon, null, Modifier.size(16.dp)) })
+                                }
+                                Spacer(Modifier.weight(1f))
+                                TextButton(onClick = { showSteps = true }) { Text("Steps (${r.steps.size})") }
+                            }
+                        }
+                    }
+                }
+                if (routeError.isNotBlank()) Surface(shape = RoundedCornerShape(12.dp), color = Color(0xFFFFF3E0)) { Text(routeError, Modifier.padding(8.dp), fontSize = 12.sp, color = Color(0xFF6D4C41)) }
             }
             Column(
                 Modifier.align(Alignment.CenterEnd).padding(end = 12.dp),
@@ -227,24 +301,77 @@ fun LiveMapDialog(loc: SharedLocation, onDismiss: () -> Unit) {
                         IconButton(onClick = { controller.zoomBy(-1.0) }) { Icon(Icons.Default.Remove, "Zoom out", tint = Color(0xFF1B1B1F)) }
                     }
                 }
-                Surface(shape = CircleShape, color = if (controller.follow) Color(0xFF1E88E5) else Color.White.copy(alpha = .95f), shadowElevation = 6.dp) {
-                    IconButton(onClick = { controller.follow = true; controller.centerOn(lat, lng) }) {
-                        Icon(Icons.Default.MyLocation, "Center on pin", tint = if (controller.follow) Color.White else Color(0xFF1B1B1F))
+                MapRoundButton(Icons.Default.Layers, "Map style", false) { showStyles = !showStyles }
+                MapRoundButton(Icons.Default.SocialDistance, "Show distance", showDistance) { showDistance = !showDistance; MapPrefs.setShowDistance(context, showDistance) }
+                MapRoundButton(Icons.Default.Explore, if (compass) "Compass on" else "Follow phone direction", compass) { compass = !compass }
+                MapRoundButton(Icons.Default.MyLocation, "Center on pin", controller.follow) { controller.follow = true; controller.centerOn(lat, lng) }
+                if (me != null) MapRoundButton(Icons.Default.NearMe, "Center on me", false) { controller.follow = false; me?.let { controller.centerOn(it.first, it.second) } }
+            }
+            if (showStyles) Surface(
+                Modifier.align(Alignment.CenterEnd).padding(end = 72.dp),
+                shape = RoundedCornerShape(18.dp), color = Color.White.copy(alpha = .98f), shadowElevation = 8.dp
+            ) {
+                Column(Modifier.padding(8.dp).width(170.dp)) {
+                    Text("Map style", fontWeight = FontWeight.Bold, color = Color(0xFF1B1B1F), modifier = Modifier.padding(6.dp))
+                    MapTileStyle.values().forEach { s ->
+                        Row(
+                            Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable { style = s; MapPrefs.setStyle(context, s); showStyles = false }
+                                .background(if (s == style) Color(0xFF1A73E8).copy(alpha = .12f) else Color.Transparent).padding(horizontal = 8.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(Modifier.size(14.dp).clip(CircleShape).background(if (s.dark) Color(0xFF263238) else Color(0xFFB3E5FC)))
+                            Spacer(Modifier.width(8.dp))
+                            Text(s.label, color = Color(0xFF1B1B1F), fontSize = 13.sp, fontWeight = if (s == style) FontWeight.Bold else FontWeight.Normal)
+                        }
                     }
                 }
+            }
+            if (compass) Surface(Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(top = 70.dp, end = 14.dp), shape = CircleShape, color = Color.White.copy(alpha = .95f), shadowElevation = 4.dp) {
+                Icon(Icons.Default.Navigation, "North", tint = Color(0xFFE53935), modifier = Modifier.padding(8.dp).size(22.dp).rotate(-heading))
             }
             Row(
                 Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(16.dp),
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Button(onClick = { runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("geo:$lat,$lng?q=$lat,$lng"))) } }) {
-                    Icon(Icons.Default.Directions, null); Spacer(Modifier.width(6.dp)); Text("Directions")
+                Button(onClick = { loadRoute(routeMode) }, enabled = !routing) {
+                    if (routing) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = Color.White) else Icon(Icons.Default.Route, null)
+                    Spacer(Modifier.width(6.dp)); Text(if (route == null) "Route" else "Update route")
                 }
-                FilledTonalButton(onClick = { runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://maps.google.com/?q=$lat,$lng"))) } }) {
-                    Icon(Icons.Default.Map, null); Spacer(Modifier.width(6.dp)); Text("Google Maps")
+                FilledTonalButton(onClick = { runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("geo:$lat,$lng?q=$lat,$lng"))) } }) {
+                    Icon(Icons.Default.Directions, null); Spacer(Modifier.width(6.dp)); Text("Open in app")
                 }
             }
+            if (showSteps) route?.let { r ->
+                AlertDialog(
+                    onDismissRequest = { showSteps = false },
+                    title = { Text("${formatDuration(r.duration)} · ${formatDistance(r.distance)}") },
+                    text = {
+                        androidx.compose.foundation.lazy.LazyColumn(Modifier.heightIn(max = 420.dp)) {
+                            items(r.steps.size) { i ->
+                                val st = r.steps[i]
+                                Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(turnIcon(st), null, tint = Color(0xFF1A73E8))
+                                    Spacer(Modifier.width(10.dp))
+                                    Column(Modifier.weight(1f)) {
+                                        Text(st.instruction, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                                        if (st.distance > 0) Text("${formatDistance(st.distance)} · ${formatDuration(st.duration)}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    confirmButton = { TextButton(onClick = { showSteps = false }) { Text("Close") } }
+                )
+            }
+            Text("Routes: OSRM / FOSSGIS (best-effort)", fontSize = 8.sp, color = Color(0xFF37474F), modifier = Modifier.align(Alignment.BottomEnd).navigationBarsPadding().background(Color.White.copy(.7f)).padding(horizontal = 4.dp, vertical = 1.dp))
         }
+    }
+}
+
+@Composable
+private fun MapRoundButton(icon: ImageVector, description: String, active: Boolean, onClick: () -> Unit) {
+    Surface(shape = CircleShape, color = if (active) Color(0xFF1E88E5) else Color.White.copy(alpha = .95f), shadowElevation = 6.dp) {
+        IconButton(onClick = onClick) { Icon(icon, description, tint = if (active) Color.White else Color(0xFF1B1B1F)) }
     }
 }
 

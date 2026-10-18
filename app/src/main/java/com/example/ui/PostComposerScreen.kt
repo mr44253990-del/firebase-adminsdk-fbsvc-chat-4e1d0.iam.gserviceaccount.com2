@@ -464,7 +464,7 @@ fun PostComposerScreen(viewModel: ChatViewModel, onBack: () -> Unit, onPublished
                                 value = tagQuery, onValueChange = { tagQuery = it }, label = { Text(tr("Tag people")) },
                                 leadingIcon = { Icon(Icons.Outlined.AlternateEmail, null) }, placeholder = { Text("Type a name or username") }, modifier = Modifier.fillMaxWidth(), singleLine = true, shape = RoundedCornerShape(16.dp)
                             )
-                            val matches = if (tagQuery.trim().length < 2) emptyList() else users.filter { it.uid !in taggedIds && (it.name.contains(tagQuery.trim(), true) || it.username.contains(tagQuery.trim().removePrefix("@"), true)) }.take(5)
+                            val matches = if (tagQuery.trim().length < 2) emptyList() else users.filter { it.uid !in taggedIds && it.uid in Mentions.friendIds && (it.name.contains(tagQuery.trim(), true) || it.username.contains(tagQuery.trim().removePrefix("@"), true)) }.take(5)
                             matches.forEach { user ->
                                 ListItem(
                                     headlineContent = { Text(user.name, fontWeight = FontWeight.Bold) }, supportingContent = { Text("@${user.username}") },

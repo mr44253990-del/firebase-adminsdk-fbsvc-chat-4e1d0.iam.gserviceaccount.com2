@@ -1054,7 +1054,7 @@ fun ChatScreen(
                         val msg = chatReactions[rawMsg.messageId]?.let { live -> rawMsg.copy(reactions = rawMsg.reactions + live) } ?: rawMsg
                         val entranceAnimate = remember(msg.messageId) { msg.timestamp > chatOpenedAt - 1500L && enteredMessageIds.add(msg.messageId) }
                         val flash by animateFloatAsState(if (highlightedMessageId == msg.messageId) .22f else 0f, tween(450), label = "jump_flash")
-                        Box(Modifier.fillMaxWidth().messageEntrance(chatAppearance.messageAnimation, entranceAnimate, msg.senderId == currentUserId).background(MaterialTheme.colorScheme.primary.copy(alpha = flash), RoundedCornerShape(16.dp)).padding(bottom = if (msg.messageId == lastSeenOwnId || msg.messageId == newestOwnId) 16.dp else 0.dp)) {
+                        Box(Modifier.fillMaxWidth().messageEntrance(chatAppearance.messageAnimation, entranceAnimate, msg.senderId == currentUserId).background(MaterialTheme.colorScheme.primary.copy(alpha = flash), RoundedCornerShape(16.dp)).padding(bottom = if (msg.messageId == lastSeenOwnId || msg.messageId == newestOwnId) 20.dp else 0.dp)) {
                         val isSentByMe = msg.senderId == currentUserId
                         MessageBubbleItem(
                             message = msg,
@@ -1116,13 +1116,13 @@ fun ChatScreen(
                                 statusLabel,
                                 fontSize = 10.sp,
                                 color = if (chatThemeSpec?.isScene == true && !chatThemeSpec.light) Color.White.copy(alpha = .78f) else MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.align(Alignment.BottomEnd).padding(end = if (msg.messageId == lastSeenOwnId) 24.dp else 6.dp).offset(y = 2.dp)
+                                modifier = Modifier.align(Alignment.BottomEnd).padding(end = if (msg.messageId == lastSeenOwnId) 24.dp else 6.dp).offset(y = 17.dp)
                             )
                         }
                         if (msg.messageId == lastSeenOwnId) {
                             SeenAvatar(
                                 updatedRecipient.profileImageUrl, updatedRecipient.name,
-                                Modifier.align(Alignment.BottomEnd).offset(x = 0.dp, y = 17.dp)
+                                Modifier.align(Alignment.BottomEnd).offset(x = 0.dp, y = 19.dp)
                             )
                         }
                         }

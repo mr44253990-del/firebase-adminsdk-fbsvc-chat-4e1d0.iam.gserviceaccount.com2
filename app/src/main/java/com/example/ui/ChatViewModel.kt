@@ -343,6 +343,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     // Observables for UI
     private val _currentUserState = MutableStateFlow<User?>(null)
     val currentUserState: StateFlow<User?> = _currentUserState.asStateFlow()
+    init {
+        // Mentions and share pickers are friends-only everywhere.
+        viewModelScope.launch { _currentUserState.collect { u -> Mentions.friendIds = u?.friends?.toSet().orEmpty() } }
+    }
 
     private val _activeRecipientUser = MutableStateFlow<User?>(null)
     val activeRecipientUser: StateFlow<User?> = _activeRecipientUser.asStateFlow()
@@ -597,14 +601,15 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Runs a request on the routed worker; on network error or 5xx from a secondary, retries on the primary. */
     private fun executeRouted(service: String, client: OkHttpClient, build: (String) -> Request): Response {
-        val base = routed(service)
-        val primary = _webhookUrl.value.trimEnd('/')
-        if (base == primary) return client.newCall(build(base)).execute()
-        val first = runCatching { client.newCall(build(base)).execute() }.getOrNull()
-        if (first != null && first.code < 500) return first
-        first?.close()
-        WorkerRouter.markFailed(base)
-        return client.newCall(build(primary)).execute()
+        WorkerRouter.setPrimary(_webhookUrl.value)
+        return WorkerRouter.execute(service, client, _webhookUrl.value.trimEnd('/'), build)
+    }
+
+    fun saveWorkerPoolMode(mode: String) {
+        if (!isCurrentAdmin()) return
+        WorkerRouter.setMode(mode)
+        getDatabaseInstance().getReference("config").child("app_settings").child("workerPoolMode").setValue(if (mode == "manual") "manual" else "smart")
+        AdminAudit.log("worker_pool_mode", mode)
     }
 
     fun saveWorkerPool(nodes: List<WorkerRouter.WorkerNode>, onDone: (Boolean, String) -> Unit) {
@@ -1111,16 +1116,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             val token = tokenResult.token ?: return@addOnSuccessListener onResult(false, JSONObject().put("error", "Missing token"))
             viewModelScope.launch(Dispatchers.IO) {
                 try {
-                    val base = routed("database")
                     fun build(b: String) = Request.Builder().url(b + path).header("Authorization", "Bearer $token").post(payload.toString().toRequestBody("application/json".toMediaTypeOrNull())).build()
                     val client = OkHttpClient.Builder().callTimeout(45, TimeUnit.SECONDS).build()
-                    val primary = _webhookUrl.value.trimEnd('/')
-                    // Secondary worker unreachable or 5xx: cool it down and retry on the primary.
-                    val firstTry = runCatching { client.newCall(build(base)).execute() }.getOrNull()
-                    val responseUsed = if (base != primary && (firstTry == null || firstTry.code >= 500)) {
-                        firstTry?.close(); WorkerRouter.markFailed(base); client.newCall(build(primary)).execute()
-                    } else firstTry ?: client.newCall(build(base)).execute()
-                    responseUsed.use { response ->
+                    // Smart pool: random healthy worker, automatic failover to the others.
+                    executeRouted("database", client, ::build).use { response ->
                         val json = com.example.data.WorkerHealth.normalize(response.code, runCatching { JSONObject(response.body?.string().orEmpty()) }.getOrDefault(JSONObject()))
                         withContext(Dispatchers.Main) { onResult(response.isSuccessful && !json.optBoolean("outdatedWorker"), json) }
                     }
@@ -1637,6 +1636,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         _webhookUrl.value = url
                         WorkerRouter.setPrimary(url)
                         WorkerRouter.setNodes(WorkerRouter.parse(snapshot.child("workerPool").value))
+                        WorkerRouter.setMode(snapshot.child("workerPoolMode").value as? String)
                         sharedPrefs.edit().putString("webhook_url", url).apply()
                         val configuredPresenceUrl = snapshot.child("presenceWorkerUrl").getValue(String::class.java)
                         val presenceUrl = configuredPresenceUrl?.trim()?.trimEnd('/')
@@ -4242,7 +4242,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         senderProfileUrl: String = "",
         notificationType: String = "message",
         targetId: String = "",
-        extraData: Map<String, String> = emptyMap()
+        extraData: Map<String, String> = emptyMap(),
+        tried: Set<String> = emptySet()
     ) {
         if (gatewayUrl.isBlank() || !gatewayUrl.startsWith("https://")) {
             Log.w("FCM_GATEWAY", "Direct FCM gateway URL is not configured.")
@@ -4287,21 +4288,25 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 client.newCall(request).enqueue(object : Callback {
                     override fun onFailure(call: Call, e: IOException) {
                         Log.e("FCM_GATEWAY", "Gateway request failed: ${e.message}")
-                        if (retryOnPrimary()) return
+                        if (retryOnPrimary(false)) return
                         _gatewayHealth.value = GatewayHealth(message = "Notification gateway error: ${e.localizedMessage}")
                     }
 
-                    /** Secondary worker failed: cool it down and resend once through the primary. */
-                    fun retryOnPrimary(): Boolean {
+                    /** Worker failed: let it rest and resend through the next worker in the smart pool (max 3 tries). */
+                    fun retryOnPrimary(limit: Boolean): Boolean {
                         val primary = _webhookUrl.value.trimEnd('/')
-                        if (gatewayUrl.trimEnd('/') == primary) return false
-                        WorkerRouter.markFailed(gatewayUrl)
-                        triggerFcmGatewayNotification(primary, targetToken, senderName, messageBody, senderId, senderProfileUrl, notificationType, targetId, extraData)
+                        val failed = gatewayUrl.trimEnd('/')
+                        val done = tried + failed
+                        WorkerRouter.markFailed(failed, limit)
+                        if (done.size >= 3) return false
+                        val next = WorkerRouter.candidates("push", primary).firstOrNull { it !in done }
+                            ?: primary.takeIf { it !in done } ?: return false
+                        triggerFcmGatewayNotification(next, targetToken, senderName, messageBody, senderId, senderProfileUrl, notificationType, targetId, extraData, done)
                         return true
                     }
 
                     override fun onResponse(call: Call, response: Response) {
-                        if (response.code >= 500 || response.code == 404) { response.close(); if (retryOnPrimary()) return }
+                        if (response.code >= 500 || response.code == 404 || response.code == 429) { response.close(); if (retryOnPrimary(response.code == 429)) return }
                         val respBody = runCatching { response.body?.string() }.getOrNull() ?: ""
                         Log.d("FCM_GATEWAY", "FCM gateway response [${response.code}]: $respBody")
                         if (response.isSuccessful) {

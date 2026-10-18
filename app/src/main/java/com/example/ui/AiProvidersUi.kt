@@ -198,11 +198,11 @@ object AiProviderStore {
     /** Fallback: generate through the Worker's /ai/chat (uses the server-side key). */
     suspend fun completeViaWorker(system: String, user: String): String = withContext(Dispatchers.IO) {
         val token = FirebaseAuth.getInstance().currentUser?.getIdToken(false)?.awaitTask()?.token ?: error("Not signed in")
-        val base = WorkerRouter.resolve("ai", WorkerRouter.primary.value.ifBlank { "https://solitary-hill-dcdc.mr44253990.workers.dev" })
         val payload = JSONObject().put("message", user.take(4000)).put("systemPrompt", system.take(1200)).put("memory", JSONArray())
-        val req = Request.Builder().url("$base/ai/chat").header("Authorization", "Bearer $token")
-            .post(payload.toString().toRequestBody("application/json".toMediaTypeOrNull())).build()
-        http.newCall(req).execute().use { r ->
+        WorkerRouter.execute("ai", http, WorkerRouter.primary.value.ifBlank { "https://solitary-hill-dcdc.mr44253990.workers.dev" }) { base ->
+            Request.Builder().url("$base/ai/chat").header("Authorization", "Bearer $token")
+                .post(payload.toString().toRequestBody("application/json".toMediaTypeOrNull())).build()
+        }.use { r ->
             val body = r.body?.string().orEmpty()
             val json = runCatching { JSONObject(body) }.getOrDefault(JSONObject())
             if (!r.isSuccessful) error(com.example.data.WorkerHealth.friendly(json.optString("error")).ifBlank { "Worker HTTP ${r.code}" })

@@ -35,10 +35,68 @@ fun AdminWorkerRoutingPanel(viewModel: ChatViewModel) {
     var nodes by remember(saved) { mutableStateOf(saved) }
     var probe by remember { mutableStateOf<Map<String, Pair<Boolean, String>>>(emptyMap()) }
     var saving by remember { mutableStateOf(false) }
+    val mode by WorkerRouter.mode.collectAsState()
+    var tick by remember { mutableIntStateOf(0) }
+    LaunchedEffect(Unit) { while (true) { kotlinx.coroutines.delay(2000); tick++ } }
 
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        // Mode selector
+        Card(shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = Color.Transparent)) {
+            Box(Modifier.fillMaxWidth().background(androidx.compose.ui.graphics.Brush.linearGradient(listOf(Color(0xFF1E1B4B), Color(0xFF0F766E)))).padding(14.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Hub, null, tint = Color.White); Spacer(Modifier.width(8.dp))
+                        Text("Worker pool", color = Color.White, fontWeight = FontWeight.Black, fontSize = 17.sp, modifier = Modifier.weight(1f))
+                        val active = 1 + nodes.count { it.enabled && it.valid }
+                        Text("$active active", color = Color(0xFF99F6E4), fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf("smart" to "Smart: all active", "manual" to "Manual split").forEach { (id, label) ->
+                            FilterChip(
+                                selected = mode == id, onClick = { viewModel.saveWorkerPoolMode(id) },
+                                label = { Text(label, fontSize = 12.sp) },
+                                leadingIcon = { Icon(if (id == "smart") Icons.Default.Shuffle else Icons.Default.AltRoute, null, Modifier.size(16.dp)) },
+                                colors = FilterChipDefaults.filterChipColors(labelColor = Color.White, iconColor = Color.White, selectedContainerColor = Color.White, selectedLabelColor = Color(0xFF1E1B4B), selectedLeadingIconColor = Color(0xFF1E1B4B))
+                            )
+                        }
+                    }
+                    Text(
+                        if (mode == "smart") "Every worker (primary included) runs every service at once. Each request picks a random healthy worker by weight; on a network error, 5xx or 429 (daily limit) it instantly retries on another worker, and the failing one rests 2 minutes (30 minutes after a limit)."
+                        else "Each service runs on one chosen worker; the primary is the fallback.",
+                        color = Color.White.copy(alpha = .8f), fontSize = 11.sp
+                    )
+                }
+            }
+        }
+        // Live stats (smart mode)
+        if (mode == "smart") Card(shape = RoundedCornerShape(18.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .5f))) {
+            Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("Live traffic (this device)", fontWeight = FontWeight.Bold)
+                val urls = (listOf(primary.trimEnd('/')) + nodes.filter { it.enabled && it.valid }.map { it.url.trimEnd('/') }).distinct()
+                urls.forEachIndexed { i, url ->
+                    val refreshKey = tick
+                    val st = WorkerRouter.stats(url)
+                    val resting = WorkerRouter.isCoolingDown(url)
+                    val total = (st.ok.get() + st.failed.get()).coerceAtLeast(1)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(Modifier.size(10.dp).clip(CircleShape).background(when { resting -> Color(0xFFEF4444); WorkerRouter.isOutdated(url) -> Color(0xFFF59E0B); else -> Color(0xFF22C55E) }))
+                        Spacer(Modifier.width(8.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(if (i == 0) "Primary" else nodes.firstOrNull { it.url.trimEnd('/') == url }?.label?.ifBlank { null } ?: "Worker ${i + 1}", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                            LinearProgressIndicator(progress = { st.ok.get().toFloat() / total }, modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)))
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            "${st.ok.get()} ok · ${st.failed.get()} fail" + (if (st.lastMs.get() > 0) " · ${st.lastMs.get()} ms" else "") + if (resting) " · resting" else "",
+                            fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    if (resting && st.lastError.isNotBlank()) Text(st.lastError, fontSize = 10.sp, color = MaterialTheme.colorScheme.error, maxLines = 1)
+                }
+            }
+        }
         // Live routing map
-        Card(shape = RoundedCornerShape(18.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .5f))) {
+        if (mode == "manual") Card(shape = RoundedCornerShape(18.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .5f))) {
             Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text("Routing map", fontWeight = FontWeight.Bold)
                 WorkerRouter.SERVICES.forEach { svc ->
@@ -66,7 +124,7 @@ fun AdminWorkerRoutingPanel(viewModel: ChatViewModel) {
             Column(Modifier.weight(1f)) {
                 Text("Primary worker", fontWeight = FontWeight.Bold)
                 Text(primary, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text("Handles every service that is not moved below, and is the automatic fallback.", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(if (mode == "smart") "Active in the pool like every other worker, and the last-resort fallback." else "Handles every service that is not moved below, and is the automatic fallback.", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             TextButton(onClick = { viewModel.probeWorker(primary) { ok, msg -> probe = probe + ("primary" to (ok to msg)) } }) { Text("Ping") }
         }
@@ -88,8 +146,12 @@ fun AdminWorkerRoutingPanel(viewModel: ChatViewModel) {
                     OutlinedTextField(node.url, { v -> nodes = nodes.map { if (it.id == node.id) it.copy(url = v.trim()) else it } },
                         label = { Text("Worker HTTPS URL") }, placeholder = { Text("https://worker-2.example.workers.dev") }, singleLine = true,
                         isError = node.url.isNotBlank() && !node.valid, modifier = Modifier.fillMaxWidth())
-                    Text("Services on this worker (moving one here removes it from the primary and other workers)", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    FlowRowCompat {
+                    if (mode == "smart") {
+                        Text("Traffic share: ${node.weight}x  (all services enabled)", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Slider(node.weight.toFloat(), { v -> nodes = nodes.map { if (it.id == node.id) it.copy(weight = v.toInt().coerceIn(1, 10)) else it } }, valueRange = 1f..10f, steps = 8)
+                    }
+                    if (mode == "manual") Text("Services on this worker (moving one here removes it from the primary and other workers)", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (mode == "manual") FlowRowCompat {
                         WorkerRouter.SERVICES.forEach { svc ->
                             FilterChip(
                                 selected = svc.key in node.services,
@@ -123,7 +185,7 @@ fun AdminWorkerRoutingPanel(viewModel: ChatViewModel) {
             Spacer(Modifier.width(6.dp)); Text("Save routing")
         }
         Text(
-            "Each extra worker must run the same cloudflare-worker.js with the same secrets/bindings (FIREBASE_SERVICE_ACCOUNT, R2, TURN…). Firestore/RTDB stay on Firebase; workers only relay server-side jobs. If an assigned worker fails, the app retries on the primary and skips that worker for 2 minutes.",
+            "Each extra worker must run the same cloudflare-worker.js with the same secrets/bindings (FIREBASE_SERVICE_ACCOUNT, R2, TURN…). Firestore/RTDB stay on Firebase; workers only relay server-side jobs. Tip: deploy the same Worker under 3-4 Cloudflare accounts (each free plan has its own 100k requests/day) and add them here; Smart mode spreads the load and fails over automatically.",
             fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant
         )
     }

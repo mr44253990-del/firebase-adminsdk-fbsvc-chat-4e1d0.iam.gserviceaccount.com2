@@ -194,6 +194,7 @@ fun UserProfileScreen(
                             }
                         }
                         Text("@${liveUser.username}  •  ${if (liveUser.isOnline) "Active now" else "Offline"}", color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
+                        if (!isMe) MutualFriendsLine(liveUser, currentUser?.friends?.toSet().orEmpty(), allUsers)
                         if (liveUser.staffRole == "sub_admin") StaffBadge(liveUser.staffTitle.ifBlank { "Sub-admin" } + " • Convo staff")
                         Surface(color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = .7f), shape = CircleShape) {
                             Text(liveUser.activeProfileType.ifBlank { "Personal" }, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold, fontSize = 11.sp, modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp))

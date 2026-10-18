@@ -44,10 +44,15 @@ object Mentions {
         return match.groupValues[1]
     }
 
+    /** Friends of the signed-in user. Mentions everywhere only suggest these people. */
+    @Volatile var friendIds: Set<String> = emptySet()
+
     fun suggestions(query: String, users: List<User>, excludeUid: String, limit: Int = 6): List<User> {
-        val q = query.lowercase()
+        val q = query.lowercase().trim()
+        val friends = friendIds
         return users.asSequence()
-            .filter { it.uid != excludeUid && it.username.isNotBlank() }
+            .filter { it.uid != excludeUid && it.username.isNotBlank() && it.uid in friends }
+            .distinctBy { it.uid }
             .filter { q.isBlank() || it.username.lowercase().startsWith(q) || it.name.lowercase().contains(q) }
             .sortedWith(compareBy<User>({ !it.username.lowercase().startsWith(q) }, { it.name.lowercase() }))
             .take(limit)
@@ -194,7 +199,7 @@ fun MentionSuggestionBar(
     ) {
         Column(Modifier.padding(vertical = 6.dp)) {
             Text(
-                "Mention someone",
+                "Mention a friend",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 14.dp, vertical = 2.dp)

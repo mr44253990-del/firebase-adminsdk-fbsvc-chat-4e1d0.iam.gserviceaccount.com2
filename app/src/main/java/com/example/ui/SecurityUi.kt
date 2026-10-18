@@ -114,10 +114,10 @@ object MfaClient {
     /** Unauthenticated: reset a forgotten password with a one-time backup code. */
     suspend fun recover(email: String, backupCode: String, newPassword: String): Pair<Boolean, String> = withContext(Dispatchers.IO) {
         runCatching {
-            val base = WorkerRouter.resolve("database", WorkerRouter.primary.value.ifBlank { FALLBACK })
             val body = JSONObject().put("email", email.trim()).put("backupCode", backupCode.trim()).put("newPassword", newPassword)
-            val req = Request.Builder().url("$base/mfa/recover").post(body.toString().toRequestBody("application/json".toMediaTypeOrNull())).build()
-            OkHttpClient.Builder().callTimeout(30, TimeUnit.SECONDS).build().newCall(req).execute().use { r ->
+            WorkerRouter.execute("database", OkHttpClient.Builder().callTimeout(30, TimeUnit.SECONDS).build(), WorkerRouter.primary.value.ifBlank { FALLBACK }) { base ->
+                Request.Builder().url("$base/mfa/recover").post(body.toString().toRequestBody("application/json".toMediaTypeOrNull())).build()
+            }.use { r ->
                 val j = com.example.data.WorkerHealth.normalize(r.code, runCatching { JSONObject(r.body?.string().orEmpty()) }.getOrDefault(JSONObject()))
                 if (r.isSuccessful && j.optBoolean("success")) true to "Password changed. ${j.optInt("backupRemaining")} backup codes left — sign in with your new password."
                 else false to j.optString("error").ifBlank { "HTTP ${r.code}" }

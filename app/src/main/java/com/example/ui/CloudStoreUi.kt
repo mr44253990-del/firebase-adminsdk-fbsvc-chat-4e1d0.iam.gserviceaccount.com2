@@ -47,10 +47,10 @@ private val workerHttp by lazy { OkHttpClient.Builder().callTimeout(25, TimeUnit
 /** Authenticated POST to the worker that owns [service]. Returns (HTTP code, JSON body). */
 internal suspend fun convoWorkerPost(service: String, path: String, body: JSONObject): Pair<Int, JSONObject> = withContext(Dispatchers.IO) {
     val token = FirebaseAuth.getInstance().currentUser?.getIdToken(false)?.awaitTask()?.token ?: error("Not signed in")
-    val base = WorkerRouter.resolve(service, WorkerRouter.primary.value.ifBlank { DEFAULT_WORKER })
-    val req = Request.Builder().url(base + path).header("Authorization", "Bearer $token")
-        .post(body.toString().toRequestBody("application/json".toMediaTypeOrNull())).build()
-    workerHttp.newCall(req).execute().use { r ->
+    WorkerRouter.execute(service, workerHttp, WorkerRouter.primary.value.ifBlank { DEFAULT_WORKER }) { base ->
+        Request.Builder().url(base + path).header("Authorization", "Bearer $token")
+            .post(body.toString().toRequestBody("application/json".toMediaTypeOrNull())).build()
+    }.use { r ->
         r.code to com.example.data.WorkerHealth.normalize(r.code, runCatching { JSONObject(r.body?.string().orEmpty()) }.getOrNull() ?: JSONObject())
     }
 }
@@ -160,6 +160,11 @@ fun AdminCloudStorePanel() {
     var busy by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf<Pair<Boolean, String>?>(null) }
     var testedOk by remember { mutableStateOf(false) }
+    var perUserLimit by remember { mutableStateOf("") }
+    var userLimits by remember { mutableStateOf<Map<String, Long>>(emptyMap()) }
+    var overrideUser by remember { mutableStateOf("") }
+    var overrideLimit by remember { mutableStateOf("") }
+    var stats by remember { mutableStateOf<JSONObject?>(null) }
     val secrets = remember { FirebaseFirestore.getInstance().collection("admin_secrets").document("cloud_db") }
 
     LaunchedEffect(Unit) {
@@ -169,6 +174,9 @@ fun AdminCloudStorePanel() {
             databaseId = d.getString("databaseId").orEmpty()
             apiToken = d.getString("apiToken").orEmpty()
             testedOk = d.getBoolean("tested") == true
+            perUserLimit = (d.getLong("perUserLimit") ?: 0L).takeIf { it > 0 }?.toString().orEmpty()
+            @Suppress("UNCHECKED_CAST")
+            userLimits = (d.get("userLimits") as? Map<String, Any?>)?.mapNotNull { (k, v) -> (v as? Number)?.toLong()?.let { k to it } }?.toMap().orEmpty()
         }.onFailure { status = false to "Could not load: ${it.localizedMessage}. Deploy firestore.rules first." }
         loading = false
     }
@@ -242,7 +250,8 @@ fun AdminCloudStorePanel() {
                     val now = System.currentTimeMillis()
                     val db = FirebaseFirestore.getInstance()
                     val r = runCatching {
-                        secrets.set(mapOf("enabled" to (enabled && testedOk), "accountId" to accountId, "databaseId" to databaseId, "apiToken" to apiToken, "tested" to testedOk, "updatedAt" to now)).awaitTask()
+                        secrets.set(mapOf("enabled" to (enabled && testedOk), "accountId" to accountId, "databaseId" to databaseId, "apiToken" to apiToken, "tested" to testedOk,
+                            "perUserLimit" to (perUserLimit.toLongOrNull() ?: 0L), "userLimits" to userLimits, "updatedAt" to now)).awaitTask()
                         db.collection("app_config").document("cloud_db").set(mapOf("enabled" to (enabled && testedOk), "version" to now, "updatedAt" to now)).awaitTask()
                     }
                     busy = false
@@ -254,6 +263,67 @@ fun AdminCloudStorePanel() {
             }, enabled = !busy, modifier = Modifier.weight(1f)) { Icon(Icons.Default.Save, null); Spacer(Modifier.width(6.dp)); Text("Save") }
         }
         status?.let { (ok, msg) -> Text(msg, fontSize = 12.sp, color = if (ok) Color(0xFF2E9E6A) else MaterialTheme.colorScheme.error) }
+
+        // ---- Per-user storage limit ---------------------------------------------------------
+        Card(shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(.5f))) {
+            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Per-user message limit", fontWeight = FontWeight.Bold)
+                Text("Each user keeps only their newest N cloud messages. When they send more, the oldest ones are deleted from D1 automatically. Messages already saved on phones stay there. Leave empty for no limit.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf("100", "500", "1000", "5000").forEach { preset ->
+                        FilterChip(selected = perUserLimit == preset, onClick = { perUserLimit = preset }, label = { Text(preset) })
+                    }
+                }
+                OutlinedTextField(perUserLimit, { perUserLimit = it.filter(Char::isDigit).take(7) }, label = { Text("Messages per user (default for everyone)") }, singleLine = true,
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number), modifier = Modifier.fillMaxWidth())
+                Text("Custom limit for one user", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    OutlinedTextField(overrideUser, { overrideUser = it.trim() }, label = { Text("User ID") }, singleLine = true, modifier = Modifier.weight(1.4f))
+                    OutlinedTextField(overrideLimit, { overrideLimit = it.filter(Char::isDigit).take(7) }, label = { Text("Limit") }, singleLine = true, modifier = Modifier.weight(1f))
+                    IconButton(enabled = overrideUser.length > 5 && overrideLimit.isNotBlank(), onClick = {
+                        userLimits = userLimits + (overrideUser to (overrideLimit.toLongOrNull() ?: 0L)); overrideUser = ""; overrideLimit = ""
+                    }) { Icon(Icons.Default.Add, "Add") }
+                }
+                userLimits.forEach { (uid, lim) ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("${uid.take(14)}…  →  $lim", fontSize = 12.sp, fontFamily = FontFamily.Monospace, modifier = Modifier.weight(1f))
+                        IconButton(onClick = { userLimits = userLimits - uid }) { Icon(Icons.Default.Close, "Remove", Modifier.size(18.dp)) }
+                    }
+                }
+                Text("Press Save above to apply limits.", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(enabled = !busy, onClick = {
+                        scope.launch {
+                            busy = true
+                            val (code, j) = runCatching { convoWorkerPost("database", "/clouddb/admin/stats", JSONObject()) }.getOrElse { 0 to JSONObject().put("error", it.localizedMessage) }
+                            busy = false
+                            if (code in 200..299) stats = j else Toast.makeText(context, j.optString("error").ifBlank { "HTTP $code" }, Toast.LENGTH_LONG).show()
+                        }
+                    }, modifier = Modifier.weight(1f)) { Icon(Icons.Default.Insights, null); Spacer(Modifier.width(4.dp)); Text("Usage") }
+                    Button(enabled = !busy && (perUserLimit.toLongOrNull() ?: 0L) > 0, onClick = {
+                        scope.launch {
+                            busy = true
+                            val (code, j) = runCatching { convoWorkerPost("database", "/clouddb/admin/prune", JSONObject().put("limit", perUserLimit.toLongOrNull() ?: 0L)) }.getOrElse { 0 to JSONObject().put("error", it.localizedMessage) }
+                            busy = false
+                            Toast.makeText(context, if (code in 200..299) "Cleaned up: ${j.optInt("deleted")} old messages deleted" else j.optString("error").ifBlank { "HTTP $code" }, Toast.LENGTH_LONG).show()
+                        }
+                    }, modifier = Modifier.weight(1f)) { Icon(Icons.Default.CleaningServices, null); Spacer(Modifier.width(4.dp)); Text("Apply now") }
+                }
+                stats?.let { st ->
+                    Text("${st.optInt("messages")} messages from ${st.optInt("users")} users", fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+                    val top = st.optJSONArray("top")
+                    if (top != null) for (i in 0 until minOf(top.length(), 10)) {
+                        val row = top.optJSONObject(i) ?: continue
+                        val n = row.optLong("n"); val lim = perUserLimit.toLongOrNull() ?: 0L
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(row.optString("sender_id").take(12) + "…", fontSize = 11.sp, fontFamily = FontFamily.Monospace, modifier = Modifier.width(118.dp))
+                            LinearProgressIndicator(progress = { if (lim > 0) (n.toFloat() / lim).coerceIn(0f, 1f) else 1f }, modifier = Modifier.weight(1f).height(5.dp))
+                            Spacer(Modifier.width(6.dp)); Text("$n", fontSize = 11.sp)
+                        }
+                    }
+                }
+            }
+        }
         Text(
             "Only text and emoji bodies move to D1. Photos, voice, files, reactions, ticks, typing and calls work exactly as before. " +
                 "If the cloud is unreachable a message falls back to Firebase automatically so nothing is lost. The token is stored in admin_secrets (admin-only) and used only by the Worker.",
