@@ -231,7 +231,7 @@ fun Login3DHero(palette: LoginPalette, deviceTilt: Offset, modifier: Modifier = 
             // Floating chat bubbles (front layer, strongest parallax)
             HeroBubble("Hey there!", palette, Modifier.align(Alignment.TopStart).padding(start = 16.dp, top = 18.dp)
                 .graphicsLayer { translationX = tilt.x * 34f; translationY = tilt.y * 26f - float * 5f }, sent = false)
-            HeroBubble("Liquid glass"), palette, Modifier.align(Alignment.BottomEnd).padding(end = 16.dp, bottom = 40.dp)
+            HeroBubble("Liquid glass", palette, Modifier.align(Alignment.BottomEnd).padding(end = 16.dp, bottom = 40.dp)
                 .graphicsLayer { translationX = tilt.x * 40f; translationY = tilt.y * 30f + float * 5f }, sent = true)
             Row(
                 Modifier.align(Alignment.BottomStart).padding(14.dp)
