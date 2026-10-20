@@ -105,6 +105,8 @@ fun ConversationSettingsPage(
     val nickname = remember(prefsVersion) { ConversationPrefs.nickname(context, recipient.uid) }
     var dialog by remember { mutableStateOf("") }
     var mediaTab by remember { mutableIntStateOf(0) }
+    var pdfOpen by remember { mutableStateOf<Pair<android.net.Uri, String>?>(null) }
+    var autoSave by remember { mutableStateOf(ReceivedFiles.autoDownloadEnabled(context)) }
 
     val photos = remember(messages) { messages.mapNotNull { it.imageUrl?.takeIf { u -> u.isNotBlank() } }.reversed() }
     val files = remember(messages) { messages.filter { !it.fileUrl.isNullOrBlank() }.reversed() }
@@ -167,6 +169,7 @@ fun ConversationSettingsPage(
                             onClick = { dialog = "mute" })
                         SettingRow(Icons.Default.Keyboard, Color(0xFF1E88E5), "Typing sounds", "Soft sound while you type", switch = typingSounds, onSwitch = onTypingSounds)
                         SettingRow(Icons.Default.KeyboardReturn, Color(0xFF43A047), "Enter to send", "Enter key sends instead of new line", switch = enterToSend, onSwitch = { ChatPreferences.setEnterToSend(context, it) })
+                        SettingRow(Icons.Default.Download, Color(0xFF00897B), "Auto-save received media", "Saved to Downloads/${ReceivedFiles.APP_FOLDER} by type (all chats)", switch = autoSave, onSwitch = { autoSave = it; ReceivedFiles.setAutoDownload(context, it) })
                     }
                     // ---------- Privacy ----------
                     SettingsGroup("Privacy") {
@@ -195,9 +198,27 @@ fun ConversationSettingsPage(
                                     }
                                 }
                                 1 -> if (files.isEmpty()) EmptyMedia("No files yet") else Column {
-                                    files.take(20).forEach { m ->
-                                        MediaLine(Icons.Default.Description, m.fileName ?: "File", SimpleDateFormat("d MMM yyyy", Locale.getDefault()).format(Date(m.timestamp))) {
-                                            runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(m.remoteFileUrl ?: m.fileUrl))) }
+                                    files.take(40).forEach { m ->
+                                        val name = m.fileName ?: "File"
+                                        val mime = m.fileMimeType ?: "application/octet-stream"
+                                        val dm = context.getSystemService(Context.DOWNLOAD_SERVICE) as android.app.DownloadManager
+                                        val id = ReceivedFiles.downloadIdFor(context, m.messageId)
+                                        val saved = id > 0 && ReceivedFiles.statusOf(context, id) == android.app.DownloadManager.STATUS_SUCCESSFUL
+                                        MediaLine(
+                                            if (mime == "application/pdf") Icons.Default.PictureAsPdf else Icons.Default.Description, name,
+                                            SimpleDateFormat("d MMM yyyy", Locale.getDefault()).format(Date(m.timestamp)) + if (saved) " · saved in Downloads/${ReceivedFiles.APP_FOLDER}/${ReceivedFiles.folderFor(mime, name)}" else " · tap to download"
+                                        ) {
+                                            val local = if (saved) runCatching { dm.getUriForDownloadedFile(id) }.getOrNull() else null
+                                            when {
+                                                local != null && mime == "application/pdf" -> pdfOpen = local to name
+                                                local != null -> ReceivedFiles.openExternally(context, local, mime)
+                                                else -> {
+                                                    val src = m.remoteFileUrl ?: m.fileUrl
+                                                    if (src != null && src.startsWith("http") && ReceivedFiles.enqueue(context, m.messageId, src, name, mime) > 0)
+                                                        android.widget.Toast.makeText(context, "Saving to Downloads/${ReceivedFiles.APP_FOLDER}", android.widget.Toast.LENGTH_SHORT).show()
+                                                    else android.widget.Toast.makeText(context, "This file is no longer available on the server", android.widget.Toast.LENGTH_SHORT).show()
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -258,6 +279,8 @@ fun ConversationSettingsPage(
             }
         }
     }
+
+    pdfOpen?.let { (uri, name) -> PdfViewerDialog(uri, name) { pdfOpen = null } }
 
     when (dialog) {
         "mute" -> OptionDialog("Mute messages", MUTE_OPTIONS.map { it.second }, MUTE_OPTIONS.indexOfFirst { if (!muted) it.first == 0L else it.first == Long.MAX_VALUE && mutedUntil == Long.MAX_VALUE }, { dialog = "" }) { i ->

@@ -16,6 +16,12 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.fadeIn
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -229,6 +235,10 @@ fun CallScreen(
     // Video calls: one tap hides/shows every control, double tap flips the camera.
     var controlsVisible by remember { mutableStateOf(true) }
     var showFilters by remember { mutableStateOf(false) }
+    // Comfort options: fill/fit remote video, hide or drag the self-view to any corner.
+    var fillVideo by remember { mutableStateOf(true) }
+    var showSelfView by remember { mutableStateOf(true) }
+    var selfOffset by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
     val inPip by CallPipState.inPip.collectAsState()
     val screenShareLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode == Activity.RESULT_OK && result.data != null) {
@@ -289,18 +299,44 @@ fun CallScreen(
                     it.setScalingType(org.webrtc.RendererCommon.ScalingType.SCALE_ASPECT_FIT)
                     CallEngine.attachRemoteRenderer(it)
                 } },
+                update = { it.setScalingType(if (fillVideo) org.webrtc.RendererCommon.ScalingType.SCALE_ASPECT_FILL else org.webrtc.RendererCommon.ScalingType.SCALE_ASPECT_FIT) },
                 modifier = Modifier.fillMaxSize(),
                 onRelease = CallEngine::detachRenderer
             )
-            if (!state.cameraOff && !state.screenSharing) AndroidView(
-                factory = { ctx -> SurfaceViewRenderer(ctx).also {
-                    it.setEnableHardwareScaler(true)
-                    it.setScalingType(org.webrtc.RendererCommon.ScalingType.SCALE_ASPECT_FIT)
-                    CallEngine.attachLocalRenderer(it)
-                } },
-                modifier = Modifier.align(Alignment.TopEnd).windowInsetsPadding(WindowInsets.statusBars).padding(14.dp).size(width = 104.dp, height = 148.dp).clip(RoundedCornerShape(26.dp)).border(1.dp, Color.White.copy(.6f), RoundedCornerShape(26.dp)),
-                onRelease = CallEngine::detachRenderer
-            )
+            if (!state.cameraOff && !state.screenSharing && showSelfView) {
+                val density = androidx.compose.ui.platform.LocalDensity.current
+                val conf = androidx.compose.ui.platform.LocalConfiguration.current
+                // Drag the self-view anywhere; it snaps to the nearest corner when released.
+                val maxX = with(density) { (conf.screenWidthDp.dp - 104.dp - 28.dp).toPx() }.coerceAtLeast(0f)
+                val maxY = with(density) { (conf.screenHeightDp.dp - 148.dp - 220.dp).toPx() }.coerceAtLeast(0f)
+                var dragging by remember { mutableStateOf(false) }
+                val animatedSelf by animateOffsetAsState(selfOffset, spring(dampingRatio = .72f, stiffness = 420f), label = "self_view")
+                AndroidView(
+                    factory = { ctx -> SurfaceViewRenderer(ctx).also {
+                        it.setEnableHardwareScaler(true)
+                        it.setZOrderMediaOverlay(true)
+                        it.setScalingType(org.webrtc.RendererCommon.ScalingType.SCALE_ASPECT_FIT)
+                        CallEngine.attachLocalRenderer(it)
+                    } },
+                    modifier = Modifier.align(Alignment.TopEnd).windowInsetsPadding(WindowInsets.statusBars).padding(14.dp)
+                        .offset { (if (dragging) selfOffset else animatedSelf).let { androidx.compose.ui.unit.IntOffset(it.x.toInt(), it.y.toInt()) } }
+                        .pointerInput(maxX, maxY) {
+                            detectDragGestures(
+                                onDragStart = { dragging = true },
+                                onDragEnd = {
+                                    dragging = false
+                                    selfOffset = androidx.compose.ui.geometry.Offset(if (selfOffset.x < -maxX / 2f) -maxX else 0f, if (selfOffset.y > maxY / 2f) maxY else 0f)
+                                },
+                                onDragCancel = { dragging = false }
+                            ) { change, drag ->
+                                change.consume()
+                                selfOffset = androidx.compose.ui.geometry.Offset((selfOffset.x + drag.x).coerceIn(-maxX, 0f), (selfOffset.y + drag.y).coerceIn(0f, maxY))
+                            }
+                        }
+                        .size(width = 104.dp, height = 148.dp).clip(RoundedCornerShape(26.dp)).border(1.dp, Color.White.copy(.6f), RoundedCornerShape(26.dp)),
+                    onRelease = CallEngine::detachRenderer
+                )
+            }
             Box(
                 Modifier.fillMaxSize().pointerInput(Unit) {
                     detectTapGestures(
@@ -402,6 +438,59 @@ fun CallScreen(
                             }
                         }
                     }
+                    AnimatedVisibility(
+                        visible = showMoreControls,
+                        enter = fadeIn(tween(180)) + slideInVertically(tween(260, easing = FastOutSlowInEasing)) { it / 3 },
+                        exit = fadeOut(tween(140)) + slideOutVertically(tween(180)) { it / 3 }
+                    ) {
+                        val tiles = buildList<Triple<androidx.compose.ui.graphics.vector.ImageVector, String, () -> Unit>> {
+                            add(Triple(if (state.speaker) Icons.Default.Hearing else Icons.Default.VolumeUp, if (state.speaker) "Earpiece" else "Speaker") { CallEngine.toggleSpeaker() })
+                            add(Triple(Icons.Default.PersonAdd, "Add people") { onAddParticipant(); showMoreControls = false })
+                            add(Triple(if (state.screenSharing) Icons.Default.StopScreenShare else Icons.Default.ScreenShare, if (state.screenSharing) "Stop share" else "Share screen") {
+                                if (state.screenSharing) CallEngine.stopScreenShare()
+                                else {
+                                    val manager = context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+                                    screenShareLauncher.launch(manager.createScreenCaptureIntent())
+                                }
+                                showMoreControls = false
+                            })
+                            if (effectiveVideo) {
+                                add(Triple(Icons.Default.Cameraswitch, "Flip camera") { if (!state.screenSharing) CallEngine.switchCamera() })
+                                add(Triple(if (state.cameraOff) Icons.Default.Videocam else Icons.Default.VideocamOff, if (state.cameraOff) "Camera on" else "Camera off") { CallEngine.toggleCamera() })
+                                add(Triple(if (fillVideo) Icons.Default.FitScreen else Icons.Default.Fullscreen, if (fillVideo) "Fit video" else "Fill screen") { fillVideo = !fillVideo })
+                                add(Triple(if (showSelfView) Icons.Default.VisibilityOff else Icons.Default.Visibility, if (showSelfView) "Hide me" else "Show me") { showSelfView = !showSelfView })
+                                add(Triple(Icons.Default.AutoFixHigh, "Filters") { showFilters = !showFilters; showMoreControls = false })
+                                if (state.status == "connected") add(Triple(Icons.Default.PictureInPictureAlt, "Mini view") { showMoreControls = false; onMinimize() })
+                            }
+                        }
+                        Column(
+                            Modifier.fillMaxWidth()
+                                .clip(RoundedCornerShape(30.dp))
+                                .background(Brush.verticalGradient(listOf(Color.Black.copy(.52f), Color.Black.copy(.38f))))
+                                .border(1.dp, Brush.verticalGradient(listOf(Color.White.copy(.32f), callPalette.accent.copy(.22f))), RoundedCornerShape(30.dp))
+                                .padding(horizontal = 10.dp, vertical = 14.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            tiles.chunked(4).forEach { row ->
+                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                                    row.forEach { (icon, label, action) ->
+                                        Column(
+                                            Modifier.width(76.dp).clip(RoundedCornerShape(18.dp)).clickable { view.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY); action() }.padding(vertical = 6.dp),
+                                            horizontalAlignment = Alignment.CenterHorizontally
+                                        ) {
+                                            Box(
+                                                Modifier.size(46.dp).clip(CircleShape).background(Brush.linearGradient(listOf(Color.White.copy(.20f), callPalette.accent.copy(.20f)))).border(1.dp, Color.White.copy(.25f), CircleShape),
+                                                contentAlignment = Alignment.Center
+                                            ) { Icon(icon, label, tint = Color.White, modifier = Modifier.size(22.dp)) }
+                                            Spacer(Modifier.height(5.dp))
+                                            Text(label, color = Color.White.copy(.9f), fontSize = 11.sp, maxLines = 1, textAlign = TextAlign.Center)
+                                        }
+                                    }
+                                    repeat(4 - row.size) { Spacer(Modifier.width(76.dp)) }
+                                }
+                            }
+                        }
+                    }
                     AnimatedVisibility(visible = showReactions && state.status == "connected") {
                         CallReactionBar(callPalette.accent, onPick = { token ->
                             if (!CallEngine.sendReaction(token)) view.performHapticFeedback(android.view.HapticFeedbackConstants.REJECT)
@@ -421,49 +510,7 @@ fun CallScreen(
                         if (effectiveVideo) GlassCallButton(if (state.cameraOff) Icons.Default.VideocamOff else Icons.Default.Videocam, "Camera", active = state.cameraOff, accent = callPalette.accent) { CallEngine.toggleCamera() }
                         GlassCallButton(Icons.Default.EmojiEmotions, "React", active = showReactions, accent = callPalette.accent) { showReactions = !showReactions }
                         GlassCallButton(Icons.Default.CallEnd, "End", danger = true, size = 56) { onEndCall(); onClose() }
-                        Box {
-                            GlassCallButton(Icons.Default.MoreVert, "More", accent = callPalette.accent) { showMoreControls = true }
-                            DropdownMenu(
-                                expanded = showMoreControls,
-                                onDismissRequest = { showMoreControls = false }
-                            ) {
-                                DropdownMenuItem(
-                                    text = { Text(if (state.speaker) "Use earpiece" else "Use speaker") },
-                                    leadingIcon = { Icon(if (state.speaker) Icons.Default.Hearing else Icons.Default.VolumeUp, null) },
-                                    onClick = { CallEngine.toggleSpeaker(); showMoreControls = false }
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("Add participant") },
-                                    leadingIcon = { Icon(Icons.Default.PersonAdd, null) },
-                                    onClick = { onAddParticipant(); showMoreControls = false }
-                                )
-                                if (effectiveVideo) {
-                                    DropdownMenuItem(
-                                        text = { Text(if (state.cameraOff) "Turn camera on" else "Turn camera off") },
-                                        leadingIcon = { Icon(if (state.cameraOff) Icons.Default.Videocam else Icons.Default.VideocamOff, null) },
-                                        onClick = { CallEngine.toggleCamera(); showMoreControls = false }
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text("Flip camera") },
-                                        leadingIcon = { Icon(Icons.Default.Cameraswitch, null) },
-                                        onClick = { CallEngine.switchCamera(); showMoreControls = false },
-                                        enabled = !state.screenSharing
-                                    )
-                                }
-                                DropdownMenuItem(
-                                    text = { Text(if (state.screenSharing) "Stop screen share" else "Share screen") },
-                                    leadingIcon = { Icon(if (state.screenSharing) Icons.Default.StopScreenShare else Icons.Default.ScreenShare, null) },
-                                    onClick = {
-                                        if (state.screenSharing) CallEngine.stopScreenShare()
-                                        else {
-                                            val manager = context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-                                            screenShareLauncher.launch(manager.createScreenCaptureIntent())
-                                        }
-                                        showMoreControls = false
-                                    }
-                                )
-                            }
-                        }
+                        GlassCallButton(if (showMoreControls) Icons.Default.Close else Icons.Default.GridView, "More", active = showMoreControls, accent = callPalette.accent) { showMoreControls = !showMoreControls }
                     }
                 }
             }
