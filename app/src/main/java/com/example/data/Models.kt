@@ -49,7 +49,9 @@ data class User(
     val appVersionCode: Long = 0L,
     val appVersionAt: Long = 0L,
     val deviceModel: String = "",
-    val androidVersion: String = ""
+    val androidVersion: String = "",
+    /** One-way hash of the verified phone number (E.164 digits), used only for contact discovery. */
+    val phoneHash: String = ""
 )
 
 data class MessageEditRecord(

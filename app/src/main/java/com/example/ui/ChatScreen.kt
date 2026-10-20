@@ -484,7 +484,9 @@ fun ChatScreen(
                 if (!cursor.isNull(1)) fileSize = cursor.getLong(1)
             }
         }
-        val mime = context.contentResolver.getType(uri) ?: "application/octet-stream"
+        val mime = context.contentResolver.getType(uri)?.takeIf { it.isNotBlank() && it != "application/octet-stream" }
+            ?: android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(fileName.substringAfterLast('.', "").lowercase())
+            ?: "application/octet-stream"
         // The file shows up in the chat right away as an uploading bubble; the composer stays usable.
         val upId = viewModel.startOutgoingUpload("file", fileName, fileSize)
         fun startFileUpload() {
@@ -1825,6 +1827,12 @@ fun MessageBubbleItem(
     val isStickerOnly = ConvoStickers.isSticker(message.text) && message.imageUrl.isNullOrBlank() && message.voiceUrl.isNullOrBlank() && message.fileUrl.isNullOrBlank()
 
     val timeString = remember(message.timestamp, appearance.use24h) { appearance.formatTime(message.timestamp) }
+    LaunchedEffect(message.messageId, message.imageUrl) {
+        val img = message.imageUrl
+        if (!isSentByMe && img != null && img.startsWith("http")) {
+            ReceivedFiles.autoSave(context, message.messageId + "_img", img, "IMG_${java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US).format(java.util.Date(message.timestamp.takeIf { it > 0 } ?: System.currentTimeMillis()))}_${message.messageId.takeLast(4)}.jpg", "image/jpeg")
+        }
+    }
     if (showImageViewer && !message.imageUrl.isNullOrBlank()) {
         FullScreenChatImage(message.imageUrl, onDismiss = { showImageViewer = false })
     }
@@ -2236,20 +2244,32 @@ private fun GenericFileBubble(message: Message, onConsumed: () -> Unit, accent: 
         VoicePlayerBubble(message.remoteFileUrl ?: message.fileUrl.orEmpty(), 0, onPlaybackStarted = onConsumed, accent = accent, contentColor = contentColor, title = name)
         return
     }
-    var downloadId by remember(message.messageId) { mutableLongStateOf(0L) }
+    var downloadId by remember(message.messageId) { mutableLongStateOf(ReceivedFiles.downloadIdFor(context, message.messageId)) }
     var progress by remember(message.messageId) { mutableIntStateOf(0) }
     var localUri by remember(message.messageId) { mutableStateOf<Uri?>(null) }
+    var showPdf by remember(message.messageId) { mutableStateOf(false) }
+    var showText by remember(message.messageId) { mutableStateOf(false) }
+    val receivedByMe = remember(message.senderId) { message.senderId != com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid }
+    // WhatsApp-style: received files save themselves into Downloads/Convo Chat/<type>.
+    LaunchedEffect(message.messageId) {
+        if (receivedByMe && downloadId <= 0L) {
+            val source = message.remoteFileUrl ?: message.fileUrl
+            val id = ReceivedFiles.autoSave(context, message.messageId, source, name, mime)
+            if (id > 0) downloadId = id
+        }
+    }
     LaunchedEffect(downloadId) {
         if (downloadId <= 0) return@LaunchedEffect
         val manager = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
         while (localUri == null) {
             manager.query(DownloadManager.Query().setFilterById(downloadId)).use { cursor ->
-                if (cursor.moveToFirst()) {
+                if (!cursor.moveToFirst()) { downloadId = 0L; return@LaunchedEffect }
+                run {
                     val total = cursor.getLong(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_TOTAL_SIZE_BYTES))
                     val done = cursor.getLong(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR))
                     if (total > 0) progress = (done * 100 / total).toInt()
                     when (cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS))) {
-                        DownloadManager.STATUS_SUCCESSFUL -> { localUri = manager.getUriForDownloadedFile(downloadId); onConsumed() }
+                        DownloadManager.STATUS_SUCCESSFUL -> { localUri = manager.getUriForDownloadedFile(downloadId) ?: return@LaunchedEffect; onConsumed() }
                         DownloadManager.STATUS_FAILED -> return@LaunchedEffect
                     }
                 }
@@ -2286,6 +2306,8 @@ private fun GenericFileBubble(message: Message, onConsumed: () -> Unit, accent: 
         verticalArrangement = Arrangement.spacedBy(9.dp)
     ) {
         if (isPdf && localUri != null) PdfFirstPage(localUri!!)
+        if (showPdf && localUri != null) PdfViewerDialog(localUri!!, name) { showPdf = false }
+        if (showText && localUri != null) TextFileViewerDialog(localUri!!, name, mime) { showText = false }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(
                 Modifier.size(46.dp).clip(RoundedCornerShape(14.dp)).background(Brush.linearGradient(tileColors)),
@@ -2307,7 +2329,7 @@ private fun GenericFileBubble(message: Message, onConsumed: () -> Unit, accent: 
         }
         if (downloadId > 0 && localUri == null) {
             LinearProgressIndicator(progress = { progress / 100f }, color = accent, trackColor = contentColor.copy(alpha = .15f), modifier = Modifier.fillMaxWidth().clip(CircleShape))
-            Text("Saving to Downloads · $progress%", color = contentColor.copy(alpha = .75f), fontSize = 10.sp)
+            Text("Saving to Downloads/${ReceivedFiles.APP_FOLDER}/${ReceivedFiles.folderFor(mime, name)} · $progress%", color = contentColor.copy(alpha = .75f), fontSize = 10.sp)
         } else {
             Row(
                 Modifier
@@ -2317,15 +2339,23 @@ private fun GenericFileBubble(message: Message, onConsumed: () -> Unit, accent: 
                     .background(Brush.horizontalGradient(listOf(accent, androidx.compose.ui.graphics.lerp(accent, Color(0xFF3D7BFF), .45f))))
                     .clickable {
                         localUri?.let { uri ->
-                            runCatching { context.startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(uri, mime).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)) }
+                            when {
+                                isPdf -> showPdf = true
+                                isTextLikeFile(mime, name) -> showText = true
+                                else -> ReceivedFiles.openExternally(context, uri, mime)
+                            }
                         } ?: run {
                             val source = message.remoteFileUrl ?: message.fileUrl
                             if (source?.startsWith("http") == true) {
-                                val safeName = name.replace(Regex("[\\/:*?\"<>|]"), "_")
-                                val request = DownloadManager.Request(Uri.parse(source)).setTitle(name).setMimeType(mime)
-                                    .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-                                    .setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, "Convo Chat_$safeName")
-                                downloadId = (context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager).enqueue(request)
+                                downloadId = ReceivedFiles.enqueue(context, message.messageId, source, name, mime)
+                                if (downloadId <= 0L) Toast.makeText(context, "Download could not start", Toast.LENGTH_SHORT).show()
+                            } else if (source != null && (source.startsWith("content://") || source.startsWith("file://"))) {
+                                val uri = Uri.parse(source)
+                                when {
+                                    isPdf -> { localUri = uri; showPdf = true }
+                                    isTextLikeFile(mime, name) -> { localUri = uri; showText = true }
+                                    else -> ReceivedFiles.openExternally(context, uri, mime)
+                                }
                             } else {
                                 Toast.makeText(context, "This file is already on your phone", Toast.LENGTH_SHORT).show()
                             }
@@ -2336,7 +2366,7 @@ private fun GenericFileBubble(message: Message, onConsumed: () -> Unit, accent: 
             ) {
                 Icon(if (localUri == null) Icons.Default.Download else Icons.Default.OpenInNew, null, tint = onAccent, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(6.dp))
-                Text(if (localUri == null) "Download / Save" else "Open ${if (isPdf) "PDF" else "file"}", color = onAccent, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                Text(if (localUri == null) "Download / Save" else if (isPdf) "Read PDF" else "Open file", color = onAccent, fontWeight = FontWeight.Bold, fontSize = 13.sp)
             }
         }
     }

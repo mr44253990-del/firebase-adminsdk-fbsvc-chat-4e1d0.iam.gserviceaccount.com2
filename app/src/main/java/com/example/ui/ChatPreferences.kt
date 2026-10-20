@@ -194,6 +194,7 @@ object AppSoundStore {
             context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
                 .putString("local_${kind}_name", displayName.take(60)).apply()
             ChatPreferences.bumpSounds()
+            runCatching { preload(context, kind) }
             null
         } catch (e: Throwable) {
             e.localizedMessage ?: "Could not import the sound"
@@ -231,11 +232,42 @@ object AppSoundStore {
                     if (!temp.renameTo(target)) { temp.copyTo(target, overwrite = true); temp.delete() }
                     prefs.edit().putString(key, clean).apply()
                     ChatPreferences.bumpSounds()
+                    runCatching { preload(context, kind) }
                 } else temp.delete()
             }
         } catch (e: Throwable) {
             Log.w("AppSoundStore", "Global $kind sound sync failed: ${e.message}")
         }
+    }
+
+    // Pre-decoded clips (SoundPool) so admin / custom sounds start instantly instead of
+    // preparing a MediaPlayer on every typing tick or notification.
+    private val poolLock = Any()
+    private var pool: android.media.SoundPool? = null
+    private val poolIds = java.util.concurrent.ConcurrentHashMap<String, Pair<String, Int>>() // kind -> (path+stamp, id)
+    private val poolReady = java.util.concurrent.ConcurrentHashMap.newKeySet<Int>()
+
+    private fun soundPool(): android.media.SoundPool = synchronized(poolLock) {
+        pool ?: android.media.SoundPool.Builder().setMaxStreams(4)
+            .setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION).setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build())
+            .build().also { p -> p.setOnLoadCompleteListener { _, id, status -> if (status == 0) poolReady.add(id) }; pool = p }
+    }
+
+    /** Loads every active custom sound into memory (called after downloads and at startup). */
+    fun warmUp(context: Context) {
+        listOf(NOTIFICATION, TYPING, LIKE).forEach { kind -> runCatching { preload(context, kind) } }
+    }
+
+    private fun preload(context: Context, kind: String): Int? {
+        val file = activeFile(context, kind)
+        val existing = poolIds[kind]
+        if (file == null) { existing?.let { runCatching { soundPool().unload(it.second) }; poolReady.remove(it.second) }; poolIds.remove(kind); return null }
+        val stamp = file.absolutePath + ":" + file.lastModified() + ":" + file.length()
+        if (existing != null && existing.first == stamp) return existing.second
+        existing?.let { runCatching { soundPool().unload(it.second) }; poolReady.remove(it.second) }
+        val id = soundPool().load(file.absolutePath, 1)
+        poolIds[kind] = stamp to id
+        return id
     }
 
     /** Plays the active custom sound. Returns false if the built-in sound should be used instead. */
@@ -244,6 +276,14 @@ object AppSoundStore {
         if (kind == NOTIFICATION) {
             val nm = context.getSystemService(NotificationManager::class.java)
             if (nm != null && nm.currentInterruptionFilter > NotificationManager.INTERRUPTION_FILTER_ALL) return true
+        }
+        // Notification sounds keep MediaPlayer (notification usage / DND); short UI sounds use the pool.
+        if (kind != NOTIFICATION) {
+            val id = runCatching { preload(context, kind) }.getOrNull()
+            if (id != null && id in poolReady) {
+                val stream = runCatching { soundPool().play(id, volume, volume, 1, 0, 1f) }.getOrDefault(0)
+                if (stream != 0) return true
+            }
         }
         return try {
             MediaPlayer().apply {

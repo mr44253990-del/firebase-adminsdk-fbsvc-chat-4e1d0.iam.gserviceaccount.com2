@@ -252,6 +252,21 @@ fun AuthScreen(
         label = "orb_pulse"
     )
 
+    val startGoogle: () -> Unit = {
+        scope.launch {
+            try {
+                val credential = requestGoogleCredential()
+                if (credential is CustomCredential && credential.type == GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
+                    val googleToken = GoogleIdTokenCredential.createFrom(credential.data)
+                    viewModel.signInWithGoogleCredential(GoogleAuthProvider.getCredential(googleToken.idToken, null), onAuthSuccess)
+                } else Toast.makeText(context, "Unsupported Google credential", Toast.LENGTH_SHORT).show()
+            } catch (e: Exception) {
+                val detail = e.localizedMessage.orEmpty()
+                Toast.makeText(context, if (detail.contains("developer", true)) "Google OAuth SHA/package configuration is missing" else detail.ifBlank { "Google sign-in was cancelled" }, Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -391,6 +406,73 @@ fun AuthScreen(
             }
             Spacer(modifier = Modifier.height(16.dp))
 
+            // Sign-in method switch (admin decides which methods exist).
+            val methods by AuthMethodConfig.state.collectAsState()
+            LaunchedEffect(Unit) { AuthMethodConfig.load(context); runCatching { AuthMethodConfig.refresh(context) } }
+            var preferPhone by rememberSaveable { mutableStateOf(false) }
+            val usePhone = methods.phone && (preferPhone || !methods.email)
+            if (methods.phone && methods.email) {
+                Row(
+                    Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(lp.text.copy(alpha = .05f))
+                        .border(1.dp, lp.text.copy(alpha = .10f), RoundedCornerShape(16.dp)).padding(4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    listOf(false to tr("E-mail"), true to tr("Phone number")).forEach { (phone, label) ->
+                        val selected = usePhone == phone
+                        Row(
+                            Modifier.weight(1f).height(40.dp).clip(RoundedCornerShape(12.dp))
+                                .background(if (selected) Brush.horizontalGradient(listOf(ConvoBrand.Cyan.copy(alpha = .30f), ConvoBrand.Pink.copy(alpha = .26f))) else Brush.horizontalGradient(listOf(Color.Transparent, Color.Transparent)))
+                                .border(1.dp, if (selected) lp.text.copy(alpha = .22f) else Color.Transparent, RoundedCornerShape(12.dp))
+                                .clickable { preferPhone = phone; viewModel.clearAuthError() },
+                            horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(if (phone) Icons.Default.PhoneAndroid else Icons.Default.Email, null, tint = if (selected) lp.text else lp.textSoft, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text(label, color = if (selected) lp.text else lp.textSoft, fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium, fontSize = 13.sp)
+                        }
+                    }
+                }
+                Spacer(Modifier.height(14.dp))
+            }
+            if (usePhone) {
+                ElevatedCard(
+                    modifier = Modifier.fillMaxWidth().border(
+                        1.2.dp,
+                        Brush.linearGradient(if (lp.milk) lp.cardBorder else listOf(ConvoBrand.Cyan.copy(alpha = .7f), Color.White.copy(alpha = .12f), ConvoBrand.Pink.copy(alpha = .7f))),
+                        RoundedCornerShape(24.dp)
+                    ),
+                    shape = RoundedCornerShape(24.dp),
+                    colors = CardDefaults.elevatedCardColors(containerColor = lp.card),
+                    elevation = CardDefaults.elevatedCardElevation(defaultElevation = 8.dp)
+                ) {
+                    Column(Modifier.padding(22.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                        Text(if (isLoginMode) tr("Sign in with your phone") else tr("Sign up with your phone"), color = lp.text, fontWeight = FontWeight.ExtraBold, fontSize = 17.sp)
+                        PhoneVerifyPanel(
+                            defaultCountryCode = methods.countryCode,
+                            askName = !isLoginMode,
+                            accent = color1,
+                            textColor = lp.text,
+                            softColor = lp.textSoft,
+                            fieldColors = authFieldColors,
+                            busy = authLoading,
+                            submitLabel = if (isLoginMode) tr("Verify & sign in") else tr("Verify & create account"),
+                            externalError = authError
+                        ) { credential, e164, enteredName ->
+                            viewModel.signInWithPhoneCredential(credential, enteredName, e164, onAuthSuccess)
+                        }
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            HorizontalDivider(Modifier.weight(1f))
+                            Text("  OR  ", color = lp.textSoft, fontSize = 11.sp)
+                            HorizontalDivider(Modifier.weight(1f))
+                        }
+                        OutlinedButton(onClick = startGoogle, enabled = !authLoading, modifier = Modifier.fillMaxWidth().height(52.dp), shape = CircleShape) {
+                            Text("G", fontWeight = FontWeight.ExtraBold, color = Color(0xFF4285F4), fontSize = 19.sp)
+                            Spacer(Modifier.width(12.dp))
+                            Text(tr("Continue with Google"), fontWeight = FontWeight.Bold, color = lp.text)
+                        }
+                    }
+                }
+            } else {
             // Input Fields Card with neon animated border
             ElevatedCard(
                 modifier = Modifier
@@ -728,6 +810,7 @@ fun AuthScreen(
                         Text(if (isLoginMode) "Continue with Google" else "Sign up with Google", fontWeight = FontWeight.Bold)
                     }
                 }
+            }
             }
 
             Spacer(modifier = Modifier.height(20.dp))

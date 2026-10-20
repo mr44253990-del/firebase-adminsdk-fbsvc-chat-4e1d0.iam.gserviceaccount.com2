@@ -1462,7 +1462,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         aiDisplayName = incoming.aiDisplayName.replace(legacyBrand, "Convo Chat"),
                         aiSystemPrompt = incoming.aiSystemPrompt.replace(legacyBrand, "Convo Chat")
                     )
-                    if (normalized.updatedAt >= _flagshipConfig.value.updatedAt) _flagshipConfig.value = normalized
+                    if (normalized.updatedAt >= _flagshipConfig.value.updatedAt) { _flagshipConfig.value = normalized; AuthMethodConfig.store(getApplication(), normalized) }
                 }
             }
         val ref = getDatabaseInstance().getReference("config").child("flagship")
@@ -1476,7 +1476,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         aiDisplayName = incoming.aiDisplayName.replace(legacyBrand, "Convo Chat"),
                         aiSystemPrompt = incoming.aiSystemPrompt.replace(legacyBrand, "Convo Chat")
                     )
-                    if (normalized.updatedAt >= _flagshipConfig.value.updatedAt) _flagshipConfig.value = normalized
+                    if (normalized.updatedAt >= _flagshipConfig.value.updatedAt) { _flagshipConfig.value = normalized; AuthMethodConfig.store(getApplication(), normalized) }
                 }
             }
             override fun onCancelled(error: DatabaseError) { Log.e("FLAGSHIP", "RTDB config failed: ${error.message}") }
@@ -1785,6 +1785,85 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 _authError.value = it.localizedMessage ?: "Google sign-in failed"
             }
     }
+
+    /**
+     * Phone-number sign-in / sign-up (Firebase Phone Auth). A new number creates the account and
+     * a profile with the same 14-day trial as e-mail sign-up; an existing number just signs in.
+     */
+    fun signInWithPhoneCredential(credential: com.google.firebase.auth.PhoneAuthCredential, name: String, e164: String, onSuccess: () -> Unit) {
+        _authLoading.value = true
+        _authError.value = null
+        FirebaseAuth.getInstance().signInWithCredential(credential)
+            .addOnSuccessListener { result ->
+                val authUser = result.user
+                if (authUser == null) {
+                    _authLoading.value = false
+                    _authError.value = "Phone sign-in returned no account"
+                    return@addOnSuccessListener
+                }
+                val uid = authUser.uid
+                val hash = com.example.ui.PhoneNumbers.hash(e164.ifBlank { authUser.phoneNumber.orEmpty() })
+                val users = FirebaseFirestore.getInstance().collection("users").document(uid)
+                val finish: () -> Unit = {
+                    retrieveFCMTokenAndStore(uid)
+                    loadCurrentUserProfile(uid)
+                    setupPresence(uid)
+                    loadAllUsers()
+                    listenToAllPresences()
+                    listenForInAppNotifications()
+                    registerDeviceSession()
+                    restoreTextBackup(uid)
+                    _authLoading.value = false
+                    onSuccess()
+                }
+                users.get().addOnCompleteListener { task ->
+                    val exists = task.isSuccessful && task.result?.exists() == true
+                    if (exists) {
+                        if (hash.isNotBlank()) users.set(mapOf("phoneHash" to hash), SetOptions.merge())
+                        finish()
+                    } else {
+                        val now = System.currentTimeMillis()
+                        val display = name.trim().ifBlank { "Convo user " + e164.takeLast(4) }
+                        val base = display.lowercase().replace("[^a-z0-9_]".toRegex(), "").ifBlank { "user" }.take(16)
+                        val newUser = User(
+                            uid = uid, name = display, username = "${base}_${(1000..9999).random()}", createdAt = now,
+                            isPremium = true, premiumPlan = "trial", premiumUntil = now + 14L * 86_400_000L,
+                            premiumApprovedAt = now, premiumTrialClaimed = true, premiumSource = "signup_trial",
+                            phoneHash = hash
+                        )
+                        users.set(newUser)
+                            .addOnSuccessListener { _currentUserState.value = newUser; finish() }
+                            .addOnFailureListener { e ->
+                                _authLoading.value = false
+                                _authError.value = "Failed to save profile: ${e.localizedMessage}"
+                            }
+                    }
+                }
+            }
+            .addOnFailureListener { e ->
+                _authLoading.value = false
+                _authError.value = when {
+                    e.message?.contains("invalid", true) == true && e.message?.contains("code", true) == true -> "Wrong code. Check the SMS and try again."
+                    else -> e.localizedMessage ?: "Phone sign-in failed"
+                }
+            }
+    }
+
+    /** Stores the verified number's hash on the signed-in profile so contacts can find this account. */
+    fun savePhoneHash(e164: String, onDone: (Boolean) -> Unit = {}) {
+        val uid = FirebaseAuth.getInstance().currentUser?.uid ?: return onDone(false)
+        val hash = com.example.ui.PhoneNumbers.hash(e164)
+        if (hash.isBlank()) return onDone(false)
+        FirebaseFirestore.getInstance().collection("users").document(uid)
+            .set(mapOf("phoneHash" to hash), SetOptions.merge())
+            .addOnSuccessListener {
+                _currentUserState.value = _currentUserState.value?.copy(phoneHash = hash)
+                onDone(true)
+            }
+            .addOnFailureListener { onDone(false) }
+    }
+
+    fun clearAuthError() { _authError.value = null }
 
     fun signup(
         email: String,
@@ -5450,6 +5529,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 val likeUrl = doc?.getString("likeUrl").orEmpty()
                 _globalSoundUrls.value = mapOf(AppSoundStore.NOTIFICATION to notificationUrl, AppSoundStore.TYPING to typingUrl, AppSoundStore.LIKE to likeUrl)
                 viewModelScope.launch {
+                    // Already-downloaded sounds are decoded first so playback is instant even offline.
+                    withContext(Dispatchers.IO) { AppSoundStore.warmUp(getApplication()) }
                     AppSoundStore.syncGlobal(getApplication(), AppSoundStore.NOTIFICATION, notificationUrl)
                     AppSoundStore.syncGlobal(getApplication(), AppSoundStore.TYPING, typingUrl)
                     AppSoundStore.syncGlobal(getApplication(), AppSoundStore.LIKE, likeUrl)

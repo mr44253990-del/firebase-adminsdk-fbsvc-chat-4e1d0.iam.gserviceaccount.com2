@@ -747,8 +747,10 @@ fun HomeScreen(
                     val sentRequestTargets = sentFriendRequests.mapNotNull { id -> id.removePrefix("${myUid}_").takeIf { it != id } }.toSet()
                     val conversationOrder by viewModel.conversationOrder.collectAsState()
                     val recencyRank = remember(conversationOrder) { conversationOrder.withIndex().associate { it.value to it.index } }
+                    val contactMatchIds by ContactMatches.uids.collectAsState()
                     val filteredChatUsers = if (searchQuery.isNotBlank()) users else users.filter { user ->
                         currentUser?.friends?.contains(user.uid) == true ||
+                            (flagshipConfig.contactsDiscoveryEnabled && contactMatchIds.contains(user.uid)) ||
                             conversationUserIds.contains(user.uid) ||
                             unreadCounts.containsKey(user.uid) ||
                             sentRequestTargets.contains(user.uid)
@@ -786,6 +788,8 @@ fun HomeScreen(
                         )
 
                         Spacer(modifier = Modifier.height(14.dp))
+
+                        if (searchQuery.isBlank()) ContactsDiscoveryCard(viewModel, users, onUserSelected)
 
                         val activeContacts = chatUsers.filter { it.isOnline }.distinctBy { it.uid }
                         if (searchQuery.isBlank() && activeContacts.isNotEmpty()) {
@@ -1496,6 +1500,19 @@ fun HomeScreen(
                                 Text(tr("Play a soft pop when you like or react to a message"), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                             Switch(likeSoundOn, { likeSoundOn = it; LikeSound.setEnabled(context, it) })
+                        }
+                        var autoSaveOn by remember { mutableStateOf(ReceivedFiles.autoDownloadEnabled(context)) }
+                        Row(
+                            Modifier.fillMaxWidth().liquidCard(shape = RoundedCornerShape(22.dp)).clickable { autoSaveOn = !autoSaveOn; ReceivedFiles.setAutoDownload(context, autoSaveOn) }.padding(14.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Default.Download, null, tint = MaterialTheme.colorScheme.primary)
+                            Spacer(Modifier.width(12.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(tr("Auto-save received media"), fontWeight = FontWeight.Bold)
+                                Text(tr("Photos, PDFs and files you receive are saved to Downloads/Convo Chat, sorted by type"), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            Switch(autoSaveOn, { autoSaveOn = it; ReceivedFiles.setAutoDownload(context, it) })
                         }
                         listOf(
                             Triple(AppSoundStore.NOTIFICATION, "Message notification", Icons.Outlined.NotificationsActive),
