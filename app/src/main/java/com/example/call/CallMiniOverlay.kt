@@ -15,6 +15,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CallEnd
+import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
 import androidx.compose.material3.Icon
@@ -164,6 +165,31 @@ fun CallMiniOverlay(state: CallState, onExpand: () -> Unit, onEnd: () -> Unit) {
                     Icon(Icons.Default.CallEnd, "End", tint = Color.White, modifier = Modifier.size(20.dp))
                 }
             }
+        }
+    }
+}
+
+
+/** Floating "return to group call" pill shown while an audio group call runs and the user is elsewhere in the app. */
+@Composable
+fun GroupCallReturnPill(state: GroupCallState, onExpand: () -> Unit) {
+    val pulse by rememberInfiniteTransition(label = "gpill").animateFloat(1f, 1.18f, infiniteRepeatable(tween(900, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "gp")
+    var seconds by remember(state.roomId) { mutableLongStateOf(0L) }
+    LaunchedEffect(state.connectedAt) { while (true) { seconds = if (state.connectedAt > 0) (System.currentTimeMillis() - state.connectedAt) / 1000 else 0; kotlinx.coroutines.delay(1000) } }
+    Row(
+        Modifier.clip(RoundedCornerShape(22.dp))
+            .background(Brush.horizontalGradient(listOf(Color(0xFF0F9D58), Color(0xFF00897B))))
+            .clickable(onClick = onExpand)
+            .padding(horizontal = 14.dp, vertical = 9.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(Modifier.size(26.dp).scale(pulse).clip(CircleShape).background(Color.White.copy(alpha = .22f)), contentAlignment = Alignment.Center) {
+            Icon(Icons.Default.Groups, null, tint = Color.White, modifier = Modifier.size(16.dp))
+        }
+        Spacer(Modifier.width(8.dp))
+        Column {
+            Text(state.groupName.ifBlank { "Group call" }, color = Color.White, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold, fontSize = 12.sp, maxLines = 1)
+            Text("%02d:%02d  ·  tap to return".format(seconds / 60, seconds % 60), color = Color.White.copy(alpha = .85f), fontSize = 10.sp)
         }
     }
 }

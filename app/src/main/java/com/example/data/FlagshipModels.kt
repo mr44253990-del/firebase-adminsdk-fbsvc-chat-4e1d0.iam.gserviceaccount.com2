@@ -97,6 +97,18 @@ data class FlagshipConfig(
     // Remote feature flags are additive and default to the currently shipped behavior.
     val smartReplyEnabled: Boolean = true,
     val memorySearchEnabled: Boolean = true,
+    /** v4.3.6: assistant answers appear word-by-word while they are generated (streamed). */
+    val aiStreamingEnabled: Boolean = true,
+    /** v4.3.6: assistant may search the web (Worker /ai/search) for fresh facts and cite sources. */
+    val aiWebSearchEnabled: Boolean = true,
+    /** v4.3.6: warm, human-like conversation style in the user's own language. */
+    val aiHumanStyle: Boolean = true,
+    /** v4.3.6: sign-up / sign-in methods chosen by the admin. */
+    val phoneAuthEnabled: Boolean = false,
+    val emailAuthEnabled: Boolean = true,
+    val defaultCountryCode: String = "+880",
+    /** v4.3.6: friends-from-contacts discovery (phone numbers are matched as hashes). */
+    val contactsDiscoveryEnabled: Boolean = true,
     val taskExtractionEnabled: Boolean = true,
     val advancedCallQualityEnabled: Boolean = true,
     val advancedThemesEnabled: Boolean = true,

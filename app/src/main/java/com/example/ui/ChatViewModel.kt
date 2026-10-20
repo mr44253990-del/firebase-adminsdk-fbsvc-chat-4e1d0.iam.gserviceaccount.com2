@@ -1051,7 +1051,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         // No model here: the Worker always uses the model chosen on the admin AI providers page.
                         put("aiv", AiPublicInfo.info.value.version)
                         put("systemPrompt", _flagshipConfig.value.aiSystemPrompt.take(2000))
-                        put("memory", JSONArray(memory.takeLast(20)))
+                        put("memory", JSONArray(memory.takeLast(24)))
+                        put("humanStyle", _flagshipConfig.value.aiHumanStyle)
                     }
                     executeRouted("ai", OkHttpClient.Builder().callTimeout(90, TimeUnit.SECONDS).build()) { base ->
                         Request.Builder().url("$base/ai/chat")
@@ -1078,7 +1079,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             val token = tokenResult.token ?: return@addOnSuccessListener onDone("Could not authenticate")
             viewModelScope.launch(Dispatchers.IO) {
                 try {
-                    val payload = JSONObject().apply { put("message", prompt.take(4000)); put("aiv", AiPublicInfo.info.value.version); put("systemPrompt", _flagshipConfig.value.aiSystemPrompt.take(2000)); put("memory", JSONArray(memory.takeLast(20))); put("stream", true) }
+                    val payload = JSONObject().apply { put("message", prompt.take(4000)); put("aiv", AiPublicInfo.info.value.version); put("systemPrompt", _flagshipConfig.value.aiSystemPrompt.take(2000)); put("memory", JSONArray(memory.takeLast(24))); put("stream", true); put("humanStyle", _flagshipConfig.value.aiHumanStyle) }
                     executeRouted("ai", OkHttpClient.Builder().callTimeout(2, TimeUnit.MINUTES).build()) { base ->
                         Request.Builder().url("$base/ai/chat").header("Authorization", "Bearer $token").post(payload.toString().toRequestBody("application/json".toMediaTypeOrNull())).build()
                     }.use { response ->
@@ -1617,6 +1618,17 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val user = FirebaseAuth.getInstance().currentUser ?: return onComplete(false)
         if (user.email?.lowercase()?.trim()?.trimEnd('.') != "mr4425390@gmail.com") return onComplete(false)
         val updates = fields + mapOf("updatedAt" to System.currentTimeMillis(), "updatedBy" to user.uid)
+        // Sign-in methods must be readable BEFORE login: mirror them to a public doc.
+        if (fields.keys.any { it in setOf("phoneAuthEnabled", "emailAuthEnabled", "defaultCountryCode") }) {
+            FirebaseFirestore.getInstance().collection("app_config").document("auth_public").set(
+                mapOf(
+                    "phoneAuthEnabled" to (fields["phoneAuthEnabled"] ?: _flagshipConfig.value.phoneAuthEnabled),
+                    "emailAuthEnabled" to (fields["emailAuthEnabled"] ?: _flagshipConfig.value.emailAuthEnabled),
+                    "defaultCountryCode" to (fields["defaultCountryCode"] ?: _flagshipConfig.value.defaultCountryCode),
+                    "updatedAt" to System.currentTimeMillis()
+                ), com.google.firebase.firestore.SetOptions.merge()
+            )
+        }
         FirebaseFirestore.getInstance().collection("app_config").document("flagship").update(updates)
             .addOnSuccessListener { getDatabaseInstance().getReference("config").child("flagship").updateChildren(updates); AdminAudit.log("flagship_update", fields.entries.joinToString { "${it.key}=${it.value}" }); onComplete(true) }
             .addOnFailureListener { onComplete(false) }

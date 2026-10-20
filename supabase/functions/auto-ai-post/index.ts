@@ -147,7 +147,7 @@ declare const EdgeRuntime: { waitUntil?: (promise: Promise<unknown>) => void } |
 const VERSION = "1.1.0-standalone";
 const SCOPE = "https://www.googleapis.com/auth/datastore";
 const DAY_MS = 24 * 60 * 60 * 1000;
-const POST_TYPES = ["status", "tip", "quote", "question", "fun_fact", "motivation", "poll"] as const;
+const POST_TYPES = ["status", "tip", "quote", "question", "fun_fact", "motivation", "poll", "news", "story"] as const;
 const BACKGROUNDS = ["sunset", "ocean", "aurora", "forest", "rose", "midnight", "candy", "peach", "gold", "mint"];
 
 // deno-lint-ignore no-explicit-any
@@ -238,7 +238,8 @@ function insideWindow(hour: number, start: number, end: number): boolean {
 
 function pickType(configured: string): string {
   if ((POST_TYPES as readonly string[]).includes(configured)) return configured;
-  const pool = POST_TYPES.filter((t) => t !== "poll");
+  // "news" needs web search and "story" is the multi-part series; neither is picked at random.
+  const pool = POST_TYPES.filter((t) => t !== "poll" && t !== "news" && t !== "story");
   return pool[Math.floor(Math.random() * pool.length)];
 }
 
@@ -250,7 +251,45 @@ const TYPE_GUIDE: Record<string, string> = {
   fun_fact: "one surprising but TRUE, well-known fun fact (no made-up statistics)",
   motivation: "a short motivational message",
   poll: "a light, fun community poll question with 2 to 4 short answer options",
+  news: "a short, neutral summary of ONE fresh, interesting and non-political item from the web results (tech, science, sport, culture), ending with why it matters",
+  story: "one part of an engaging multi-part story",
 };
+
+/** Fresh web results for news-style posts: Tavily (admin key) first, then keyless DuckDuckGo. */
+async function webResults(projectId: string, token: string, query: string): Promise<{ title: string; url: string; snippet: string }[]> {
+  const cfg: Json = (await firestoreGet(projectId, "admin_secrets/search", token).catch(() => null)) ?? {};
+  const strip = (v: unknown) => String(v ?? "").replace(/<[^>]+>/g, "").replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/\s+/g, " ").trim();
+  const tavily = String(cfg.tavilyKey || env("TAVILY_API_KEY") || "").trim();
+  if (tavily) {
+    try {
+      const r = await fetch("https://api.tavily.com/search", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${tavily}` }, body: JSON.stringify({ query, max_results: 5, topic: "news", search_depth: "basic" }) });
+      const j: Json = await r.json().catch(() => ({}));
+      if (r.ok && Array.isArray(j.results) && j.results.length) return j.results.map((x: Json) => ({ title: strip(x.title), url: String(x.url || ""), snippet: strip(x.content).slice(0, 300) }));
+    } catch (_) { /* fall through */ }
+  }
+  try {
+    const r = await fetch(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`, { headers: { "User-Agent": "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/126 Mobile Safari/537.36" } });
+    const html = r.ok ? await r.text() : "";
+    const out: { title: string; url: string; snippet: string }[] = [];
+    const re = /<a[^>]+class="result__a"[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>[\s\S]*?(?:class="result__snippet"[^>]*>([\s\S]*?)<\/a>)?/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(html)) && out.length < 5) {
+      let href = m[1].replace(/&amp;/g, "&");
+      const u = href.match(/[?&]uddg=([^&]+)/);
+      if (u) href = decodeURIComponent(u[1]);
+      if (href.startsWith("//")) href = "https:" + href;
+      if (!/^https?:\/\//.test(href) || href.includes("duckduckgo.com/y.js")) continue;
+      out.push({ title: strip(m[2]), url: href, snippet: strip(m[3] || "").slice(0, 300) });
+    }
+    return out;
+  } catch (_) { return []; }
+}
+
+/** Free AI picture for a post (Pollinations, no key). The prompt comes from the AI itself. */
+function aiImageUrl(prompt: string): string {
+  const clean = prompt.replace(/[\r\n]+/g, " ").slice(0, 400);
+  return `https://image.pollinations.ai/prompt/${encodeURIComponent(clean)}?width=1024&height=1024&nologo=true&seed=${Math.floor(Math.random() * 1_000_000)}`;
+}
 
 /** Admin-managed provider from Firestore `admin_secrets/ai` (OpenAI-compatible), or null. */
 async function activeProvider(projectId: string, token: string): Promise<Json | null> {
@@ -262,7 +301,7 @@ async function activeProvider(projectId: string, token: string): Promise<Json | 
   return { name: String(p.name || cfg.activeProviderId), baseUrl: String(p.baseUrl).replace(/\/+$/, ""), apiKey: String(p.apiKey), model: String(p.model || defaults[String(cfg.activeProviderId)] || "") };
 }
 
-async function generatePost(config: Json, type: string, localTime: string, provider: Json | null = null): Promise<Json> {
+async function generatePost(config: Json, type: string, localTime: string, provider: Json | null = null, extra: { web?: { title: string; url: string; snippet: string }[]; part?: number; seriesTopic?: string; seriesSummary?: string } = {}): Promise<Json> {
   const apiKey = provider ? String(provider.apiKey) : env("MISTRAL_API_KEY");
   if (!apiKey) throw new Error("No AI provider: set one in the admin panel or the MISTRAL_API_KEY secret");
   const model = provider ? String(provider.model) : "mistral-small-latest";
@@ -270,17 +309,24 @@ async function generatePost(config: Json, type: string, localTime: string, provi
   const language = String(config.language || "Bengali");
   const useEmoji = config.useEmoji !== false;
   const adminPrompt = String(config.prompt || "").slice(0, 1500);
+  const withImage = config.withImage === true;
+  const isStory = type === "story";
   const system = [
-    "You write short posts for the community feed of Convo Chat, a friendly messaging and social app.",
-    `Write in ${language}. Keep it under 70 words, warm and natural, never spammy.`,
+    "You write posts for the community feed of Convo Chat, a friendly messaging and social app. Sound like a real, warm person, not a bot.",
+    `Write in ${language}. ${isStory ? "Write 120 to 220 words with vivid, simple language, and end with a small cliffhanger." : "Keep it under 80 words, natural, never spammy."}`,
     useEmoji ? "Use 2 to 4 fitting emoji naturally inside the text." : "Do not use emoji.",
-    "Never invent news, prices, medical or legal claims, or statistics. No politics, religion debates, hate, adult content or personal data.",
+    "Never invent news, prices, medical or legal claims, or statistics; for news use ONLY the web results given. No politics, religion debates, hate, adult content or personal data.",
     "Reply ONLY with a JSON object: {\"title\": string (max 6 words, may be empty), \"text\": string, \"tags\": [up to 3 short hashtags without #], \"feeling\": string (one word, may be empty)" +
-      (type === "poll" ? ", \"options\": [2-4 short strings]" : "") + "}.",
+      (type === "poll" ? ", \"options\": [2-4 short strings]" : "") +
+      (withImage && type !== "poll" ? ", \"imagePrompt\": string (an English description of a beautiful photo-style picture for this post, no text or letters in the image)" : "") +
+      (extra.web?.length ? ", \"link\": string (the URL of the result you used)" : "") +
+      (isStory ? ", \"summary\": string (2 sentences: the whole story so far, in English)" : "") + "}.",
   ].join("\n");
   const user = [
     `Post type: ${TYPE_GUIDE[type] ?? TYPE_GUIDE.status}.`,
     `Local time for readers: ${localTime}.`,
+    isStory ? `This is PART ${extra.part ?? 1} of a series about: ${extra.seriesTopic || "a heart-warming everyday adventure"}.` + (extra.seriesSummary ? ` Story so far: ${extra.seriesSummary}` : " Start the story.") : "",
+    extra.web?.length ? "Fresh web results:\n" + extra.web.map((r, i) => `[${i + 1}] ${r.title} - ${r.snippet} (${r.url})`).join("\n") : "",
     adminPrompt ? `Admin guidance (follow it unless it breaks the rules above):\n${adminPrompt}` : "",
   ].filter(Boolean).join("\n");
   const response = await fetch(endpoint, {
@@ -289,7 +335,7 @@ async function generatePost(config: Json, type: string, localTime: string, provi
     body: JSON.stringify({
       model,
       temperature: 0.9,
-      max_tokens: 400,
+      max_tokens: isStory ? 900 : 500,
       // json_object is Mistral/OpenAI specific; other providers get plain text and we extract JSON.
       ...(provider ? {} : { response_format: { type: "json_object" } }),
       messages: [{ role: "system", content: system }, { role: "user", content: user }],
@@ -313,6 +359,9 @@ async function generatePost(config: Json, type: string, localTime: string, provi
     tags: (Array.isArray(parsed.tags) ? parsed.tags : []).map((t: unknown) => String(t).replace(/^#/, "").trim()).filter(Boolean).slice(0, 3),
     feeling: String(parsed.feeling ?? "").trim().slice(0, 30),
     options: (Array.isArray(parsed.options) ? parsed.options : []).map((o: unknown) => String(o).trim().slice(0, 60)).filter(Boolean).slice(0, 4),
+    imagePrompt: String(parsed.imagePrompt ?? "").trim().slice(0, 400),
+    link: /^https?:\/\//.test(String(parsed.link ?? "")) ? String(parsed.link).slice(0, 500) : (extra.web?.[0]?.url ?? ""),
+    summary: String(parsed.summary ?? "").trim().slice(0, 600),
   };
 }
 
@@ -350,10 +399,23 @@ export async function runAutoPost(force = false): Promise<Json> {
 
   try {
     const admin: Json = (await firestoreGet(projectId, `users/${adminUid}`, token)) ?? {};
-    const type = pickType(String(config.postType || "mixed"));
+    const seriesOn = config.seriesEnabled === true && String(config.seriesTopic || "").trim().length > 0;
+    let type = seriesOn ? "story" : pickType(String(config.postType || "mixed"));
+    const maxParts = clampInt(config.seriesMaxParts, 2, 30, 5);
+    let part = clampInt(config.seriesPart, 0, 1000, 0) + 1;
+    let seriesSummary = String(config.seriesSummary || "");
+    if (part > maxParts) { part = 1; seriesSummary = ""; }
+    let web: { title: string; url: string; snippet: string }[] = [];
+    if (!seriesOn && (type === "news" || (config.useWebSearch === true && type !== "poll"))) {
+      web = await webResults(projectId, token, String(config.searchTopic || "") || (type === "news" ? "latest technology science news today" : `${TYPE_GUIDE[type]} ideas`)).catch(() => []);
+      if (!web.length && type === "news") type = "fun_fact";
+    }
     const localTime = `${String(hour).padStart(2, "0")}:${String(new Date(now + tz * 60_000).getUTCMinutes()).padStart(2, "0")}`;
     const provider = await activeProvider(projectId, token);
-    const generated = await generatePost(config, type, localTime, provider);
+    const generated = await generatePost(config, type, localTime, provider, { web, part, seriesTopic: String(config.seriesTopic || ""), seriesSummary });
+    const imageUrl = config.withImage === true && generated.imagePrompt ? aiImageUrl(generated.imagePrompt) : "";
+    const postText = generated.link && web.length ? `${generated.text}\n\n${generated.link}` : generated.text;
+    const postTitle = type === "story" ? `${String(config.seriesTopic || generated.title).slice(0, 50)} - Part ${part}` : generated.title;
     const id = crypto.randomUUID();
     let pollId = "";
     if (type === "poll" && generated.options.length >= 2) {
@@ -375,14 +437,14 @@ export async function runAutoPost(force = false): Promise<Json> {
         senderId: adminUid,
         senderName: String(admin.name || "Convo Chat"),
         senderProfilePic: String(admin.profileImageUrl || ""),
-        text: generated.text,
-        title: generated.title,
+        text: postText,
+        title: postTitle,
         tags: generated.tags,
         feeling: generated.feeling,
-        imageUrl: "",
+        imageUrl,
         audioUrl: "",
         videoUrl: "",
-        imageUrls: [],
+        imageUrls: imageUrl ? [imageUrl] : [],
         timestamp: now,
         reactions: {},
         comments: [],
@@ -391,7 +453,7 @@ export async function runAutoPost(force = false): Promise<Json> {
         isPrivate: false,
         reel: false,
         isReel: false,
-        backgroundStyle: config.styledBackground === false ? "glass" : BACKGROUNDS[Math.floor(Math.random() * BACKGROUNDS.length)],
+        backgroundStyle: imageUrl || config.styledBackground === false || type === "story" || postText.length > 220 ? "glass" : BACKGROUNDS[Math.floor(Math.random() * BACKGROUNDS.length)],
         textAnimation: "none",
         postEverywhere: true,
         autoGenerated: true,
@@ -407,6 +469,7 @@ export async function runAutoPost(force = false): Promise<Json> {
       lastError: "",
       totalPosts: Number(config.totalPosts || 0) + 1,
       runningUntil: 0,
+      ...(type === "story" ? { seriesPart: part, seriesSummary: generated.summary || seriesSummary } : {}),
     }, token);
     return { posted: true, type, postId: pollId || id, nextRunAt, pollsClosed };
   } catch (error) {

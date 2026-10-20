@@ -127,6 +127,11 @@ service cloud.firestore {
       allow update, delete: if signedIn() && resource.data.senderId == request.auth.uid;
     }
 
+    // Sign-up / sign-in methods (phone or e-mail) must be readable on the login screen.
+    match /app_config/auth_public {
+      allow read: if true;
+    }
+
     match /app_config/{documentId} {
       allow read: if signedIn();
       allow write: if isAdmin() || (documentId == 'announcement' && staffCan('announce'));

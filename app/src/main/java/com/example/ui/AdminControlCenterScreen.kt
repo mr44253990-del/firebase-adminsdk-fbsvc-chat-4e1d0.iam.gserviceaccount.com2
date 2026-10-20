@@ -129,6 +129,13 @@ fun AdminControlCenterScreen(
     var rocketEnabled by remember(flagshipConfig) { mutableStateOf(flagshipConfig.premiumRocketEnabled) }
     var smartReplyEnabled by remember(flagshipConfig) { mutableStateOf(flagshipConfig.smartReplyEnabled) }
     var memorySearchEnabled by remember(flagshipConfig) { mutableStateOf(flagshipConfig.memorySearchEnabled) }
+    var aiStreamingEnabled by remember(flagshipConfig) { mutableStateOf(flagshipConfig.aiStreamingEnabled) }
+    var aiWebSearchEnabled by remember(flagshipConfig) { mutableStateOf(flagshipConfig.aiWebSearchEnabled) }
+    var aiHumanStyle by remember(flagshipConfig) { mutableStateOf(flagshipConfig.aiHumanStyle) }
+    var phoneAuthEnabled by remember(flagshipConfig) { mutableStateOf(flagshipConfig.phoneAuthEnabled) }
+    var emailAuthEnabled by remember(flagshipConfig) { mutableStateOf(flagshipConfig.emailAuthEnabled) }
+    var contactsDiscoveryEnabled by remember(flagshipConfig) { mutableStateOf(flagshipConfig.contactsDiscoveryEnabled) }
+    var defaultCountryCode by remember(flagshipConfig) { mutableStateOf(flagshipConfig.defaultCountryCode) }
     var taskExtractionEnabled by remember(flagshipConfig) { mutableStateOf(flagshipConfig.taskExtractionEnabled) }
     var callQualityEnabled by remember(flagshipConfig) { mutableStateOf(flagshipConfig.advancedCallQualityEnabled) }
     var advancedThemesEnabled by remember(flagshipConfig) { mutableStateOf(flagshipConfig.advancedThemesEnabled) }
@@ -616,6 +623,15 @@ fun AdminControlCenterScreen(
                             Text("Stage-roll out app features without changing the APK.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             AdminSwitchRow("Smart replies", "", smartReplyEnabled, { smartReplyEnabled = it })
                             AdminSwitchRow("AI memory search", "", memorySearchEnabled, { memorySearchEnabled = it })
+                            AdminSwitchRow("AI live streaming", "Answers appear word by word while the AI writes them. Off = the full answer appears at once.", aiStreamingEnabled, { aiStreamingEnabled = it })
+                            AdminSwitchRow("AI web search", "The assistant can search the internet for fresh facts and shows its sources. Keys: AI providers page → Web search.", aiWebSearchEnabled, { aiWebSearchEnabled = it })
+                            AdminSwitchRow("Human-like talking style", "Warm, natural replies in the user's own language (Bengali / English / Banglish).", aiHumanStyle, { aiHumanStyle = it })
+                            HorizontalDivider()
+                            Text("Sign-up & sign-in methods", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                            AdminSwitchRow("E-mail sign-up / sign-in", "Classic e-mail + password accounts.", emailAuthEnabled, { emailAuthEnabled = it || !phoneAuthEnabled })
+                            AdminSwitchRow("Phone number sign-up / sign-in", "SMS code via Firebase Phone Auth. Needs: Firebase console → Authentication → Phone enabled + the app's SHA-1/SHA-256 added.", phoneAuthEnabled, { phoneAuthEnabled = it; if (!it) emailAuthEnabled = true })
+                            OutlinedTextField(defaultCountryCode, { v -> defaultCountryCode = ("+" + v.filter(Char::isDigit)).take(5) }, label = { Text("Default country code") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                            AdminSwitchRow("Find friends from contacts", "Users who allow it can find people whose verified phone number is in their contacts (numbers are matched as one-way hashes).", contactsDiscoveryEnabled, { contactsDiscoveryEnabled = it })
                             AdminSwitchRow("Task extraction", "", taskExtractionEnabled, { taskExtractionEnabled = it })
                             AdminSwitchRow("Advanced call quality", "", callQualityEnabled, { callQualityEnabled = it })
                             AdminSwitchRow("Advanced themes", "", advancedThemesEnabled, { advancedThemesEnabled = it })
@@ -629,6 +645,13 @@ fun AdminControlCenterScreen(
                                     "aiSystemPrompt" to aiPrompt,
                                     "smartReplyEnabled" to smartReplyEnabled,
                                     "memorySearchEnabled" to memorySearchEnabled,
+                                    "aiStreamingEnabled" to aiStreamingEnabled,
+                                    "aiWebSearchEnabled" to aiWebSearchEnabled,
+                                    "aiHumanStyle" to aiHumanStyle,
+                                    "phoneAuthEnabled" to phoneAuthEnabled,
+                                    "emailAuthEnabled" to (emailAuthEnabled || !phoneAuthEnabled),
+                                    "defaultCountryCode" to defaultCountryCode.ifBlank { "+880" },
+                                    "contactsDiscoveryEnabled" to contactsDiscoveryEnabled,
                                     "taskExtractionEnabled" to taskExtractionEnabled,
                                     "advancedCallQualityEnabled" to callQualityEnabled,
                                     "advancedThemesEnabled" to advancedThemesEnabled,

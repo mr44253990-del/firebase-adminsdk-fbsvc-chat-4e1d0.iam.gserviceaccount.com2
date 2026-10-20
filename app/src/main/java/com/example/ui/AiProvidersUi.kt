@@ -84,7 +84,26 @@ object AiProviderStore {
         AiProvider("groq", "Groq", "https://api.groq.com/openai/v1", model = "llama-3.1-8b-instant"),
         AiProvider("openrouter", "OpenRouter", "https://openrouter.ai/api/v1", model = "openrouter/auto"),
         AiProvider("deepseek", "DeepSeek", "https://api.deepseek.com/v1", model = "deepseek-chat"),
-        AiProvider("together", "Together AI", "https://api.together.xyz/v1", model = "meta-llama/Llama-3.3-70B-Instruct-Turbo")
+        AiProvider("together", "Together AI", "https://api.together.xyz/v1", model = "meta-llama/Llama-3.3-70B-Instruct-Turbo"),
+        // v4.3.6: more providers with a free tier (OpenAI-compatible endpoints).
+        AiProvider("cerebras", "Cerebras", "https://api.cerebras.ai/v1", model = "llama3.1-8b"),
+        AiProvider("github", "GitHub Models", "https://models.github.ai/inference", model = "openai/gpt-4o-mini"),
+        AiProvider("sambanova", "SambaNova Cloud", "https://api.sambanova.ai/v1", model = "Meta-Llama-3.1-8B-Instruct"),
+        AiProvider("huggingface", "Hugging Face Router", "https://router.huggingface.co/v1", model = "meta-llama/Llama-3.1-8B-Instruct"),
+        AiProvider("nvidia", "NVIDIA NIM", "https://integrate.api.nvidia.com/v1", model = "meta/llama-3.1-8b-instruct")
+    )
+
+    /** Free-tier hint shown next to each preset (where to get a free key). */
+    val FREE_TIER = mapOf(
+        "mistral" to "Free tier · console.mistral.ai",
+        "gemini" to "Free tier · aistudio.google.com/apikey",
+        "groq" to "Free · console.groq.com/keys",
+        "openrouter" to "Free models (:free) · openrouter.ai/keys",
+        "cerebras" to "Free · cloud.cerebras.ai",
+        "github" to "Free with a GitHub token (models:read)",
+        "sambanova" to "Free tier · cloud.sambanova.ai",
+        "huggingface" to "Free monthly credits · hf.co/settings/tokens",
+        "nvidia" to "Free credits · build.nvidia.com"
     )
 
     private val doc get() = FirebaseFirestore.getInstance().collection("admin_secrets").document("ai")
@@ -220,7 +239,9 @@ private val autoGuide = mapOf(
     "question" to "an engaging open question that invites people to comment",
     "fun_fact" to "one surprising but TRUE, well-known fun fact (no made-up statistics)",
     "motivation" to "a short motivational message",
-    "poll" to "a light, fun community poll question with 2 to 4 short answer options"
+    "poll" to "a light, fun community poll question with 2 to 4 short answer options",
+    "news" to "a short, neutral summary of ONE fresh, interesting, non-political item from the web results, ending with why it matters",
+    "story" to "one part of an engaging multi-part story"
 )
 
 /**
@@ -232,22 +253,44 @@ suspend fun publishAiPostNow(settings: Map<String, Any?>): String {
     val auth = FirebaseAuth.getInstance().currentUser ?: error("Not signed in")
     val db = FirebaseFirestore.getInstance()
     val configured = settings["postType"] as? String ?: "mixed"
-    val type = if (configured in autoGuide.keys) configured else autoTypes.random()
+    val seriesTopic = (settings["seriesTopic"] as? String).orEmpty().trim()
+    val seriesOn = settings["seriesEnabled"] == true && seriesTopic.isNotBlank()
+    var type = if (seriesOn) "story" else if (configured in autoGuide.keys) configured else autoTypes.random()
+    val withImage = settings["withImage"] == true
+    val maxParts = ((settings["seriesMaxParts"] as? Number)?.toInt() ?: 5).coerceIn(2, 30)
+    var part = ((settings["seriesPart"] as? Number)?.toInt() ?: 0) + 1
+    var seriesSummary = (settings["seriesSummary"] as? String).orEmpty()
+    if (part > maxParts) { part = 1; seriesSummary = "" }
+    // Fresh facts + a source link from the web (Worker /ai/search) for news posts or when enabled.
+    var web = emptyList<Triple<String, String, String>>()
+    if (!seriesOn && (type == "news" || (settings["useWebSearch"] == true && type != "poll"))) {
+        val q = (settings["searchTopic"] as? String).orEmpty().ifBlank { if (type == "news") "latest technology science news today" else "${autoGuide[type]} ideas" }
+        val (code, j) = runCatching { convoWorkerPost("ai", "/ai/search", JSONObject().put("q", q).put("max", 5)) }.getOrElse { 0 to JSONObject() }
+        val arr = j.optJSONArray("results")
+        if (code in 200..299 && arr != null) web = (0 until arr.length()).map { k -> arr.getJSONObject(k).let { Triple(it.optString("title"), it.optString("url"), it.optString("snippet")) } }
+        if (web.isEmpty() && type == "news") type = "fun_fact"
+    }
+    val isStory = type == "story"
     val language = settings["language"] as? String ?: "Bengali"
     val useEmoji = settings["useEmoji"] as? Boolean ?: true
     val adminPrompt = (settings["prompt"] as? String).orEmpty().take(1500)
     val system = listOf(
-        "You write short posts for the community feed of Convo Chat, a friendly messaging and social app.",
-        "Write in $language. Keep it under 70 words, warm and natural, never spammy.",
+        "You write posts for the community feed of Convo Chat, a friendly messaging and social app. Sound like a real, warm person, not a bot.",
+        "Write in $language. " + if (isStory) "Write 120 to 220 words with vivid, simple language and end with a small cliffhanger." else "Keep it under 80 words, natural, never spammy.",
         if (useEmoji) "Use 2 to 4 fitting emoji naturally inside the text." else "Do not use emoji.",
-        "Never invent news, prices, medical or legal claims, or statistics. No politics, religion debates, hate, adult content or personal data.",
+        "Never invent news, prices, medical or legal claims, or statistics; for news use ONLY the web results given. No politics, religion debates, hate, adult content or personal data.",
         "Reply ONLY with a JSON object: {\"title\": string (max 6 words, may be empty), \"text\": string, \"tags\": [up to 3 short hashtags without #], \"feeling\": string (one word, may be empty)" +
-            (if (type == "poll") ", \"options\": [2-4 short strings]" else "") + "}."
+            (if (type == "poll") ", \"options\": [2-4 short strings]" else "") +
+            (if (withImage && type != "poll") ", \"imagePrompt\": string (English description of a beautiful photo-style picture for this post, no text in the image)" else "") +
+            (if (web.isNotEmpty()) ", \"link\": string (URL of the result you used)" else "") +
+            (if (isStory) ", \"summary\": string (2 sentences: the whole story so far, in English)" else "") + "}."
     ).joinToString("\n")
     val cal = java.util.Calendar.getInstance()
     val user = listOfNotNull(
         "Post type: ${autoGuide[type]}.",
         "Local time for readers: %02d:%02d.".format(cal.get(java.util.Calendar.HOUR_OF_DAY), cal.get(java.util.Calendar.MINUTE)),
+        if (isStory) ("This is PART $part of a series about: $seriesTopic. " + (if (seriesSummary.isNotBlank()) "Story so far: $seriesSummary" else "Start the story.")) else null,
+        if (web.isNotEmpty()) "Fresh web results:\n" + web.mapIndexed { i, r -> "[${i + 1}] ${r.first} - ${r.third} (${r.second})" }.joinToString("\n") else null,
         adminPrompt.takeIf { it.isNotBlank() }?.let { "Admin guidance (follow it unless it breaks the rules above):\n$it" }
     ).joinToString("\n")
 
@@ -256,8 +299,15 @@ suspend fun publishAiPostNow(settings: Map<String, Any?>): String {
     val json = runCatching { JSONObject(raw) }.getOrNull()
         ?: Regex("\\{[\\s\\S]*\\}").find(raw)?.value?.let { runCatching { JSONObject(it) }.getOrNull() }
         ?: JSONObject().put("text", raw)
-    val text = json.optString("text").trim().take(1200)
-    if (text.isBlank()) error("AI returned an empty post")
+    val bodyText = json.optString("text").trim().take(1600)
+    if (bodyText.isBlank()) error("AI returned an empty post")
+    val link = json.optString("link").takeIf { it.startsWith("http") } ?: web.firstOrNull()?.second.orEmpty()
+    val text = if (link.isNotBlank() && web.isNotEmpty()) "$bodyText\n\n$link" else bodyText
+    val imagePrompt = json.optString("imagePrompt").trim().take(400)
+    val imageUrl = if (withImage && imagePrompt.isNotBlank() && type != "poll")
+        "https://image.pollinations.ai/prompt/" + java.net.URLEncoder.encode(imagePrompt.replace(Regex("[\\r\\n]+"), " "), "UTF-8").replace("+", "%20") + "?width=1024&height=1024&nologo=true&seed=" + (0..999_999).random()
+    else ""
+    val title = if (isStory) "${seriesTopic.take(50)} - Part $part" else json.optString("title").trim().take(80)
     val tags = (0 until (json.optJSONArray("tags")?.length() ?: 0)).map { json.optJSONArray("tags")!!.optString(it).removePrefix("#").trim() }.filter { it.isNotBlank() }.take(3)
     val options = (0 until (json.optJSONArray("options")?.length() ?: 0)).map { json.optJSONArray("options")!!.optString(it).trim().take(60) }.filter { it.isNotBlank() }.take(4)
     val profile = runCatching { db.collection("users").document(auth.uid).get().awaitTask() }.getOrNull()
@@ -275,19 +325,20 @@ suspend fun publishAiPostNow(settings: Map<String, Any?>): String {
             "id" to id, "senderId" to auth.uid,
             "senderName" to (profile?.getString("name") ?: "Convo Chat"),
             "senderProfilePic" to (profile?.getString("profileImageUrl") ?: ""),
-            "text" to text, "title" to json.optString("title").trim().take(80), "tags" to tags,
+            "text" to text, "title" to title, "tags" to tags,
             "feeling" to json.optString("feeling").trim().take(30),
-            "imageUrl" to "", "audioUrl" to "", "videoUrl" to "", "imageUrls" to emptyList<String>(),
+            "imageUrl" to imageUrl, "audioUrl" to "", "videoUrl" to "", "imageUrls" to if (imageUrl.isNotBlank()) listOf(imageUrl) else emptyList<String>(),
             "timestamp" to now, "reactions" to emptyMap<String, String>(), "comments" to emptyList<Any>(),
             "viewsCount" to 0, "private" to false, "isPrivate" to false, "reel" to false, "isReel" to false,
-            "backgroundStyle" to if (settings["styledBackground"] == false) "glass" else autoBackgrounds.random(),
+            "backgroundStyle" to if (imageUrl.isNotBlank() || settings["styledBackground"] == false || isStory || text.length > 220) "glass" else autoBackgrounds.random(),
             "textAnimation" to "none", "postEverywhere" to true, "autoGenerated" to true, "autoPostType" to type
         )).awaitTask()
     }
     db.collection("app_config").document("auto_post").set(mapOf(
         "lastRunAt" to now, "lastPostId" to id, "lastPostType" to type, "lastPostPreview" to text.take(160),
         "lastError" to "", "totalPosts" to com.google.firebase.firestore.FieldValue.increment(1)
-    ), com.google.firebase.firestore.SetOptions.merge()).awaitTask()
+    ) + (if (isStory) mapOf("seriesPart" to part, "seriesSummary" to json.optString("summary").ifBlank { seriesSummary }) else emptyMap()),
+        com.google.firebase.firestore.SetOptions.merge()).awaitTask()
     return "Posted now via ${provider?.name ?: "server key"} (${type.replace('_', ' ')})"
 }
 
@@ -370,6 +421,7 @@ fun AdminAiProvidersPanel(assistantEnabled: Boolean, onAssistantEnabled: (Boolea
                         Spacer(Modifier.width(10.dp))
                         Column(Modifier.weight(1f)) {
                             Text(p.name + if (p.custom) " · custom" else "", fontWeight = FontWeight.Bold)
+                            AiProviderStore.FREE_TIER[p.id]?.let { hint -> Text(hint, fontSize = 10.sp, color = Color(0xFF2E9E6A), fontWeight = FontWeight.SemiBold) }
                             Text(
                                 when { p.ready && config.activeId == p.id -> "Active · ${p.model}"; p.ready -> "Key saved · ${p.model.ifBlank { "pick a model" }}"; else -> "No key yet" },
                                 fontSize = 11.sp, color = if (p.ready) Color(0xFF2E9E6A) else MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis
@@ -472,6 +524,8 @@ fun AdminAiProvidersPanel(assistantEnabled: Boolean, onAssistantEnabled: (Boolea
             "Keys are stored in Firestore admin_secrets/ai, readable only by the admin account (firestore.rules). The Worker and the auto-post function read them server-side; users never receive them.",
             fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant
         )
+        HorizontalDivider()
+        AdminWebSearchPanel()
         }
     }
 }
@@ -505,4 +559,60 @@ object AiPublicInfo {
         }
     }
     fun stop() { reg?.remove(); reg = null }
+}
+
+
+/** Admin: web search keys for the assistant / AI posts (admin_secrets/search). Works without keys too (DuckDuckGo + Wikipedia). */
+@Composable
+fun AdminWebSearchPanel() {
+    val scope = rememberCoroutineScope()
+    val doc = remember { FirebaseFirestore.getInstance().collection("admin_secrets").document("search") }
+    var enabled by remember { mutableStateOf(true) }
+    var tavily by remember { mutableStateOf("") }
+    var brave by remember { mutableStateOf("") }
+    var serper by remember { mutableStateOf("") }
+    var status by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        runCatching { doc.get().awaitTask() }.getOrNull()?.let { d ->
+            enabled = d.getBoolean("enabled") != false
+            tavily = d.getString("tavilyKey").orEmpty(); brave = d.getString("braveKey").orEmpty(); serper = d.getString("serperKey").orEmpty()
+        }
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Default.TravelExplore, null, tint = Color(0xFF22D3EE))
+            Spacer(Modifier.width(8.dp))
+            Column(Modifier.weight(1f)) {
+                Text("Web search for AI", fontWeight = FontWeight.Bold)
+                Text("Works free without keys (DuckDuckGo + Wikipedia). Add a key for better, faster results: Tavily 1,000/month free, Brave Search 2,000/month free, Serper 2,500 free.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Switch(enabled, { enabled = it })
+        }
+        OutlinedTextField(tavily, { tavily = it.trim() }, label = { Text("Tavily API key (tvly-…) · tavily.com") }, singleLine = true, visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(brave, { brave = it.trim() }, label = { Text("Brave Search API key · brave.com/search/api") }, singleLine = true, visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(serper, { serper = it.trim() }, label = { Text("Serper (Google) API key · serper.dev") }, singleLine = true, visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(enabled = !busy, onClick = {
+                scope.launch {
+                    busy = true
+                    status = runCatching {
+                        doc.set(mapOf("enabled" to enabled, "tavilyKey" to tavily, "braveKey" to brave, "serperKey" to serper, "updatedAt" to System.currentTimeMillis())).awaitTask()
+                        "Saved."
+                    }.getOrElse { "Save failed: ${it.message}" }
+                    busy = false
+                }
+            }, modifier = Modifier.weight(1f)) { Text("Save") }
+            Button(enabled = !busy, onClick = {
+                scope.launch {
+                    busy = true
+                    val (code, j) = runCatching { convoWorkerPost("ai", "/ai/search", JSONObject().put("q", "Bangladesh weather today").put("max", 3)) }.getOrElse { 0 to JSONObject().put("error", it.message) }
+                    status = if (code in 200..299) "Search works via ${j.optString("provider")}: ${j.optJSONArray("results")?.length() ?: 0} results" + j.optJSONArray("tried")?.let { t -> if (t.length() > 0) " (skipped: ${(0 until t.length()).joinToString { t.optString(it) }})" else "" }.orEmpty()
+                        else if (code == 404) "The Worker is outdated: update it in Server health." else "Search failed: ${j.optString("error").ifBlank { "HTTP $code" }}"
+                    busy = false
+                }
+            }, modifier = Modifier.weight(1f)) { Text("Test search") }
+        }
+        if (status.isNotBlank()) Text(status, fontSize = 12.sp, color = if (status.startsWith("Search works") || status == "Saved.") Color(0xFF2E9E6A) else MaterialTheme.colorScheme.error)
+    }
 }

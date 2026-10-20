@@ -58,6 +58,7 @@ fun GroupCallScreen(
     video: Boolean,
     onClose: () -> Unit,
     onMinimize: () -> Unit = {},
+    onPipCallOver: () -> Unit = {},
     onRoomReady: (String) -> Unit = {},
     joinRoomId: String? = null,
     autoStart: Boolean = true
@@ -98,6 +99,8 @@ fun GroupCallScreen(
         if (!joinRequested || (!started && !audioGranted)) return@LaunchedEffect
         if (!started && audioGranted) {
             started = true
+            // Returning to a call that is already running (from the floating pill): don't start a new one.
+            GroupCallEngine.state.value.let { live -> if (live.groupId == group.id && live.status !in listOf("idle", "ended", "failed")) return@LaunchedEffect }
             val startCall: ((Boolean) -> Unit) -> Unit = { ready ->
                 if (joinRoomId.isNullOrBlank()) {
                     GroupCallEngine.start(
@@ -142,6 +145,12 @@ fun GroupCallScreen(
     }
 
     val inPip by CallPipState.inPip.collectAsState()
+    // The call ended while minimized: close the PiP window instead of leaving a frozen frame.
+    var groupWasLive by remember { mutableStateOf(false) }
+    LaunchedEffect(state.status, inPip) {
+        if (state.status !in listOf("idle", "ended", "failed")) groupWasLive = true
+        else if (groupWasLive && inPip) { kotlinx.coroutines.delay(700); onPipCallOver() }
+    }
     if (inPip && state.status !in listOf("idle", "ended", "failed")) {
         GroupCallPipContent(state, callPalette.accent)
         return

@@ -77,6 +77,8 @@ import coil.ImageLoader
 import coil.disk.DiskCache
 import coil.memory.MemoryCache
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.launch
+import androidx.lifecycle.lifecycleScope
 
 @androidx.media3.common.util.UnstableApi
 class MainActivity : FragmentActivity() {
@@ -110,19 +112,23 @@ class MainActivity : FragmentActivity() {
         super.onDestroy()
     }
 
+    /** True only while a 1:1 or group VIDEO call is live: the only case that may use Picture-in-Picture. */
+    private fun liveVideoCall(): Boolean {
+        val p = CallEngine.state.value
+        val privateActive = p.status !in listOf("idle", "ended", "declined", "missed", "failed")
+        if (privateActive) return p.video
+        val g = GroupCallEngine.state.value
+        return g.status !in listOf("idle", "ended", "failed") && g.video
+    }
+
     private fun minimizeActiveCall() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val privateState = CallEngine.state.value
-            val privateActive = privateState.status !in listOf("idle", "ended", "declined", "missed", "failed")
-            // Show the call itself in PiP: bring the 1:1 call screen to the front first.
+        val privateActive = CallEngine.state.value.status !in listOf("idle", "ended", "declined", "missed", "failed")
+        // Audio calls never use PiP: they keep running with the in-app bubble / ongoing notification.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && liveVideoCall()) {
             if (privateActive) pendingOpenCall.value = true
-            val video = if (privateActive) privateState.video && !privateState.remoteCameraOff else GroupCallEngine.state.value.video
             runCatching {
-                enterPictureInPictureMode(
-                    PictureInPictureParams.Builder()
-                        .setAspectRatio(if (video) Rational(9, 16) else Rational(1, 1))
-                        .build()
-                )
+                enterPictureInPictureMode(PictureInPictureParams.Builder().setAspectRatio(Rational(9, 16)).build())
+                watchCallEndWhileInPip()
             }.onFailure { onBackPressedDispatcher.onBackPressed() }
         } else {
             onBackPressedDispatcher.onBackPressed()
@@ -132,14 +138,35 @@ class MainActivity : FragmentActivity() {
     override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: android.content.res.Configuration) {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
         com.example.call.CallPipState.set(isInPictureInPictureMode)
+        // Closed / expanded while the call already ended: never leave a frozen frame behind.
+        if (!isInPictureInPictureMode) pipCallWatcher?.cancel()
     }
 
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
-        val privateCallActive = CallEngine.state.value.status !in listOf("idle", "ended", "declined", "missed", "failed")
-        val groupCallActive = GroupCallEngine.state.value.status !in listOf("idle", "ended", "failed")
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !isInPictureInPictureMode && (privateCallActive || groupCallActive)) {
+        // Only a CONNECTED video call auto-enters PiP. Ringing calls, audio calls and in-app
+        // activity switches (pickers, the incoming-call screen) never do.
+        val connected = CallEngine.state.value.status in listOf("connected", "reconnecting") || GroupCallEngine.state.value.status in listOf("connected", "active", "reconnecting")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !isInPictureInPictureMode && connected && liveVideoCall()) {
             minimizeActiveCall()
+        }
+    }
+
+    private var pipCallWatcher: kotlinx.coroutines.Job? = null
+
+    /** When the call ends (either side hangs up) while in PiP, close the PiP window instead of freezing it. */
+    private fun watchCallEndWhileInPip() {
+        pipCallWatcher?.cancel()
+        pipCallWatcher = lifecycleScope.launch {
+            kotlinx.coroutines.flow.combine(CallEngine.state, GroupCallEngine.state) { p, g ->
+                p.status in listOf("idle", "ended", "declined", "missed", "failed") && g.status in listOf("idle", "ended", "failed")
+            }.collect { over ->
+                if (over && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && isInPictureInPictureMode) {
+                    kotlinx.coroutines.delay(600)
+                    com.example.call.CallPipState.set(false)
+                    moveTaskToBack(true)
+                }
+            }
         }
     }
 
@@ -665,7 +692,7 @@ class MainActivity : FragmentActivity() {
                                     group = group,
                                     video = requestedGroupCallVideo,
                                     onClose = { GroupCallEngine.end(); navController.popBackStack() },
-                                    onMinimize = { minimizeActiveCall() },
+                                    onMinimize = { if (liveVideoCall()) minimizeActiveCall() else navController.popBackStack() },
                                     joinRoomId = activeGroupRoomId,
                                     // A room ID means this is an explicit Join action. Start
                                     // immediately; only the group-chat banner remains passive.
@@ -731,6 +758,11 @@ class MainActivity : FragmentActivity() {
                         val groupLive = groupCallState.status !in listOf("idle", "ended", "failed")
                         if (privateLive && currentRoute != "call") Box(Modifier.fillMaxSize().clickable(enabled = false) {}) { com.example.call.PrivateCallPipContent(callState.copy(video = false)) }
                         else if (!privateLive && groupLive && currentRoute != "group_call") Box(Modifier.fillMaxSize().clickable(enabled = false) {}) { com.example.call.GroupCallPipContent(groupCallState) }
+                    }
+                    if (!inCallPip && currentRoute != "group_call" && groupCallState.status !in listOf("idle", "ended", "failed") && activeGroup?.id == groupCallState.groupId && callState.status in listOf("idle", "ended", "declined", "missed", "failed")) {
+                        Box(Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(12.dp)) {
+                            com.example.call.GroupCallReturnPill(groupCallState, onExpand = { navController.navigate("group_call") { launchSingleTop = true } })
+                        }
                     }
                     if (!inCallPip && currentRoute != "call" && callState.status !in listOf("idle", "ended", "declined", "missed", "failed")) {
                         Box(Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(12.dp)) {

@@ -48,24 +48,43 @@ object TextBackupManager {
 
     data class Result(val restored: Boolean, val itemCount: Int = 0, val reason: String = "")
 
+    /**
+     * Updates the ONE backup file of this account in place. The current local cache is merged
+     * with what the file already holds (by message / user / group / post id), so a fresh
+     * install that has not restored yet can never shrink the backup, and no extra files are made.
+     */
     suspend fun export(context: Context, uid: String): Result = runCatching {
         val dao = AppDatabase.getDatabase(context).cacheDao()
+        val previous = readLatest(context, uid)?.let { bytes ->
+            runCatching { JSONObject(String(decrypt(bytes, uid), StandardCharsets.UTF_8)) }.getOrNull()
+        }?.takeIf { it.optString("magic") == MAGIC && it.optString("uid") == uid }
+        fun merged(key: String, idField: String, fresh: List<JSONObject>): JSONArray {
+            val byId = LinkedHashMap<String, JSONObject>()
+            previous?.optJSONArray(key)?.let { old -> for (i in 0 until old.length()) old.optJSONObject(i)?.let { o -> byId[o.optString(idField)] = o } }
+            fresh.forEach { o -> byId[o.optString(idField)] = o }
+            byId.remove("")
+            return JSONArray(byId.values.toList())
+        }
         val root = JSONObject().apply {
             put("magic", MAGIC)
             put("uid", uid)
-            put("createdAt", System.currentTimeMillis())
-            put("users", JSONArray(dao.getAllUsers().first().map(::userJson)))
-            put("messages", JSONArray(buildMessages(dao)))
-            put("groups", JSONArray(dao.getAllGroups().first().map(::groupJson)))
-            put("groupMessages", JSONArray(buildGroupMessages(dao)))
-            put("stories", JSONArray(dao.getAllStories().first().map(::storyJson)))
-            put("posts", JSONArray(dao.getAllPosts().first().map(::postJson)))
+            put("createdAt", previous?.optLong("createdAt")?.takeIf { it > 0 } ?: System.currentTimeMillis())
+            put("updatedAt", System.currentTimeMillis())
+            put("users", merged("users", "uid", dao.getAllUsers().first().map(::userJson)))
+            put("messages", merged("messages", "messageId", buildMessages(dao)))
+            put("groups", merged("groups", "id", dao.getAllGroups().first().map(::groupJson)))
+            put("groupMessages", merged("groupMessages", "messageId", buildGroupMessages(dao)))
+            put("stories", merged("stories", "id", dao.getAllStories().first().map(::storyJson)))
+            put("posts", merged("posts", "id", dao.getAllPosts().first().map(::postJson)))
         }
         val bytes = encrypt(root.toString().toByteArray(StandardCharsets.UTF_8), uid)
         writePrivate(context, uid, bytes)
-        writePublic(context, uid, bytes)
-        Result(restored = false, itemCount = root.length())
+        runCatching { writePublic(context, uid, bytes) }
+        Result(restored = false, itemCount = root.optJSONArray("messages")?.length() ?: 0)
     }.getOrElse { Result(false, reason = it.message ?: "backup failed") }
+
+    /** Where the single backup file lives, for the Settings screen. */
+    fun publicLocation(uid: String): String = "Documents/Convo Chat Backups/$FILE_PREFIX$uid$FILE_SUFFIX"
 
     suspend fun restoreLatest(context: Context, uid: String): Result = runCatching {
         val bytes = readLatest(context, uid) ?: return@runCatching Result(false, reason = "no backup found")
@@ -144,6 +163,11 @@ object TextBackupManager {
         put("edited", x.edited); put("replyToId", x.replyToId); put("replyToText", x.replyToText)
         put("replyToSenderName", x.replyToSenderName); put("seenByRecipient", x.seenByRecipient)
         put("deliveredToRecipient", x.deliveredToRecipient); put("expiresAt", x.expiresAt); put("chatId", x.chatId)
+        // Online media links only (never local file paths), so photos / voice / files come back after restore.
+        fun web(v: String?) = v?.takeIf { it.startsWith("https://") || it.startsWith("http://") }
+        web(x.imageUrl)?.let { put("imageUrl", it) }
+        (web(x.remoteVoiceUrl) ?: web(x.voiceUrl))?.let { put("remoteVoiceUrl", it); x.voiceDurationSec?.let { d -> put("voiceDurationSec", d) } }
+        (web(x.remoteFileUrl) ?: web(x.fileUrl))?.let { put("remoteFileUrl", it); put("fileName", x.fileName ?: ""); put("fileMimeType", x.fileMimeType ?: ""); x.fileSize?.let { z -> put("fileSize", z) } }
     }
 
     private fun messageFromJson(x: JSONObject) = CachedMessage(
@@ -151,8 +175,11 @@ object TextBackupManager {
         senderUsername = x.optString("senderUsername"), text = x.optString("text"), timestamp = x.optLong("timestamp"),
         edited = x.optBoolean("edited"), replyToId = x.optNullableString("replyToId"),
         replyToText = x.optNullableString("replyToText"), replyToSenderName = x.optNullableString("replyToSenderName"),
-        imageUrl = null, voiceUrl = null, voiceDurationSec = null, remoteVoiceUrl = null, fileUrl = null,
-        remoteFileUrl = null, fileName = null, fileMimeType = null, fileSize = null,
+        imageUrl = x.optNullableString("imageUrl"), voiceUrl = x.optNullableString("remoteVoiceUrl"),
+        voiceDurationSec = if (x.has("voiceDurationSec")) x.optInt("voiceDurationSec") else null,
+        remoteVoiceUrl = x.optNullableString("remoteVoiceUrl"), fileUrl = x.optNullableString("remoteFileUrl"),
+        remoteFileUrl = x.optNullableString("remoteFileUrl"), fileName = x.optNullableString("fileName"),
+        fileMimeType = x.optNullableString("fileMimeType"), fileSize = if (x.has("fileSize")) x.optLong("fileSize") else null,
         seenByRecipient = x.optBoolean("seenByRecipient"), deliveredToRecipient = x.optBoolean("deliveredToRecipient"),
         expiresAt = x.optLong("expiresAt"), chatId = x.optString("chatId")
     )
@@ -248,50 +275,77 @@ object TextBackupManager {
 
     private fun writePrivate(context: Context, uid: String, bytes: ByteArray) {
         val dir = File(context.filesDir, "secret_backups").apply { mkdirs() }
-        File(dir, "$FILE_PREFIX$uid$FILE_SUFFIX").writeBytes(bytes)
+        val target = File(dir, "$FILE_PREFIX$uid$FILE_SUFFIX")
+        val tmp = File(dir, "$FILE_PREFIX$uid$FILE_SUFFIX.tmp")
+        tmp.writeBytes(bytes)
+        if (!tmp.renameTo(target)) { target.writeBytes(bytes); tmp.delete() }
+    }
+
+    private const val PUBLIC_DIR = "Convo Chat Backups"
+
+    /** Finds this account's single public backup file (and any legacy timestamped copies we own). */
+    private fun queryPublic(context: Context, uid: String): List<Pair<Uri, String>> {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return emptyList()
+        val collection = MediaStore.Files.getContentUri("external")
+        val projection = arrayOf(MediaStore.Files.FileColumns._ID, MediaStore.Files.FileColumns.DISPLAY_NAME)
+        val selection = "${MediaStore.Files.FileColumns.DISPLAY_NAME} LIKE ?"
+        val out = mutableListOf<Pair<Uri, String>>()
+        runCatching {
+            context.contentResolver.query(collection, projection, selection, arrayOf("$FILE_PREFIX$uid%$FILE_SUFFIX"), "${MediaStore.Files.FileColumns.DATE_MODIFIED} DESC")?.use { c ->
+                while (c.moveToNext()) out += Uri.withAppendedPath(collection, c.getLong(0).toString()) to c.getString(1)
+            }
+        }
+        return out
     }
 
     private fun writePublic(context: Context, uid: String, bytes: ByteArray) {
-        val name = "$FILE_PREFIX$uid-${System.currentTimeMillis()}$FILE_SUFFIX"
+        val name = "$FILE_PREFIX$uid$FILE_SUFFIX"
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            val values = ContentValues().apply {
-                put(MediaStore.Files.FileColumns.DISPLAY_NAME, name)
-                put(MediaStore.Files.FileColumns.MIME_TYPE, "application/octet-stream")
-                put(MediaStore.Files.FileColumns.RELATIVE_PATH, Environment.DIRECTORY_DOCUMENTS + "/Convo Chat Backups")
-                put(MediaStore.Files.FileColumns.IS_PENDING, 1)
+            val found = queryPublic(context, uid)
+            val single = found.firstOrNull { it.second == name }
+            // 1) Overwrite the existing single file in place ("wt" = truncate).
+            val wrote = single != null && runCatching {
+                context.contentResolver.openOutputStream(single.first, "wt")?.use { it.write(bytes) } != null
+            }.getOrDefault(false)
+            if (!wrote) {
+                val values = ContentValues().apply {
+                    put(MediaStore.Files.FileColumns.DISPLAY_NAME, name)
+                    put(MediaStore.Files.FileColumns.MIME_TYPE, "application/octet-stream")
+                    put(MediaStore.Files.FileColumns.RELATIVE_PATH, Environment.DIRECTORY_DOCUMENTS + "/" + PUBLIC_DIR)
+                    put(MediaStore.Files.FileColumns.IS_PENDING, 1)
+                }
+                val uri = context.contentResolver.insert(MediaStore.Files.getContentUri("external"), values) ?: return
+                try {
+                    context.contentResolver.openOutputStream(uri)?.use { it.write(bytes) }
+                    context.contentResolver.update(uri, ContentValues().apply { put(MediaStore.Files.FileColumns.IS_PENDING, 0) }, null, null)
+                } catch (error: Exception) { context.contentResolver.delete(uri, null, null); throw error }
             }
-            val uri = context.contentResolver.insert(MediaStore.Files.getContentUri("external"), values) ?: return
-            try {
-                context.contentResolver.openOutputStream(uri)?.use { it.write(bytes) }
-                context.contentResolver.update(uri, ContentValues().apply { put(MediaStore.Files.FileColumns.IS_PENDING, 0) }, null, null)
-            } catch (error: Exception) { context.contentResolver.delete(uri, null, null); throw error }
+            // 2) Remove the old one-file-per-backup copies made by earlier versions.
+            queryPublic(context, uid).filter { it.second != name }.forEach { runCatching { context.contentResolver.delete(it.first, null, null) } }
         } else {
-            val dir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS), "Convo Chat Backups").apply { mkdirs() }
-            File(dir, name).writeBytes(bytes)
+            val dir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS), PUBLIC_DIR).apply { mkdirs() }
+            val target = File(dir, name)
+            val tmp = File(dir, "$name.tmp")
+            tmp.writeBytes(bytes)
+            if (!tmp.renameTo(target)) { target.writeBytes(bytes); tmp.delete() }
+            dir.listFiles { f -> f.name.startsWith("$FILE_PREFIX$uid-") && f.name.endsWith(FILE_SUFFIX) }?.forEach { it.delete() }
         }
     }
 
     private fun readLatest(context: Context, uid: String): ByteArray? {
         val privateFile = File(context.filesDir, "secret_backups/$FILE_PREFIX$uid$FILE_SUFFIX")
-        if (privateFile.exists()) return privateFile.readBytes()
+        if (privateFile.exists() && privateFile.length() > 0) return privateFile.readBytes()
+        val name = "$FILE_PREFIX$uid$FILE_SUFFIX"
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            val collection = MediaStore.Files.getContentUri("external")
-            val projection = arrayOf(MediaStore.Files.FileColumns._ID, MediaStore.Files.FileColumns.DISPLAY_NAME)
-            val selection = "${MediaStore.Files.FileColumns.DISPLAY_NAME} LIKE ?"
-            val args = arrayOf("$FILE_PREFIX$uid-%$FILE_SUFFIX")
-            context.contentResolver.query(collection, projection, selection, args, "${MediaStore.Files.FileColumns.DATE_MODIFIED} DESC")?.use { cursor ->
-                if (cursor.moveToFirst()) {
-                    val id = cursor.getLong(0)
-                    val uri = Uri.withAppendedPath(collection, id.toString())
-                    return context.contentResolver.openInputStream(uri)?.use(InputStream::readBytes)
-                }
-            }
+            val found = queryPublic(context, uid)
+            val pick = found.firstOrNull { it.second == name } ?: found.firstOrNull()
+            return pick?.let { p -> runCatching { context.contentResolver.openInputStream(p.first)?.use(InputStream::readBytes) }.getOrNull() }
         } else {
-            val dir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS), "Convo Chat Backups")
-            return dir.listFiles { file -> file.name.startsWith("$FILE_PREFIX$uid-") && file.name.endsWith(FILE_SUFFIX) }
+            val dir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS), PUBLIC_DIR)
+            File(dir, name).takeIf { it.exists() }?.let { return it.readBytes() }
+            return dir.listFiles { file -> file.name.startsWith("$FILE_PREFIX$uid") && file.name.endsWith(FILE_SUFFIX) }
                 ?.maxByOrNull { it.lastModified() }?.readBytes()
         }
-        return null
     }
 }
 

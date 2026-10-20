@@ -45,6 +45,12 @@ fun AdminAutoPostPanel() {
     var styled by remember { mutableStateOf(true) }
     var startHour by remember { mutableIntStateOf(8) }
     var endHour by remember { mutableIntStateOf(23) }
+    var withImage by remember { mutableStateOf(false) }
+    var useWebSearch by remember { mutableStateOf(false) }
+    var searchTopic by remember { mutableStateOf("") }
+    var seriesEnabled by remember { mutableStateOf(false) }
+    var seriesTopic by remember { mutableStateOf("") }
+    var seriesMaxParts by remember { mutableIntStateOf(5) }
     var status by remember { mutableStateOf<Map<String, Any?>>(emptyMap()) }
     var saving by remember { mutableStateOf(false) }
     var posting by remember { mutableStateOf(false) }
@@ -64,6 +70,12 @@ fun AdminAutoPostPanel() {
                 styled = data["styledBackground"] as? Boolean ?: true
                 startHour = (data["startHour"] as? Number)?.toInt() ?: 8
                 endHour = (data["endHour"] as? Number)?.toInt() ?: 23
+                withImage = data["withImage"] as? Boolean ?: false
+                useWebSearch = data["useWebSearch"] as? Boolean ?: false
+                searchTopic = data["searchTopic"] as? String ?: ""
+                seriesEnabled = data["seriesEnabled"] as? Boolean ?: false
+                seriesTopic = data["seriesTopic"] as? String ?: ""
+                seriesMaxParts = (data["seriesMaxParts"] as? Number)?.toInt() ?: 5
                 loaded = true
             }
         }
@@ -83,6 +95,12 @@ fun AdminAutoPostPanel() {
             "styledBackground" to styled,
             "startHour" to startHour,
             "endHour" to endHour,
+            "withImage" to withImage,
+            "useWebSearch" to useWebSearch,
+            "searchTopic" to searchTopic.trim().take(200),
+            "seriesEnabled" to seriesEnabled,
+            "seriesTopic" to seriesTopic.trim().take(120),
+            "seriesMaxParts" to seriesMaxParts,
             "tzOffsetMinutes" to (java.util.TimeZone.getDefault().getOffset(System.currentTimeMillis()) / 60_000),
             "adminUid" to uid,
             "updatedAt" to System.currentTimeMillis(),
@@ -107,7 +125,7 @@ fun AdminAutoPostPanel() {
         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             listOf(
                 "mixed" to "Mixed", "status" to "Status", "tip" to "Tips", "quote" to "Quotes",
-                "question" to "Questions", "fun_fact" to "Fun facts", "motivation" to "Motivation", "poll" to "Polls"
+                "question" to "Questions", "fun_fact" to "Fun facts", "motivation" to "Motivation", "poll" to "Polls", "news" to "Fresh news"
             ).forEach { (id, label) -> FilterChip(selected = postType == id, onClick = { postType = id }, label = { Text(label) }) }
         }
         Text("Language", fontWeight = FontWeight.Bold, fontSize = 13.sp)
@@ -124,6 +142,16 @@ fun AdminAutoPostPanel() {
         )
         AdminAutoSwitch("Use emoji", "Add 2–4 fitting emoji to each post", useEmoji) { useEmoji = it }
         AdminAutoSwitch("Colorful background", "Short text posts use a random gradient canvas", styled) { styled = it }
+        AdminAutoSwitch("AI picture in posts", "Each post gets a matching AI-generated image (free, no key)", withImage) { withImage = it }
+        AdminAutoSwitch("AI web search + link", "Uses fresh information from the web and adds the source link", useWebSearch) { useWebSearch = it }
+        if (useWebSearch || postType == "news") OutlinedTextField(searchTopic, { searchTopic = it.take(200) }, label = { Text("Search topic (optional)") }, placeholder = { Text("e.g. Bangladesh tech news, football, space") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+        AdminAutoSwitch("Part-by-part story series", "Posts a continuing story: Part 1, Part 2 … each one picks up where the last ended", seriesEnabled) { seriesEnabled = it }
+        if (seriesEnabled) {
+            OutlinedTextField(seriesTopic, { seriesTopic = it.take(120) }, label = { Text("Story topic / title") }, placeholder = { Text("e.g. A village boy who builds a robot") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            Text("Parts per story: $seriesMaxParts  ·  now at part ${((status["seriesPart"] as? Number)?.toInt() ?: 0)}", fontSize = 12.sp)
+            Slider(value = seriesMaxParts.toFloat(), onValueChange = { seriesMaxParts = it.toInt() }, valueRange = 2f..20f, steps = 17)
+            TextButton(onClick = { save(mapOf("seriesPart" to 0, "seriesSummary" to ""), "Story restarts at Part 1") }) { Text("Restart the story from Part 1") }
+        }
         Text("Posting hours: ${hourLabel(startHour)} – ${hourLabel(endHour)}", fontWeight = FontWeight.Bold, fontSize = 13.sp)
         Text("Start", fontSize = 12.sp)
         Slider(value = startHour.toFloat(), onValueChange = { startHour = it.toInt() }, valueRange = 0f..23f, steps = 22)
@@ -140,7 +168,10 @@ fun AdminAutoPostPanel() {
                     scope.launch {
                         val settings = mapOf(
                             "postType" to postType, "language" to language, "prompt" to prompt,
-                            "useEmoji" to useEmoji, "styledBackground" to styled
+                            "useEmoji" to useEmoji, "styledBackground" to styled,
+                            "withImage" to withImage, "useWebSearch" to useWebSearch, "searchTopic" to searchTopic,
+                            "seriesEnabled" to seriesEnabled, "seriesTopic" to seriesTopic, "seriesMaxParts" to seriesMaxParts,
+                            "seriesPart" to ((status["seriesPart"] as? Number)?.toInt() ?: 0), "seriesSummary" to (status["seriesSummary"] as? String ?: "")
                         )
                         val msg = runCatching { publishAiPostNow(settings) }.getOrElse { "Test post failed: ${it.localizedMessage}" }
                         posting = false

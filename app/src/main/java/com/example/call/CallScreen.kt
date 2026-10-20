@@ -119,7 +119,10 @@ class IncomingCallActivity : ComponentActivity() {
         openMainAndFinish()
     }
 
+    private var leavingToApp = false
+
     private fun openMainAndFinish() {
+        leavingToApp = true
         runCatching {
             startActivity(Intent(this, com.example.MainActivity::class.java).apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
@@ -148,7 +151,8 @@ class IncomingCallActivity : ComponentActivity() {
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
         val active = CallEngine.state.value.status !in listOf("idle", "ended", "declined", "missed", "failed")
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && active && !isInPictureInPictureMode) minimizeCallToPip()
+        // PiP only for live video calls; audio calls continue in the background with the ongoing notification.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && active && !leavingToApp && CallEngine.state.value.video && CallEngine.state.value.status in listOf("connected", "reconnecting") && !isInPictureInPictureMode) minimizeCallToPip()
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -244,7 +248,17 @@ fun CallScreen(
             CallEngine.acceptIncoming(context, callId, remoteUid, remoteName, remoteImage, effectiveVideo)
         } else pendingAccept = false
     }
-    LaunchedEffect(state.status) { if (state.status in listOf("ended", "declined", "missed", "failed")) kotlinx.coroutines.delay(900).also { onClose() } }
+    // Close the call UI whenever the call is over, including when the engine resets straight to "idle"
+    // (remote hang-up during PiP) so a frozen frame never stays on screen.
+    var wasLive by remember { mutableStateOf(false) }
+    LaunchedEffect(state.status) {
+        if (state.status !in listOf("idle", "ended", "declined", "missed", "failed")) wasLive = true
+        if (state.status in listOf("ended", "declined", "missed", "failed") || (state.status == "idle" && wasLive)) {
+            kotlinx.coroutines.delay(900)
+            CallPipState.set(false)
+            onClose()
+        }
+    }
     if (inPip && accepted) {
         // Picture-in-Picture: only the call — never a shrunken copy of the whole screen.
         PrivateCallPipContent(state, callPalette.accent)

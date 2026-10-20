@@ -600,16 +600,29 @@ fun AdminEmailSecurityPanel() {
     var statusOk by remember { mutableStateOf(true) }
     var busy by remember { mutableStateOf(false) }
     var live by remember { mutableStateOf<Map<String, JSONObject>>(emptyMap()) }
+    var skippedWhy by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
+    var workerProblem by remember { mutableStateOf("") }
+    var gmailRedirect by remember { mutableStateOf("") }
+    val context = androidx.compose.ui.platform.LocalContext.current
 
     suspend fun refreshLive() {
         val (code, j) = runCatching { convoWorkerPost("database", "/admin/email/providers", JSONObject()) }.getOrElse { 0 to JSONObject() }
         if (code in 200..299) {
             val arr = j.optJSONArray("providers")
             live = buildMap<String, JSONObject> { if (arr != null) for (i in 0 until arr.length()) arr.optJSONObject(i)?.let { put(it.optString("id"), it) } }
-        }
+            val sk = j.optJSONArray("skipped")
+            skippedWhy = buildMap { if (sk != null) for (i in 0 until sk.length()) sk.optJSONObject(i)?.let { put(it.optString("id"), it.optString("reason")) } }
+            gmailRedirect = j.optString("gmailRedirectUri")
+            val api = j.optInt("apiVersion", 0)
+            workerProblem = when {
+                j.optString("readError").isNotBlank() -> "The Worker cannot read admin_secrets/email: ${j.optString("readError")}. Check the FIREBASE_SERVICE_ACCOUNT secret."
+                api in 1 until com.example.data.WorkerHealth.REQUIRED_API_VERSION || !j.has("skipped") -> "The live Worker is an OLD version, so it ignores most providers. Update it: Admin → Server health → Update Worker now."
+                else -> ""
+            }
+        } else workerProblem = if (code == 404) "The live Worker is an OLD version (no e-mail pool). Update it: Admin → Server health → Update Worker now." else if (code == 0) "Worker not reachable." else "Worker error HTTP $code: ${j.optString("error")}"
     }
 
-    LaunchedEffect(Unit) {
+    suspend fun reload() {
         runCatching { doc.get().awaitTask() }.getOrNull()?.let { d ->
             enabled = d.getBoolean("enabled") != false
             strategy = d.getString("strategy") ?: "random"
@@ -619,7 +632,9 @@ fun AdminEmailSecurityPanel() {
             providers.clear()
             // Legacy single provider becomes the first pool entry so nothing stops working.
             val legacyKey = d.getString("apiKey").orEmpty()
-            if (legacyKey.isNotBlank()) providers += MailProviderEntry("primary", d.getString("provider") ?: "brevo", apiKey = legacyKey, fromEmail = fromEmail, fromName = fromName)
+            @Suppress("UNCHECKED_CAST")
+            val listHasPrimary = (d.get("providers") as? List<Map<String, Any?>>)?.any { it["id"]?.toString() == "primary" } == true
+            if (legacyKey.isNotBlank() && !listHasPrimary) providers += MailProviderEntry("primary", d.getString("provider") ?: "brevo", apiKey = legacyKey, fromEmail = fromEmail, fromName = fromName)
             @Suppress("UNCHECKED_CAST")
             (d.get("providers") as? List<Map<String, Any?>>)?.forEach { m ->
                 val id = m["id"]?.toString().orEmpty().ifBlank { "p" + System.nanoTime().toString().takeLast(6) }
@@ -635,6 +650,15 @@ fun AdminEmailSecurityPanel() {
         refreshLive()
     }
 
+    LaunchedEffect(Unit) { reload() }
+    // Back from the Google sign-in page: re-read what the Worker saved (never overwrite it with a stale list).
+    val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val obs = androidx.lifecycle.LifecycleEventObserver { _, ev -> if (ev == androidx.lifecycle.Lifecycle.Event.ON_RESUME && loaded) scope.launch { reload() } }
+        lifecycleOwner.lifecycle.addObserver(obs)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
+    }
+
     fun save(test: String?) = scope.launch {
         busy = true
         val primary = providers.firstOrNull { it.id == "primary" }
@@ -642,7 +666,9 @@ fun AdminEmailSecurityPanel() {
             "enabled" to enabled, "strategy" to strategy, "fromEmail" to fromEmail, "fromName" to fromName,
             "replyTo" to replyTo, "brandName" to fromName.ifBlank { "Convo Chat" }, "brandUrl" to brandUrl,
             "sponsorLine" to sponsorLine, "supportEmail" to supportEmail,
-            "providers" to providers.filter { it.id != "primary" }.map { it.toMap() },
+            // Every provider (including the legacy "primary") with ALL its fields, so Gmail/Mailjet/Mailgun
+            // secrets of the primary entry are no longer lost on save.
+            "providers" to providers.map { it.toMap() },
             "updatedAt" to System.currentTimeMillis()
         )
         // Keep the legacy fields for older Workers.
@@ -664,7 +690,34 @@ fun AdminEmailSecurityPanel() {
         busy = false
     }
 
+    fun connectGmail(entry: MailProviderEntry) = scope.launch {
+        busy = true
+        val i = providers.indexOfFirst { it.id == entry.id }
+        if (i >= 0) providers[i] = entry else providers += entry
+        editing = null
+        val result = runCatching {
+            save(null).join()
+            val body = JSONObject().put("clientId", entry.clientId.trim()).put("clientSecret", entry.secret.trim()).put("providerId", entry.id)
+                .put("fromName", entry.fromName.ifBlank { fromName }).put("weight", entry.weight)
+            val (code, j) = convoWorkerPost("database", "/admin/gmail/oauth/start", body)
+            if (code !in 200..299 || j.optString("url").isBlank()) throw IllegalStateException(j.optString("error").ifBlank { if (code == 404) "Update the Worker first (Admin → Server health)" else "HTTP $code" })
+            gmailRedirect = j.optString("redirectUri")
+            context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(j.optString("url"))).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+            "Sign in with the Gmail account in the browser and allow \"Send e-mail\". You come back here automatically and the token is saved on the server."
+        }
+        statusOk = result.isSuccess
+        status = result.getOrElse { "Gmail connect failed: ${it.message}" }
+        busy = false
+    }
+
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        if (workerProblem.isNotBlank()) Surface(shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.errorContainer) {
+            Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.Warning, null, tint = MaterialTheme.colorScheme.onErrorContainer)
+                Spacer(Modifier.width(8.dp))
+                Text(workerProblem, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onErrorContainer)
+            }
+        }
         Text(
             "Security codes, new sign-in alerts and recovery e-mails. Add several providers: each e-mail goes through a random one, and if it fails or hits its limit the next one is tried automatically. Keys stay in admin-only Firestore and are used only by the Worker.",
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -694,12 +747,14 @@ fun AdminEmailSecurityPanel() {
                         Text(info.label + if (p.id == "primary") "  ·  primary" else "", fontWeight = FontWeight.SemiBold, maxLines = 1)
                         Text(p.fromEmail.ifBlank { fromEmail }.ifBlank { "No sender e-mail" } + "  ·  free ${info.free}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
                         val line = when {
+                            stat == null && skippedWhy[p.id] != null -> "Not used: ${skippedWhy[p.id]}"
+                            stat == null && !p.enabled -> "Switched off"
                             stat == null -> "Not loaded by the Worker yet (save, or redeploy the Worker)"
                             cooling > 0 -> "Resting ${cooling / 60 + 1} min after an error: ${st?.optString("lastError").orEmpty().take(70)}"
                             st != null -> "Today ${st.optInt("sentToday")} sent · ${st.optInt("failedToday")} failed · total ${st.optInt("sentTotal")}"
                             else -> "Ready"
                         }
-                        Text(line, style = MaterialTheme.typography.labelSmall, color = if (cooling > 0) MaterialTheme.colorScheme.error else Color(0xFF2E7D32), maxLines = 2)
+                        Text(line, style = MaterialTheme.typography.labelSmall, color = if (cooling > 0 || (stat == null && p.enabled)) MaterialTheme.colorScheme.error else Color(0xFF2E7D32), maxLines = 3)
                     }
                     Switch(p.enabled, { on -> providers[index] = p.copy(enabled = on) })
                     IconButton(onClick = { editing = p }) { Icon(Icons.Default.Edit, "Edit") }
@@ -741,6 +796,8 @@ fun AdminEmailSecurityPanel() {
             initial = entry,
             defaultFrom = fromEmail,
             isNew = providers.none { it.id == entry.id },
+            redirectUri = gmailRedirect,
+            onConnectGmail = { connectGmail(it) },
             onDismiss = { editing = null },
             onDelete = { providers.removeAll { it.id == entry.id }; editing = null },
             onSave = { updated ->
@@ -753,12 +810,13 @@ fun AdminEmailSecurityPanel() {
 }
 
 @Composable
-private fun MailProviderEditor(initial: MailProviderEntry, defaultFrom: String, isNew: Boolean, onDismiss: () -> Unit, onDelete: () -> Unit, onSave: (MailProviderEntry) -> Unit) {
+private fun MailProviderEditor(initial: MailProviderEntry, defaultFrom: String, isNew: Boolean, redirectUri: String = "", onConnectGmail: (MailProviderEntry) -> Unit = {}, onDismiss: () -> Unit, onDelete: () -> Unit, onSave: (MailProviderEntry) -> Unit) {
     var e by remember(initial.id) { mutableStateOf(initial) }
     var showKey by remember { mutableStateOf(false) }
     val info = mailInfo(e.type)
     val hidden = if (showKey) androidx.compose.ui.text.input.VisualTransformation.None else PasswordVisualTransformation()
-    val valid = (info.type == "gmail_sa" || e.apiKey.length > 8) &&
+    val gmailOauth = info.type == "gmail_oauth"
+    val valid = (info.type == "gmail_sa" || e.apiKey.length > 8 || gmailOauth) &&
         (info.secretLabel == null || e.secret.isNotBlank()) && (info.domainLabel == null || e.domain.isNotBlank()) &&
         (info.clientIdLabel == null || e.clientId.isNotBlank()) && e.fromEmail.ifBlank { defaultFrom }.contains("@")
     AlertDialog(
@@ -778,11 +836,31 @@ private fun MailProviderEditor(initial: MailProviderEntry, defaultFrom: String, 
                         }
                     }
                 }
-                Text(info.help, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                if (info.type != "gmail_sa") OutlinedTextField(e.apiKey, { e = e.copy(apiKey = it.trim()) }, label = { Text(info.keyLabel) }, singleLine = true, visualTransformation = hidden,
+                Text(if (gmailOauth) "Easiest: enter the OAuth client ID + secret below, then tap Connect Gmail. You sign in once in the browser; the Worker receives the redirect, stores the refresh token on the server and sends you back here. Google Cloud setup: enable Gmail API, OAuth consent screen = External + Publish (In production, otherwise Google expires the token after 7 days), create an OAuth client of type Web application and add the redirect URI shown below." else info.help, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (gmailOauth) {
+                    val ctx = androidx.compose.ui.platform.LocalContext.current
+                    val uri = redirectUri.ifBlank { "https://<your-worker>/gmail/oauth/callback" }
+                    Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceVariant, modifier = Modifier.fillMaxWidth().clickable {
+                        (ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager).setPrimaryClip(android.content.ClipData.newPlainText("redirect", uri))
+                        android.widget.Toast.makeText(ctx, "Redirect URI copied", android.widget.Toast.LENGTH_SHORT).show()
+                    }) {
+                        Column(Modifier.padding(10.dp)) {
+                            Text("Authorized redirect URI (tap to copy)", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                            Text(uri, style = MaterialTheme.typography.bodySmall, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
+                        }
+                    }
+                    Text(if (e.apiKey.isNotBlank()) "Status: connected (refresh token stored)" else "Status: not connected yet", style = MaterialTheme.typography.labelMedium, color = if (e.apiKey.isNotBlank()) Color(0xFF2E7D32) else MaterialTheme.colorScheme.error)
+                }
+                if (info.type != "gmail_sa" && !gmailOauth) OutlinedTextField(e.apiKey, { e = e.copy(apiKey = it.trim()) }, label = { Text(info.keyLabel) }, singleLine = true, visualTransformation = hidden,
                     trailingIcon = { IconButton(onClick = { showKey = !showKey }) { Icon(if (showKey) Icons.Default.VisibilityOff else Icons.Default.Visibility, null) } }, modifier = Modifier.fillMaxWidth())
                 info.clientIdLabel?.let { l -> OutlinedTextField(e.clientId, { e = e.copy(clientId = it.trim()) }, label = { Text(l) }, singleLine = true, modifier = Modifier.fillMaxWidth()) }
                 info.secretLabel?.let { l -> OutlinedTextField(e.secret, { e = e.copy(secret = it.trim()) }, label = { Text(l) }, singleLine = true, visualTransformation = hidden, modifier = Modifier.fillMaxWidth()) }
+                if (gmailOauth) Button(
+                    enabled = e.clientId.trim().endsWith(".apps.googleusercontent.com") && e.secret.length >= 8,
+                    onClick = { onConnectGmail(e) }, modifier = Modifier.fillMaxWidth()
+                ) { Icon(Icons.Default.Login, null); Spacer(Modifier.width(8.dp)); Text(if (e.apiKey.isBlank()) "Connect Gmail (sign in with Google)" else "Reconnect Gmail") }
+                if (gmailOauth) TextButton(onClick = { showKey = !showKey }) { Text(if (showKey) "Hide manual refresh-token field" else "Advanced: paste a refresh token manually") }
+                if (gmailOauth && showKey) OutlinedTextField(e.apiKey, { e = e.copy(apiKey = it.trim()) }, label = { Text(info.keyLabel) }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 info.domainLabel?.let { l -> OutlinedTextField(e.domain, { e = e.copy(domain = it.trim()) }, label = { Text(l) }, singleLine = true, modifier = Modifier.fillMaxWidth()) }
                 if (info.regions.isNotEmpty()) Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     info.regions.forEach { r -> FilterChip(selected = e.region.ifBlank { info.regions.first() } == r, onClick = { e = e.copy(region = r) }, label = { Text(r.uppercase()) }) }

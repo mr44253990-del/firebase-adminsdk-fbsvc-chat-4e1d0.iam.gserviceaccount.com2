@@ -44,6 +44,21 @@
                 android:resource="@xml/file_paths" />
         </provider>
 
+        <!-- Return hop after the admin finishes Google sign-in (Gmail connect): brings the open app back. -->
+        <activity
+            android:name=".DeepLinkReturnActivity"
+            android:exported="true"
+            android:noHistory="true"
+            android:excludeFromRecents="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="convochat" android:host="admin" />
+            </intent-filter>
+        </activity>
+
         <activity
             android:name=".MainActivity"
             android:exported="true"

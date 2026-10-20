@@ -103,7 +103,7 @@ class IncomingGroupCallActivity : ComponentActivity() {
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
         val active = accepted && GroupCallEngine.state.value.status !in listOf("idle", "ended", "failed")
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && active && !isInPictureInPictureMode) minimizeCallToPip()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && active && GroupCallEngine.state.value.video && !isInPictureInPictureMode) minimizeCallToPip()
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -136,7 +136,8 @@ class IncomingGroupCallActivity : ComponentActivity() {
                         // the passive Join Call card is only for group-chat banners.
                         autoStart = true,
                         onClose = { GroupCallEngine.end(); finish() },
-                        onMinimize = { minimizeCallToPip() }
+                        onMinimize = { if (GroupCallEngine.state.value.video) minimizeCallToPip() else moveTaskToBack(true) },
+                        onPipCallOver = { CallPipState.set(false); finish() }
                     )
                 } else {
                     IncomingGroupCallPrompt(

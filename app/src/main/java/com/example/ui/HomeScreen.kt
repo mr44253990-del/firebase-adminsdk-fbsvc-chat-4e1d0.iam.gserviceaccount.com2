@@ -322,7 +322,7 @@ fun HomeScreen(
         kotlinx.coroutines.delay(1400)
         if (!CoachTour.isDone(context)) coachTourActive = true
     }
-    LaunchedEffect(coachReplay) { if (coachReplay > 0) { kotlinx.coroutines.delay(350); coachTourActive = true } }
+    LaunchedEffect(coachReplay) { if (coachReplay && CoachTour.consumeReplay()) { kotlinx.coroutines.delay(350); coachTourActive = true } }
 
     Scaffold(
         modifier = Modifier.fillMaxSize().coachBlurHost(coachTourActive && currentTab != 6, CoachTour.activeKey.value?.let { CoachTour.targets[it] }),
