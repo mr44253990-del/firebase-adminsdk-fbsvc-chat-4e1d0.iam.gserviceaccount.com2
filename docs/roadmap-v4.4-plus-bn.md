@@ -193,3 +193,7 @@
 **আংশিক—রোডম্যাপের সম্পূর্ণ scope নয়:** #12 search এই ফোনে cache হওয়া Room messages-এ; server-side পুরনো cloud history নয়। #32 storage manager অ্যাপের DownloadManager-এ তৈরি Downloads দেখায়; প্রতি-chat cache বা database usage breakdown নয়। #37 call history এই মুহূর্তে 1:1 কলের local history; group calls/সিঙ্ক পরের কাজ। #11 lock-এর জন্য Android secure screen lock বা biometrics দরকার; lock preferences device-local।
 
 **এখনও বাকি:** প্রথম ধাপের #52 voice-message transcription, #73 account deletion/data export, #82 swipe actions, #116 Crashlytics এবং #122 deprecated API cleanup-ও এই series-এ শেষ হয়নি। ১২৪টি আইডিয়া একটি দীর্ঘমেয়াদি backlog; সব এক release-এ সম্পন্ন বলা হচ্ছে না। যেসব ফিচারে merchant account, cloud storage/stream, provider key, Play Console বা account-data erasure backend দরকার, সেগুলোর setup আগে লাগবে।
+
+## v4.4.3 UI/verification update
+
+v4.4.3-তে নতুন UI backlog item #125–#131-এর targeted অংশ যোগ করা হয়েছে: chat tools collapse menu, full-screen insets, searchable/filterable 1:1 call history with callback, Smart system/wallpaper theme, animated local-search loading, SMS one-time-code autofill hint/clipboard paste, এবং existing 2-step code-entry paste convenience। আগের 124-item roadmap সম্পূর্ণ হয়েছে—এমন দাবি নয়। নতুন পরবর্তী পর্যায়ের 100-item প্রস্তাব `docs/roadmap-v4.5-to-v5.0-bn.md`-এ। Release caveat: CI outcome এবং actual deploy সম্পন্ন হলে সংশ্লিষ্ট status আপডেট করতে হবে।

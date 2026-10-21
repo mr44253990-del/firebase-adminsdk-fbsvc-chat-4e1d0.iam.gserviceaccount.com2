@@ -2,6 +2,7 @@ package com.example.ui
 
 import android.Manifest
 import android.content.Context
+import android.content.ClipboardManager
 import android.content.pm.PackageManager
 import android.provider.ContactsContract
 import android.widget.Toast
@@ -22,6 +23,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Contacts
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PhoneAndroid
@@ -36,6 +38,9 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.autofill.ContentType
+import androidx.compose.ui.semantics.contentType
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
@@ -287,7 +292,15 @@ fun PhoneVerifyPanel(
                 code, { v -> code = v.filter(Char::isDigit).take(6) }, label = { Text(tr("6-digit code")) }, singleLine = true,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
                 textStyle = LocalTextStyle.current.copy(fontSize = 22.sp, letterSpacing = 8.sp, fontWeight = FontWeight.Bold, color = textColor),
-                colors = fieldColors, shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()
+                trailingIcon = {
+                    IconButton(onClick = {
+                        val clip = (context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager)?.primaryClip?.getItemAt(0)?.coerceToText(context)?.toString().orEmpty()
+                        val otp = clip.filter(Char::isDigit).take(6)
+                        if (otp.isNotBlank()) code = otp
+                    }) { Icon(Icons.Default.ContentPaste, "Paste verification code", tint = accent) }
+                },
+                colors = fieldColors, shape = RoundedCornerShape(16.dp),
+                modifier = Modifier.fillMaxWidth().semantics { contentType = ContentType.SmsOtp }
             )
             GradientActionButton(if (busy) tr("Verifying…") else submitLabel, accent, enabled = code.length == 6 && !busy, loading = busy) {
                 val id = verificationId ?: return@GradientActionButton

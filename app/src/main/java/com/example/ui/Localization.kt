@@ -507,5 +507,14 @@ private val BENGALI: Map<String, String> = mapOf(
     "Open map" to "ম্যাপ খুলুন", "Directions" to "দিকনির্দেশ", "Live location" to "লাইভ লোকেশন", "Shared location" to "শেয়ার করা লোকেশন",
     // Calls
     "Mute" to "মিউট", "Speaker" to "স্পিকার", "Camera off" to "ক্যামেরা বন্ধ", "Flip" to "ঘোরান", "Filters" to "ফিল্টার", "Torch" to "টর্চ",
-    "End" to "শেষ", "Share screen" to "স্ক্রিন শেয়ার", "Minimize" to "ছোট করুন"
+    "End" to "শেষ", "Share screen" to "স্ক্রিন শেয়ার", "Minimize" to "ছোট করুন",
+    "Tools & filters" to "টুলস ও ফিল্টার", "Saved, calls, discovery and chat filters" to "সেভড, কল, খোঁজ ও চ্যাট ফিল্টার",
+    "Call history" to "কলের ইতিহাস", "Search chats" to "চ্যাটে খুঁজুন", "All" to "সব", "Unread" to "অপঠিত",
+    "Archived" to "আর্কাইভ", "Locked" to "লক করা", "chats" to "চ্যাট", "Recent calls" to "সাম্প্রতিক কল",
+    "Find a person in call history" to "কলের ইতিহাসে নাম খুঁজুন", "Missed" to "মিসড", "Incoming" to "ইনকামিং",
+    "Outgoing" to "আউটগোয়িং", "Completed" to "সম্পন্ন", "Declined" to "প্রত্যাখ্যাত", "Cancelled" to "বাতিল",
+    "No answer" to "কেউ ধরেনি", "Failed" to "ব্যর্থ", "No calls yet" to "এখনও কোনো কল নেই",
+    "No matching calls" to "মিলে এমন কল নেই", "Your recent calls will appear here." to "আপনার সাম্প্রতিক কল এখানে দেখা যাবে।",
+    "Try a different filter or search." to "অন্য ফিল্টার বা শব্দ দিয়ে খুঁজুন।", "Video call back" to "ভিডিও কল ফিরিয়ে দিন",
+    "Call back" to "আবার কল করুন", "Remove call" to "কলের রেকর্ড মুছুন", "Offline" to "অফলাইন"
 )

@@ -133,6 +133,7 @@ private fun copyText(context: Context, label: String, text: String) {
 
 @Composable
 private fun CodeField(value: String, onChange: (String) -> Unit, label: String = "6-digit code", allowBackup: Boolean = false) {
+    val context = LocalContext.current
     OutlinedTextField(
         value = value,
         onValueChange = { v -> onChange(if (allowBackup) v.uppercase().filter { it.isLetterOrDigit() || it == '-' }.take(9) else v.filter(Char::isDigit).take(6)) },
@@ -140,6 +141,13 @@ private fun CodeField(value: String, onChange: (String) -> Unit, label: String =
         singleLine = true,
         textStyle = MaterialTheme.typography.headlineSmall.copy(fontFamily = FontFamily.Monospace, letterSpacing = 6.sp, textAlign = TextAlign.Center),
         keyboardOptions = KeyboardOptions(keyboardType = if (allowBackup) KeyboardType.Ascii else KeyboardType.NumberPassword),
+        trailingIcon = {
+            IconButton(onClick = {
+                val clip = (context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager)?.primaryClip?.getItemAt(0)?.coerceToText(context)?.toString().orEmpty()
+                val pasted = if (allowBackup) clip.uppercase().filter { it.isLetterOrDigit() || it == '-' }.take(9) else clip.filter(Char::isDigit).take(6)
+                if (pasted.isNotBlank()) onChange(pasted)
+            }) { Icon(Icons.Default.ContentPaste, "Paste code") }
+        },
         shape = RoundedCornerShape(16.dp),
         modifier = Modifier.fillMaxWidth()
     )

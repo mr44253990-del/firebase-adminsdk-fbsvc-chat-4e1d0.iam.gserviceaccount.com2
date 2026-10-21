@@ -284,7 +284,7 @@ fun TextFileViewerDialog(uri: Uri, name: String, mime: String, onDismiss: () -> 
         }
     }
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
-        Column(Modifier.fillMaxSize().background(Color(0xFF0E0F14))) {
+        Column(Modifier.fillMaxSize().navigationBarsPadding().background(Color(0xFF0E0F14))) {
             Row(Modifier.fillMaxWidth().background(Color.Black.copy(alpha = .6f)).windowInsetsPadding(WindowInsets.statusBars).padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, "Close", tint = Color.White) }
                 Text(name, color = Color.White, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)

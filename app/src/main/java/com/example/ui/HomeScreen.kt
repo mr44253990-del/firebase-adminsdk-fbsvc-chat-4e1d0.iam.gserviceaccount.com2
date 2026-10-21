@@ -13,6 +13,7 @@ import android.content.pm.PackageManager
 import android.media.MediaPlayer
 import android.net.Uri
 import android.os.Build
+import android.text.format.DateUtils
 import android.provider.Settings
 import android.util.Log
 import android.widget.Toast
@@ -256,12 +257,14 @@ fun HomeScreen(
 
     var searchQuery by remember { mutableStateOf("") }
     var chatFilter by rememberSaveable { mutableStateOf("all") }
+    var showChatTools by rememberSaveable { mutableStateOf(false) }
     var feedFilter by rememberSaveable { mutableStateOf("All Posts") }
     var showAnalytics by remember { mutableStateOf(false) }
     var showAccountMenu by remember { mutableStateOf(false) }
     var showActivityCenter by remember { mutableStateOf(false) }
     var showGlobalSearch by remember { mutableStateOf(false) }
     var showLockSetup by remember { mutableStateOf(false) }
+    var showLockDisableConfirm by remember { mutableStateOf(false) }
     var showReportDialog by remember { mutableStateOf(false) }
     var showAllDeviceSessions by rememberSaveable { mutableStateOf(false) }
     var deviceSessionPendingDelete by remember { mutableStateOf<DeviceSession?>(null) }
@@ -361,44 +364,40 @@ fun HomeScreen(
                 // App branding top bar
                 TopAppBar(
                     title = {
-                        Column {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    text = "Convo Chat",
-                                    fontWeight = FontWeight.Black,
-                                    fontSize = 25.sp,
-                                    color = MaterialTheme.colorScheme.primary,
-                                    letterSpacing = (-0.8).sp
-                                )
-                                Spacer(Modifier.width(5.dp))
-                                Icon(
-                                    Icons.Default.Verified,
-                                    contentDescription = "Verified",
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(19.dp)
-                                )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(Modifier.size(40.dp).clip(CircleShape).background(Brush.linearGradient(listOf(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.tertiary))).padding(2.dp)) {
+                                Image(painterResource(R.drawable.img_app_logo), contentDescription = "Convo Chat", modifier = Modifier.fillMaxSize().clip(CircleShape))
                             }
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Box(
-                                    Modifier.size(8.dp).clip(CircleShape).background(
-                                        if (isOnlineState) Color(0xFF26E86F) else Color(0xFFFF5252)
+                            Spacer(Modifier.width(9.dp))
+                            Column {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        text = "Convo Chat",
+                                        fontWeight = FontWeight.Black,
+                                        fontSize = 23.sp,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        letterSpacing = (-0.8).sp
                                     )
-                                )
-                                Spacer(Modifier.width(6.dp))
-                                Text(
-                                    text = if (isOnlineState) "Online" else "Offline Cache Active",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
+                                    Spacer(Modifier.width(5.dp))
+                                    Icon(Icons.Default.Verified, contentDescription = "Verified", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+                                }
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Box(Modifier.size(7.dp).clip(CircleShape).background(if (isOnlineState) Color(0xFF26E86F) else Color(0xFFFF5252)))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(text = if (isOnlineState) "Online" else "Offline Cache Active", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
                             }
                         }
                     },
                     actions = {
-                        IconButton(onClick = onPremium) {
+                        if (currentTab != 1) IconButton(onClick = onPremium) {
                             Icon(Icons.Default.WorkspacePremium, contentDescription = "Convo Chat Premium", tint = Color(0xFFFFB300))
                         }
                         IconButton(onClick = { showGlobalSearch = true }) {
                             Icon(Icons.Outlined.Search, contentDescription = "Search people and media")
+                        }
+                        if (currentTab == 1) IconButton(onClick = { if (lockEnabled) showLockDisableConfirm = true else showLockSetup = true }) {
+                            Icon(if (lockEnabled) Icons.Default.Lock else Icons.Default.LockOpen, contentDescription = if (lockEnabled) "App lock enabled" else "Set app lock", tint = MaterialTheme.colorScheme.primary)
                         }
                         if (isAdmin || isStaff) IconButton(onClick = { viewModel.setCurrentTab(3) }) {
                             Icon(if (isStaff) Icons.Outlined.Shield else Icons.Outlined.AdminPanelSettings, contentDescription = if (isStaff) "Staff panel" else "Admin tools", tint = MaterialTheme.colorScheme.primary)
@@ -431,6 +430,16 @@ fun HomeScreen(
                                 expanded = showAccountMenu,
                                 onDismissRequest = { showAccountMenu = false }
                             ) {
+                                DropdownMenuItem(
+                                    text = { Text(tr("Convo Chat Premium")) },
+                                    leadingIcon = { Icon(Icons.Default.WorkspacePremium, null, tint = Color(0xFFFFB300)) },
+                                    onClick = { showAccountMenu = false; onPremium() }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text(tr("Search people and media")) },
+                                    leadingIcon = { Icon(Icons.Outlined.Search, null) },
+                                    onClick = { showAccountMenu = false; showGlobalSearch = true }
+                                )
                                 DropdownMenuItem(
                                     text = { Text(tr("Messages")) },
                                     leadingIcon = { Icon(Icons.Outlined.ChatBubbleOutline, null) },
@@ -784,10 +793,9 @@ fun HomeScreen(
                             .fillMaxSize()
                             .padding(horizontal = 16.dp)
                     ) {
-                        Spacer(modifier = Modifier.height(12.dp))
-
-                        AnnouncementBanner(Modifier.fillMaxWidth().padding(bottom = 10.dp))
-                        // Search contacts bar
+                        Spacer(modifier = Modifier.height(6.dp))
+                        // Search remains immediately available; secondary actions are tucked away
+                        // so the actual conversation list starts higher on screen.
                         OutlinedTextField(
                             value = searchQuery,
                             onValueChange = {
@@ -796,32 +804,54 @@ fun HomeScreen(
                             },
                             placeholder = { Text(tr("Search users by name...")) },
                             leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                            trailingIcon = { if (searchQuery.isNotBlank()) IconButton(onClick = { searchQuery = ""; viewModel.searchUsers("") }) { Icon(Icons.Default.Close, "Clear search") } },
                             modifier = Modifier.fillMaxWidth(),
                             singleLine = true,
                             shape = RoundedCornerShape(22.dp)
                         )
 
-                        Spacer(modifier = Modifier.height(10.dp))
                         if (searchQuery.isBlank()) {
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                AssistChip(onClick = { ProTools.open("saved") }, label = { Text("Saved") }, leadingIcon = { Icon(Icons.Default.Star, null, modifier = Modifier.size(16.dp)) })
-                                AssistChip(onClick = { ProTools.open("calls") }, label = { Text("Calls") }, leadingIcon = { Icon(Icons.Default.Call, null, modifier = Modifier.size(16.dp)) })
-                                AssistChip(onClick = { ProTools.open("search") }, label = { Text("Search chats") }, leadingIcon = { Icon(Icons.Default.ManageSearch, null, modifier = Modifier.size(16.dp)) })
-                            }
-                            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                listOf("all" to "All", "unread" to "Unread", "archived" to "Archived", "locked" to "Locked").forEach { (key, label) ->
-                                    FilterChip(selected = chatFilter == key, onClick = { chatFilter = key }, label = { Text(label) })
+                            Spacer(Modifier.height(8.dp))
+                            Card(
+                                onClick = { showChatTools = !showChatTools },
+                                modifier = Modifier.fillMaxWidth().animateContentSize(),
+                                shape = RoundedCornerShape(18.dp),
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .48f)),
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = .55f))
+                            ) {
+                                Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Box(Modifier.size(34.dp).clip(RoundedCornerShape(11.dp)).background(MaterialTheme.colorScheme.primary.copy(alpha = .12f)), contentAlignment = Alignment.Center) {
+                                        Icon(Icons.Default.Tune, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(19.dp))
+                                    }
+                                    Spacer(Modifier.width(10.dp))
+                                    Column(Modifier.weight(1f)) {
+                                        Text(tr("Tools & filters"), fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleSmall)
+                                        Text(if (chatFilter == "all") tr("Saved, calls, discovery and chat filters") else "${tr(chatFilter.replaceFirstChar { it.uppercase() })} ${tr("chats")}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    }
+                                    Icon(if (showChatTools) Icons.Default.ExpandLess else Icons.Default.ExpandMore, if (showChatTools) "Collapse tools" else "Expand tools", tint = MaterialTheme.colorScheme.primary)
                                 }
                             }
-                        }
-
-                        if (searchQuery.isBlank()) ContactsDiscoveryCard(viewModel, users, onUserSelected)
-                        if (searchQuery.isBlank()) {
-                            val friendIds = currentUser?.friends.orEmpty().toSet()
-                            val noteMe = currentUser?.uid?.let { friendNotes[it] }
-                            val noteFriends = chatUsers.filter { it.uid in friendIds }.map { user -> user to (friendNotes[user.uid] ?: UserNote()) }
-                            NotesStrip(me = currentUser, myNote = noteMe, friends = noteFriends) { note ->
-                                viewModel.publishNote(note) { ok -> Toast.makeText(context, if (ok) "Note updated" else "Could not update note", Toast.LENGTH_SHORT).show() }
+                            AnimatedVisibility(visible = showChatTools, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
+                                Column(Modifier.fillMaxWidth().padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    AnnouncementBanner(Modifier.fillMaxWidth())
+                                    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        AssistChip(onClick = { ProTools.open("saved") }, label = { Text(tr("Saved")) }, leadingIcon = { Icon(Icons.Default.Star, null, modifier = Modifier.size(16.dp)) })
+                                        AssistChip(onClick = { ProTools.open("calls") }, label = { Text(tr("Call history")) }, leadingIcon = { Icon(Icons.Default.Call, null, modifier = Modifier.size(16.dp)) })
+                                        AssistChip(onClick = { ProTools.open("search") }, label = { Text(tr("Search chats")) }, leadingIcon = { Icon(Icons.Default.ManageSearch, null, modifier = Modifier.size(16.dp)) })
+                                    }
+                                    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        listOf("all" to "All", "unread" to "Unread", "archived" to "Archived", "locked" to "Locked").forEach { (key, label) ->
+                                            FilterChip(selected = chatFilter == key, onClick = { chatFilter = key }, label = { Text(tr(label)) })
+                                        }
+                                    }
+                                    ContactsDiscoveryCard(viewModel, users, onUserSelected)
+                                    val friendIds = currentUser?.friends.orEmpty().toSet()
+                                    val noteMe = currentUser?.uid?.let { friendNotes[it] }
+                                    val noteFriends = chatUsers.filter { it.uid in friendIds }.map { user -> user to (friendNotes[user.uid] ?: UserNote()) }
+                                    NotesStrip(me = currentUser, myNote = noteMe, friends = noteFriends) { note ->
+                                        viewModel.publishNote(note) { ok -> Toast.makeText(context, if (ok) "Note updated" else "Could not update note", Toast.LENGTH_SHORT).show() }
+                                    }
+                                }
                             }
                         }
 
@@ -1269,7 +1299,8 @@ fun HomeScreen(
                                 AppThemePreview("Lavender Light", Color(0xFFFAF6FF), Color.White, Color(0xFF8E5CF7)),
                                 AppThemePreview("Sand Light", Color(0xFFFBF7F0), Color(0xFFFFFDF9), Color(0xFFA0672C))
                             )),
-                            Triple("Dark", "Comfortable at night and kind to the battery", listOf(
+                            Triple("Dark & smart", "Smart follows system light/dark and uses your Android wallpaper palette when supported", listOf(
+                                AppThemePreview("Smart", Color(0xFF191622), Color(0xFF282536), Color(0xFF8B7CFF)),
                                 AppThemePreview("Dynamic", Color(0xFF1B1530), Color(0xFF2A2245), Color(0xFF7C5CFC)),
                                 AppThemePreview("Dark", Color(0xFF171A24), Color(0xFF222634), Color(0xFF8C9EFF)),
                                 AppThemePreview("AMOLED", Color.Black, Color(0xFF121212), Color(0xFF9E8BFF)),
@@ -2487,6 +2518,16 @@ fun HomeScreen(
             title = flagshipConfig.noticeTitle,
             body = flagshipConfig.noticeBody,
             onDismiss = { dismissNotice = true }
+        )
+    }
+
+    if (showLockDisableConfirm) {
+        AlertDialog(
+            onDismissRequest = { showLockDisableConfirm = false },
+            title = { Text("Turn off app lock?") },
+            text = { Text("Your app PIN and biometric lock will be disabled on this device.") },
+            confirmButton = { TextButton(onClick = { AppLockManager.disable(context); lockEnabled = false; showLockDisableConfirm = false }) { Text("Turn off") } },
+            dismissButton = { TextButton(onClick = { showLockDisableConfirm = false }) { Text(tr("Cancel")) } }
         )
     }
 
@@ -4704,7 +4745,7 @@ fun ChatConversationUserItem(
         modifier = Modifier
             .fillMaxWidth()
             .combinedClickable(onClick = onSelect, onLongClick = onLongPress),
-        shape = RoundedCornerShape(28.dp),
+        shape = RoundedCornerShape(22.dp),
         colors = CardDefaults.cardColors(
             containerColor = if (hasUnread) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
                              else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
@@ -4717,19 +4758,19 @@ fun ChatConversationUserItem(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(12.dp),
+                .padding(horizontal = 11.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             // User Avatar bubble with online indicator badge
             Box(contentAlignment = Alignment.BottomEnd) {
                 val storyModifier = if (hasActiveStory) {
                     Modifier
-                        .size(54.dp)
+                        .size(50.dp)
                         .border(3.dp, MaterialTheme.colorScheme.error, CircleShape)
                         .padding(3.dp)
                 } else {
                     Modifier
-                        .size(50.dp)
+                        .size(46.dp)
                         .border(1.5.dp, MaterialTheme.colorScheme.primary, CircleShape)
                 }
 
@@ -4773,7 +4814,7 @@ fun ChatConversationUserItem(
                 }
             }
 
-            Spacer(modifier = Modifier.width(14.dp))
+            Spacer(modifier = Modifier.width(11.dp))
 
             // Display name + LAST MESSAGE (bold highlighted if unread!)
             Column(modifier = Modifier.weight(1f)) {
@@ -4805,6 +4846,14 @@ fun ChatConversationUserItem(
                         if (convMuted && !isMuted) { Spacer(Modifier.width(4.dp)); Icon(Icons.Default.NotificationsOff, "Muted", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(13.dp)) }
                     }
                     
+                    if ((lastMessageState?.timestamp ?: 0L) > 0L) {
+                        Text(
+                            DateUtils.formatDateTime(LocalContext.current, lastMessageState!!.timestamp, DateUtils.FORMAT_SHOW_TIME),
+                            fontSize = 10.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = .75f),
+                            modifier = Modifier.padding(end = 6.dp)
+                        )
+                    }
                     if (hasUnread) {
                         Box(
                             modifier = Modifier
@@ -4857,14 +4906,15 @@ fun ChatConversationUserItem(
                         color = previewColor
                     )
                 }
-                val presenceText = if (user.isOnline) "Active now" else {
+                val presenceText = if (user.isOnline) tr("Active now") else {
                     val since = user.offlineSince.takeIf { it > 0L } ?: user.lastActive
-                    if (since <= 0L) "Offline" else formatOfflineAge(since)
+                    if (since <= 0L) "Offline" else "Offline · ${formatOfflineAge(since)}"
                 }
                 Text(
                     text = presenceText,
                     fontSize = 10.sp,
-                    color = if (user.isOnline) Color(0xFF35B96A) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = .7f)
+                    color = if (user.isOnline) Color(0xFF35B96A) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = .72f),
+                    maxLines = 1
                 )
             }
 

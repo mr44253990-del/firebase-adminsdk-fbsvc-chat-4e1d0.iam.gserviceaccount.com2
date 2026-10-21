@@ -3,6 +3,11 @@ package com.example.ui
 import android.text.format.DateUtils
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -14,17 +19,21 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.ArrowDownward
+import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.VideoCall
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -40,7 +49,7 @@ import kotlinx.coroutines.withContext
 
 /** Full-screen v4.4 pages presented above the existing navigation graph. */
 @Composable
-fun ProToolsOverlay(users: List<User>, onOpenChat: (String) -> Unit) {
+fun ProToolsOverlay(users: List<User>, onOpenChat: (String) -> Unit, onStartCall: (String, Boolean) -> Unit = { _, _ -> }) {
     val ctx = LocalContext.current
     val page by ProTools.page.collectAsState()
     BackHandler(enabled = page != null) { ProTools.close() }
@@ -51,6 +60,8 @@ fun ProToolsOverlay(users: List<User>, onOpenChat: (String) -> Unit) {
     var matches by remember(page) { mutableStateOf(emptyList<com.example.data.CachedMessage>()) }
     var searching by remember(page) { mutableStateOf(false) }
     var managedDownloads by remember(page) { mutableStateOf(emptyList<ReceivedFiles.ManagedDownload>()) }
+    var callFilter by remember(page) { mutableStateOf("all") }
+    var callQuery by remember(page) { mutableStateOf("") }
 
     LaunchedEffect(page) {
         if (page == "calls") CallHistory.ensureStarted(ctx)
@@ -67,7 +78,7 @@ fun ProToolsOverlay(users: List<User>, onOpenChat: (String) -> Unit) {
     }
 
     if (page != null) {
-        Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+        Surface(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding(), color = MaterialTheme.colorScheme.background) {
             Column(Modifier.fillMaxSize()) {
                 Row(
                     Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
@@ -103,21 +114,74 @@ fun ProToolsOverlay(users: List<User>, onOpenChat: (String) -> Unit) {
                         }
                     }
                     "calls" -> {
-                        if (calls.isEmpty()) ProEmptyState("No calls yet", "Your recent calls will appear here.")
-                        else LazyColumn(contentPadding = PaddingValues(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            items(calls, key = { it.callId }) { call ->
-                                Card(Modifier.fillMaxWidth().clickable { if (call.peerUid.isNotBlank()) { ProTools.close(); onOpenChat(call.peerUid) } }, shape = RoundedCornerShape(18.dp)) {
-                                    Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                                        Box(Modifier.size(42.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer), contentAlignment = Alignment.Center) {
-                                            Icon(if (call.video) Icons.Default.VideoCall else Icons.Default.Call, null, tint = MaterialTheme.colorScheme.primary)
+                        val missed = calls.count { it.outcome in setOf("missed", "no answer") }
+                        val complete = calls.count { it.outcome == "completed" }
+                        val filteredCalls = calls.filter { call ->
+                            val queryMatches = callQuery.isBlank() || call.peerName.contains(callQuery.trim(), true)
+                            val filterMatches = when (callFilter) {
+                                "missed" -> call.outcome in setOf("missed", "no answer")
+                                "incoming" -> call.incoming
+                                "outgoing" -> !call.incoming
+                                else -> true
+                            }
+                            queryMatches && filterMatches
+                        }
+                        Column(Modifier.fillMaxSize()) {
+                            Card(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp), shape = RoundedCornerShape(22.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = .55f))) {
+                                Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Column(Modifier.weight(1f)) {
+                                        Text(tr("Recent calls"), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold)
+                                        Text("${calls.size} total · $complete connected · $missed missed", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    Box(Modifier.size(44.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary.copy(alpha = .12f)), contentAlignment = Alignment.Center) {
+                                        Icon(Icons.Default.Call, null, tint = MaterialTheme.colorScheme.primary)
+                                    }
+                                }
+                            }
+                            OutlinedTextField(
+                                callQuery, { callQuery = it },
+                                Modifier.fillMaxWidth().padding(horizontal = 14.dp),
+                                singleLine = true, shape = RoundedCornerShape(18.dp),
+                                leadingIcon = { Icon(Icons.Default.Search, null) },
+                                trailingIcon = { if (callQuery.isNotBlank()) IconButton(onClick = { callQuery = "" }) { Icon(Icons.Default.Close, "Clear search") } },
+                                placeholder = { Text(tr("Find a person in call history")) }
+                            )
+                            Row(Modifier.fillMaxWidth().horizontalScroll(androidx.compose.foundation.rememberScrollState()).padding(horizontal = 14.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                                listOf("all" to "All", "missed" to "Missed", "incoming" to "Incoming", "outgoing" to "Outgoing").forEach { (key, label) ->
+                                    FilterChip(selected = callFilter == key, onClick = { callFilter = key }, label = { Text(if (key == "missed" && missed > 0) "${tr(label)} · $missed" else tr(label)) })
+                                }
+                            }
+                            if (filteredCalls.isEmpty()) {
+                                Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                                    ProEmptyState(tr(if (calls.isEmpty()) "No calls yet" else "No matching calls"), tr(if (calls.isEmpty()) "Your recent calls will appear here." else "Try a different filter or search."))
+                                }
+                            } else LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 14.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                items(filteredCalls, key = { it.callId }) { call ->
+                                    val outcomeColor = when (call.outcome) {
+                                        "missed", "no answer", "failed" -> MaterialTheme.colorScheme.error
+                                        "completed" -> Color(0xFF16A765)
+                                        else -> MaterialTheme.colorScheme.onSurfaceVariant
+                                    }
+                                    Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .36f))) {
+                                        Row(Modifier.fillMaxWidth().clickable { if (call.peerUid.isNotBlank()) { ProTools.close(); onOpenChat(call.peerUid) } }.padding(start = 12.dp, top = 11.dp, bottom = 11.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                                            Box(contentAlignment = Alignment.BottomEnd) {
+                                                if (call.peerImage.isNotBlank()) AsyncImage(call.peerImage, call.peerName, modifier = Modifier.size(48.dp).clip(CircleShape))
+                                                else Box(Modifier.size(48.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer), contentAlignment = Alignment.Center) {
+                                                    Icon(if (call.video) Icons.Default.VideoCall else Icons.Default.Call, null, tint = MaterialTheme.colorScheme.primary)
+                                                }
+                                                Icon(if (call.incoming) Icons.Default.ArrowDownward else Icons.Default.ArrowUpward, null, tint = outcomeColor, modifier = Modifier.size(16.dp).background(MaterialTheme.colorScheme.surface, CircleShape))
+                                            }
+                                            Spacer(Modifier.width(11.dp))
+                                            Column(Modifier.weight(1f)) {
+                                                Text(call.peerName.ifBlank { "Unknown contact" }, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                                Text("${tr(if (call.incoming) "Incoming" else "Outgoing")} · ${tr(call.outcome.replaceFirstChar { it.uppercase() })}" + if (call.durationSec > 0) " · ${call.durationSec / 60}:${(call.durationSec % 60).toString().padStart(2, '0')}" else "", fontSize = 12.sp, color = outcomeColor, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                                Text(DateUtils.getRelativeTimeSpanString(call.at).toString(), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            }
+                                            IconButton(onClick = { if (call.peerUid.isNotBlank()) { ProTools.close(); onStartCall(call.peerUid, call.video) } }, enabled = call.peerUid.isNotBlank()) {
+                                                Icon(if (call.video) Icons.Default.VideoCall else Icons.Default.Call, if (call.video) tr("Video call back") else tr("Call back"), tint = MaterialTheme.colorScheme.primary)
+                                            }
+                                            IconButton(onClick = { CallHistory.remove(ctx, call.callId) }) { Icon(Icons.Default.DeleteOutline, tr("Remove call")) }
                                         }
-                                        Spacer(Modifier.width(12.dp))
-                                        Column(Modifier.weight(1f)) {
-                                            Text(call.peerName.ifBlank { "Unknown contact" }, fontWeight = FontWeight.SemiBold)
-                                            Text("${if (call.incoming) "Incoming" else "Outgoing"} · ${call.outcome}" + if (call.durationSec > 0) " · ${call.durationSec / 60}:${(call.durationSec % 60).toString().padStart(2, '0')}" else "", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                            Text(DateUtils.getRelativeTimeSpanString(call.at).toString(), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                        }
-                                        TextButton(onClick = { CallHistory.remove(ctx, call.callId) }) { Text("Remove") }
                                     }
                                 }
                             }
@@ -158,7 +222,7 @@ fun ProToolsOverlay(users: List<User>, onOpenChat: (String) -> Unit) {
                         OutlinedTextField(query, { query = it }, Modifier.fillMaxWidth().padding(14.dp), singleLine = true, leadingIcon = { Icon(Icons.Default.Search, null) }, label = { Text("Search cached messages and files") })
                         when {
                             query.trim().length < 2 -> ProEmptyState("Search your chats", "Type at least two characters. Search uses messages cached on this device.")
-                            searching -> Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+                            searching -> SmartLoadingIndicator("Searching messages stored on this device")
                             matches.isEmpty() -> ProEmptyState("No matching messages", "Try another word or file name.")
                             else -> LazyColumn(contentPadding = PaddingValues(horizontal = 14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 items(matches, key = { it.messageId }) { msg ->
@@ -243,6 +307,30 @@ private fun formatProBytes(bytes: Long): String = when {
     bytes < 1024L * 1024 -> "%.1f KB".format(bytes / 1024.0)
     bytes < 1024L * 1024 * 1024 -> "%.1f MB".format(bytes / (1024.0 * 1024.0))
     else -> "%.2f GB".format(bytes / (1024.0 * 1024.0 * 1024.0))
+}
+
+
+@Composable
+private fun SmartLoadingIndicator(label: String) {
+    val transition = rememberInfiniteTransition(label = "smart_loading")
+    val pulse by transition.animateFloat(
+        initialValue = .88f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(900), RepeatMode.Reverse),
+        label = "loading_pulse"
+    )
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Box(
+                Modifier.size((54f * pulse).dp).clip(CircleShape)
+                    .background(Brush.linearGradient(listOf(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.tertiary))),
+                contentAlignment = Alignment.Center
+            ) {
+                CircularProgressIndicator(Modifier.size(28.dp), color = MaterialTheme.colorScheme.onPrimary, strokeWidth = 2.5.dp)
+            }
+            Text(label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
 }
 
 @Composable

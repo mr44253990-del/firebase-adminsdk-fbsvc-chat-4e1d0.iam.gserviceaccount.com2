@@ -134,7 +134,7 @@ fun ConversationSettingsPage(
     val topReaction = remember(messages) { messages.flatMap { it.reactions.values }.groupingBy { it }.eachCount().maxByOrNull { it.value }?.key }
 
     Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
-        Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+        Surface(Modifier.fillMaxSize().navigationBarsPadding(), color = MaterialTheme.colorScheme.background) {
             Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
                 // ---------- Header ----------
                 Box(Modifier.fillMaxWidth().height(250.dp).background(headerBrush)) {

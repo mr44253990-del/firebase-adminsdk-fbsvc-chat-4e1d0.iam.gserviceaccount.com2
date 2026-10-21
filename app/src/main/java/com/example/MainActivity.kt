@@ -50,6 +50,7 @@ import com.example.call.CallMiniOverlay
 import com.example.call.GroupCallScreen
 import com.example.call.GroupCallEngine
 import com.example.ui.ChatViewModel
+import com.example.ui.CallHistory
 import com.example.ui.HomeScreen
 import com.example.ui.IncomingShareHub
 import com.example.ui.GroupChatScreen
@@ -336,6 +337,9 @@ class MainActivity : FragmentActivity() {
                 val callState by CallEngine.state.collectAsState()
                 val groupCallState by GroupCallEngine.state.collectAsState()
                 val context = LocalContext.current
+                LaunchedEffect(currentUser?.uid) {
+                    if (!currentUser?.uid.isNullOrBlank()) CallHistory.ensureStarted(context)
+                }
                 var splashFinished by remember { mutableStateOf(false) }
                 var pendingMfaStatus by remember { mutableStateOf<com.example.ui.MfaStatus?>(null) }
                 var showOverlayPermissionPrompt by remember { mutableStateOf(false) }
@@ -717,16 +721,29 @@ class MainActivity : FragmentActivity() {
                             com.example.ui.ProTools.consumeRoute()
                         }
                     }
-                    com.example.ui.ProToolsOverlay(knownUsers) { peerUid ->
-                        val cachedPeer = knownUsers.firstOrNull { it.uid == peerUid }
-                        if (cachedPeer != null) {
-                            viewModel.selectRecipient(cachedPeer)
-                            navController.navigate("chat") { launchSingleTop = true }
-                        } else {
-                            FirebaseFirestore.getInstance().collection("users").document(peerUid).get()
-                                .addOnSuccessListener { doc -> doc.toObject(User::class.java)?.let { viewModel.selectRecipient(it); navController.navigate("chat") { launchSingleTop = true } } }
+                    com.example.ui.ProToolsOverlay(
+                        users = knownUsers,
+                        onOpenChat = { peerUid ->
+                            val cachedPeer = knownUsers.firstOrNull { it.uid == peerUid }
+                            if (cachedPeer != null) {
+                                viewModel.selectRecipient(cachedPeer)
+                                navController.navigate("chat") { launchSingleTop = true }
+                            } else {
+                                FirebaseFirestore.getInstance().collection("users").document(peerUid).get()
+                                    .addOnSuccessListener { doc -> doc.toObject(User::class.java)?.let { viewModel.selectRecipient(it); navController.navigate("chat") { launchSingleTop = true } } }
+                            }
+                        },
+                        onStartCall = { peerUid, video ->
+                            val beginCall: (User) -> Unit = { peer ->
+                                viewModel.selectRecipient(peer)
+                                if (video) viewModel.startVideoCall(peer) { navController.navigate("call") { launchSingleTop = true } }
+                                else viewModel.startAudioCall(peer) { navController.navigate("call") { launchSingleTop = true } }
+                            }
+                            knownUsers.firstOrNull { it.uid == peerUid }?.let(beginCall)
+                                ?: FirebaseFirestore.getInstance().collection("users").document(peerUid).get()
+                                    .addOnSuccessListener { doc -> doc.toObject(User::class.java)?.let(beginCall) }
                         }
-                    }
+                    )
                     if (splashFinished) com.example.ui.CrashReportDialog()
                     // Two-step verification also guards screens opened from notifications/deep links.
                     val globalMfaGate by viewModel.mfaGate.collectAsState()

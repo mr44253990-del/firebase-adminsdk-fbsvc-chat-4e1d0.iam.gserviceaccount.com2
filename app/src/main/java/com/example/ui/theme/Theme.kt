@@ -130,6 +130,11 @@ fun MyApplicationTheme(
         "aurora light" -> LightColors.copy(primary = Color(0xFF765BFF), secondary = Color(0xFF009EC4), tertiary = Color(0xFFE64BAA), background = Color(0xFFF7F5FF), surface = Color(0xFFFFFFFF), surfaceVariant = Color(0xFFEDE9FF))
         "dark" -> DarkColors
         "amoled" -> AmoledColors
+        // Smart follows the device's light/dark schedule and Android wallpaper palette when
+        // available; older Android versions fall back to accessible app light/dark palettes.
+        "smart" -> if (dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+        } else if (darkTheme) DarkColors else LightColors
         "dynamic" -> if (dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
         } else if (darkTheme) DarkColors else LightColors

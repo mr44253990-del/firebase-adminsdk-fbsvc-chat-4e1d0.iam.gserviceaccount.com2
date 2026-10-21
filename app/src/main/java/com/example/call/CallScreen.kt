@@ -1,5 +1,7 @@
 package com.example.call
 
+import com.example.ui.CallHistory
+
 import com.example.ui.ThemeTextureLayer
 import android.Manifest
 import android.app.Activity
@@ -186,7 +188,7 @@ fun CallScreen(
     val view = LocalView.current
     val callSkinId by CallSkinPreferences.selectedId.collectAsState()
     val state by CallEngine.state.collectAsState()
-    LaunchedEffect(context.applicationContext) { CallSkinPreferences.load(context) }
+    LaunchedEffect(context.applicationContext) { CallHistory.ensureStarted(context); CallSkinPreferences.load(context) }
     val callPalette = CallSkinPreferences.palette(callSkinId)
     val effectiveVideo = video || state.video
     var elapsedSeconds by remember { mutableLongStateOf(0L) }
