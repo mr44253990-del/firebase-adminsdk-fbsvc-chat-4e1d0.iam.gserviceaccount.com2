@@ -11,7 +11,7 @@
 127. **Modern local call history [M] — সম্পন্ন:** Search, missed/incoming/outgoing filters, summary, per-entry remove এবং দ্রুত audio/video callback।
 128. **Smart wallpaper/system theme [S] — সম্পন্ন:** Android 12+ dynamic wallpaper colors + system light/dark; পুরোনো Android-এ fallback।
 129. **Dynamic local-search loader [S] — সম্পন্ন:** Theme accent-নির্ভর animated loading state।
-130. **SMS OTP assist [S] — সম্পন্ন:** Firebase instant/auto retrieval বজায় রেখে SMS one-time-code autofill semantics ও clipboard paste।
+130. **SMS OTP assist [S] — সম্পন্ন:** Firebase instant/auto retrieval বজায় রেখে clipboard paste shortcut; বর্তমান Compose version-এ SMS Autofill hint API নেই।
 131. **2-step code-entry assist [S] — সম্পন্ন:** বিদ্যমান MFA flow অক্ষত রেখে OTP/backup-code paste shortcut।
 
 ## A. Chat interaction ও navigation (#132–#141)
