@@ -119,7 +119,7 @@ fun ConversationSettingsPage(
     var pdfOpen by remember { mutableStateOf<Pair<android.net.Uri, String>?>(null) }
     var autoSave by remember { mutableStateOf(ReceivedFiles.autoDownloadEnabled(context)) }
     var wifiOnly by remember { mutableStateOf(ReceivedFiles.wifiOnly(context)) }
-    var allowedDownloadTypes by remember { mutableStateOf(listOf("Images", "Videos", "Audio", "PDF", "Documents", "Files").associateWith { ReceivedFiles.typeAllowed(context, it) }) }
+    var allowedDownloadTypes by remember { mutableStateOf(listOf("Images", "Videos", "Audio", "PDF", "Documents", "Archives", "Apps", "Files").associateWith { ReceivedFiles.typeAllowed(context, it) }) }
 
     val photos = remember(messages) { messages.mapNotNull { it.imageUrl?.takeIf { u -> u.isNotBlank() } }.reversed() }
     val files = remember(messages) { messages.filter { !it.fileUrl.isNullOrBlank() }.reversed() }
@@ -187,7 +187,7 @@ fun ConversationSettingsPage(
                         SettingRow(Icons.Default.Download, Color(0xFF00897B), "Auto-save received media", "Saved to Downloads/${ReceivedFiles.APP_FOLDER} by type (all chats)", switch = autoSave, onSwitch = { autoSave = it; ReceivedFiles.setAutoDownload(context, it) })
                         if (autoSave) {
                             SettingRow(Icons.Default.Wifi, Color(0xFF1976D2), "Wi-Fi only", "Pause automatic downloads on mobile data", switch = wifiOnly, onSwitch = { wifiOnly = it; ReceivedFiles.setWifiOnly(context, it) })
-                            listOf("Images", "Videos", "Audio", "PDF", "Documents", "Files").forEach { kind ->
+                            listOf("Images", "Videos", "Audio", "PDF", "Documents", "Archives", "Apps", "Files").forEach { kind ->
                                 val enabled = allowedDownloadTypes[kind] ?: true
                                 SettingRow(Icons.Default.Folder, Color(0xFF00897B), "Auto-save $kind", "Include this type in automatic downloads", switch = enabled, onSwitch = { allowedDownloadTypes = allowedDownloadTypes + (kind to it); ReceivedFiles.setTypeAllowed(context, kind, it) })
                             }

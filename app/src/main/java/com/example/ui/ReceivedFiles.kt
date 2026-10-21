@@ -87,6 +87,36 @@ object ReceivedFiles {
         }
     }
 
+    data class ManagedDownload(val id: Long, val title: String, val bytes: Long, val status: Int, val description: String)
+
+    /** Only enumerates this app's DownloadManager items, identified by our app-folder description. */
+    fun managedDownloads(ctx: Context): List<ManagedDownload> = runCatching {
+        val manager = ctx.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+        manager.query(DownloadManager.Query()).use { cursor ->
+            buildList {
+                while (cursor.moveToNext()) {
+                    val description = cursor.getString(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_DESCRIPTION)).orEmpty()
+                    if (!description.startsWith(APP_FOLDER)) continue
+                    add(ManagedDownload(
+                        cursor.getLong(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_ID)),
+                        cursor.getString(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_TITLE)).orEmpty(),
+                        cursor.getLong(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_TOTAL_SIZE_BYTES)).coerceAtLeast(0L),
+                        cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS)),
+                        description
+                    ))
+                }
+            }
+        }
+    }.getOrDefault(emptyList())
+
+    fun removeManagedDownload(ctx: Context, id: Long): Boolean = runCatching {
+        val removed = (ctx.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager).remove(id) > 0
+        val editor = prefs(ctx).edit()
+        prefs(ctx).all.filterValues { it == id }.keys.forEach { key -> editor.remove(key) }
+        editor.apply()
+        removed
+    }.getOrDefault(false)
+
     fun downloadIdFor(ctx: Context, key: String): Long = prefs(ctx).getLong("id_$key", 0L)
 
     /** Starts (or reuses) the download for [key]. Returns the DownloadManager id, or 0 on failure. */

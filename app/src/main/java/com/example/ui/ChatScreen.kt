@@ -22,6 +22,7 @@ import android.provider.OpenableColumns
 import android.util.Log
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
@@ -85,6 +86,9 @@ import com.example.call.CallEngine
 import com.example.security.PrivacyPreferences
 import com.example.data.Message
 import com.example.data.User
+import com.google.mlkit.vision.documentscanner.GmsDocumentScannerOptions
+import com.google.mlkit.vision.documentscanner.GmsDocumentScanning
+import com.google.mlkit.vision.documentscanner.GmsDocumentScanningResult
 import com.google.firebase.auth.FirebaseAuth
 import java.io.File
 import java.io.InputStream
@@ -166,6 +170,9 @@ fun ChatScreen(
     var replyingToMessage by remember { mutableStateOf<Message?>(null) }
     var editingMessage by remember { mutableStateOf<Message?>(null) }
     var forwardingMessage by remember { mutableStateOf<Message?>(null) }
+    var forwardingSelection by remember { mutableStateOf<List<Message>?>(null) }
+    var selectedMessageIds by remember(recipient.uid) { mutableStateOf<Set<String>>(emptySet()) }
+    var showBulkDeleteConfirmation by remember { mutableStateOf(false) }
     var translationMessage by remember { mutableStateOf<Message?>(null) }
     var translationText by remember { mutableStateOf("") }
     var translationLoading by remember { mutableStateOf(false) }
@@ -180,6 +187,10 @@ fun ChatScreen(
                 message.replyToText.orEmpty()
             ).any { it.lowercase().contains(query) }
         }
+    }
+    LaunchedEffect(visibleMessages) {
+        val currentIds = visibleMessages.mapTo(mutableSetOf()) { it.messageId }
+        selectedMessageIds = selectedMessageIds.intersect(currentIds)
     }
 
     LaunchedEffect(recipient.uid, messageText, editingMessage) {
@@ -520,6 +531,64 @@ fun ChatScreen(
                 })
         }
         startFileUpload()
+    }
+
+    val sendScannedDocument: (Uri, String, String) -> Unit = { uri, fileName, mime ->
+        if (!conversationAccepted) {
+            Toast.makeText(context, "Accept the conversation before sending a document", Toast.LENGTH_SHORT).show()
+        } else {
+            val fileSize = runCatching {
+                context.contentResolver.query(uri, arrayOf(OpenableColumns.SIZE), null, null, null)?.use { c -> if (c.moveToFirst() && !c.isNull(0)) c.getLong(0) else -1L } ?: -1L
+            }.getOrDefault(-1L)
+            val upId = viewModel.startOutgoingUpload("file", fileName, fileSize)
+            fun uploadScan() {
+                viewModel.setFileUploadState(fileName, 0, 0L, active = true)
+                viewModel.uploadUriToSupabase(uri, fileName, mime, fileSize,
+                    onProgress = { percent, eta -> viewModel.updateOutgoingUpload(upId, percent, eta); viewModel.setFileUploadState(fileName, percent, eta, active = true) },
+                    onSuccess = { url ->
+                        viewModel.setFileUploadState(fileName, 100, 0L, active = false)
+                        val wanted = viewModel.isOutgoingUploadActive(upId)
+                        viewModel.dismissOutgoingUpload(upId)
+                        if (wanted) viewModel.sendMessage(recipient, "", fileUrl = url, fileName = fileName, fileMimeType = mime, fileSize = fileSize)
+                    },
+                    onFailure = { error -> viewModel.setFileUploadState(fileName, 0, 0L, active = false); viewModel.failOutgoingUpload(upId, error) { uploadScan() } }
+                )
+            }
+            uploadScan()
+        }
+    }
+    val documentScanner = remember {
+        GmsDocumentScanning.getClient(
+            GmsDocumentScannerOptions.Builder()
+                .setGalleryImportAllowed(true)
+                .setPageLimit(20)
+                .setResultFormats(GmsDocumentScannerOptions.RESULT_FORMAT_PDF, GmsDocumentScannerOptions.RESULT_FORMAT_JPEG)
+                .setScannerMode(GmsDocumentScannerOptions.SCANNER_MODE_FULL)
+                .build()
+        )
+    }
+    val documentScannerLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
+        if (result.resultCode == android.app.Activity.RESULT_OK) {
+            val scan = GmsDocumentScanningResult.fromActivityResultIntent(result.data)
+            val pdfUri = scan?.pdf?.uri
+            val pageUri = scan?.pages?.firstOrNull()?.imageUri
+            val uri = pdfUri ?: pageUri
+            if (uri != null) {
+                val isPdf = pdfUri != null
+                val name = "scan_${System.currentTimeMillis()}" + if (isPdf) ".pdf" else ".jpg"
+                sendScannedDocument(uri, name, if (isPdf) "application/pdf" else "image/jpeg")
+            } else Toast.makeText(context, "No scanned pages were returned", Toast.LENGTH_SHORT).show()
+        }
+    }
+    val launchDocumentScanner = {
+        if (!conversationAccepted) Toast.makeText(context, "Accept the conversation before sending a document", Toast.LENGTH_SHORT).show()
+        else {
+            val activity = ChatLockAuth.findActivity(context)
+            if (activity == null) Toast.makeText(context, "Document scanner could not open here", Toast.LENGTH_SHORT).show()
+            else documentScanner.getStartScanIntent(activity)
+                .addOnSuccessListener { sender -> documentScannerLauncher.launch(IntentSenderRequest.Builder(sender).build()) }
+                .addOnFailureListener { error -> Toast.makeText(context, "Scanner unavailable: ${error.localizedMessage}", Toast.LENGTH_LONG).show() }
+        }
     }
 
     // ---- Location sharing (current + live) ----
@@ -1053,6 +1122,30 @@ fun ChatScreen(
                 }
             }
 
+            if (selectedMessageIds.isNotEmpty()) {
+                val selectedMessages = visibleMessages.filter { it.messageId in selectedMessageIds }
+                val canDeleteSelection = selectedMessages.isNotEmpty() && selectedMessages.all { it.senderId == currentUserId }
+                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = .82f)).padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text("${selectedMessages.size} selected", Modifier.padding(horizontal = 8.dp), fontWeight = FontWeight.Bold)
+                    TextButton(onClick = {
+                        val text = selectedMessages.filter { it.text.isNotBlank() }.joinToString("\n\n") { it.text }
+                        if (text.isNotBlank()) {
+                            (context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("Selected messages", text))
+                            Toast.makeText(context, "Copied", Toast.LENGTH_SHORT).show()
+                        }
+                        selectedMessageIds = emptySet()
+                    }) { Text("Copy") }
+                    TextButton(onClick = {
+                        selectedMessages.forEach { SavedMessages.saveIfMissing(context, it, recipient.uid, recipient.name) }
+                        Toast.makeText(context, "Saved ${selectedMessages.size} messages on this device", Toast.LENGTH_SHORT).show()
+                        selectedMessageIds = emptySet()
+                    }) { Text("Save") }
+                    TextButton(onClick = { forwardingSelection = selectedMessages }) { Text("Forward") }
+                    TextButton(enabled = canDeleteSelection, onClick = { showBulkDeleteConfirmation = true }) { Text("Delete", color = if (canDeleteSelection) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface.copy(alpha = .38f)) }
+                    IconButton(onClick = { selectedMessageIds = emptySet() }) { Icon(Icons.Default.Close, "Clear selection") }
+                }
+            }
+
             // Messages list area
             if (messages.isEmpty()) {
                 Box(
@@ -1146,6 +1239,7 @@ fun ChatScreen(
                                 }
                             },
                             onDeleteSelect = {
+                                if (PinnedMessages.get(context, recipient.uid)?.id == msg.messageId) PinnedMessages.unpin(context, recipient.uid)
                                 viewModel.deleteMessage(recipient.uid, msg.messageId)
                             },
                             onReactSelect = { reaction ->
@@ -1162,6 +1256,13 @@ fun ChatScreen(
                             onSaveMessage = { val saved = SavedMessages.toggle(context, msg, recipient.uid, recipient.name); Toast.makeText(context, if (saved) "Saved on this device" else "Removed from Saved", Toast.LENGTH_SHORT).show() },
                             onPinMessage = { if (PinnedMessages.get(context, recipient.uid)?.id == msg.messageId) PinnedMessages.unpin(context, recipient.uid) else PinnedMessages.pin(context, recipient.uid, msg) },
                             onRemindMessage = { ProTools.askReminder(ProTools.ReminderTarget(recipient.uid, recipient.name, msg.messageId, ProTools.messagePreview(msg))) },
+                            selectionMode = selectedMessageIds.isNotEmpty(),
+                            isSelected = msg.messageId in selectedMessageIds,
+                            onSelectMessage = {
+                                if (msg.messageId in selectedMessageIds) selectedMessageIds = selectedMessageIds - msg.messageId
+                                else if (selectedMessageIds.size < 100) selectedMessageIds = selectedMessageIds + msg.messageId
+                                else Toast.makeText(context, "Select up to 100 messages at once", Toast.LENGTH_SHORT).show()
+                            },
                             onJumpToReply = { targetId ->
                                 val index = visibleMessages.reversed().indexOfFirst { it.messageId == targetId }
                                 if (index >= 0) uiScope.launch { listState.animateScrollToItem(index + chatUploads.size); highlightedMessageId = targetId }
@@ -1681,6 +1782,7 @@ fun ChatScreen(
             add(AttachAction("photo", "Gallery", Icons.Default.Image, listOf(Color(0xFF7C4DFF), Color(0xFFB388FF))))
             add(AttachAction("camera", "Camera", Icons.Default.PhotoCamera, listOf(Color(0xFFFF4081), Color(0xFFFF80AB))))
             add(AttachAction("file", "Document", Icons.Default.Description, listOf(Color(0xFF2979FF), Color(0xFF82B1FF))))
+            add(AttachAction("scan", "Scan to PDF", Icons.Default.Description, listOf(Color(0xFF00897B), Color(0xFF4DB6AC))))
             add(AttachAction("audio", "Audio", Icons.Default.Headphones, listOf(Color(0xFFFF6D00), Color(0xFFFFAB40))))
             if (locationAllowed) add(AttachAction("location", "Location", Icons.Default.LocationOn, listOf(Color(0xFF00C853), Color(0xFF69F0AE))))
             add(AttachAction("contact", "Contact", Icons.Default.ContactPage, listOf(Color(0xFF00B8D4), Color(0xFF84FFFF))))
@@ -1699,6 +1801,7 @@ fun ChatScreen(
                     cameraLauncher.launch(uri)
                 }.onFailure { Toast.makeText(context, "Camera unavailable: ${it.localizedMessage}", Toast.LENGTH_SHORT).show() }
                 "file" -> filePickerLauncher.launch(arrayOf("*/*"))
+                "scan" -> launchDocumentScanner()
                 "audio" -> filePickerLauncher.launch(arrayOf("audio/*"))
                 "apk" -> filePickerLauncher.launch(arrayOf("application/vnd.android.package-archive"))
                 "location" -> showLocationSheet = true
@@ -1756,6 +1859,38 @@ fun ChatScreen(
         )
     }
 
+    if (showBulkDeleteConfirmation) {
+        val deletable = visibleMessages.filter { it.messageId in selectedMessageIds }
+        AlertDialog(
+            onDismissRequest = { showBulkDeleteConfirmation = false },
+            icon = { Icon(Icons.Default.Delete, null, tint = MaterialTheme.colorScheme.error) },
+            title = { Text("Delete ${deletable.size} messages?") },
+            text = { Text("This removes the selected messages you sent from this conversation. This action cannot be undone.") },
+            confirmButton = { TextButton(onClick = {
+                deletable.filter { it.senderId == currentUserId }.forEach {
+                    if (PinnedMessages.get(context, recipient.uid)?.id == it.messageId) PinnedMessages.unpin(context, recipient.uid)
+                    viewModel.deleteMessage(recipient.uid, it.messageId)
+                }
+                selectedMessageIds = emptySet()
+                showBulkDeleteConfirmation = false
+            }) { Text("Delete", color = MaterialTheme.colorScheme.error) } },
+            dismissButton = { TextButton(onClick = { showBulkDeleteConfirmation = false }) { Text("Cancel") } }
+        )
+    }
+    forwardingSelection?.let { originals ->
+        if (originals.isNotEmpty()) ForwardMessagesSheet(
+            messages = originals,
+            me = currentUser,
+            users = users,
+            onDismiss = { forwardingSelection = null },
+            onSend = { targets ->
+                targets.forEach { target -> originals.forEach { viewModel.forwardMessage(target, it) } }
+                Toast.makeText(context, "Forwarded ${originals.size} messages to ${targets.size} friends", Toast.LENGTH_SHORT).show()
+                forwardingSelection = null
+                selectedMessageIds = emptySet()
+            }
+        )
+    }
     forwardingMessage?.let { original ->
         ForwardMessageSheet(
             message = original,
@@ -1905,6 +2040,9 @@ fun MessageBubbleItem(
     onSaveMessage: () -> Unit = {},
     onPinMessage: () -> Unit = {},
     onRemindMessage: () -> Unit = {},
+    selectionMode: Boolean = false,
+    isSelected: Boolean = false,
+    onSelectMessage: () -> Unit = {},
     onJumpToReply: (String) -> Unit = {},
     bubbleAccent: Color? = null,
     textScale: Float = 1f,
@@ -1919,6 +2057,8 @@ fun MessageBubbleItem(
     val animatedDrag by animateFloatAsState(dragOffset, spring(stiffness = Spring.StiffnessMedium), label = "swipe_reply")
     val isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
     val context = LocalContext.current
+    val savedVersion by SavedMessages.version.collectAsState()
+    val isMessageSaved = remember(savedVersion, message.messageId) { SavedMessages.isSaved(context, message.messageId) }
 
     val bubbleStyle = appearance.resolvedStyle(themeSpec)
     val palette = rememberBubblePalette(isSentByMe, themeSpec, bubbleAccent, bubbleStyle)
@@ -1945,6 +2085,7 @@ fun MessageBubbleItem(
         Column(
             modifier = Modifier
                 .widthIn(max = maxBubbleWidth)
+                .background(if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = .48f) else Color.Transparent, RoundedCornerShape(18.dp))
                 .graphicsLayer { translationX = animatedDrag }
                 .pointerInput(message.messageId) {
                     detectHorizontalDragGestures(
@@ -1960,10 +2101,10 @@ fun MessageBubbleItem(
                     )
                 }
                 .combinedClickable(
-                    onClick = { showMenu = !showMenu },
-                    onLongClick = { showMenu = true },
+                    onClick = { if (selectionMode) onSelectMessage() else showMenu = !showMenu },
+                    onLongClick = { if (selectionMode) onSelectMessage() else showMenu = true },
                     onDoubleClick = {
-                        if (message.text.isNotBlank()) {
+                        if (!selectionMode && message.text.isNotBlank()) {
                             val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                             clipboard.setPrimaryClip(ClipData.newPlainText("Convo Chat message", message.text))
                             Toast.makeText(context, "Message copied", Toast.LENGTH_SHORT).show()
@@ -2179,7 +2320,7 @@ fun MessageBubbleItem(
 
         // Action context dropdown menu on click/long press
         DropdownMenu(
-            expanded = showMenu,
+            expanded = showMenu && !selectionMode,
             onDismissRequest = { showMenu = false },
             modifier = Modifier.background(MaterialTheme.colorScheme.surface)
         ) {
@@ -2236,9 +2377,10 @@ fun MessageBubbleItem(
                 }
             }
             Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
-                MenuQuickAction(Icons.Default.Bookmark, "Save") { onSaveMessage(); showMenu = false }
+                MenuQuickAction(if (isMessageSaved) Icons.Default.Bookmark else Icons.Default.BookmarkBorder, if (isMessageSaved) "Unsave" else "Save") { onSaveMessage(); showMenu = false }
                 MenuQuickAction(Icons.Default.PushPin, "Pin") { onPinMessage(); showMenu = false }
                 MenuQuickAction(Icons.Default.NotificationsActive, "Remind") { onRemindMessage(); showMenu = false }
+                MenuQuickAction(Icons.Default.Checklist, "Select") { onSelectMessage(); showMenu = false }
             }
             HorizontalDivider(Modifier.padding(horizontal = 12.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = .5f))
             if (message.text.isNotBlank()) {

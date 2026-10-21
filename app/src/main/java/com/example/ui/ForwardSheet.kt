@@ -34,6 +34,19 @@ import com.example.data.User
  * Forward sheet: friends only, live search, multi-select (up to 10) and a preview of what is
  * being forwarded.
  */
+@Composable
+fun ForwardMessagesSheet(messages: List<Message>, me: User?, users: List<User>, onDismiss: () -> Unit, onSend: (List<User>) -> Unit) {
+    val preview = remember(messages) {
+        val first = messages.firstOrNull() ?: Message()
+        first.copy(
+            messageId = "multi-forward-preview",
+            text = "${messages.size} messages selected",
+            imageUrl = null, voiceUrl = null, remoteVoiceUrl = null, fileUrl = null, remoteFileUrl = null, fileName = null
+        )
+    }
+    ForwardMessageSheet(preview, me, users, onDismiss, onSend)
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ForwardMessageSheet(

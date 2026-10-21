@@ -16,6 +16,7 @@ import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.VideoCall
@@ -49,9 +50,11 @@ fun ProToolsOverlay(users: List<User>, onOpenChat: (String) -> Unit) {
     var query by remember(page) { mutableStateOf("") }
     var matches by remember(page) { mutableStateOf(emptyList<com.example.data.CachedMessage>()) }
     var searching by remember(page) { mutableStateOf(false) }
+    var managedDownloads by remember(page) { mutableStateOf(emptyList<ReceivedFiles.ManagedDownload>()) }
 
     LaunchedEffect(page) {
         if (page == "calls") CallHistory.ensureStarted(ctx)
+        if (page == "storage") managedDownloads = withContext(Dispatchers.IO) { ReceivedFiles.managedDownloads(ctx) }
     }
     LaunchedEffect(page, query) {
         if (page != "search" || query.trim().length < 2) { matches = emptyList(); return@LaunchedEffect }
@@ -72,7 +75,7 @@ fun ProToolsOverlay(users: List<User>, onOpenChat: (String) -> Unit) {
                 ) {
                     IconButton(onClick = { ProTools.close() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
                     Column(Modifier.weight(1f)) {
-                        Text(when (page) { "saved" -> "Saved messages"; "calls" -> "Calls"; "search" -> "Search all chats"; else -> "Convo tools" }, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                        Text(when (page) { "saved" -> "Saved messages"; "calls" -> "Calls"; "search" -> "Search all chats"; "storage" -> "Storage manager"; else -> "Convo tools" }, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                         Text("Private tools stored on this device", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     if (page == "saved" && savedVersion >= 0) IconButton(onClick = { SavedMessages.clear(ctx) }) { Icon(Icons.Default.DeleteOutline, "Clear saved") }
@@ -120,6 +123,37 @@ fun ProToolsOverlay(users: List<User>, onOpenChat: (String) -> Unit) {
                             }
                         }
                     }
+                    "storage" -> {
+                        val total = managedDownloads.sumOf { it.bytes }
+                        Column(Modifier.fillMaxSize()) {
+                            Card(Modifier.fillMaxWidth().padding(14.dp), shape = RoundedCornerShape(18.dp)) {
+                                Column(Modifier.padding(16.dp)) {
+                                    Text("Downloads / ${ReceivedFiles.APP_FOLDER}", fontWeight = FontWeight.Bold)
+                                    Text("${managedDownloads.size} files · ${formatProBytes(total)}", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text("Only items created by Convo Chat are listed here.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            }
+                            if (managedDownloads.isEmpty()) ProEmptyState("No downloaded files", "Received attachments saved by the app will appear here.")
+                            else LazyColumn(contentPadding = PaddingValues(horizontal = 14.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                items(managedDownloads, key = { it.id }) { item ->
+                                    Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp)) {
+                                        Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                                            Icon(Icons.Default.Storage, null, tint = MaterialTheme.colorScheme.primary)
+                                            Spacer(Modifier.width(10.dp))
+                                            Column(Modifier.weight(1f)) {
+                                                Text(item.title, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold)
+                                                Text("${formatProBytes(item.bytes)} · ${item.description.removePrefix(ReceivedFiles.APP_FOLDER).trim()}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            }
+                                            TextButton(onClick = {
+                                                ReceivedFiles.removeManagedDownload(ctx, item.id)
+                                                managedDownloads = managedDownloads.filterNot { it.id == item.id }
+                                            }) { Text("Remove") }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                     "search" -> {
                         OutlinedTextField(query, { query = it }, Modifier.fillMaxWidth().padding(14.dp), singleLine = true, leadingIcon = { Icon(Icons.Default.Search, null) }, label = { Text("Search cached messages and files") })
                         when {
@@ -129,7 +163,11 @@ fun ProToolsOverlay(users: List<User>, onOpenChat: (String) -> Unit) {
                             else -> LazyColumn(contentPadding = PaddingValues(horizontal = 14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 items(matches, key = { it.messageId }) { msg ->
                                     val me = FirebaseAuth.getInstance().currentUser?.uid.orEmpty()
-                                    val peerUid = msg.chatId.split('_').firstOrNull { it != me && it.isNotBlank() }.orEmpty()
+                                    val peerUid = when {
+                                        msg.chatId.startsWith("${me}_") -> msg.chatId.removePrefix("${me}_")
+                                        msg.chatId.endsWith("_${me}") -> msg.chatId.removeSuffix("_${me}")
+                                        else -> ""
+                                    }
                                     val contact = users.firstOrNull { it.uid == peerUid }
                                     Card(Modifier.fillMaxWidth().clickable { if (peerUid.isNotBlank()) { ProTools.close(); onOpenChat(peerUid) } }, shape = RoundedCornerShape(16.dp)) {
                                         Column(Modifier.padding(14.dp)) {
@@ -185,6 +223,7 @@ private fun ProToolsHubPage(onSelect: (String) -> Unit) {
         ProHubCard("Saved messages", "Keep important messages in one private list", Icons.Default.Star) { onSelect("saved") }
         ProHubCard("Call history", "Recent incoming, outgoing and missed calls", Icons.Default.Call) { onSelect("calls") }
         ProHubCard("Search all chats", "Find cached message text and file names", Icons.Default.Search) { onSelect("search") }
+        ProHubCard("Storage manager", "Review and remove files downloaded by Convo Chat", Icons.Default.Storage) { onSelect("storage") }
     }
 }
 
@@ -197,6 +236,13 @@ private fun ProHubCard(title: String, body: String, icon: androidx.compose.ui.gr
             Column { Text(title, fontWeight = FontWeight.Bold); Text(body, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
         }
     }
+}
+
+private fun formatProBytes(bytes: Long): String = when {
+    bytes < 1024L -> "$bytes B"
+    bytes < 1024L * 1024 -> "%.1f KB".format(bytes / 1024.0)
+    bytes < 1024L * 1024 * 1024 -> "%.1f MB".format(bytes / (1024.0 * 1024.0))
+    else -> "%.2f GB".format(bytes / (1024.0 * 1024.0 * 1024.0))
 }
 
 @Composable

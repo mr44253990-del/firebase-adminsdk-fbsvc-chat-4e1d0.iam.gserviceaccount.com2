@@ -61,7 +61,7 @@ object ProTools {
         when (action) {
             null, "" -> Unit
             "assistant" -> _pendingRoute.value = "assistant"
-            "saved", "calls", "search", "hub" -> _page.value = action
+            "saved", "calls", "search", "storage", "hub" -> _page.value = action
         }
     }
 
@@ -120,6 +120,18 @@ object SavedMessages {
     }
 
     /** Returns true when the message is now saved, false when it was removed. */
+    fun saveIfMissing(ctx: Context, m: Message, peerUid: String, peerName: String) {
+        val list = all(ctx)
+        if (list.any { it.id == m.messageId }) return
+        val entry = SavedMessage(
+            m.messageId, peerUid, peerName, m.senderName, ProTools.messagePreview(m),
+            m.imageUrl.orEmpty().takeIf { it.startsWith("http") }.orEmpty(),
+            (m.remoteFileUrl ?: m.fileUrl).orEmpty().takeIf { it.startsWith("http") }.orEmpty(),
+            m.fileName.orEmpty(), m.timestamp, System.currentTimeMillis()
+        )
+        write(ctx, listOf(entry) + list)
+    }
+
     fun toggle(ctx: Context, m: Message, peerUid: String, peerName: String): Boolean {
         val list = all(ctx)
         if (list.any { it.id == m.messageId }) { write(ctx, list.filterNot { it.id == m.messageId }); return false }
