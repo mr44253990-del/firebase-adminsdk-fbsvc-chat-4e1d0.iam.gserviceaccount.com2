@@ -38,9 +38,6 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.autofill.ContentType
-import androidx.compose.ui.semantics.contentType
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
@@ -300,7 +297,7 @@ fun PhoneVerifyPanel(
                     }) { Icon(Icons.Default.ContentPaste, "Paste verification code", tint = accent) }
                 },
                 colors = fieldColors, shape = RoundedCornerShape(16.dp),
-                modifier = Modifier.fillMaxWidth().semantics { contentType = ContentType.SmsOtp }
+                modifier = Modifier.fillMaxWidth()
             )
             GradientActionButton(if (busy) tr("Verifying…") else submitLabel, accent, enabled = code.length == 6 && !busy, loading = busy) {
                 val id = verificationId ?: return@GradientActionButton
