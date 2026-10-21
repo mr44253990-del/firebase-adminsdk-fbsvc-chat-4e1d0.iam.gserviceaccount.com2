@@ -60,6 +60,17 @@ object ReceivedFiles {
     fun autoDownloadEnabled(ctx: Context) = prefs(ctx).getBoolean("auto", true)
     fun setAutoDownload(ctx: Context, on: Boolean) = prefs(ctx).edit().putBoolean("auto", on).apply()
 
+    /** v4.4 auto-download rules: Wi-Fi only and per-type switches (all default on, Wi-Fi only off). */
+    fun wifiOnly(ctx: Context) = prefs(ctx).getBoolean("wifi_only", false)
+    fun setWifiOnly(ctx: Context, on: Boolean) = prefs(ctx).edit().putBoolean("wifi_only", on).apply()
+    fun typeAllowed(ctx: Context, folder: String) = prefs(ctx).getBoolean("type_$folder", true)
+    fun setTypeAllowed(ctx: Context, folder: String, on: Boolean) = prefs(ctx).edit().putBoolean("type_$folder", on).apply()
+    private fun onMeteredNetwork(ctx: Context): Boolean = runCatching {
+        (ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager).isActiveNetworkMetered
+    }.getOrDefault(false)
+    fun rulesAllow(ctx: Context, mime: String, name: String): Boolean =
+        typeAllowed(ctx, folderFor(mime, name)) && !(wifiOnly(ctx) && onMeteredNetwork(ctx))
+
     fun folderFor(mime: String, name: String): String {
         val m = mime.lowercase()
         val ext = name.substringAfterLast('.', "").lowercase()
@@ -103,7 +114,7 @@ object ReceivedFiles {
 
     /** Automatic save for received media (once per message, only when the user keeps it on). */
     fun autoSave(ctx: Context, key: String, url: String?, name: String, mime: String): Long {
-        if (!autoDownloadEnabled(ctx) || url.isNullOrBlank() || !url.startsWith("http")) return downloadIdFor(ctx, key)
+        if (!autoDownloadEnabled(ctx) || url.isNullOrBlank() || !url.startsWith("http") || !rulesAllow(ctx, mime, name)) return downloadIdFor(ctx, key)
         return enqueue(ctx, key, url, name, mime, notify = false)
     }
 

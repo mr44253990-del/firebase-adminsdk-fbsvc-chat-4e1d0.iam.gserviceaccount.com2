@@ -136,6 +136,14 @@ fun ChatScreen(
     var showChatSettings by remember { mutableStateOf(false) }
     var showMessageSearch by remember { mutableStateOf(false) }
     var messageSearchQuery by remember { mutableStateOf("") }
+    var showCatchUpDialog by remember { mutableStateOf(false) }
+    var catchUpLoading by remember { mutableStateOf(false) }
+    var catchUpText by remember { mutableStateOf("") }
+    val chatLockUnlocked by ChatLockSession.unlocked.collectAsState()
+    val convPrefsVersion by ConversationPrefs.version.collectAsState()
+    val chatLocked = remember(convPrefsVersion, recipient.uid) { ConversationPrefs.isLocked(context, recipient.uid) }
+    val needsChatUnlock = chatLocked && recipient.uid !in chatLockUnlocked
+    var lockAuthMessage by remember(recipient.uid) { mutableStateOf("") }
     
     val users by viewModel.usersState.collectAsState()
     val updatedRecipient = users.find { it.uid == recipient.uid } ?: recipient
@@ -146,6 +154,8 @@ fun ChatScreen(
     }
     var showAttachmentMenu by remember { mutableStateOf(false) }
     var showScheduleDialog by remember { mutableStateOf(false) }
+    var showWritingTools by remember { mutableStateOf(false) }
+    var aiRewriteLoading by remember { mutableStateOf(false) }
     var fileUploading by remember { mutableStateOf(false) }
     var fileProgress by remember { mutableIntStateOf(0) }
     var fileEta by remember { mutableLongStateOf(0L) }
@@ -409,6 +419,8 @@ fun ChatScreen(
     // Album send: pick up to 10 photos, preview, caption, then upload in order.
     var pendingImages by remember { mutableStateOf<List<Uri>>(emptyList()) }
     var highlightedMessageId by remember { mutableStateOf<String?>(null) }
+    val pinnedMessageVersion by PinnedMessages.version.collectAsState()
+    val pinnedMessage = remember(pinnedMessageVersion, recipient.uid) { PinnedMessages.get(context, recipient.uid) }
     LaunchedEffect(highlightedMessageId) { if (highlightedMessageId != null) { kotlinx.coroutines.delay(1600); highlightedMessageId = null } }
     var albumProgress by remember { mutableStateOf<Pair<Int, Int>?>(null) }
     val multiPhotoLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetMultipleContents()) { uris ->
@@ -781,10 +793,50 @@ fun ChatScreen(
                 showChatSettings = false
             },
             onReport = { showReportDialog = true },
-            onOpenImage = { settingsImageUrl = it }
+            onOpenImage = { settingsImageUrl = it },
+            onChatLockToggle = { enabled ->
+                if (enabled && !ChatLockAuth.canLock(context)) {
+                    Toast.makeText(context, "Set a screen lock or biometric in Android settings first", Toast.LENGTH_LONG).show()
+                } else {
+                    ConversationPrefs.setLocked(context, recipient.uid, enabled)
+                    if (enabled) ChatLockSession.unlock(recipient.uid)
+                }
+            }
         )
     }
+    if (needsChatUnlock) {
+        androidx.compose.ui.window.Dialog(onDismissRequest = {}, properties = DialogProperties(usePlatformDefaultWidth = false, dismissOnBackPress = false, dismissOnClickOutside = false)) {
+            Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+                Column(Modifier.fillMaxSize().padding(28.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
+                    Box(Modifier.size(82.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer), contentAlignment = Alignment.Center) {
+                        Icon(Icons.Default.Lock, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(36.dp))
+                    }
+                    Spacer(Modifier.height(18.dp))
+                    Text("${recipient.name} chat is locked", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                    Text(lockAuthMessage.ifBlank { "Verify with your phone's screen lock to view this conversation." }, modifier = Modifier.padding(top = 8.dp, bottom = 20.dp), color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
+                    Button(onClick = {
+                        lockAuthMessage = ""
+                        ChatLockAuth.prompt(context, "Unlock Convo chat", { ChatLockSession.unlock(recipient.uid) }) { lockAuthMessage = it }
+                    }) { Icon(Icons.Default.Fingerprint, null); Spacer(Modifier.width(8.dp)); Text("Unlock chat") }
+                    TextButton(onClick = onBack) { Text("Back to chats") }
+                }
+            }
+        }
+    }
     settingsImageUrl?.let { url -> FullScreenChatImage(url, onDismiss = { settingsImageUrl = null }) }
+    if (showCatchUpDialog) {
+        AlertDialog(
+            onDismissRequest = { showCatchUpDialog = false },
+            icon = { Icon(Icons.Default.AutoAwesome, null) },
+            title = { Text("Catch me up") },
+            text = {
+                Box(Modifier.fillMaxWidth().heightIn(min = 60.dp, max = 380.dp), contentAlignment = Alignment.Center) {
+                    if (catchUpLoading) CircularProgressIndicator() else Text(catchUpText.ifBlank { "No summary available." }, modifier = Modifier.verticalScroll(rememberScrollState()))
+                }
+            },
+            confirmButton = { TextButton(onClick = { showCatchUpDialog = false }) { Text("Done") } }
+        )
+    }
     if (showReportDialog) {
         val categories = listOf("Spam", "Harassment", "Fake account", "Inappropriate content", "Other")
         var category by remember { mutableStateOf(categories.first()) }
@@ -901,6 +953,13 @@ fun ChatScreen(
                     }) {
                         Icon(Icons.Default.Search, contentDescription = "Search messages", tint = MaterialTheme.colorScheme.primary)
                     }
+                    IconButton(enabled = messages.isNotEmpty() && !catchUpLoading, onClick = {
+                        catchUpText = ""
+                        showCatchUpDialog = true
+                        catchUpLoading = true
+                        val transcript = messages.takeLast(80).joinToString("\n") { "${it.senderName.ifBlank { if (it.senderId == currentUserId) "Me" else recipient.name }}: ${ProTools.messagePreview(it)}" }.take(12000)
+                        viewModel.askAssistant("Summarize this recent conversation for someone catching up. Use concise bullet points, mention open questions/action items, and do not invent facts. Transcript:\n\n$transcript", emptyList()) { result -> catchUpText = result; catchUpLoading = false }
+                    }) { Icon(Icons.Default.AutoAwesome, contentDescription = "Summarize recent messages", tint = MaterialTheme.colorScheme.primary) }
                     ChatCallPill(
                         onVideo = {
                             val cameraGranted = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
@@ -972,6 +1031,24 @@ fun ChatScreen(
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
+                    }
+                }
+            }
+
+            pinnedMessage?.let { pinned ->
+                Surface(color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = .58f), modifier = Modifier.fillMaxWidth().clickable {
+                    val index = visibleMessages.reversed().indexOfFirst { it.messageId == pinned.id }
+                    if (index >= 0) uiScope.launch { listState.animateScrollToItem(index + chatUploads.size); highlightedMessageId = pinned.id }
+                    else Toast.makeText(context, "Pinned message is not in the loaded history", Toast.LENGTH_SHORT).show()
+                }) {
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.PushPin, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(9.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("Pinned message · ${pinned.senderName.ifBlank { "Message" }}", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                            Text(pinned.text, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 13.sp)
+                        }
+                        IconButton(onClick = { PinnedMessages.unpin(context, recipient.uid) }, modifier = Modifier.size(32.dp)) { Icon(Icons.Default.Close, "Unpin", modifier = Modifier.size(17.dp)) }
                     }
                 }
             }
@@ -1082,6 +1159,9 @@ fun ChatScreen(
                             },
                             onFileConsumed = { viewModel.acknowledgeFileConsumed(msg.messageId, msg.remoteFileUrl) },
                             onForward = { forwardingMessage = msg },
+                            onSaveMessage = { val saved = SavedMessages.toggle(context, msg, recipient.uid, recipient.name); Toast.makeText(context, if (saved) "Saved on this device" else "Removed from Saved", Toast.LENGTH_SHORT).show() },
+                            onPinMessage = { if (PinnedMessages.get(context, recipient.uid)?.id == msg.messageId) PinnedMessages.unpin(context, recipient.uid) else PinnedMessages.pin(context, recipient.uid, msg) },
+                            onRemindMessage = { ProTools.askReminder(ProTools.ReminderTarget(recipient.uid, recipient.name, msg.messageId, ProTools.messagePreview(msg))) },
                             onJumpToReply = { targetId ->
                                 val index = visibleMessages.reversed().indexOfFirst { it.messageId == targetId }
                                 if (index >= 0) uiScope.launch { listState.animateScrollToItem(index + chatUploads.size); highlightedMessageId = targetId }
@@ -1261,6 +1341,24 @@ fun ChatScreen(
                     Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
                         LinearProgressIndicator(progress = { fileProgress / 100f }, modifier = Modifier.fillMaxWidth())
                         Text("Uploading file • $fileProgress% • about ${fileEta}s left", fontSize = 11.sp)
+                    }
+                }
+            }
+
+            if (messageText.isNotBlank() && editingMessage == null && AppFeatureFlags.aiEnabled.collectAsState().value) {
+                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 2.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    AssistChip(onClick = { showWritingTools = !showWritingTools }, label = { Text(if (aiRewriteLoading) "Working…" else "Writing tools") }, enabled = !aiRewriteLoading, leadingIcon = { Icon(Icons.Default.AutoFixHigh, null, modifier = Modifier.size(16.dp)) })
+                    if (showWritingTools && !aiRewriteLoading) {
+                        listOf("Polish" to "Improve clarity and grammar while preserving the meaning", "Shorten" to "Make this message shorter while preserving key details", "Friendly" to "Rewrite this message in a warm, natural, friendly tone", "বাংলা" to "Translate this message into natural Bengali").forEach { (label, instruction) ->
+                            SuggestionChip(onClick = {
+                                aiRewriteLoading = true
+                                viewModel.askAssistant("$instruction. Return only the rewritten message. Do not add quotes or explanations. Draft:\n\n${messageText.take(3000)}", emptyList()) { result ->
+                                    aiRewriteLoading = false
+                                    if (result.startsWith("AI processing is disabled") || result.startsWith("Please sign in") || result.startsWith("Assistant unavailable")) Toast.makeText(context, result, Toast.LENGTH_LONG).show()
+                                    else messageText = result
+                                }
+                            }, label = { Text(label, fontSize = 11.sp) })
+                        }
                     }
                 }
             }
@@ -1804,6 +1902,9 @@ fun MessageBubbleItem(
     onFileConsumed: () -> Unit,
     onForward: () -> Unit,
     onTranslate: (Message) -> Unit = {},
+    onSaveMessage: () -> Unit = {},
+    onPinMessage: () -> Unit = {},
+    onRemindMessage: () -> Unit = {},
     onJumpToReply: (String) -> Unit = {},
     bubbleAccent: Color? = null,
     textScale: Float = 1f,
@@ -2133,6 +2234,11 @@ fun MessageBubbleItem(
                 if (isSentByMe && message.text.isNotBlank() && !isStickerOnly) {
                     MenuQuickAction(Icons.Default.Edit, "Edit") { onEditSelect(); showMenu = false }
                 }
+            }
+            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
+                MenuQuickAction(Icons.Default.Bookmark, "Save") { onSaveMessage(); showMenu = false }
+                MenuQuickAction(Icons.Default.PushPin, "Pin") { onPinMessage(); showMenu = false }
+                MenuQuickAction(Icons.Default.NotificationsActive, "Remind") { onRemindMessage(); showMenu = false }
             }
             HorizontalDivider(Modifier.padding(horizontal = 12.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = .5f))
             if (message.text.isNotBlank()) {

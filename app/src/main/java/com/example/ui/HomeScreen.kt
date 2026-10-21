@@ -251,6 +251,7 @@ fun HomeScreen(
     val unreadCounts by viewModel.unreadCountsState.collectAsState()
 
     var searchQuery by remember { mutableStateOf("") }
+    var chatFilter by rememberSaveable { mutableStateOf("all") }
     var feedFilter by rememberSaveable { mutableStateOf("All Posts") }
     var showAnalytics by remember { mutableStateOf(false) }
     var showAccountMenu by remember { mutableStateOf(false) }
@@ -757,12 +758,21 @@ fun HomeScreen(
                     }
                     // People you actually chat with stay on top: unread first, then the most
                     // recent conversations, then friends you have not messaged yet.
+                    val conversationPrefsVersion by ConversationPrefs.version.collectAsState()
                     val chatUsers = remember(filteredChatUsers, recencyRank, unreadCounts) {
                         filteredChatUsers.distinctBy { it.uid }.sortedWith(
                             compareByDescending<User> { (unreadCounts[it.uid] ?: 0) > 0 }
                                 .thenBy { recencyRank[it.uid] ?: Int.MAX_VALUE }
                                 .thenBy { it.name.lowercase() }
                         )
+                    }
+                    val displayedChatUsers = remember(chatUsers, chatFilter, unreadCounts, conversationPrefsVersion) {
+                        when (chatFilter) {
+                            "unread" -> chatUsers.filter { (unreadCounts[it.uid] ?: 0) > 0 && !ConversationPrefs.isArchived(context, it.uid) }
+                            "archived" -> chatUsers.filter { ConversationPrefs.isArchived(context, it.uid) }
+                            "locked" -> chatUsers.filter { ConversationPrefs.isLocked(context, it.uid) }
+                            else -> chatUsers.filter { !ConversationPrefs.isArchived(context, it.uid) && !ConversationPrefs.isLocked(context, it.uid) }
+                        }
                     }
                     // Only friends, requests and real conversations appear until the user searches.
                     Column(
@@ -787,9 +797,27 @@ fun HomeScreen(
                             shape = RoundedCornerShape(22.dp)
                         )
 
-                        Spacer(modifier = Modifier.height(14.dp))
+                        Spacer(modifier = Modifier.height(10.dp))
+                        if (searchQuery.isBlank()) {
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                AssistChip(onClick = { ProTools.open("saved") }, label = { Text("Saved") }, leadingIcon = { Icon(Icons.Default.Star, null, modifier = Modifier.size(16.dp)) })
+                                AssistChip(onClick = { ProTools.open("calls") }, label = { Text("Calls") }, leadingIcon = { Icon(Icons.Default.Call, null, modifier = Modifier.size(16.dp)) })
+                                AssistChip(onClick = { ProTools.open("search") }, label = { Text("Search chats") }, leadingIcon = { Icon(Icons.Default.ManageSearch, null, modifier = Modifier.size(16.dp)) })
+                            }
+                            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                listOf("all" to "All", "unread" to "Unread", "archived" to "Archived", "locked" to "Locked").forEach { (key, label) ->
+                                    FilterChip(selected = chatFilter == key, onClick = { chatFilter = key }, label = { Text(label) })
+                                }
+                            }
+                        }
 
                         if (searchQuery.isBlank()) ContactsDiscoveryCard(viewModel, users, onUserSelected)
+                        if (searchQuery.isBlank()) {
+                            val friendIds = currentUser?.friends.orEmpty().toSet()
+                            NotesStrip(me = currentUser, friends = chatUsers.filter { it.uid in friendIds }) { note ->
+                                viewModel.publishNote(note) { ok -> Toast.makeText(context, if (ok) "Note updated" else "Could not update note", Toast.LENGTH_SHORT).show() }
+                            }
+                        }
 
                         val activeContacts = chatUsers.filter { it.isOnline }.distinctBy { it.uid }
                         if (searchQuery.isBlank() && activeContacts.isNotEmpty()) {
@@ -797,17 +825,17 @@ fun HomeScreen(
                             Spacer(modifier = Modifier.height(14.dp))
                         }
 
-                        if (chatUsers.isEmpty()) {
+                        if (displayedChatUsers.isEmpty()) {
                             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                Text(tr("No conversations yet — search to find people"), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(if (chatUsers.isEmpty()) tr("No conversations yet — search to find people") else "Nothing in this filter yet", color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         } else {
                             LazyColumn(
-                                modifier = Modifier.fillMaxSize(),
+                                modifier = Modifier.weight(1f),
                                 verticalArrangement = Arrangement.spacedBy(10.dp),
                                 contentPadding = PaddingValues(bottom = 16.dp)
                             ) {
-                                items(chatUsers.sortedByDescending { ConversationPrefs.isPinned(context, it.uid) }, key = { it.uid }) { user ->
+                                items(displayedChatUsers.sortedByDescending { ConversationPrefs.isPinned(context, it.uid) }, key = { it.uid }) { user ->
                                     val hasActiveStory = stories.any { it.senderId == user.uid }
                                     ChatConversationUserItem(
                                         user = user,
@@ -1144,6 +1172,14 @@ fun HomeScreen(
                         }
 
                         SettingsHubGroup("Smart tools") {
+                            SettingsHubRow(
+                                icon = Icons.Default.Bookmark,
+                                title = "Saved, calls & global search",
+                                subtitle = "Your new message library and communication tools",
+                                accent = Color(0xFF6750A4),
+                                onClick = { ProTools.open("hub") }
+                            )
+                            SettingsHubDivider()
                             SettingsHubRow(
                                 icon = Icons.Default.AutoAwesome,
                                 title = "Smart tools",

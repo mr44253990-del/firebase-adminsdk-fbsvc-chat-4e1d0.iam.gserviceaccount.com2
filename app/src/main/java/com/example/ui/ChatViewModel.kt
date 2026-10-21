@@ -1563,6 +1563,20 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             .addOnSuccessListener { createActivityNotification(uid, "premium_revoked", uid, "Your Premium access was cancelled by ADMIN RAKIB"); onComplete(true) }.addOnFailureListener { onComplete(false) }
     }
 
+    /** Update a short, friends-only 24-hour note; the full text remains in the normal private profile doc. */
+    fun publishNote(text: String, onComplete: (Boolean) -> Unit = {}) {
+        val user = FirebaseAuth.getInstance().currentUser ?: return onComplete(false)
+        val clean = text.trim().take(80)
+        val at = if (clean.isBlank()) 0L else System.currentTimeMillis()
+        FirebaseFirestore.getInstance().collection("users").document(user.uid)
+            .update(mapOf("note" to clean, "noteAt" to at))
+            .addOnSuccessListener {
+                _currentUserState.value = _currentUserState.value?.copy(note = clean, noteAt = at)
+                onComplete(true)
+            }
+            .addOnFailureListener { onComplete(false) }
+    }
+
     fun submitFeatureRequest(title: String, description: String, onComplete: (Boolean) -> Unit = {}) {
         val user = getCurrentUserOrFallback() ?: return onComplete(false)
         if (title.isBlank() || description.isBlank()) return onComplete(false)

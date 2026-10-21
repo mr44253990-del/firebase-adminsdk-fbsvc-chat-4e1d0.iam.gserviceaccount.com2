@@ -457,6 +457,10 @@ interface CacheDao {
     @Query("SELECT * FROM cached_messages ORDER BY timestamp ASC")
     fun getAllMessages(): Flow<List<CachedMessage>>
 
+    /** Global search across every cached conversation (text and file names), newest first. */
+    @Query("SELECT * FROM cached_messages WHERE text LIKE '%' || :query || '%' OR fileName LIKE '%' || :query || '%' ORDER BY timestamp DESC LIMIT 200")
+    suspend fun searchMessages(query: String): List<CachedMessage>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertMessage(msg: CachedMessage)
 

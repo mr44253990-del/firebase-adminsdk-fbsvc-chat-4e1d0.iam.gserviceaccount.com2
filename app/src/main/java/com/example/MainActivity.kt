@@ -249,6 +249,7 @@ class MainActivity : FragmentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         pendingChatSenderId.value = intent.getStringExtra("senderId")?.takeIf { it.isNotBlank() }
+        com.example.ui.ProTools.handleAction(intent.getStringExtra("convoAction"))
         captureDeepLink(intent); captureActiveGroupCall(intent); captureSharedContent(intent)
     }
 
@@ -266,6 +267,7 @@ class MainActivity : FragmentActivity() {
         viewModel.exportTextBackup()
         VideoPlayerManager.pause()
         AppLockManager.lock(this)
+        com.example.ui.ChatLockSession.relockAll()
         super.onStop()
     }
 
@@ -274,6 +276,9 @@ class MainActivity : FragmentActivity() {
         installSplashScreen()
         super.onCreate(savedInstanceState)
         pendingChatSenderId.value = intent?.getStringExtra("senderId")?.takeIf { it.isNotBlank() }
+        com.example.ui.ProTools.handleAction(intent?.getStringExtra("convoAction"))
+        com.example.ui.CallHistory.ensureStarted(this)
+        com.example.ui.ProShortcuts.publish(this)
         captureDeepLink(intent); captureActiveGroupCall(intent); captureSharedContent(intent)
         AppLockManager.initialize(this)
         PrivacyPreferences.initialize(this)
@@ -703,6 +708,23 @@ class MainActivity : FragmentActivity() {
                                     }
                                 )
                             }
+                        }
+                    }
+                    val pendingProRoute by com.example.ui.ProTools.pendingRoute.collectAsState()
+                    LaunchedEffect(pendingProRoute) {
+                        if (pendingProRoute == "assistant") {
+                            if (FirebaseAuth.getInstance().currentUser != null) navController.navigate("assistant") { launchSingleTop = true }
+                            com.example.ui.ProTools.consumeRoute()
+                        }
+                    }
+                    com.example.ui.ProToolsOverlay(knownUsers) { peerUid ->
+                        val cachedPeer = knownUsers.firstOrNull { it.uid == peerUid }
+                        if (cachedPeer != null) {
+                            viewModel.selectRecipient(cachedPeer)
+                            navController.navigate("chat") { launchSingleTop = true }
+                        } else {
+                            FirebaseFirestore.getInstance().collection("users").document(peerUid).get()
+                                .addOnSuccessListener { doc -> doc.toObject(User::class.java)?.let { viewModel.selectRecipient(it); navController.navigate("chat") { launchSingleTop = true } } }
                         }
                     }
                     if (splashFinished) com.example.ui.CrashReportDialog()

@@ -145,6 +145,9 @@
         <receiver
             android:name=".service.NotificationActionReceiver"
             android:exported="false" />
+        <receiver
+            android:name=".ui.ProReminderReceiver"
+            android:exported="false" />
 
         <service
             android:name=".service.CallForegroundService"

@@ -65,6 +65,14 @@ object ConversationPrefs {
 
     fun readReceiptsHidden(ctx: Context, peerUid: String): Boolean = p(ctx).getBoolean("noreceipt_$peerUid", false)
     fun setReadReceiptsHidden(ctx: Context, peerUid: String, value: Boolean) { p(ctx).edit().putBoolean("noreceipt_$peerUid", value).apply(); _version.value++ }
+
+    /** Archived chats leave the main list (they come back with the Archived filter). */
+    fun isArchived(ctx: Context, peerUid: String): Boolean = p(ctx).getBoolean("archive_$peerUid", false)
+    fun setArchived(ctx: Context, peerUid: String, value: Boolean) { p(ctx).edit().putBoolean("archive_$peerUid", value).apply(); _version.value++ }
+
+    /** Locked chats need fingerprint / screen lock / app PIN before they open. */
+    fun isLocked(ctx: Context, peerUid: String): Boolean = peerUid.isNotBlank() && p(ctx).getBoolean("lock_$peerUid", false)
+    fun setLocked(ctx: Context, peerUid: String, value: Boolean) { p(ctx).edit().putBoolean("lock_$peerUid", value).apply(); _version.value++ }
 }
 
 private val MUTE_OPTIONS = listOf(
@@ -91,7 +99,8 @@ fun ConversationSettingsPage(
     onTheme: () -> Unit,
     onBlockToggle: () -> Unit,
     onReport: () -> Unit,
-    onOpenImage: (String) -> Unit
+    onOpenImage: (String) -> Unit,
+    onChatLockToggle: (Boolean) -> Unit = {}
 ) {
     val context = LocalContext.current
     val prefsVersion by ConversationPrefs.version.collectAsState()
@@ -102,11 +111,15 @@ fun ConversationSettingsPage(
     val muted = remember(prefsVersion) { ConversationPrefs.isMuted(context, recipient.uid) }
     val mutedUntil = remember(prefsVersion) { ConversationPrefs.mutedUntil(context, recipient.uid) }
     val pinned = remember(prefsVersion) { ConversationPrefs.isPinned(context, recipient.uid) }
+    val archived = remember(prefsVersion) { ConversationPrefs.isArchived(context, recipient.uid) }
+    val chatLocked = remember(prefsVersion) { ConversationPrefs.isLocked(context, recipient.uid) }
     val nickname = remember(prefsVersion) { ConversationPrefs.nickname(context, recipient.uid) }
     var dialog by remember { mutableStateOf("") }
     var mediaTab by remember { mutableIntStateOf(0) }
     var pdfOpen by remember { mutableStateOf<Pair<android.net.Uri, String>?>(null) }
     var autoSave by remember { mutableStateOf(ReceivedFiles.autoDownloadEnabled(context)) }
+    var wifiOnly by remember { mutableStateOf(ReceivedFiles.wifiOnly(context)) }
+    var allowedDownloadTypes by remember { mutableStateOf(listOf("Images", "Videos", "Audio", "PDF", "Documents", "Files").associateWith { ReceivedFiles.typeAllowed(context, it) }) }
 
     val photos = remember(messages) { messages.mapNotNull { it.imageUrl?.takeIf { u -> u.isNotBlank() } }.reversed() }
     val files = remember(messages) { messages.filter { !it.fileUrl.isNullOrBlank() }.reversed() }
@@ -161,6 +174,8 @@ fun ConversationSettingsPage(
                         SettingRow(Icons.Default.Badge, Color(0xFF00897B), "Nickname", nickname.ifBlank { "Only you will see it" }, onClick = { dialog = "nickname" })
                         SettingRow(Icons.Default.TextFields, Color(0xFF3949AB), "Message text size", "${(textScale * 100).toInt()}%", onClick = { dialog = "text" })
                         SettingRow(Icons.Default.PushPin, Color(0xFFD81B60), "Pin conversation", "Keep it at the top of your chats", switch = pinned, onSwitch = { ConversationPrefs.setPinned(context, recipient.uid, it) })
+                        SettingRow(Icons.Default.Archive, Color(0xFF546E7A), "Archive conversation", "Move it out of All; find it under Archived", switch = archived, onSwitch = { ConversationPrefs.setArchived(context, recipient.uid, it) })
+                        SettingRow(Icons.Default.Lock, Color(0xFF3949AB), "Lock this chat", "Requires your fingerprint, face or screen lock", switch = chatLocked, onSwitch = onChatLockToggle)
                     }
                     // ---------- Notifications & input ----------
                     SettingsGroup("Notifications & typing") {
@@ -170,6 +185,13 @@ fun ConversationSettingsPage(
                         SettingRow(Icons.Default.Keyboard, Color(0xFF1E88E5), "Typing sounds", "Soft sound while you type", switch = typingSounds, onSwitch = onTypingSounds)
                         SettingRow(Icons.Default.KeyboardReturn, Color(0xFF43A047), "Enter to send", "Enter key sends instead of new line", switch = enterToSend, onSwitch = { ChatPreferences.setEnterToSend(context, it) })
                         SettingRow(Icons.Default.Download, Color(0xFF00897B), "Auto-save received media", "Saved to Downloads/${ReceivedFiles.APP_FOLDER} by type (all chats)", switch = autoSave, onSwitch = { autoSave = it; ReceivedFiles.setAutoDownload(context, it) })
+                        if (autoSave) {
+                            SettingRow(Icons.Default.Wifi, Color(0xFF1976D2), "Wi-Fi only", "Pause automatic downloads on mobile data", switch = wifiOnly, onSwitch = { wifiOnly = it; ReceivedFiles.setWifiOnly(context, it) })
+                            listOf("Images", "Videos", "Audio", "PDF", "Documents", "Files").forEach { kind ->
+                                val enabled = allowedDownloadTypes[kind] ?: true
+                                SettingRow(Icons.Default.Folder, Color(0xFF00897B), "Auto-save $kind", "Include this type in automatic downloads", switch = enabled, onSwitch = { allowedDownloadTypes = allowedDownloadTypes + (kind to it); ReceivedFiles.setTypeAllowed(context, kind, it) })
+                            }
+                        }
                     }
                     // ---------- Privacy ----------
                     SettingsGroup("Privacy") {
