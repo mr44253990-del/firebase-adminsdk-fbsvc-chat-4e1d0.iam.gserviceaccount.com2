@@ -183,3 +183,13 @@
 
 ### ধাপ ৪ — দীর্ঘমেয়াদি
 42, 44, 46, 53, 60, 67, 78, 93, 94, 100, 123
+
+---
+
+## v4.4.2 বাস্তবায়ন-অবস্থা
+
+**এই রিলিজ সিরিজে যোগ হয়েছে:** #1 Saved messages, #2 Pin message, #3 Multi-select, #10 Archive, #11 Chat lock, #17 Message reminders, #27 Document scanner, #31 Auto-download rules, #48 Catch-me-up summary, #49 AI writing tools, #63 24-hour friend Notes, #85 App shortcuts।
+
+**আংশিক—রোডম্যাপের সম্পূর্ণ scope নয়:** #12 search এই ফোনে cache হওয়া Room messages-এ; server-side পুরনো cloud history নয়। #32 storage manager অ্যাপের DownloadManager-এ তৈরি Downloads দেখায়; প্রতি-chat cache বা database usage breakdown নয়। #37 call history এই মুহূর্তে 1:1 কলের local history; group calls/সিঙ্ক পরের কাজ। #11 lock-এর জন্য Android secure screen lock বা biometrics দরকার; lock preferences device-local।
+
+**এখনও বাকি:** প্রথম ধাপের #52 voice-message transcription, #73 account deletion/data export, #82 swipe actions, #116 Crashlytics এবং #122 deprecated API cleanup-ও এই series-এ শেষ হয়নি। ১২৪টি আইডিয়া একটি দীর্ঘমেয়াদি backlog; সব এক release-এ সম্পন্ন বলা হচ্ছে না। যেসব ফিচারে merchant account, cloud storage/stream, provider key, Play Console বা account-data erasure backend দরকার, সেগুলোর setup আগে লাগবে।

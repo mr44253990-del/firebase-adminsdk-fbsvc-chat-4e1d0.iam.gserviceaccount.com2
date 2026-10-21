@@ -193,6 +193,8 @@ private class ProgressUriRequestBody(
     }
 }
 
+data class UserNote(val text: String = "", val updatedAt: Long = 0L)
+
 class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     private val sharedPrefs = application.getSharedPreferences("firechat_prefs", Context.MODE_PRIVATE)
@@ -353,6 +355,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _usersState = MutableStateFlow<List<User>>(emptyList())
     val usersState: StateFlow<List<User>> = _usersState.asStateFlow()
+
+    private val _friendNotesState = MutableStateFlow<Map<String, UserNote>>(emptyMap())
+    val friendNotesState: StateFlow<Map<String, UserNote>> = _friendNotesState.asStateFlow()
+    private val noteListeners = mutableMapOf<String, ListenerRegistration>()
 
     private val _filteredUsersState = MutableStateFlow<List<User>>(emptyList())
     val filteredUsersState: StateFlow<List<User>> = _filteredUsersState.asStateFlow()
@@ -1563,15 +1569,40 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             .addOnSuccessListener { createActivityNotification(uid, "premium_revoked", uid, "Your Premium access was cancelled by ADMIN RAKIB"); onComplete(true) }.addOnFailureListener { onComplete(false) }
     }
 
-    /** Update a short, friends-only 24-hour note; the full text remains in the normal private profile doc. */
+    /** Subscribe only to the signed-in user's own note and notes of known friends. */
+    fun observeFriendNotes(uids: List<String>) {
+        val me = FirebaseAuth.getInstance().currentUser?.uid
+        if (me.isNullOrBlank()) {
+            noteListeners.values.forEach { it.remove() }
+            noteListeners.clear()
+            _friendNotesState.value = emptyMap()
+            return
+        }
+        val wanted = (listOf(me) + uids).filter { it.isNotBlank() }.distinct().take(100).toSet()
+        (noteListeners.keys - wanted).toList().forEach { uid ->
+            noteListeners.remove(uid)?.remove()
+            _friendNotesState.value = _friendNotesState.value - uid
+        }
+        wanted.forEach { uid ->
+            if (uid in noteListeners) return@forEach
+            noteListeners[uid] = FirebaseFirestore.getInstance().collection("user_notes").document(uid)
+                .addSnapshotListener { doc, error ->
+                    if (error != null) return@addSnapshotListener
+                    val note = if (doc?.exists() == true) UserNote(doc.getString("note").orEmpty().take(80), doc.getLong("noteAt") ?: 0L) else UserNote()
+                    _friendNotesState.value = _friendNotesState.value + (uid to note)
+                }
+        }
+    }
+
+    /** Update a short-lived note stored separately so Firestore rules can enforce friend-only reads. */
     fun publishNote(text: String, onComplete: (Boolean) -> Unit = {}) {
         val user = FirebaseAuth.getInstance().currentUser ?: return onComplete(false)
         val clean = text.trim().take(80)
         val at = if (clean.isBlank()) 0L else System.currentTimeMillis()
-        FirebaseFirestore.getInstance().collection("users").document(user.uid)
-            .update(mapOf("note" to clean, "noteAt" to at))
+        FirebaseFirestore.getInstance().collection("user_notes").document(user.uid)
+            .set(mapOf("note" to clean, "noteAt" to at), SetOptions.merge())
             .addOnSuccessListener {
-                _currentUserState.value = _currentUserState.value?.copy(note = clean, noteAt = at)
+                _friendNotesState.value = _friendNotesState.value + (user.uid to UserNote(clean, at))
                 onComplete(true)
             }
             .addOnFailureListener { onComplete(false) }
@@ -1995,6 +2026,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun logout(onSuccess: () -> Unit) {
+        noteListeners.values.forEach { it.remove() }
+        noteListeners.clear()
+        _friendNotesState.value = emptyMap()
         try {
             val uid = FirebaseAuth.getInstance().currentUser?.uid
             if (uid != null) {
@@ -5643,6 +5677,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     override fun onCleared() {
+        noteListeners.values.forEach { it.remove() }
+        noteListeners.clear()
+        _friendNotesState.value = emptyMap()
         stopTypingLoop()
         val database = runCatching { getDatabaseInstance() }.getOrNull()
         val currentUid = FirebaseAuth.getInstance().currentUser?.uid

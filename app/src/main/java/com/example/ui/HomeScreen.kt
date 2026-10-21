@@ -247,6 +247,10 @@ fun HomeScreen(
     val mutedUsers by viewModel.mutedUserIds.collectAsState()
     val savedPostIds by viewModel.savedPostIds.collectAsState()
     val allUsers by viewModel.usersState.collectAsState()
+    val friendNotes by viewModel.friendNotesState.collectAsState()
+    LaunchedEffect(currentUser?.uid, currentUser?.friends) {
+        viewModel.observeFriendNotes(currentUser?.friends.orEmpty() + listOfNotNull(currentUser?.uid))
+    }
     val conversationUserIds by viewModel.conversationUserIds.collectAsState()
     val unreadCounts by viewModel.unreadCountsState.collectAsState()
 
@@ -814,7 +818,9 @@ fun HomeScreen(
                         if (searchQuery.isBlank()) ContactsDiscoveryCard(viewModel, users, onUserSelected)
                         if (searchQuery.isBlank()) {
                             val friendIds = currentUser?.friends.orEmpty().toSet()
-                            NotesStrip(me = currentUser, friends = chatUsers.filter { it.uid in friendIds }) { note ->
+                            val noteMe = currentUser?.uid?.let { friendNotes[it] }
+                            val noteFriends = chatUsers.filter { it.uid in friendIds }.map { user -> user to (friendNotes[user.uid] ?: UserNote()) }
+                            NotesStrip(me = currentUser, myNote = noteMe, friends = noteFriends) { note ->
                                 viewModel.publishNote(note) { ok -> Toast.makeText(context, if (ok) "Note updated" else "Could not update note", Toast.LENGTH_SHORT).show() }
                             }
                         }

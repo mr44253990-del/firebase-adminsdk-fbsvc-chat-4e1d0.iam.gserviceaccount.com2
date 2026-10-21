@@ -51,10 +51,7 @@ data class User(
     val deviceModel: String = "",
     val androidVersion: String = "",
     /** One-way hash of the verified phone number (E.164 digits), used only for contact discovery. */
-    val phoneHash: String = "",
-    /** Short 24-hour "note" shown to friends above the chat list (v4.4). */
-    val note: String = "",
-    val noteAt: Long = 0L
+    val phoneHash: String = ""
 )
 
 data class MessageEditRecord(

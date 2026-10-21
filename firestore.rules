@@ -55,6 +55,20 @@ service cloud.firestore {
       }
     }
 
+    // Notes are separate from the broadly readable profile doc so this rule can enforce friends-only access.
+    match /user_notes/{uid} {
+      allow read: if owner(uid) || (signedIn()
+        && request.auth.uid in get(/databases/$(database)/documents/users/$(uid)).data.get('friends', []));
+      allow create, update: if owner(uid)
+        && request.resource.data.keys().hasAll(['note', 'noteAt'])
+        && request.resource.data.keys().hasOnly(['note', 'noteAt'])
+        && request.resource.data.note is string
+        && request.resource.data.note.size() <= 80
+        && request.resource.data.noteAt is int
+        && request.resource.data.noteAt <= request.time.toMillis() + 120000;
+      allow delete: if owner(uid);
+    }
+
     // Private per-user settings (quick replies, …): only the owner can read or write.
     match /user_private/{uid}/{document=**} {
       allow read, write: if signedIn() && request.auth.uid == uid;
