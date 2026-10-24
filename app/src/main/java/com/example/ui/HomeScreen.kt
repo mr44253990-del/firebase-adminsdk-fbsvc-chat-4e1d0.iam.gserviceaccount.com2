@@ -276,6 +276,8 @@ fun HomeScreen(
     var lockEnabled by remember { mutableStateOf(AppLockManager.isEnabled(context)) }
     val privacySettings by PrivacyPreferences.settings.collectAsState()
     val currentTab by viewModel.currentTabState.collectAsState()
+    var chatChromeCollapsed by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(currentTab) { if (currentTab != 1) chatChromeCollapsed = false }
     val selectedReelPostId by viewModel.selectedReelPostId.collectAsState()
     BackHandler(enabled = currentTab == 6 && !flagshipConfig.tiktokModeEnabled) { viewModel.setCurrentTab(0) }
     BackHandler(enabled = currentTab == 7) { viewModel.setCurrentTab(3) }
@@ -338,7 +340,13 @@ fun HomeScreen(
         containerColor = Color.Transparent,
         contentWindowInsets = androidx.compose.foundation.layout.WindowInsets(0, 0, 0, 0),
         topBar = {
-            if (currentTab != 6) Column(modifier = Modifier.fillMaxWidth()) {
+            if (currentTab != 6) {
+                AnimatedVisibility(
+                    visible = currentTab != 1 || !chatChromeCollapsed,
+                    enter = expandVertically(expandFrom = Alignment.Top) + fadeIn() + slideInVertically { -it / 3 },
+                    exit = shrinkVertically(shrinkTowards = Alignment.Top) + fadeOut() + slideOutVertically { -it / 3 }
+                ) {
+                    Column(modifier = Modifier.fillMaxWidth()) {
                 // WiFi Offline Mode indicator banner
                 if (!isOnlineState) {
                     Box(
@@ -497,6 +505,11 @@ fun HomeScreen(
                         containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.72f)
                     )
                 )
+                    }
+                }
+                if (currentTab == 1 && chatChromeCollapsed) {
+                    Spacer(Modifier.fillMaxWidth().windowInsetsTopHeight(androidx.compose.foundation.layout.WindowInsets.statusBars))
+                }
             }
         },
         bottomBar = {
@@ -788,6 +801,18 @@ fun HomeScreen(
                             else -> chatUsers.filter { !ConversationPrefs.isArchived(context, it.uid) && !ConversationPrefs.isLocked(context, it.uid) }
                         }
                     }
+                    val chatListState = rememberLazyListState()
+                    val chatCollapseThresholdPx = with(androidx.compose.ui.platform.LocalDensity.current) { 20.dp.toPx().toInt() }
+                    val chatHeaderCollapsed by remember(chatListState, displayedChatUsers, chatCollapseThresholdPx) {
+                        derivedStateOf {
+                            displayedChatUsers.isNotEmpty() &&
+                                (chatListState.firstVisibleItemIndex > 0 || chatListState.firstVisibleItemScrollOffset > chatCollapseThresholdPx)
+                        }
+                    }
+                    LaunchedEffect(chatHeaderCollapsed) {
+                        chatChromeCollapsed = chatHeaderCollapsed
+                        if (chatHeaderCollapsed) showChatTools = false
+                    }
                     // Only friends, requests and real conversations appear until the user searches.
                     Column(
                         modifier = Modifier
@@ -812,62 +837,77 @@ fun HomeScreen(
                         )
 
                         if (searchQuery.isBlank()) {
-                            Spacer(Modifier.height(8.dp))
-                            Card(
-                                onClick = { showChatTools = !showChatTools },
-                                modifier = Modifier.fillMaxWidth().animateContentSize(),
-                                shape = RoundedCornerShape(18.dp),
-                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .48f)),
-                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = .55f))
+                            AnimatedVisibility(
+                                visible = !chatHeaderCollapsed,
+                                enter = expandVertically(expandFrom = Alignment.Top) + fadeIn(),
+                                exit = shrinkVertically(shrinkTowards = Alignment.Top) + fadeOut()
                             ) {
-                                Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    Box(Modifier.size(34.dp).clip(RoundedCornerShape(11.dp)).background(MaterialTheme.colorScheme.primary.copy(alpha = .12f)), contentAlignment = Alignment.Center) {
-                                        Icon(Icons.Default.Tune, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(19.dp))
-                                    }
-                                    Spacer(Modifier.width(10.dp))
-                                    Column(Modifier.weight(1f)) {
-                                        Text(tr("Tools & filters"), fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleSmall)
-                                        Text(if (chatFilter == "all") tr("Saved, calls, discovery and chat filters") else "${tr(chatFilter.replaceFirstChar { it.uppercase() })} ${tr("chats")}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                    }
-                                    Icon(if (showChatTools) Icons.Default.ExpandLess else Icons.Default.ExpandMore, if (showChatTools) "Collapse tools" else "Expand tools", tint = MaterialTheme.colorScheme.primary)
-                                }
-                            }
-                            AnimatedVisibility(visible = showChatTools, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
-                                Column(Modifier.fillMaxWidth().padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    AnnouncementBanner(Modifier.fillMaxWidth())
-                                    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        AssistChip(onClick = { ProTools.open("saved") }, label = { Text(tr("Saved")) }, leadingIcon = { Icon(Icons.Default.Star, null, modifier = Modifier.size(16.dp)) })
-                                        AssistChip(onClick = { ProTools.open("calls") }, label = { Text(tr("Call history")) }, leadingIcon = { Icon(Icons.Default.Call, null, modifier = Modifier.size(16.dp)) })
-                                        AssistChip(onClick = { ProTools.open("search") }, label = { Text(tr("Search chats")) }, leadingIcon = { Icon(Icons.Default.ManageSearch, null, modifier = Modifier.size(16.dp)) })
-                                    }
-                                    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                        listOf("all" to "All", "unread" to "Unread", "archived" to "Archived", "locked" to "Locked").forEach { (key, label) ->
-                                            FilterChip(selected = chatFilter == key, onClick = { chatFilter = key }, label = { Text(tr(label)) })
+                                Column(Modifier.fillMaxWidth()) {
+                                    Spacer(Modifier.height(8.dp))
+                                    Card(
+                                        onClick = { showChatTools = !showChatTools },
+                                        modifier = Modifier.fillMaxWidth().animateContentSize(),
+                                        shape = RoundedCornerShape(18.dp),
+                                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .48f)),
+                                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = .55f))
+                                    ) {
+                                        Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                                            Box(Modifier.size(34.dp).clip(RoundedCornerShape(11.dp)).background(MaterialTheme.colorScheme.primary.copy(alpha = .12f)), contentAlignment = Alignment.Center) {
+                                                Icon(Icons.Default.Tune, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(19.dp))
+                                            }
+                                            Spacer(Modifier.width(10.dp))
+                                            Column(Modifier.weight(1f)) {
+                                                Text(tr("Tools & filters"), fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleSmall)
+                                                Text(if (chatFilter == "all") tr("Saved, calls, discovery and chat filters") else "${tr(chatFilter.replaceFirstChar { it.uppercase() })} ${tr("chats")}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                            }
+                                            Icon(if (showChatTools) Icons.Default.ExpandLess else Icons.Default.ExpandMore, if (showChatTools) "Collapse tools" else "Expand tools", tint = MaterialTheme.colorScheme.primary)
                                         }
                                     }
-                                    ContactsDiscoveryCard(viewModel, users, onUserSelected)
-                                    val friendIds = currentUser?.friends.orEmpty().toSet()
-                                    val noteMe = currentUser?.uid?.let { friendNotes[it] }
-                                    val noteFriends = chatUsers.filter { it.uid in friendIds }.map { user -> user to (friendNotes[user.uid] ?: UserNote()) }
-                                    NotesStrip(me = currentUser, myNote = noteMe, friends = noteFriends) { note ->
-                                        viewModel.publishNote(note) { ok -> Toast.makeText(context, if (ok) "Note updated" else "Could not update note", Toast.LENGTH_SHORT).show() }
+                                    AnimatedVisibility(visible = showChatTools, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
+                                        Column(Modifier.fillMaxWidth().padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            AnnouncementBanner(Modifier.fillMaxWidth())
+                                            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                                AssistChip(onClick = { ProTools.open("saved") }, label = { Text(tr("Saved")) }, leadingIcon = { Icon(Icons.Default.Star, null, modifier = Modifier.size(16.dp)) })
+                                                AssistChip(onClick = { ProTools.open("calls") }, label = { Text(tr("Call history")) }, leadingIcon = { Icon(Icons.Default.Call, null, modifier = Modifier.size(16.dp)) })
+                                                AssistChip(onClick = { ProTools.open("search") }, label = { Text(tr("Search chats")) }, leadingIcon = { Icon(Icons.Default.ManageSearch, null, modifier = Modifier.size(16.dp)) })
+                                            }
+                                            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                                listOf("all" to "All", "unread" to "Unread", "archived" to "Archived", "locked" to "Locked").forEach { (key, label) ->
+                                                    FilterChip(selected = chatFilter == key, onClick = { chatFilter = key }, label = { Text(tr(label)) })
+                                                }
+                                            }
+                                            ContactsDiscoveryCard(viewModel, users, onUserSelected)
+                                            val friendIds = currentUser?.friends.orEmpty().toSet()
+                                            val noteMe = currentUser?.uid?.let { friendNotes[it] }
+                                            val noteFriends = chatUsers.filter { it.uid in friendIds }.map { user -> user to (friendNotes[user.uid] ?: UserNote()) }
+                                            NotesStrip(me = currentUser, myNote = noteMe, friends = noteFriends) { note ->
+                                                viewModel.publishNote(note) { ok -> Toast.makeText(context, if (ok) "Note updated" else "Could not update note", Toast.LENGTH_SHORT).show() }
+                                            }
+                                        }
                                     }
                                 }
                             }
                         }
 
                         val activeContacts = chatUsers.filter { it.isOnline }.distinctBy { it.uid }
-                        if (searchQuery.isBlank() && activeContacts.isNotEmpty()) {
-                            ActiveContactsStrip(users = activeContacts, onSelect = onUserSelected)
-                            Spacer(modifier = Modifier.height(14.dp))
+                        AnimatedVisibility(
+                            visible = searchQuery.isBlank() && activeContacts.isNotEmpty() && !chatHeaderCollapsed,
+                            enter = expandVertically(expandFrom = Alignment.Top) + fadeIn(),
+                            exit = shrinkVertically(shrinkTowards = Alignment.Top) + fadeOut()
+                        ) {
+                            Column {
+                                ActiveContactsStrip(users = activeContacts, onSelect = onUserSelected)
+                                Spacer(Modifier.height(14.dp))
+                            }
                         }
 
                         if (displayedChatUsers.isEmpty()) {
-                            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                                 Text(if (chatUsers.isEmpty()) tr("No conversations yet — search to find people") else "Nothing in this filter yet", color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         } else {
                             LazyColumn(
+                                state = chatListState,
                                 modifier = Modifier.weight(1f),
                                 verticalArrangement = Arrangement.spacedBy(10.dp),
                                 contentPadding = PaddingValues(bottom = 16.dp)

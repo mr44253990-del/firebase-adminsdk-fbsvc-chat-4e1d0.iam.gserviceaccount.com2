@@ -197,3 +197,8 @@
 ## v4.4.3 UI/verification update
 
 v4.4.3-তে নতুন UI backlog item #125–#131-এর targeted অংশ যোগ করা হয়েছে: chat tools collapse menu, full-screen insets, searchable/filterable 1:1 call history with callback, Smart system/wallpaper theme, animated local-search loading, Firebase SMS auto-retrieval/instant credential flow ও clipboard paste, এবং existing 2-step code-entry paste convenience। আগের 124-item roadmap সম্পূর্ণ হয়েছে—এমন দাবি নয়। নতুন পরবর্তী পর্যায়ের 100-item প্রস্তাব `docs/roadmap-v4.5-to-v5.0-bn.md`-এ। Release CI (`39668886838`), PR validation (`39668895421`) এবং emulator smoke test (`39670743063`) সফল। এই update-এ backend code/rules বদলায়নি, তাই deploy step প্রয়োজন হয়নি।
+
+
+## v4.4.4 scroll-responsive Chats update
+
+Chats list-এ ~20dp scroll threshold-এর পর app chrome, online/status row, Tools & filters এবং Active now strip animatedভাবে collapse হয়; search pinned থাকে। Expanded tools scroll শুরুতে auto-close হয়; top-এ ফিরলে chrome পুনরায় খোলে। `docs/app-experience-audit-plan-bn.md`-এ page-by-page audit, design rules ও test criteria; user impact `docs/v4.4.4-user-benefits-bn.txt`-এ। অন্য screens-এর বড় redesign পরিকল্পনাধীন—এই release-এ সব page redesign হয়েছে দাবি নয়।

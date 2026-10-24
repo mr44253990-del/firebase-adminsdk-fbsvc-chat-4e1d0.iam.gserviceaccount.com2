@@ -1,5 +1,12 @@
 # Convo Chat — বড় ভবিষ্যৎ পরিকল্পনা (v4.5 → v5.0)
 
+> **v4.4.4 বাস্তবায়িত (বর্তমান update):** Chats list-এর top chrome/online strip/Tools & filters down-scroll-এ animatedভাবে collapse, search pinned, top-এ ফিরলে restore। Whole-app screen audit plan `docs/app-experience-audit-plan-bn.md`-এ; সব proposed future item এখনো implemented নয়।
+
+## #225 — Scroll-responsive Chats header [S] — v4.4.4-তে সম্পন্ন
+
+Scroll threshold পেরোলে AppBar + online/status + Tools & filters + Active now strip fade/slide/expand-এ লুকায়; search field এবং bottom navigation থাকে। Tools expanded থাকলে scroll শুরুতে auto-close; list-এর top-এ ফেরার পর header ফিরবে। Status-bar spacer safe-area রাখে।
+
+
 এই তালিকা আগের 124-item v4.4 roadmap-এর **পরের 100টি আইডিয়া (#125–#224)**। এটি কাজ শেষ হওয়ার প্রতিশ্রুতি নয়; পছন্দ, নিরাপত্তা, backend, API key, Android সীমা ও release-test অনুযায়ী ধাপে বাস্তবায়ন করতে হবে।
 
 **চিহ্ন:** [S] ছোট, [M] মাঝারি, [L] বড়; [KEY] বাইরের key/provider/account; [PRIV] privacy review দরকার; [NET] server/backend কাজ; [AI] AI-provider খরচ/নীতি প্রযোজ্য। Key না লিখলে app-এর বিদ্যমান stack-এ সম্ভব হওয়ার কথা, তবে build/permission verification প্রয়োজন।

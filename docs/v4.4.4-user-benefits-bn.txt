@@ -1,0 +1,57 @@
+CONVO CHAT v4.4.4 — ব্যবহারকারীরা কী সুবিধা পাবেন
+
+এই ফাইলে বর্তমান v4.4.4 আপডেটের বাস্তব সুবিধা এবং ভবিষ্যৎ পরিকল্পনার সুবিধা আলাদা করে বলা হয়েছে। ভবিষ্যৎ roadmap-এর ফিচারগুলো এখনই অ্যাপে আছে—এমন দাবি নয়।
+
+এখনকার আপডেট: Chats স্ক্রিনে স্মার্ট scroll
+
+1. স্ক্রল করলে জায়গা বাড়ে
+চ্যাট লিস্টে নিচের দিকে স্ক্রল শুরু হলে অ্যাপের বড় উপরের বার, online/status অংশ, Tools & filters এবং Active now contact strip সুন্দর animation-এ গুটিয়ে যাবে। ফলে একই পর্দায় আরও বেশি chat দেখা যাবে।
+
+2. Search হারাবে না
+মানুষ খোঁজার search field pinned থাকবে। উপরের tools ও online list লুকালেও search ব্যবহার করা যাবে।
+
+3. উপরে ফিরলে পরিচিত controls ফিরে আসে
+চ্যাট লিস্টের শুরুতে ফিরে scroll করলে brand bar, Online/Offline status, Tools & filters এবং Active now strip animation-এ আবার দেখা যাবে। এটি শুধু hide নয়—যে সময় দরকার তখন দ্রুত ফিরে পাওয়া যাবে।
+
+4. Tools নিজে থেকে জায়গা ছাড়ে
+Tools & filters খোলা থাকলেও user যখন chat list scroll করবেন, panel-টি animate করে বন্ধ হবে। Saved messages, Call history, Search chats, discovery, Notes এবং All/Unread/Archived/Locked filter সরানো হয়নি—Tools & filters থেকে পাওয়া যাবে।
+
+5. সিস্টেম বারের আড়ালে কনটেন্ট যাবে না
+Header collapse হলে status bar-এর নিরাপদ জায়গা রাখা হয়; list system area-র নিচে ঢোকে না। Bottom navigation আগের মতো থাকে।
+
+6. কম visual clutter
+দীর্ঘ চ্যাট লিস্টে একটানা উপরের control দেখতে হয় না। স্ক্রল থামলে/উপরে ফিরলে প্রয়োজনীয় navigation আবার দেখা যায়।
+
+আগের সুবিধা যেগুলো বজায় থাকে
+
+- Saved messages, pinned/archive/locked/unread chat controls।
+- 1:1 call history, search/filter ও callback; call record এই মুহূর্তে device-local।
+- Smart theme Android 12+ এ system mode ও wallpaper colors অনুসরণ করতে পারে; পুরোনো Android-এ fallback থাকে।
+- Firebase Phone Auth-এর instant verification/SMS auto-retrieval আগের মতো; code field-এ clipboard paste shortcut আছে। SMS auto-retrieval সব device/network-এ নিশ্চিত নয়।
+- 2-step verification এবং backup-code flow থাকে; code field-এ paste shortcut যোগ করা হয়েছে।
+- Full-screen tools/search/storage pages-এ system-bar/keyboard safe-area handling থাকে।
+
+ব্যবহার শুরু করার উপায়
+
+1. Convo Chat v4.4.4 install/update করুন।
+2. Chats tab খুলে chat list-এর উপর search, Tools & filters এবং Active now দেখুন।
+3. নিচের দিকে স্ক্রল করুন: উপরের brand/status, tools এবং active-contact strip animate করে সরে যাবে।
+4. উপরের দিকে ফিরে গেলে controls আবার দেখা যাবে।
+5. Saved/Call history/Search chats/filter ব্যবহার করতে scroll-এর top-এ ফিরে Tools & filters চাপুন।
+
+এই update-এর জন্য নতুন API key লাগবে না
+
+- Smart theme-এর জন্য Android 12+ device wallpaper palette ব্যবহার করে; Profile & settings > App theme > Smart নির্বাচন করতে হবে।
+- SMS login-এর জন্য আগে থেকে Firebase Phone provider, সঠিক signing SHA fingerprint, quota/region ও test numbers ঠিক থাকতে হবে।
+- Audio/video callback আগের Firebase signaling এবং Worker/TURN setup ব্যবহার করে। নতুন provider/API key যোগ হয়নি।
+- পূর্বের v4.4.2 থেকে থাকা একটি সেটআপ মনে রাখুন: Firestore-এ user_notes/{uid} rules deploy না থাকলে friend Notes read/write ব্যর্থ হতে পারে। সঠিক Firebase project-এ rules deploy করুন অথবা deployment credentials configure করুন।
+
+পরবর্তী পরিকল্পনার সুবিধা — এখনও বাস্তবায়িত নয়
+
+পরিকল্পনা নথিতে Home/feed, post composer, stories/reels, 1:1/group chat, call screens, search/discovery, pickers, profiles/settings, backup, AI, admin/moderation, notifications, background presence ও accessibility-এর page-by-page কাজ এবং acceptance tests আছে। এগুলো phase অনুযায়ী implement ও CI-তে যাচাই না হওয়া পর্যন্ত ব্যবহারকারীরা নতুন feature হিসেবে পাবেন না।
+
+সম্পূর্ণ অ্যাপের screen-by-screen design, scope ও acceptance plan:
+docs/app-experience-audit-plan-bn.md
+
+Release/setup details:
+docs/v4.4.4-scroll-ui-update-bn.md
