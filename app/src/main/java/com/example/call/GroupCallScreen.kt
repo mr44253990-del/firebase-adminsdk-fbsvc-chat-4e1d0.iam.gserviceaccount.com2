@@ -1,5 +1,7 @@
 package com.example.call
 
+import com.example.ui.drawThemeTexture
+import com.example.ui.tr
 import android.Manifest
 import android.app.Activity
 import android.content.Context
@@ -28,6 +30,17 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.foundation.border
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -45,12 +58,16 @@ fun GroupCallScreen(
     video: Boolean,
     onClose: () -> Unit,
     onMinimize: () -> Unit = {},
+    onPipCallOver: () -> Unit = {},
     onRoomReady: (String) -> Unit = {},
     joinRoomId: String? = null,
     autoStart: Boolean = true
 ) {
     val context = LocalContext.current
+    val callSkinId by CallSkinPreferences.selectedId.collectAsState()
     val state by GroupCallEngine.state.collectAsState()
+    LaunchedEffect(context.applicationContext) { CallSkinPreferences.load(context) }
+    val callPalette = CallSkinPreferences.palette(callSkinId)
     var permissionResult by remember { mutableStateOf<Map<String, Boolean>?>(null) }
     var started by remember { mutableStateOf(false) }
     var joinRequested by remember { mutableStateOf(autoStart) }
@@ -82,6 +99,8 @@ fun GroupCallScreen(
         if (!joinRequested || (!started && !audioGranted)) return@LaunchedEffect
         if (!started && audioGranted) {
             started = true
+            // Returning to a call that is already running (from the floating pill): don't start a new one.
+            GroupCallEngine.state.value.let { live -> if (live.groupId == group.id && live.status !in listOf("idle", "ended", "failed")) return@LaunchedEffect }
             val startCall: ((Boolean) -> Unit) -> Unit = { ready ->
                 if (joinRoomId.isNullOrBlank()) {
                     GroupCallEngine.start(
@@ -125,10 +144,40 @@ fun GroupCallScreen(
         }
     }
 
+    val inPip by CallPipState.inPip.collectAsState()
+    // The call ended while minimized: close the PiP window instead of leaving a frozen frame.
+    var groupWasLive by remember { mutableStateOf(false) }
+    LaunchedEffect(state.status, inPip) {
+        if (state.status !in listOf("idle", "ended", "failed")) groupWasLive = true
+        else if (groupWasLive && inPip) { kotlinx.coroutines.delay(700); onPipCallOver() }
+    }
+    if (inPip && state.status !in listOf("idle", "ended", "failed")) {
+        GroupCallPipContent(state, callPalette.accent)
+        return
+    }
+
     Scaffold(
+        containerColor = Color.Transparent,
+        contentColor = Color.White,
         topBar = {
             TopAppBar(
-                title = { Text(group.name) },
+                title = {
+                    var elapsed by remember { mutableLongStateOf(0L) }
+                    LaunchedEffect(state.connectedAt, state.status) {
+                        while (state.connectedAt > 0L && state.status != "ended") {
+                            elapsed = (System.currentTimeMillis() - state.connectedAt) / 1000L
+                            kotlinx.coroutines.delay(1000)
+                        }
+                    }
+                    Column {
+                        Text(group.name, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Bold)
+                        Text(
+                            (if (state.connectedAt > 0L) "%02d:%02d".format(elapsed / 60, elapsed % 60) + "  ·  " else "") +
+                                "${state.participants.count { it.connected } + 1} in call",
+                            style = MaterialTheme.typography.labelSmall, color = Color.White.copy(alpha = .72f)
+                        )
+                    }
+                },
                 navigationIcon = {
                     IconButton(onClick = { GroupCallEngine.end(); onClose() }) {
                         Icon(Icons.Default.Close, "End call")
@@ -182,34 +231,44 @@ fun GroupCallScreen(
                     }
                                                 Text("${state.participants.size}/6", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(end = 10.dp))
 
-                }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = callPalette.surface,
+                    titleContentColor = Color.White,
+                    navigationIconContentColor = Color.White,
+                    actionIconContentColor = Color.White
+                )
             )
         },
         bottomBar = {
             if (joinRequested && started) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 14.dp, vertical = 10.dp),
+                    shape = RoundedCornerShape(30.dp),
+                    color = Color.Black.copy(alpha = .46f),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Brush.horizontalGradient(listOf(callPalette.accent.copy(alpha = .7f), Color.White.copy(alpha = .12f), callPalette.accent.copy(alpha = .5f))))
+                ) {
                 Row(
-                    modifier = Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface).navigationBarsPadding().padding(horizontal = 12.dp, vertical = 8.dp),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 10.dp),
                     horizontalArrangement = Arrangement.SpaceEvenly,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    FilledTonalIconButton(onClick = { GroupCallEngine.toggleMute() }) {
-                        Icon(if (state.muted) Icons.Default.MicOff else Icons.Default.Mic, "Mute")
-                    }
-                    if (state.video) {
-                        FilledTonalIconButton(onClick = { GroupCallEngine.toggleCamera() }) {
-                            Icon(if (state.cameraOff) Icons.Default.VideocamOff else Icons.Default.Videocam, "Camera")
+                    GroupDockButton(if (state.muted) Icons.Default.MicOff else Icons.Default.Mic, if (state.muted) "Unmute" else "Mute", state.muted, callPalette.accent) { GroupCallEngine.toggleMute() }
+                    if (state.video) GroupDockButton(if (state.cameraOff) Icons.Default.VideocamOff else Icons.Default.Videocam, "Camera", state.cameraOff, callPalette.accent) { GroupCallEngine.toggleCamera() }
+                    GroupDockButton(if (state.speaker) Icons.Default.VolumeUp else Icons.Default.Hearing, if (state.speaker) "Speaker" else "Earpiece", state.speaker, callPalette.accent) { GroupCallEngine.toggleSpeaker() }
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        FilledIconButton(
+                            onClick = { GroupCallEngine.end(); onClose() },
+                            modifier = Modifier.size(width = 64.dp, height = 48.dp),
+                            shape = RoundedCornerShape(24.dp),
+                            colors = IconButtonDefaults.filledIconButtonColors(containerColor = Color(0xFFE53935), contentColor = Color.White)
+                        ) {
+                            Icon(Icons.Default.CallEnd, "End call")
                         }
-                    }
-                    FilledIconButton(
-                        onClick = { GroupCallEngine.end(); onClose() },
-                        colors = IconButtonDefaults.filledIconButtonColors(containerColor = MaterialTheme.colorScheme.error)
-                    ) {
-                        Icon(Icons.Default.CallEnd, "End call")
+                        Text("End", style = MaterialTheme.typography.labelSmall, color = Color.White.copy(alpha = .8f))
                     }
                     Box {
-                        FilledTonalIconButton(onClick = { showMoreControls = true }) {
-                            Icon(Icons.Default.MoreVert, "More call controls")
-                        }
+                        GroupDockButton(Icons.Default.MoreHoriz, "More", showMoreControls, callPalette.accent) { showMoreControls = true }
                         DropdownMenu(
                             expanded = showMoreControls,
                             onDismissRequest = { showMoreControls = false }
@@ -259,10 +318,11 @@ fun GroupCallScreen(
                         }
                     }
                 }
+                }
             }
         }
     ) { padding ->
-        Column(Modifier.fillMaxSize().padding(padding).padding(8.dp)) {
+        Column(Modifier.fillMaxSize().background(Brush.verticalGradient(callPalette.background)).drawBehind { drawThemeTexture(callPalette.texture, callPalette.accent, 1.2f) }.padding(padding).padding(8.dp)) {
             if (!joinRequested) {
                 Card(
                     modifier = Modifier.fillMaxWidth().padding(12.dp),
@@ -281,7 +341,7 @@ fun GroupCallScreen(
                         ) {
                             Icon(Icons.Default.Call, contentDescription = null)
                             Spacer(Modifier.width(8.dp))
-                            Text("Join Call")
+                            Text(tr("Join Call"))
                         }
                     }
                 }
@@ -384,6 +444,8 @@ fun GroupCallScreen(
                     items(remoteParticipants, key = { it.uid }) { participant ->
                         CallVideoTile(
                             name = participant.name,
+                            image = participant.image,
+                            accent = callPalette.accent,
                             connected = participant.connected,
                             muted = participant.muted || participant.hostMuted,
                             cameraOff = !participant.video,
@@ -427,6 +489,8 @@ fun GroupCallScreen(
                         CallVideoTile(
                             modifier = Modifier.fillMaxSize(),
                             name = focused.name,
+                            image = focused.image,
+                            accent = callPalette.accent,
                             connected = focused.connected,
                             muted = focused.muted || focused.hostMuted,
                             cameraOff = !focused.video,
@@ -470,6 +534,8 @@ fun GroupCallScreen(
                         CallVideoTile(
                             modifier = Modifier.width(112.dp).fillMaxHeight(),
                             name = participant.name,
+                            image = participant.image,
+                            accent = callPalette.accent,
                             connected = participant.connected,
                             muted = participant.muted || participant.hostMuted,
                             cameraOff = !participant.video,
@@ -494,9 +560,24 @@ fun GroupCallScreen(
 
 
 @Composable
+private fun GroupDockButton(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, active: Boolean, accent: Color, onClick: () -> Unit) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(
+            Modifier.size(48.dp).clip(androidx.compose.foundation.shape.CircleShape)
+                .background(if (active) Color.White else Color.White.copy(alpha = .14f))
+                .clickable(onClick = onClick),
+            contentAlignment = Alignment.Center
+        ) { Icon(icon, label, tint = if (active) accent.copy(alpha = 1f).let { if (it.luminance() > .7f) Color.Black else it } else Color.White) }
+        Text(label, style = MaterialTheme.typography.labelSmall, color = Color.White.copy(alpha = .8f), maxLines = 1)
+    }
+}
+
+@Composable
 private fun CallVideoTile(
     modifier: Modifier = Modifier.fillMaxWidth().aspectRatio(0.82f),
     name: String,
+    image: String = "",
+    accent: Color = Color(0xFF7C4DFF),
     connected: Boolean,
     muted: Boolean,
     cameraOff: Boolean,
@@ -506,10 +587,16 @@ private fun CallVideoTile(
     onClick: () -> Unit = {},
     videoContent: @Composable () -> Unit
 ) {
+    val hue = remember(name) { ((name.hashCode() and 0x7fffffff) % 360).toFloat() }
+    val c1 = Color.hsv(hue, .55f, .55f)
+    val c2 = Color.hsv((hue + 48f) % 360f, .65f, .28f)
+    val pulse = rememberInfiniteTransition(label = "tile")
+    val ring by pulse.animateFloat(1f, 1.18f, infiniteRepeatable(tween(1100), RepeatMode.Reverse), label = "ring")
     Surface(
         modifier = modifier.clickable(onClick = onClick),
-        shape = RoundedCornerShape(18.dp),
+        shape = RoundedCornerShape(24.dp),
         color = Color.Black,
+        border = androidx.compose.foundation.BorderStroke(1.5.dp, if (connected && !muted) accent.copy(alpha = .85f) else Color.White.copy(alpha = .10f)),
         tonalElevation = 4.dp
     ) {
         Box(Modifier.fillMaxSize()) {
@@ -517,36 +604,49 @@ private fun CallVideoTile(
                 videoContent()
             } else {
                 Column(
-                    modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.86f)),
+                    modifier = Modifier.fillMaxSize().background(Brush.linearGradient(listOf(c1, c2))),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center
                 ) {
-                    Box(
-                        modifier = Modifier.size(58.dp).background(MaterialTheme.colorScheme.primaryContainer, RoundedCornerShape(50)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(name.take(1).uppercase(), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold)
+                    Box(contentAlignment = Alignment.Center) {
+                        if (connected && !muted) Box(
+                            Modifier.size(70.dp).graphicsLayer { scaleX = ring; scaleY = ring; alpha = 1.6f - ring }
+                                .border(2.dp, Color.White.copy(alpha = .55f), androidx.compose.foundation.shape.CircleShape)
+                        )
+                        Box(
+                            modifier = Modifier.size(62.dp).clip(androidx.compose.foundation.shape.CircleShape).background(Color.White.copy(alpha = .18f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(name.take(1).uppercase(), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold, color = Color.White)
+                            if (image.isNotBlank()) coil.compose.AsyncImage(
+                                model = image, contentDescription = null,
+                                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                                modifier = Modifier.matchParentSize().clip(androidx.compose.foundation.shape.CircleShape)
+                            )
+                        }
                     }
-                    Spacer(Modifier.height(8.dp))
-                    Text(name, style = MaterialTheme.typography.labelLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(if (connected) "Camera off" else "Connecting…", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.height(10.dp))
+                    Text(name, style = MaterialTheme.typography.labelLarge, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(if (connected) (if (muted) "Muted · camera off" else "Camera off") else "Connecting…", style = MaterialTheme.typography.labelSmall, color = Color.White.copy(alpha = .7f))
                 }
             }
             Surface(
                 modifier = Modifier.align(Alignment.BottomStart).padding(8.dp),
                 shape = RoundedCornerShape(12.dp),
-                color = Color.Black.copy(alpha = 0.60f)
+                color = Color.Black.copy(alpha = 0.55f)
             ) {
                 Row(Modifier.padding(horizontal = 8.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(7.dp).clip(androidx.compose.foundation.shape.CircleShape).background(if (connected) Color(0xFF4CAF50) else Color(0xFFFFB300)))
+                    Spacer(Modifier.width(5.dp))
                     Text(name, color = Color.White, style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     if (muted) {
                         Spacer(Modifier.width(5.dp))
-                        Icon(Icons.Default.MicOff, "Muted", tint = Color.White, modifier = Modifier.size(14.dp))
+                        Icon(Icons.Default.MicOff, "Muted", tint = Color(0xFFFF8A80), modifier = Modifier.size(14.dp))
                     }
                 }
             }
             if (isHost) {
-                Row(Modifier.align(Alignment.TopEnd).padding(5.dp)) {
+                Row(Modifier.align(Alignment.TopEnd).padding(6.dp).background(Color.Black.copy(alpha = .4f), RoundedCornerShape(14.dp))) {
                     IconButton(onClick = onMute, modifier = Modifier.size(30.dp)) {
                         Icon(if (muted) Icons.Default.Mic else Icons.Default.MicOff, "Toggle mute", tint = Color.White, modifier = Modifier.size(18.dp))
                     }

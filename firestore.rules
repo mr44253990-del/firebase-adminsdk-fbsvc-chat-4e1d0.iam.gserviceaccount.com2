@@ -3,10 +3,20 @@ service cloud.firestore {
   match /databases/{database}/documents {
     function signedIn() { return request.auth != null; }
     function owner(uid) { return signedIn() && request.auth.uid == uid; }
+    function isAdmin() { return signedIn() && request.auth.token.email == 'mr4425390@gmail.com'; }
+    // Sub-admins (staff): the admin sets users/{uid}.staffRole = 'sub_admin' + staffPermissions.
+    function staffCan(permission) {
+      return signedIn() && (isAdmin() || (
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('staffRole', '') == 'sub_admin'
+        && permission in get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('staffPermissions', [])));
+    }
 
     match /users/{uid} {
       allow read: if signedIn();
       allow create: if owner(uid)
+        && request.resource.data.get('staffRole', '') == ''
+        && request.resource.data.get('staffPermissions', []).size() == 0
+        && request.resource.data.get('mfaEnabled', false) == false
         && (request.resource.data.role == null || request.resource.data.role == 'user' || request.auth.token.email == 'mr4425390@gmail.com')
         && (request.resource.data.isPremium == null || request.resource.data.isPremium == false ||
           (request.resource.data.isPremium == true && request.resource.data.premiumPlan == 'trial'
@@ -15,8 +25,18 @@ service cloud.firestore {
       allow delete: if owner(uid);
       allow update: if (owner(uid)
         && request.resource.data.role == resource.data.role
-        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['isPremium', 'premiumPlan', 'premiumUntil', 'premiumApprovedAt', 'premiumTrialClaimed', 'premiumSource']))
-        || request.auth.token.email == 'mr4425390@gmail.com' || (
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['isPremium', 'premiumPlan', 'premiumUntil', 'premiumApprovedAt', 'premiumTrialClaimed', 'premiumSource', 'staffRole', 'staffPermissions', 'staffTitle', 'mfaEnabled', 'mfaMethod', 'banned', 'forceLogoutAt']))
+        // "Sign out of all devices" fallback: an owner may only move their own forceLogoutAt forward to ~now.
+        || (owner(uid)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['forceLogoutAt'])
+          && request.resource.data.forceLogoutAt is int
+          && request.resource.data.forceLogoutAt > resource.data.get('forceLogoutAt', 0)
+          && request.resource.data.forceLogoutAt <= request.time.toMillis() + 120000)
+        || request.auth.token.email == 'mr4425390@gmail.com'
+        // Sub-admins: profile moderation with "users", Premium changes with "premium"; never other staff.
+        || (staffCan('users') && resource.data.get('staffRole', '') == '' && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['role', 'name', 'username', 'profileImageUrl', 'coverImageUrl', 'bio', 'forceLogoutAt']))
+        || (staffCan('premium') && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['isPremium', 'premiumPlan', 'premiumUntil', 'premiumApprovedAt', 'premiumSource']))
+        || (
         signedIn()
         && exists(/databases/$(database)/documents/friend_requests/$(uid + "_" + request.auth.uid))
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['friends'])
@@ -35,9 +55,49 @@ service cloud.firestore {
       }
     }
 
+    // Notes are separate from the broadly readable profile doc so this rule can enforce friends-only access.
+    match /user_notes/{uid} {
+      allow read: if owner(uid) || (signedIn()
+        && request.auth.uid in get(/databases/$(database)/documents/users/$(uid)).data.get('friends', []));
+      allow create, update: if owner(uid)
+        && request.resource.data.keys().hasAll(['note', 'noteAt'])
+        && request.resource.data.keys().hasOnly(['note', 'noteAt'])
+        && request.resource.data.note is string
+        && request.resource.data.note.size() <= 80
+        && request.resource.data.noteAt is int
+        && request.resource.data.noteAt <= request.time.toMillis() + 120000;
+      allow delete: if owner(uid);
+    }
+
+    // Private per-user settings (quick replies, …): only the owner can read or write.
+    match /user_private/{uid}/{document=**} {
+      allow read, write: if signedIn() && request.auth.uid == uid;
+    }
+
     match /fcm_tokens/{uid} {
       allow create, update, delete: if owner(uid);
       allow read: if owner(uid); // Worker service account bypasses client rules.
+    }
+
+    // Clients may acknowledge their own push/probe only. The Worker service account
+    // owns presence leases and admin reads; client writes cannot extend onlineUntil.
+    match /presence/{uid} {
+      allow read: if owner(uid);
+      allow create: if owner(uid)
+        && request.resource.data.keys().hasOnly(['lastPushReceivedAt', 'lastProbeReceivedAt', 'lastProbeId'])
+        && request.resource.data.lastPushReceivedAt == request.time
+        && (!('lastProbeReceivedAt' in request.resource.data)
+          || request.resource.data.lastProbeReceivedAt == request.time)
+        && (!('lastProbeId' in request.resource.data)
+          || (request.resource.data.lastProbeId is string && request.resource.data.lastProbeId.size() <= 128));
+      allow update: if owner(uid)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastPushReceivedAt', 'lastProbeReceivedAt', 'lastProbeId'])
+        && request.resource.data.lastPushReceivedAt == request.time
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['lastProbeReceivedAt'])
+          || request.resource.data.lastProbeReceivedAt == request.time)
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['lastProbeId'])
+          || (request.resource.data.lastProbeId is string && request.resource.data.lastProbeId.size() <= 128));
+      allow delete: if owner(uid);
     }
 
     match /friend_requests/{requestId} {
@@ -54,15 +114,57 @@ service cloud.firestore {
       allow update: if false;
     }
 
+    // Storage routing contains only public URL/provider/bucket metadata so new users can
+    // select a profile photo before account creation. It must never contain a secret key.
+    match /app_config/storage {
+      allow read: if true;
+      allow write: if signedIn() && request.auth.token.email == 'mr4425390@gmail.com';
+    }
+
+    // Admin-only secrets (AI provider API keys). Never readable by regular users; the
+    // Worker / Edge Function read it with the service account.
+    // Admin audit trail: admin-only, append-only.
+    match /admin_audit/{entryId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin() || (signedIn() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('staffRole', '') == 'sub_admin' && request.resource.data.by == request.auth.uid);
+      allow update, delete: if false;
+    }
+
+    match /admin_secrets/{documentId} {
+      allow read, write: if signedIn() && request.auth.token.email == 'mr4425390@gmail.com';
+    }
+
+    // Live location shares: the sender writes, both chat members read.
+    match /live_locations/{shareId} {
+      allow read: if signedIn() && (request.auth.uid == resource.data.senderId || request.auth.uid == resource.data.recipientId);
+      allow create: if signedIn() && request.resource.data.senderId == request.auth.uid;
+      allow update, delete: if signedIn() && resource.data.senderId == request.auth.uid;
+    }
+
+    // Sign-up / sign-in methods (phone or e-mail) must be readable on the login screen.
+    match /app_config/auth_public {
+      allow read: if true;
+    }
+
     match /app_config/{documentId} {
       allow read: if signedIn();
-      allow write: if signedIn() && request.auth.token.email == 'mr4425390@gmail.com';
+      allow write: if isAdmin() || (documentId == 'announcement' && staffCan('announce'));
+    }
+
+    // Admin-managed chat background gallery. Images live in storage; this collection only
+    // holds public URLs and labels.
+    match /chatBackgrounds/{backgroundId} {
+      allow read: if signedIn();
+      allow create, update: if signedIn() && request.auth.token.email == 'mr4425390@gmail.com'
+        && request.resource.data.url is string && request.resource.data.url.matches('https://.*')
+        && request.resource.data.name is string && request.resource.data.name.size() <= 60;
+      allow delete: if signedIn() && request.auth.token.email == 'mr4425390@gmail.com';
     }
 
     match /feature_requests/{requestId} {
       allow create: if signedIn() && request.resource.data.requesterId == request.auth.uid;
-      allow read: if signedIn() && (resource.data.requesterId == request.auth.uid || request.auth.token.email == 'mr4425390@gmail.com');
-      allow update, delete: if signedIn() && request.auth.token.email == 'mr4425390@gmail.com';
+      allow read: if signedIn() && (resource.data.requesterId == request.auth.uid || staffCan('support'));
+      allow update, delete: if staffCan('support');
     }
 
     match /premium_requests/{requestId} {
@@ -71,8 +173,29 @@ service cloud.firestore {
         && request.resource.data.status == 'pending'
         && request.resource.data.transactionId is string
         && request.resource.data.transactionId.size() >= 6;
-      allow read: if signedIn() && (resource.data.userId == request.auth.uid || request.auth.token.email == 'mr4425390@gmail.com');
-      allow update, delete: if signedIn() && request.auth.token.email == 'mr4425390@gmail.com';
+      allow read: if signedIn() && (resource.data.userId == request.auth.uid || staffCan('premium'));
+      allow update, delete: if staffCan('premium');
+    }
+
+    // Admin polls: everyone reads, only the admin creates/ends them. Voters may only bump the
+    // aggregate counters, and each vote document is readable by its voter and the admin.
+    match /polls/{pollId} {
+      allow read: if signedIn();
+      allow create, delete: if signedIn() && request.auth.token.email == 'mr4425390@gmail.com';
+      allow update: if signedIn() && (
+        request.auth.token.email == 'mr4425390@gmail.com'
+        || (resource.data.active == true
+            && resource.data.endsAt > request.time.toMillis()
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['counts', 'totalVotes']))
+      );
+      match /votes/{voterId} {
+        allow read: if signedIn() && (request.auth.uid == voterId || request.auth.token.email == 'mr4425390@gmail.com');
+        allow create, update: if owner(voterId)
+          && request.resource.data.optionIndex is int
+          && get(/databases/$(database)/documents/polls/$(pollId)).data.active == true
+          && get(/databases/$(database)/documents/polls/$(pollId)).data.endsAt > request.time.toMillis();
+        allow delete: if signedIn() && request.auth.token.email == 'mr4425390@gmail.com';
+      }
     }
 
     match /posts/{postId} {
@@ -82,7 +205,7 @@ service cloud.firestore {
         resource.data.senderId == request.auth.uid
         || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likes', 'comments', 'reactions', 'shares'])
       );
-      allow delete: if signedIn() && resource.data.senderId == request.auth.uid;
+      allow delete: if signedIn() && (resource.data.senderId == request.auth.uid || staffCan('posts'));
     }
 
     match /stories/{storyId} {
@@ -92,7 +215,7 @@ service cloud.firestore {
         resource.data.senderId == request.auth.uid
         || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['views', 'viewers', 'reactions', 'comments'])
       );
-      allow delete: if signedIn() && resource.data.senderId == request.auth.uid;
+      allow delete: if signedIn() && (resource.data.senderId == request.auth.uid || staffCan('posts'));
     }
 
     match /groups/{groupId} {

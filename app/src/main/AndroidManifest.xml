@@ -8,6 +8,7 @@
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.READ_CONTACTS" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
@@ -18,8 +19,12 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.MANAGE_OWN_CALLS" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <application
         android:allowBackup="true"
@@ -39,6 +44,21 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths" />
         </provider>
+
+        <!-- Return hop after the admin finishes Google sign-in (Gmail connect): brings the open app back. -->
+        <activity
+            android:name=".DeepLinkReturnActivity"
+            android:exported="true"
+            android:noHistory="true"
+            android:excludeFromRecents="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="convochat" android:host="admin" />
+            </intent-filter>
+        </activity>
 
         <activity
             android:name=".MainActivity"
@@ -119,12 +139,27 @@
         <receiver
             android:name=".service.ScheduledMessageReceiver"
             android:exported="false" />
+        <receiver
+            android:name=".service.MessageReminderReceiver"
+            android:exported="false" />
+        <receiver
+            android:name=".service.NotificationActionReceiver"
+            android:exported="false" />
+        <receiver
+            android:name=".ui.ProReminderReceiver"
+            android:exported="false" />
 
         <service
             android:name=".service.CallForegroundService"
             android:exported="false"
             android:stopWithTask="false"
             android:foregroundServiceType="phoneCall|microphone|camera|mediaProjection" />
+
+        <service
+            android:name=".location.LiveLocationService"
+            android:exported="false"
+            android:stopWithTask="false"
+            android:foregroundServiceType="location" />
 
         <service
             android:name=".service.MyFirebaseMessagingService"
