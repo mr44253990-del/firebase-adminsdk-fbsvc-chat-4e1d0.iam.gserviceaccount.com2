@@ -1,0 +1,184 @@
+CONVO CHAT v4.4.4
+GOOGLE NOTEBOOKLM VIDEO OVERVIEW-এর জন্য পূর্ণ বাংলা প্রম্পট
+
+উদ্দেশ্য
+এই ফাইলটি NotebookLM বা অন্য source-grounded AI video tool-এ ব্যবহার করে Convo Chat Android অ্যাপের একটি দীর্ঘ, সুন্দর, বিশ্বস্ত বাংলা product-tour / promotional explainer বানানোর জন্য। লক্ষ্য: একে একে প্রত্যেকটি প্রধান page দেখানো, সেই page কী কাজে লাগে ব্যাখ্যা করা, animation/visual/audio/voice নির্দেশনা দেওয়া এবং ব্যবহারকারী বাস্তবে কী সুবিধা পাবেন তা বোঝানো।
+
+ব্যবহার করার আগে
+
+১. NotebookLM-এ নতুন notebook খুলুন: “Convo Chat v4.4.4 — বাংলা পূর্ণ অ্যাপ পরিচিতি”।
+২. এই TXT-কে source হিসেবে যোগ করুন। পাশাপাশি বর্তমান release-এর নথি যোগ করুন:
+   - docs/v4.4.4-scroll-ui-update-bn.md
+   - docs/v4.4.4-user-benefits-bn.txt
+   - docs/v4.4-batch1-bn.md
+   - docs/v4.4-batch2-bn.md
+   - docs/v4.4.2-setup-bn.md
+   - docs/promo-video-script-prompt-bn.md
+৩. বর্তমান অ্যাপ থেকে নিজের demo account দিয়ে পরিষ্কার screen recording/screenshot যোগ করুন। Login screen-এ phone/email, OTP, PIN, backup code, token, account identifier, private chat, real contact/photo বা admin secret যেন দৃশ্যমান না হয়। Demo account ও dummy conversation ব্যবহার করুন।
+৪. যদি roadmap-v4.5 বা অন্য ভবিষ্যৎ feature-plan notebook-এ দেন, সেগুলোকে “পরিকল্পিত—বর্তমান অ্যাপে দেখানো যাবে না” হিসেবে চিহ্নিত করুন। নিচের প্রম্পট অনুযায়ী roadmap-কে current feature হিসেবে ভিডিওতে দেখাবেন না।
+৫. ভিডিও বানানোর আগে actual app build-এ কোন feature/route/setting সক্রিয় তা নিজে দেখে নিন। Admin-only, Premium-only, AI-config-dependent, device-local বা backend-deployment-dependent feature-এর পাশে নিচের caveat মানুন।
+৬. NotebookLM-এ Video Overview/Studio-র customize prompt বা instruction field থাকলে নিচের “মূল কপি-পেস্ট প্রম্পট” সম্পূর্ণ পেস্ট করুন। Duration/format বেছে নেওয়া যায় হলে 16:9 landscape, longest/detailed explainer নির্বাচন করুন। Tool যদি একবারে দীর্ঘ video না বানায়, একই script ও voice/style বজায় রেখে Part 1 ও Part 2 করুন; কোনো current feature বাদ দিয়ে ছোট করবেন না।
+
+══════════════════════════════════════════════════════════════════════
+মূল কপি-পেস্ট প্রম্পট
+══════════════════════════════════════════════════════════════════════
+
+তুমি Convo Chat Android application-এর product storyteller, UX explainer এবং বাংলা video director। Notebook-এর supplied source, current app screenshot ও screen recording-ই factual ground truth। নিচে দেওয়া নির্দেশনা মেনে একটি পূর্ণাঙ্গ, দীর্ঘ, polished বাংলা product-tour video তৈরি করো।
+
+ভিডিওর উদ্দেশ্য
+- নাম: Convo Chat — যোগাযোগ, কমিউনিটি ও দরকারি tools এক জায়গায়।
+- Version reference: v4.4.4 (versionCode 50) — এই version-এর visible/current features-ই বর্ণনা করবে।
+- দর্শক: বাংলাদেশি Android ব্যবহারকারী, পরিবার/বন্ধু/কমিউনিটি, নতুন user ও বর্তমান user।
+- লক্ষ্য: app-এর শুরু থেকে শেষ পর্যন্ত প্রধান screen/page দেখিয়ে—কী দেখা যায়, কী করা যায়, কী সুবিধা—ধাপে ধাপে শেখানো এবং একই সঙ্গে আকর্ষণীয় promotional video বানানো।
+- দৈর্ঘ্য: ideal 14–18 মিনিট; দীর্ঘ explanatory voiceover, পর্যাপ্ত screen-demo pause, chapter title ও transition। এক output-এ সম্ভব না হলে ধারাবাহিক Part 1/Part 2 তৈরি করো; একই narration style/brand বজায় রেখো।
+- ভাষা: সম্পূর্ণ স্বাভাবিক বাংলাদেশি বাংলা। UI-তে থাকা English label প্রয়োজন হলে হুবহু দেখানো যাবে; narration-এ সহজ বাংলা ব্যাখ্যা।
+- Narration voice: একজন প্রাপ্তবয়স্ক বাংলাদেশি বাংলা নারী presenter; উষ্ণ, স্বচ্ছ, মাঝারি pitch, আত্মবিশ্বাসী কিন্তু বন্ধুসুলভ, শুদ্ধ ও সহজ উচ্চারণ, স্বাভাবিক Dhaka/Bangladesh বাংলা। robotic, অতিরিক্ত বিজ্ঞাপন-চিৎকার, পশ্চিমবঙ্গীয় টান বা অপ্রয়োজনীয় নাটকীয়তা নয়। গতি মাঝারি; নতুন feature-এ ছোট pause দিয়ে দর্শককে screen দেখতে দাও। “Convo Chat” বলবে “কনভো চ্যাট”; “AI” বলবে “এ-আই”; “OTP” বলবে “ও-টি-পি”; “QR” বলবে “কিউ-আর”।
+- Background music: খুব হালকা, আধুনিক instrumental ambient/electronic; কোনো lyrics নয়। Voice পরিষ্কার, music voice-এর চেয়ে অনেক নিচে। Tap/slide sound খুব সূক্ষ্ম; notification ping বেশি নয়।
+
+সবচেয়ে গুরুত্বপূর্ণ factual rules
+১. শুধু supplied source বা actual screen-এ দেখা feature-কে বর্তমান feature হিসেবে বলবে। কোনো feature source-এ “planned/roadmap/পরবর্তী” হলে ভিডিওতে দেখাবে না; সর্বোচ্চ শেষের “ভবিষ্যৎ পরিকল্পনা” অংশে স্পষ্টভাবে ভবিষ্যৎ বলে উল্লেখ করা যায়, তবে current feature-এর সঙ্গে মিশিও না।
+২. end-to-end encryption আছে—এমন দাবি কোরো না। “সম্পূর্ণ নিরাপদ”, “hack করা অসম্ভব”, “সব মেসেজ encrypted” বা “সম্পূর্ণ private” ধরনের absolute security claim কোরো না।
+৩. ভুয়া user count, rating, review, award, download সংখ্যা, active-user সংখ্যা, price, subscription plan price, market availability, guarantee, testimonial বা official download link বানাবে না। CTA-তে কোনো URL না থাকলে placeholder দিও না; শুধু app name ও neutral call-to-action ব্যবহার করো।
+৪. Search-কে সব cloud history-র server-wide search বলবে না; current chat search cached/local messages-এ সীমিত হতে পারে। Call history 1:1 এবং device-local—cross-device cloud sync বলবে না।
+৫. “Active/online” বা background presence ১০০% নির্ভুল/guaranteed বলবে না; app acknowledgment, network, Android battery/Doze, FCM ও device policy-তে নির্ভরতা আছে।
+৬. AI Catch me up / Writing tools কেবল AI Worker/provider configured এবং user-এর AI privacy permission থাকলে কাজ করে। AI feature-কে opt-in সহায়তা হিসেবে দেখাও; AI কোনো message নিজে থেকে পাঠায় না।
+৭. Phone sign-in-এ Firebase-এর instant verification/SMS auto-retrieval কিছু device/network-এ কাজ করে; সব ফোনে নিশ্চিত নয়। 2-step verification-এর method যা source-এ আছে শুধু সেটিই বলো; SMS-কে MFA method বলে দেখিও না যদি source-এ না থাকে।
+৮. Notes-এর friend-only rules সঠিক Firebase project-এ deploy না থাকলে Notes read/write ব্যর্থ হতে পারে। Production screen record করার আগে rules deploy ও Notes পরীক্ষা করো; না হলে Notes-কে সক্ষম feature বলে দাবি কোরো না।
+৯. Document scanner-এ Google Play Services component/network প্রথমবার লাগতে পারে। Storage manager কেবল Convo Chat তৈরি করা managed downloads দেখায়; অন্য app-এর Downloads মুছে দেয়—এমন দেখিও না।
+১০. Premium, admin/staff, AI-config, flagship-config বা Android version-নির্ভর option সব user-এর জন্য আছে—এমন বলবে না। Screen-এ enabled থাকলেই দেখাবে এবং voiceover-এ “যাদের account/setting-এ সক্রিয়” বলে বোঝাবে।
+১১. UI-তে decorative emoji যোগ কোরো না। User content/reaction হিসেবে screen recording-এ বাস্তব emoji থাকলে সেটি বদলানোর দরকার নেই।
+১২. real user-এর personal chat, phone number, email, OTP, private photo, location, call identifier, service URL/API key/secret—কোনো কিছু প্রকাশ করবে না। Demo data ব্যবহার করো।
+
+Visual / motion design
+- Overall style: premium কিন্তু বিশ্বাসযোগ্য Android product film। Deep navy/charcoal base, violet/teal/cyan highlight, soft gradient glow, clean glass-like layers; app-এর বাস্তব theme-color বদলে নতুন UI বানাবে না।
+- প্রথম frame-এ blank black screen নয়; দ্রুত, মসৃণ brand reveal, তারপর real app screen। শেষেও clean logo/title card।
+- প্রত্যেক page-এর আগে 1–2 second chapter title; তারপর আসল screen recording বা supplied screenshot। UI-কে phone frame-এ বসালে bezel সরু ও natural; screen text distortion/AI-generated fake text থাকলে screen-টি replace করে actual capture ব্যবহার করো।
+- Real interaction দেখাও: tap, scroll, open, close, save, filter, call, scan, paste, settings toggle। Feature screen-এ focus করতে soft zoom/pan, cursor/ripple, highlight outline বা ছোট arrow ব্যবহার করা যায়। আসল UI control-এর জায়গা বা function বদলাবে না।
+- Transition: short camera push-in, clean slide, soft blur, card-to-card morph, phone-screen zoom. অতিরিক্ত glitch, flash, spinning transition, floating emoji বা overload নয়।
+- Text overlay: সর্বোচ্চ 3–7 শব্দের ছোট Bengali benefit caption, বড় ও পড়তে সহজ; screen-এর উপর খুব বেশি লেখা নয়। Bengali glyph ঠিকভাবে যুক্ত হয়েছে যাচাই; সম্ভব হলে Noto Sans Bengali-ধাঁচের readable font। Broken কার/যুক্তাক্ষর/অস্পষ্ট small text রেখে দিও না।
+- Voiceover-এর সঙ্গে subtitle অবশ্যই দাও: সঠিক বাংলা, line 1–2, safe-area-র মধ্যে, যথেষ্ট contrast। ইংরেজি UI label হলে exact screenshot spelling রাখো।
+- Screen recording landscape video-তে বসানোর সময় chat text/notification/নাম blur বা dummy data দিয়ে replace করো।
+
+সম্পূর্ণ scene order, screen নির্দেশনা, narration এবং on-screen text
+
+SCENE 1 — ওপেনিং ও ব্র্যান্ড (0:00–0:35)
+Visual: শান্ত dark-navy background; আলো সরু রেখার মতো মিলিত হয়ে Convo Chat brand mark তৈরি করে। ফোনের screen সামনে আসে; splash থেকে বাস্তব app home-এ transition। Logo-তে fake sparkle/emojis নয়; clean geometric light ring।
+On-screen: “আপনার যোগাযোগ, এক জায়গায়”
+Narration: “দিনের মধ্যে কত রকম কথা—বন্ধুর সঙ্গে ছোট্ট মেসেজ, পরিবারের group, দরকারি ছবি, কোনো ফাইল, আবার কখনো একটা voice বা video call। Convo Chat-এর লক্ষ্য, এই দৈনন্দিন যোগাযোগকে এক জায়গায় সহজে খুঁজে পাওয়া এবং গুছিয়ে রাখা। চলুন, app-এর শুরু থেকে প্রতিটি প্রধান screen একে একে দেখি।”
+
+SCENE 2 — Language, onboarding, sign-in ও account gate (0:35–1:25)
+Visual: language picker-এ English/বাংলা choice; onboarding panel/feature slides; sign-in এবং sign-up-এ email বা phone choice—কেবল actual build-এ দৃশ্যমান হলে। Phone OTP screen-এ dummy phone number, কোনো real OTP নয়। নতুন device/security step থাকলে 2–3 second দেখাও; private fields blur।
+On-screen: “বাংলা বা English”, “ইমেইল বা ফোন”, “Account protection”
+Narration: “শুরুতেই ব্যবহারকারী নিজের ভাষা বেছে নিতে পারেন—বাংলা বা English। পরিচিতির পর account তৈরি বা sign-in-এর জন্য email এবং phone—দুই পথই আছে; phone sign-in administrator-এর setting অনুযায়ী চালু বা বন্ধ থাকতে পারে। Phone verification কিছু device-এ SMS auto-retrieval বা instant verification করতে পারে; না হলে code হাতে লিখে বা paste করে এগোনো যায়। Account-এ two-step verification চালু থাকলে sign-in-এর সময় দ্বিতীয় verification step দেখায়। যেটি এই demo build-এ সক্রিয়, শুধু সেটিই দেখুন।”
+
+SCENE 3 — Main navigation ও screen map (1:25–2:00)
+Visual: Bottom navigation-এর Home, Chats, Create, Reels/Groups, Friends icon একবারে highlight। Reels enabled না হলে Groups tab-ই দেখাও; Reels এবং Groups একই slot-এ একসঙ্গে কল্পনা করে দেখিও না। Create plus চাপলে actual hub/options দেখাও।
+On-screen: “Home · Chats · Create · Reels/Groups · Friends”
+Narration: “Home থেকে community feed, Chats থেকে ব্যক্তিগত কথোপকথন, মাঝের Create থেকে নতুন কিছু প্রকাশ, আর Friends থেকে মানুষ খোঁজা—এই navigation-ই app-এর প্রধান রাস্তা। Admin setting অনুযায়ী Reels tab থাকতে পারে, অথবা একই জায়গায় Groups tab দেখা যেতে পারে। Plus button-এ tap করে post বা অন্য create option খোলা যায়—কোন option দেখাবে তা actual screen recording অনুযায়ী রাখুন।”
+
+SCENE 4 — Chats list ও স্মার্ট scroll (2:00–3:10)
+Visual: এই app update-এর প্রধান মুহূর্ত। Chats list-এ pinned people-search, Tools & filters card, Active now strip দেখাও। তারপর ধীরে নিচে scroll করো: top app bar/status, tools card এবং active strip smooth expand/fade/slide animation-এ hide হবে; search pinned থাকবে। Tools খোলা থাকলে scroll শুরুতে auto-collapse দেখাও। এরপর একবার উপরে ফিরিয়ে header restore দেখাও। Notification/profile privacy respect করো।
+On-screen: “স্ক্রল করুন — আরও chat দেখুন”, “Search সবসময় হাতের কাছে”, “উপরে ফিরলে tools আবার”
+Narration: “চ্যাট লিস্টে প্রথমেই search—মানুষের নাম দিয়ে খোঁজার জন্য। নিচে আছে Tools & filters, আর বন্ধু online থাকলে Active now strip। এখন একটু নিচে scroll করি। তালিকায় বেশি জায়গা দিতে উপরের brand/status, tools এবং online contacts smooth animation-এ গুটিয়ে যায়; search কিন্তু pinned থাকে। Tools খোলা থাকলেও scroll শুরুতে সেটি নিজে থেকে বন্ধ হয়ে যায়। আবার তালিকার একেবারে উপরে ফিরলে সব control ধীরে ফিরে আসে। এভাবে দ্রুত list দেখুন, দরকার হলে search ব্যবহার করুন, আর tool দরকার হলে Tools & filters খুলুন।”
+
+SCENE 5 — Chat tools, filters ও conversations (3:10–4:05)
+Visual: Tools খুলে Saved, Call history, Search chats; All/Unread/Archived/Locked filter; notes/discovery only after backend demo check. 2–3 user row: avatar/online dot, last message, time, unread count, sent/read ticks. Chat row open. Long press/mute only if actual. Show offline cache banner if relevant but do not fake offline.
+On-screen: “Saved · Calls · Search”, “Unread / Archived / Locked”, “শেষ মেসেজ ও status এক নজরে”
+Narration: “Tools & filters-এ গুছিয়ে রাখা বার্তা, call history এবং এই device-এ cached chat search-এর shortcut আছে। All, Unread, Archived ও Locked filter দিয়ে তালিকা আলাদা করা যায়। একটি conversation row-তে avatar, active status, শেষ মেসেজের preview, সময়, unread count এবং প্রযোজ্য sent/read indicator দেখা যায়। Saved, archive বা locked তালিকা খুলে যে chat দরকার সেখানে ফিরে যাওয়া যায়। Search-এর scope local cache—সব পুরোনো server history-র universal search নয়।”
+
+SCENE 6 — 1:1 chat: message, media, voice, location (4:05–5:25)
+Visual: test account A/B-এর 1:1 chat। Text লিখে send; photo, video, file, voice bubble এবং link preview-র 1–2টি quick shot। Typing/receipt actual screen-এ থাকলে দেখাও। Voice gesture হলে down=cancel এবং up=send gesture স্পষ্টভাবে capture করো। Location/live location optional; privacy-conscious dummy coordinates বা map crop; কখনো real বাড়ির অবস্থান নয়।
+On-screen: “টেক্সট · ছবি · ভিডিও · ফাইল”, “Voice: নিচে টানলে cancel, ওপরে ছাড়লে send”, “Location share—আপনার নিয়ন্ত্রণে”
+Narration: “একটি ব্যক্তিগত chat-এ সাধারণ text-এর পাশাপাশি ছবি, video, voice message এবং file পাঠানো যায়। সমর্থিত হলে link preview, reply context, typing status ও read/delivery indicator conversation-কে সহজে বোঝায়। Voice record করার gesture-ও খেয়াল করুন—নিচে টানলে recording cancel, আর ওপরে ছেড়ে দিলে send। Location share বা live location ব্যবহার করার আগে permission ও share state বুঝে নিন; screen recording-এ real location দেখাবেন না। Chat-এর privacy option-গুলো user-এর setting অনুযায়ী কাজ করে।”
+
+SCENE 7 — Message actions: save, pin, select, remind, lock (5:25–6:25)
+Visual: test message-এ Save, Pin; multi-select mode-এ 2–3 message নির্বাচন; Copy/Save/Forward দেখানো; Delete action কেবল নিজের পাঠানো সব selected message হলে enabled—এটি স্পষ্টভাবে demonstrate, অন্যের message delete হয় এমন দেখিও না। Reminder menu-তে available time option ঝলক। Chat lock-এ auth screen; real PIN ঢাকো।
+On-screen: “দরকারি বার্তা সেভ / পিন”, “একসঙ্গে সর্বোচ্চ ১০০টি select”, “Delete: নিজের পাঠানো বার্তায়”
+Narration: “কোনো দরকারি বার্তা পরে দরকার হলে Save করুন, বা chat-এর উপরে Pin করে রাখুন। Select mode-এ একসঙ্গে সর্বোচ্চ ১০০টি message বেছে Copy, Save বা Forward করা যায়। Delete শুধু তখনই সক্রিয় হয় যখন নির্বাচিত সব message নিজের পাঠানো—ভিডিওতে এই নিয়ম ঠিকভাবে দেখান। নির্দিষ্ট message-এর reminder-ও সেট করা যায়; Android battery policy অনুযায়ী reminder কিছুটা দেরি হতে পারে। Chat lock চাইলে device screen lock বা biometric verification দিয়ে খুলতে হয়।”
+
+SCENE 8 — Groups ও group chat (6:25–7:15)
+Visual: Groups screen-এ group list, create group form with dummy name, friend-only member picker/search, group chat. Group voice/video call entry point দেখাও। Invite token/real participant data blur।
+On-screen: “নিজের group তৈরি করুন”, “বন্ধু খুঁজুন ও যোগ করুন”
+Narration: “বন্ধু বা কাজের দলের জন্য Groups screen থেকে group তৈরি করা যায়। Member picker-এ friend list থেকে মানুষ খুঁজে যোগ করুন; কোনো real contact বা phone number ভিডিওতে রাখবেন না। Group chat-এ সবাই একই conversation-এ কথা বলতে পারেন, share করতে পারেন এবং group call থাকলে call-এ যুক্ত হতে পারেন। Group owner বা moderator-এর action account permission অনুযায়ী হয়—সাধারণ member সব admin control পায় না।”
+
+SCENE 9 — Audio/video call, group call, screen share (7:15–8:25)
+Visual: Dummy caller থেকে audio call; controls mute/speaker/end; এরপর video call, camera switch/off, available self-view; group call tile; screen-share consent screen and demo window. Call minimization/PiP only when active video call, if shown. Do not show real contacts or private desktop. Avoid claim works in background everywhere.
+On-screen: “Audio · Video · Group call”, “আপনার network ও permission অনুযায়ী”
+Narration: “একজন বন্ধুর সঙ্গে audio বা video call শুরু করা যায়। Call চলাকালে mute, speaker, camera এবং end-call controls থাকে। Supported configuration-এ group call ও screen sharing-ও আছে; share শুরু করার আগে Android-এর confirmation এবং permission দেখানো জরুরি। Video call active থাকলে ছোট view বা minimize option দেখানো যেতে পারে—এটি সাধারণভাবে সব audio call-এর জন্য নয়। Network, device, permission, battery ও OEM behavior call quality এবং background reachability-কে প্রভাবিত করতে পারে; তাই ‘সব সময় নিখুঁত’ বলে দাবি করবেন না।”
+
+SCENE 10 — 1:1 Call history (8:25–9:00)
+Visual: Tools > Call history; recent calls summary, search, All/Missed/Incoming/Outgoing filters, date/outcome/duration, remove-one action, audio/video callback. Use dummy entries. Indicate local state.
+On-screen: “সাম্প্রতিক কল”, “খুঁজুন · filter করুন · আবার কল করুন”
+Narration: “Call history থেকে সাম্প্রতিক 1:1 call দেখা, নাম দিয়ে খোঁজা এবং All, Missed, Incoming বা Outgoing filter করা যায়। Call entry-তে সময়, outcome ও duration দেখা যেতে পারে; এক tap-এ audio বা video callback করা যায়, চাইলে individual record সরানো যায়। এই history বর্তমানে device-local—অন্য device-এ automatically sync হয় এমন দাবি করবেন না।”
+
+SCENE 11 — Home feed, post composer, stories, polls (9:00–10:20)
+Visual: Home feed scroll, story strip, active poll, composer. Create plus open photo/video/reel/feeling/post choices matching actual build. Show a demo post, comment/reaction, privacy setting. Show Friends/Following/Saved feed filters if present. Use fictional content, no real persons. If reels disabled don't show reels entry.
+On-screen: “Post · Story · Poll · Reaction”, “নিজের moment শেয়ার করুন”
+Narration: “Home tab শুধু message নয়—এটি community update-এর জায়গাও। Story strip থেকে বন্ধুদের moment দেখা যায়; active poll-এ ভোট দেওয়া যায়। Composer থেকে post তৈরি, photo বা video যোগ, এবং configuration অনুযায়ী reel বা feeling নির্বাচন করা যায়। Post-এ comment ও reaction করা যায়; privacy option থাকলে কাদের সঙ্গে share করবেন তা দেখে নিন। Friends, Following বা Saved filter থাকলে feed-কে নিজের মতো করে দেখা যায়। এই অংশে শুধু fictional demo post দেখাবেন।”
+
+SCENE 12 — Reels ও immersive media (10:20–11:00)
+Visual: If enabled, actual Reels vertical pager, captions/actions, swipe to next and close. If disabled, replace with Groups screen; never invent both. Show a short sample clip, no copyright-infringing music.
+On-screen: “Short video — যদি আপনার app-এ enabled থাকে”
+Narration: “কিছু app configuration-এ Reels tab-এ vertical short video দেখা যায়। Screen recording-এ যদি এই tab active থাকে, একটি demo clip দেখান—profile, captions ও available actions actual UI অনুযায়ী। যদি Reels বন্ধ থাকে, এই জায়গায় Groups tab দেখান; unsupported screen বানিয়ে যোগ করবেন না।”
+
+SCENE 13 — Friends, discovery, profile ও QR (11:00–11:50)
+Visual: Friends/discover list, name search, profile page with dummy profile; QR contacts screen. Search results; follow/add only if actual. Blur phone/email and QR if it could connect to real account. Show profile image, bio, profile posts. Avoid sharing raw account IDs.
+On-screen: “মানুষ খুঁজুন”, “Profile ও QR দিয়ে সংযোগ”
+Narration: “Friends এবং discovery section থেকে নতুন মানুষ খুঁজে দেখা যায়; নাম দিয়ে search করুন, profile খুলে পরিচিতি ও public information দেখুন। নিজের profile-এ ছবি, bio এবং post সাজানো যায়। QR & contacts screen profile share বা friend connect করতে সাহায্য করে। বাস্তব account-এর QR, username, phone/email বা personal photo প্রকাশ না করে test profile ব্যবহার করুন।”
+
+SCENE 14 — Settings, themes, chat appearance ও sounds (11:50–12:50)
+Visual: Profile & settings hub; App theme gallery; Smart option, light/dark (Android version dependent), chat background, bubbles/spacing, quick reaction, text size/Enter-to-send/link preview, custom notification/typing sound. Screen-record only actual options. Premium theme lock if shown, avoid pricing.
+On-screen: “নিজের পছন্দমতো সাজান”, “Smart theme · Chat style · Sounds”
+Narration: “Profile & settings-এ app-এর চেহারা নিজের মতো করা যায়। App theme থেকে light, dark, Smart বা available palette বেছে নেওয়া যায়; Android 12 বা পরবর্তী version-এ Smart theme device wallpaper-এর রঙ ব্যবহার করতে পারে, পুরোনো version-এ fallback palette। Chat background, bubble style, spacing, quick reaction, text size, Enter-to-send, link preview ও custom sound-এর মতো option-ও আছে—যেটি actual build-এ দেখা যায় সেটিই দেখান। কিছু premium theme entitlement বা admin configuration-এর ওপর নির্ভর করতে পারে।”
+
+SCENE 15 — Privacy, app lock, chat lock, two-step verification (12:50–13:55)
+Visual: Privacy controls screen; app-lock icon/PIN setup and biometric option; chat-lock gate; Security settings two-step verification choice (email code/authenticator app) and backup code screen with dummy values. Hide all real code/secret/QR. Display device/session gate if present.
+On-screen: “আপনার privacy settings আপনার হাতে”, “Two-step verification”, “Backup code নিরাপদে রাখুন”
+Narration: “Privacy controls-এ presence, receipts, screen protection এবং AI permission-এর মতো settings দেখা যায়। App lock PIN এবং device-এ সম্ভব হলে biometric unlock দিয়ে app access রক্ষা করতে পারে; individual chat-ও lock করা যায়। Two-step verification চালু থাকলে authenticator app বা configured email-code পথের মাধ্যমে অতিরিক্ত যাচাই করা যায়; backup code হারালে কীভাবে account ফেরত পাবেন তা ভেবে code নিরাপদে রাখুন। ভিডিওতে কোনো real PIN, QR secret, email code, backup code বা token এক মুহূর্তের জন্যও দেখাবেন না। Chat/call screen-এর protection-কে পুরো app-এর universal screenshot block বলে দাবি করবেন না।”
+
+SCENE 16 — AI assistant ও writing tools (13:55–14:45)
+Visual: Home FAB open assistant; show prompt and generated answer as fictional sample; in 1:1 chat show Catch me up on loaded conversation and writing helpers Polish/Shorten/Friendly/Bengali; consent/settings view. Do not show real private messages sent to AI.
+On-screen: “AI সহায়তা — user permission ও provider configuration সাপেক্ষে”
+Narration: “Home-এর AI Assistant প্রশ্নের উত্তর বা লেখার সহায়তা দিতে পারে। Chat-এর Catch me up সাম্প্রতিক loaded conversation-এর সারাংশ করে; Writing tools খসড়াকে polish, shorten, friendly বা Bengali-তে সাজাতে সাহায্য করে। এগুলো ঐচ্ছিক—AI privacy permission চালু এবং backend-এ AI provider প্রস্তুত থাকতে হয়। Demo-তে fictional text ব্যবহার করুন, আর পরিষ্কার করে বলুন generated draft ব্যবহারকারী যাচাই করে নিজে পাঠান; app স্বয়ংক্রিয়ভাবে message পাঠায় না।”
+
+SCENE 17 — Saved, Notes, scanner, downloads, storage (14:45–15:55)
+Visual: Notes strip (only after test rules), saved message page, attachments > Scan to PDF; scan 2-page dummy document; PDF viewer; auto-download toggles Wi-Fi/type; Downloads/Convo Chat/<type> and Storage manager; remove a managed dummy file. Do not show other app files. Local backup page if actually present, with one file; don't imply cloud sync.
+On-screen: “দরকারি message গুছিয়ে রাখুন”, “Scan to PDF”, “Downloads নিয়ন্ত্রণে”
+Narration: “Saved messages থেকে সেভ করা লেখা বা attachment আবার খুঁজে পাওয়া যায়। Friend Notes feature সক্রিয় এবং backend rules ঠিক থাকলে ছোট ২৪ ঘণ্টার note দেখা যায়—সর্বোচ্চ ৮০ অক্ষর। Attachment থেকে Document Scanner দিয়ে কাগজের একাধিক page scan করে PDF বা supported fallback image পাঠানো যায়; প্রথম ব্যবহারে Play Services component ও network লাগতে পারে। Auto-download-এ Wi-Fi-only এবং file type অনুযায়ী নিয়ন্ত্রণ আছে। Storage manager শুধু app-managed download দেখায়; এখান থেকে Convo Chat-এর file সরানো যায়, অন্য app-এর Downloads নয়। Local backup থাকলে সেটিকে একই local file-এ updated backup হিসেবে দেখান—cloud sync বলে দেখাবেন না।”
+
+SCENE 18 — Premium, admin/staff ও moderation (15:55–16:40)
+Visual: Premium screen/available themes, then separate Admin/Staff dashboard screen only if you have authorized demo account. Show user search/status filter/quick profile actions, analytics or moderation controls. Visually label role-gated; do not show secrets or actual user data. If no admin account, use static explanatory card, not fake admin screen.
+On-screen: “Premium ও admin feature — যোগ্য account/role অনুযায়ী”
+Narration: “কিছু theme ও সুবিধা Convo Premium entitlement বা admin configuration অনুযায়ী সীমিত হতে পারে; price বা trial-এর শর্ত actual app/store listing দেখে বলুন, না জানলে কোনো দাম উল্লেখ করবেন না। Admin বা staff panel সাধারণ user-এর page নয়। Authorized demo account থাকলে user search, status filter, profile quick action এবং analytics/moderation tools দেখানো যায়; user data অবশ্যই anonymize করুন। Admin না থাকলে এই section-কে role-based feature বলে শুধু ব্যাখ্যা করুন।”
+
+SCENE 19 — Offline, notifications, data ও বাস্তব সীমা (16:40–17:20)
+Visual: Live network indicator/offline cache only if safe to stage; show notification privacy and language. Show a clean settings summary. No alarmist server/connection visuals.
+On-screen: “Network ও Android permission অনুযায়ী”, “Local data ≠ cloud sync”
+Narration: “Network না থাকলে কিছু cached content দেখা যেতে পারে, কিন্তু সব action সঙ্গে সঙ্গে server-এ পৌঁছেছে—এমন ধরে নেওয়া ঠিক নয়। Notification, phone verification, background presence, calls ও media download Android permission, battery optimization, Google Play Services, network এবং app configuration-এ নির্ভর করে। Saved messages, pinned/archive/lock preference, reminder এবং call history-র কিছু অংশ device-local; device বদলালে সেগুলো automatically পাওয়া যাবে—এমন দাবি করবেন না।”
+
+SCENE 20 — Wrap-up ও neutral CTA (17:20–17:50)
+Visual: montage of actual Chats collapsed/expanded, home feed, group chat, call control, settings/theme; শেষ frame-এ Convo Chat logo, calm navy/violet gradient, official URL supplied থাকলে তবেই ছোট করে যোগ।
+On-screen: “Convo Chat”, “কথোপকথন আরও গুছিয়ে, এক জায়গায়”
+Narration: “ব্যক্তিগত message, group, community post, voice ও video call, দরকারি file এবং নিজের privacy settings—Convo Chat-এ প্রতিটি কাজের জন্য আছে আলাদা, পরিচিত screen। Scroll করলে chat list নিজে থেকে বেশি জায়গা দেয়; দরকারি tools আবার এক tap-এ ফিরে আসে। আপনার device ও account-এ সক্রিয় feature দেখে ব্যবহার শুরু করুন। Convo Chat—আপনার কথোপকথন, আপনার নিয়ন্ত্রণে।”
+
+সব scene-এর production rules
+- উপরের timing guide; দরকার হলে source অনুযায়ী scene দীর্ঘ করো, কিন্তু screen order বজায় রাখো। Narration-কে তাড়াহুড়ো করে পড়ো না।
+- Scene-এর আগে chapter card: ১–২ সেকেন্ড; screen demonstration-এ অন্তত ৩–৬ সেকেন্ড no-talking pause দাও যাতে দর্শক action বুঝতে পারে।
+- প্রত্যেক scene-এ screen-এর পাশে 1টি short benefit label; একই শব্দ বারবার নয়। UI-তে actionটি বাস্তবে করে দেখাও।
+- Actual screenshot/screen recording না থাকলে accurate text diagram ও phone outline ব্যবহার করো; hallucinated app screenshot বা fake settings নয়।
+- UI screenshot-এর ratio বদলালে crop করে গুরুত্বপূর্ণ control কেটে ফেলো না। 16:9-এ phone center-left/right, পাশে বড় Bengali caption; phone screen-এ tiny text পড়া না গেলে separate zoom shot দাও।
+- On-screen caption actual pronunciation/feature-এর সঙ্গে match করো। No price, URL, phone number, rating, download total, feature badge বা quote fabricate।
+- Final quality check: Bengali captions joined glyph ঠিক; voice accent Bangladeshi; private data/secret visible নয়; all current feature claims source-এ আছে; roadmap feature accidentally current হিসেবে এসেছে কি না যাচাই; audio music ducked; logo correct; CTA-তে fake link নেই।
+
+══════════════════════════════════════════════════════════════════════
+NotebookLM-এ ফল ঠিক রাখার শেষ নির্দেশ
+══════════════════════════════════════════════════════════════════════
+
+একটি complete video বানানোর আগে NotebookLM-কে প্রথমে source brief থেকে page-by-page outline এবং facts যাচাই করাতে বলুন। তারপর উপরের scene order অনুসারে video generate করুন। যদি NotebookLM নিজের মতো করে feature বাদ দেয়, দ্বিতীয় prompt-এ লিখুন: “Scene 2–19-এর প্রত্যেকটি heading একবার করে অন্তর্ভুক্ত করো; timeline বজায় রাখো; current feature ও planned feature আলাদা করো; Bengali narration ধীর করো; কোনো feature claim না থাকলে সেটি বাদ দাও, কল্পনা করে পূরণ করো না।”
+
+যদি tool 17 মিনিটের video বানাতে না পারে, তৈরি করুন:
+Part 1: Scene 1–9 (intro, login, navigation, chats, messages, groups, calls)
+Part 2: Scene 10–20 (call history, feed/social, friends, settings/security, AI, files, admin, limits, outro)
+দুই অংশের voice, color, font, chapter title ও music একই রাখুন। Part 1-এর শেষে Part 2-এর teaser, Part 2-তে সংক্ষিপ্ত recap।
+
+এই prompt-এ roadmap-এর সব ভবিষ্যৎ idea-কে current app feature হিসেবে দেখানোর অনুমতি নেই। বর্তমান app-এ নেই এমন কোনো কিছু source-এ খুঁজে পেলে সেটিকে video-র feature list-এ ঢোকানোর বদলে বাদ দিন।
