@@ -108,7 +108,12 @@ object AiProviderStore {
 
     private val doc get() = FirebaseFirestore.getInstance().collection("admin_secrets").document("ai")
 
-    data class Config(val activeId: String = "", val providers: List<AiProvider> = emptyList()) {
+    data class Config(
+        val activeId: String = "",
+        val providers: List<AiProvider> = emptyList(),
+        val imageGenerationEnabled: Boolean = false,
+        val imageGenerationApiKey: String = ""
+    ) {
         val active: AiProvider? get() = providers.firstOrNull { it.id == activeId && it.ready }
     }
 
@@ -128,7 +133,14 @@ object AiProviderStore {
         // Always show every preset so the admin can fill in a key; saved values win.
         val merged = PRESETS.map { preset -> saved.firstOrNull { it.id == preset.id } ?: preset } +
             saved.filter { s -> PRESETS.none { it.id == s.id } }
-        return Config(active, merged)
+        @Suppress("UNCHECKED_CAST")
+        val image = snap.get("imageProvider") as? Map<String, Any?> ?: emptyMap()
+        return Config(
+            activeId = active,
+            providers = merged,
+            imageGenerationEnabled = image["enabled"] as? Boolean ?: false,
+            imageGenerationApiKey = image["apiKey"]?.toString().orEmpty()
+        )
     }
 
     /** Default model used when the admin left the model field empty (mirrors the Worker/edge function). */
@@ -150,7 +162,17 @@ object AiProviderStore {
         val fixed = config.copy(activeId = activeId, providers = config.providers.map { p -> if (p.model.isBlank() && p.ready) p.copy(model = defaultModel(p.id)) else p })
         val now = System.currentTimeMillis()
         val providers = fixed.providers.filter { it.apiKey.isNotBlank() || it.custom }.associate { it.id to it.toMap() }
-        doc.set(mapOf("activeProviderId" to activeId, "providers" to providers, "updatedAt" to now)).awaitTask()
+        doc.set(mapOf(
+            "activeProviderId" to activeId,
+            "providers" to providers,
+            "imageProvider" to mapOf(
+                "id" to "ovh_sdxl",
+                "name" to "OVHcloud Stable Diffusion XL",
+                "enabled" to fixed.imageGenerationEnabled,
+                "apiKey" to fixed.imageGenerationApiKey.trim()
+            ),
+            "updatedAt" to now
+        )).awaitTask()
         val active = fixed.active
         FirebaseFirestore.getInstance().collection("app_config").document("ai_public").set(mapOf(
             "providerId" to activeId, "providerName" to (active?.name ?: "Mistral (server key)"),
@@ -388,6 +410,39 @@ fun AdminAiProvidersPanel(assistantEnabled: Boolean, onAssistantEnabled: (Boolea
         }
         if (loading) LinearProgressIndicator(Modifier.fillMaxWidth())
         if (!loading) {
+
+        var showImageKey by remember { mutableStateOf(false) }
+        Card(
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .58f))
+        ) {
+            Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Image, null, tint = Color(0xFF7C5CFF))
+                    Spacer(Modifier.width(10.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text("Image generation · OVHcloud SDXL", fontWeight = FontWeight.Bold)
+                        Text("Uses the Stable Diffusion XL endpoint; the access token is saved in admin-only configuration and read by the Worker.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Switch(config.imageGenerationEnabled, onCheckedChange = { config = config.copy(imageGenerationEnabled = it) })
+                }
+                OutlinedTextField(
+                    value = config.imageGenerationApiKey,
+                    onValueChange = { config = config.copy(imageGenerationApiKey = it.trim()) },
+                    label = { Text("OVH AI Endpoints access token") },
+                    supportingText = { Text("Create an OVHcloud AI Endpoints token. Do not put it in app source, APK, or Git.") },
+                    singleLine = true,
+                    visualTransformation = if (showImageKey) VisualTransformation.None else PasswordVisualTransformation(),
+                    trailingIcon = { IconButton(onClick = { showImageKey = !showImageKey }) { Icon(if (showImageKey) Icons.Default.VisibilityOff else Icons.Default.Visibility, null) } },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Text(
+                    if (config.imageGenerationApiKey.length > 8) "Token saved in admin-only Firestore config; the Worker calls stable-diffusion-xl.endpoints.kepler.ai.cloud.ovh.net." else "Token required before image generation can be used.",
+                    fontSize = 10.sp,
+                    color = if (config.imageGenerationApiKey.length > 8) Color(0xFF2E9E6A) else MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
 
         Text("Active provider", fontWeight = FontWeight.Bold, fontSize = 13.sp)
         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {

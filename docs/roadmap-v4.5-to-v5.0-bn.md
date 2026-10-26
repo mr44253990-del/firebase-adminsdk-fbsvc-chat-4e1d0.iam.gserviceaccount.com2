@@ -1,6 +1,6 @@
 # Convo Chat — বড় ভবিষ্যৎ পরিকল্পনা (v4.5 → v5.0)
 
-> **v4.4.4 বাস্তবায়িত (বর্তমান update):** Chats list-এর top chrome/online strip/Tools & filters down-scroll-এ animatedভাবে collapse, search pinned, top-এ ফিরলে restore। Whole-app screen audit plan `docs/app-experience-audit-plan-bn.md`-এ; সব proposed future item এখনো implemented নয়।
+> **v4.4.5 update (বর্তমান branch):** Search result থেকে post page navigation, friend-only searchable share/contact/group pickers, single-file encrypted backup, release-summary card + notes-aware AI context, AI setup tutorial/highlight, এবং server-routed OVH SDXL image generation source-এ যোগ হয়েছে। App versionCode 51 / 4.4.5। OVH token এখনো admin-কে দিতে হবে এবং নতুন Worker route deploy/test বাকি। প্রকৃত Firestore user/post pagination, web companion ও সম্পূর্ণ screen-by-screen redesign এখনো অসম্পূর্ণ—দেখুন `docs/v4.4.5-change-summary-bn.txt`; আগের v4.4.4 Chats collapse-ও অক্ষত।
 
 ## #225 — Scroll-responsive Chats header [S] — v4.4.4-তে সম্পন্ন
 

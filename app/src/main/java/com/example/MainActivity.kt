@@ -516,6 +516,10 @@ class MainActivity : FragmentActivity() {
                                     viewModel.selectProfile(user)
                                     navController.navigate("profile")
                                 },
+                                onPostSelected = { post ->
+                                    linkedPost = post
+                                    pendingPostId.value = post.id
+                                },
                                 onCreatePost = { navController.navigate("compose_post") },
                                 onGroupSelected = { group ->
                                     viewModel.selectGroup(group)
@@ -570,6 +574,11 @@ class MainActivity : FragmentActivity() {
                             AssistantScreen(
                                 viewModel = viewModel,
                                 onBack = { navController.popBackStack() },
+                                onOpenAiSettings = {
+                                    viewModel.requestSettingsPage("privacy-ai")
+                                    viewModel.setCurrentTab(4)
+                                    navController.popBackStack("home", false)
+                                },
                                 onOpenUser = { user ->
                                     viewModel.selectRecipient(user)
                                     navController.navigate("chat")

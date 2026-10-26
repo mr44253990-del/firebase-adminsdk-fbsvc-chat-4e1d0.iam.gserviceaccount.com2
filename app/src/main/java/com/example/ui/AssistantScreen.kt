@@ -54,6 +54,7 @@ import com.google.firebase.auth.FirebaseAuth
 import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -72,7 +73,7 @@ private val AiInk = Color(0xFF070616)
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AssistantScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenUser: (User) -> Unit) {
+fun AssistantScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenAiSettings: () -> Unit, onOpenUser: (User) -> Unit) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val scope = rememberCoroutineScope()
     val currentUser by viewModel.currentUserState.collectAsState()
@@ -103,6 +104,12 @@ fun AssistantScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenUser: (U
     var matches by remember { mutableStateOf<List<User>>(emptyList()) }
     var deleteChoices by remember { mutableStateOf<List<Post>>(emptyList()) }
     var confirmDelete by remember { mutableStateOf<Post?>(null) }
+    var showAiSetupGuide by remember { mutableStateOf(false) }
+    var showImageGenerator by remember { mutableStateOf(false) }
+    var imagePrompt by remember { mutableStateOf("") }
+    var imageGenerating by remember { mutableStateOf(false) }
+    var generatedImage by remember { mutableStateOf<File?>(null) }
+    var imageGenerationError by remember { mutableStateOf("") }
     var webOn by remember(uid) { mutableStateOf(prefs.getBoolean("web_on", true)) }
     val webAllowed = config.aiWebSearchEnabled
     val listState = rememberLazyListState()
@@ -146,7 +153,12 @@ fun AssistantScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenUser: (U
         scope.launch {
             var sources = emptyList<AssistantSource>()
             var webContext: String? = null
-            if (webOn && webAllowed) {
+            val releaseQuestion = listOf("what changed", "what's new", "whats new", "release notes", "new update", "কি পরিবর্তন", "নতুন কী", "কি নতুন", "আপডেটে কী", "আপডেটের খবর")
+                .any { prompt.lowercase().contains(it) }
+            val officialReleaseContext = if (releaseQuestion && config.releaseNotes.isNotBlank()) {
+                "Official app release notes for version ${config.versionName} (code ${config.latestVersionCode}). Answer the user's question using these notes only; summarize clearly and do not invent additional changes:\n${config.releaseNotes.take(4000)}"
+            } else null
+            if (webOn && webAllowed && !releaseQuestion) {
                 phase = "Searching the web"
                 val (code, j) = runCatching { convoWorkerPost("ai", "/ai/search", JSONObject().put("q", prompt.take(300)).put("max", 6)) }.getOrElse { 0 to JSONObject() }
                 val arr = j.optJSONArray("results")
@@ -160,17 +172,22 @@ fun AssistantScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenUser: (U
                 }
             }
             phase = "Thinking"
-            val memory = listOfNotNull(accountContext, webContext) + lines.takeLast(18).map { "${it.role}: ${it.text}" }
+            val memory = listOfNotNull(accountContext, webContext, officialReleaseContext) + lines.takeLast(18).map { "${it.role}: ${it.text}" }
             if (config.aiStreamingEnabled) {
                 streamingText = ""
                 viewModel.askAssistantStreaming(prompt, memory, onDelta = { d -> phase = "Writing"; streamingText = (streamingText ?: "") + d }) { error ->
                     val text = streamingText.orEmpty()
                     streamingText = null; thinking = false; phase = ""
-                    if (text.isNotBlank()) answer(clean(text), sources) else answer(error ?: "I could not generate a response.")
+                    if (text.isNotBlank()) answer(clean(text), sources) else {
+                        val failure = error ?: "I could not generate a response."
+                        if (failure.contains("not configured", true) || failure.contains("disabled", true)) showAiSetupGuide = true
+                        answer(failure)
+                    }
                 }
             } else {
                 viewModel.askAssistant(prompt, memory) { reply ->
                     thinking = false; phase = ""
+                    if (reply.contains("not configured", true) || reply.contains("disabled", true)) showAiSetupGuide = true
                     answer(clean(reply), sources)
                 }
             }
@@ -257,6 +274,8 @@ fun AssistantScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenUser: (U
                 if (config.aiStreamingEnabled) AiChip(Icons.Default.Bolt, "Live answers", true) {}
                 if (config.aiHumanStyle) AiChip(Icons.Default.RecordVoiceOver, "Human style", true) {}
                 AiChip(Icons.Default.Lock, "Private memory", true) {}
+                if (config.assistantEnabled) AiChip(Icons.Default.Image, "Create image", true) { showImageGenerator = true }
+                AiChip(Icons.Default.Settings, "AI setup guide", false) { showAiSetupGuide = true }
             }
             Spacer(Modifier.height(6.dp))
             // ---- Conversation ----------------------------------------------------------------
@@ -332,6 +351,73 @@ fun AssistantScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenUser: (U
                 }
             }
         }
+    }
+
+    if (showAiSetupGuide) {
+        AlertDialog(
+            onDismissRequest = { showAiSetupGuide = false },
+            icon = { Icon(Icons.Default.TipsAndUpdates, null, tint = AiCyan) },
+            title = { Text("AI setup guide", fontWeight = FontWeight.ExtraBold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("1. In Privacy controls, turn on Allow AI processing if you want to use the assistant. This controls your own consent; it does not send anything until you submit a prompt.")
+                    Text("2. If AI is paused for everyone or the provider is not configured, only the admin can turn on the assistant and save a provider key. Ask the admin to review Admin tools → AI providers & API keys.")
+                    Text("3. Return here and ask your question again. Friend requests and destructive actions must remain user-confirmed.")
+                    Text("Your OVH image token, when enabled, is held in admin-only server configuration and is never included in this app request.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            },
+            confirmButton = {
+                Button(onClick = { showAiSetupGuide = false; onOpenAiSettings() }) { Text("Open highlighted privacy setting") }
+            },
+            dismissButton = { TextButton(onClick = { showAiSetupGuide = false }) { Text("Close") } }
+        )
+    }
+
+    if (showImageGenerator) {
+        AlertDialog(
+            onDismissRequest = { if (!imageGenerating) showImageGenerator = false },
+            icon = { Icon(Icons.Default.Image, null, tint = AiCyan) },
+            title = { Text("Create an image", fontWeight = FontWeight.ExtraBold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("Describe the image. The request is sent through the authenticated Convo Worker to OVHcloud Stable Diffusion XL.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    OutlinedTextField(
+                        value = imagePrompt,
+                        onValueChange = { imagePrompt = it.take(1200) },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("Image description") },
+                        minLines = 3,
+                        maxLines = 5
+                    )
+                    if (imageGenerating) LinearProgressIndicator(Modifier.fillMaxWidth())
+                    generatedImage?.let { file ->
+                        AsyncImage(model = file, contentDescription = "AI generated image", modifier = Modifier.fillMaxWidth().heightIn(max = 320.dp).clip(RoundedCornerShape(18.dp)))
+                    }
+                    if (imageGenerationError.isNotBlank()) Text(imageGenerationError, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                }
+            },
+            confirmButton = {
+                Button(
+                    enabled = imagePrompt.isNotBlank() && !imageGenerating,
+                    onClick = {
+                        imageGenerating = true
+                        imageGenerationError = ""
+                        generatedImage = null
+                        viewModel.generateAssistantImage(imagePrompt) { file, error ->
+                            imageGenerating = false
+                            generatedImage = file
+                            imageGenerationError = error
+                        }
+                    }
+                ) {
+                    if (imageGenerating) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = Color.White)
+                    else Icon(Icons.Default.AutoAwesome, null)
+                    Spacer(Modifier.width(7.dp))
+                    Text(if (imageGenerating) "Generating" else "Generate")
+                }
+            },
+            dismissButton = { TextButton(onClick = { if (!imageGenerating) showImageGenerator = false }) { Text("Close") } }
+        )
     }
 
     confirmDelete?.let { post ->

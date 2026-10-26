@@ -7,6 +7,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.Settings
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -14,9 +15,14 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.InstallMobile
+import androidx.compose.material.icons.outlined.AutoAwesome
+import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -76,9 +82,38 @@ fun FlagshipUpdateDialog(config: FlagshipConfig, mandatory: Boolean, onLater: ()
     ) {
         Surface(shape = RoundedCornerShape(30.dp), tonalElevation = 8.dp) {
             Column(Modifier.padding(22.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(if (mandatory) "Required Convo Chat update" else "New Convo Chat update", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold)
-                Text("Version ${config.versionName} • Code ${config.latestVersionCode}", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
-                Text(config.releaseNotes.ifBlank { "Performance, security and feature improvements." })
+                Row(
+                    Modifier.fillMaxWidth().clip(RoundedCornerShape(22.dp))
+                        .background(Brush.linearGradient(listOf(Color(0xFF5D4BFF), Color(0xFF1BA8D7), Color(0xFF35B88A))))
+                        .padding(16.dp),
+                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Outlined.AutoAwesome, null, tint = Color.White, modifier = Modifier.size(30.dp))
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(if (mandatory) "Required app update" else "A new version is ready", color = Color.White, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold)
+                        Text("Convo Chat ${config.versionName} · build ${config.latestVersionCode}", color = Color.White.copy(alpha = .86f), style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+                Column(
+                    Modifier.fillMaxWidth().clip(RoundedCornerShape(22.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .56f)).padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text("What changed", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.ExtraBold)
+                    val notes = config.releaseNotes.lines().map { it.trim().removePrefix("•").removePrefix("-").trim() }.filter { it.isNotBlank() }
+                    if (notes.isEmpty()) {
+                        Text("Performance, security and feature improvements.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    } else {
+                        notes.take(12).forEach { note ->
+                            Row(verticalAlignment = androidx.compose.ui.Alignment.Top) {
+                                Icon(Icons.Outlined.CheckCircle, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text(note, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                            }
+                        }
+                    }
+                }
                 if (downloading) {
                     LinearProgressIndicator(progress = { progress / 100f }, modifier = Modifier.fillMaxWidth())
                     Text("Downloading update • $progress%")

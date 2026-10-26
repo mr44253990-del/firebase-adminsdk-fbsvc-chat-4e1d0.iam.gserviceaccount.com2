@@ -646,6 +646,7 @@ fun ChatScreen(
         }
     }
     var showContactPicker by remember { mutableStateOf(false) }
+    var contactSearchQuery by remember { mutableStateOf("") }
 
     // Voice recording helpers
     val startRecording = {
@@ -1837,25 +1838,52 @@ fun ChatScreen(
         )
     }
     if (showContactPicker) {
+        val friendIds = remember(currentUser, users) {
+            val me = currentUser
+            if (me == null) emptySet() else (me.friends + users.filter { me.uid in it.friends }.map { it.uid }).toSet()
+        }
+        val shareableContacts = remember(users, friendIds, contactSearchQuery, recipient.uid) {
+            val query = contactSearchQuery.trim().removePrefix("@").lowercase()
+            users.asSequence().filter { it.uid in friendIds && it.uid != recipient.uid }
+                .distinctBy { it.uid }
+                .filter { query.isBlank() || it.name.lowercase().contains(query) || it.username.lowercase().contains(query) }
+                .sortedBy { it.name.lowercase() }.toList()
+        }
         AlertDialog(
-            onDismissRequest = { showContactPicker = false },
-            title = { Text(tr("Share a contact"), fontWeight = FontWeight.Bold) },
+            onDismissRequest = { showContactPicker = false; contactSearchQuery = "" },
+            title = { Text("Share a friend's contact", fontWeight = FontWeight.Bold) },
             text = {
-                LazyColumn(Modifier.heightIn(max = 420.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    items(users.filter { it.uid != recipient.uid }, key = { it.uid }) { person ->
-                        ListItem(
-                            headlineContent = { Text(person.name, fontWeight = FontWeight.Bold) },
-                            supportingContent = { Text("@${person.username}") },
-                            leadingContent = { AsyncImage(person.profileImageUrl.ifBlank { null }, person.name, modifier = Modifier.size(40.dp).clip(CircleShape)) },
-                            modifier = Modifier.clip(RoundedCornerShape(16.dp)).clickable {
-                                viewModel.sendMessage(recipient, "Contact: ${person.name} (@${person.username})\nhttps://solitary-hill-dcdc.mr44253990.workers.dev/profile?uid=${person.uid}")
-                                showContactPicker = false
-                            }
-                        )
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = contactSearchQuery,
+                        onValueChange = { contactSearchQuery = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        leadingIcon = { Icon(Icons.Default.Search, null) },
+                        placeholder = { Text("Search friends") },
+                        singleLine = true,
+                        shape = RoundedCornerShape(16.dp)
+                    )
+                    if (shareableContacts.isEmpty()) Text(
+                        if (friendIds.isEmpty()) "Only friends can be shared as a contact. Add friends first." else "No friends match this search.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    LazyColumn(Modifier.heightIn(max = 360.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        items(shareableContacts, key = { it.uid }) { person ->
+                            ListItem(
+                                headlineContent = { Text(person.name, fontWeight = FontWeight.Bold) },
+                                supportingContent = { Text("@${person.username}") },
+                                leadingContent = { AsyncImage(person.profileImageUrl.ifBlank { null }, person.name, modifier = Modifier.size(40.dp).clip(CircleShape)) },
+                                modifier = Modifier.clip(RoundedCornerShape(16.dp)).clickable {
+                                    viewModel.sendMessage(recipient, "Contact: ${person.name} (@${person.username})\nhttps://solitary-hill-dcdc.mr44253990.workers.dev/profile?uid=${person.uid}")
+                                    showContactPicker = false
+                                    contactSearchQuery = ""
+                                }
+                            )
+                        }
                     }
                 }
             },
-            confirmButton = { TextButton(onClick = { showContactPicker = false }) { Text(tr("Cancel")) } }
+            confirmButton = { TextButton(onClick = { showContactPicker = false; contactSearchQuery = "" }) { Text(tr("Cancel")) } }
         )
     }
 

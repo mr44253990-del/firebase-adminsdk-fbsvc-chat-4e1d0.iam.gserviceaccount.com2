@@ -200,6 +200,7 @@ fun HomeScreen(
     viewModel: ChatViewModel,
     onUserSelected: (User) -> Unit,
     onProfileSelected: (User) -> Unit,
+    onPostSelected: (Post) -> Unit = {},
     onCreatePost: () -> Unit,
     onGroupSelected: (Group) -> Unit,
     onAssistant: () -> Unit,
@@ -276,6 +277,7 @@ fun HomeScreen(
     var lockEnabled by remember { mutableStateOf(AppLockManager.isEnabled(context)) }
     val privacySettings by PrivacyPreferences.settings.collectAsState()
     val currentTab by viewModel.currentTabState.collectAsState()
+    val settingsPageRequest by viewModel.settingsPageRequest.collectAsState()
     var chatChromeCollapsed by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(currentTab) { if (currentTab != 1) chatChromeCollapsed = false }
     val selectedReelPostId by viewModel.selectedReelPostId.collectAsState()
@@ -312,6 +314,19 @@ fun HomeScreen(
     ) { isGranted ->
         if (isGranted) {
             Toast.makeText(context, "Notification permission granted!", Toast.LENGTH_SHORT).show()
+        }
+    }
+    val backupStoragePermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (!granted) Toast.makeText(context, "Android 9 and earlier need storage permission for the single-file backup.", Toast.LENGTH_LONG).show()
+    }
+
+    LaunchedEffect(currentUser?.uid) {
+        if (currentUser != null && Build.VERSION.SDK_INT <= Build.VERSION_CODES.P &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED
+        ) {
+            backupStoragePermissionLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
         }
     }
 
@@ -1006,7 +1021,25 @@ fun HomeScreen(
                     var showSettingsMoreMenu by remember { mutableStateOf(false) }
                     // Each hub row opens its own page; "" is the hub itself.
                     var settingsPage by rememberSaveable { mutableStateOf("") }
+                    var highlightAiSetting by remember { mutableStateOf(false) }
+                    var returnToAssistantAfterAiSetup by remember { mutableStateOf(false) }
                     val settingsScroll = rememberScrollState()
+                    LaunchedEffect(settingsPageRequest) {
+                        if (settingsPageRequest.isNotBlank()) {
+                            settingsPage = if (settingsPageRequest.startsWith("privacy")) "privacy" else settingsPageRequest
+                            highlightAiSetting = settingsPageRequest == "privacy-ai"
+                            returnToAssistantAfterAiSetup = settingsPageRequest == "privacy-ai"
+                            viewModel.consumeSettingsPageRequest()
+                        }
+                    }
+                    LaunchedEffect(settingsPage, highlightAiSetting) {
+                        if (settingsPage == "privacy" && highlightAiSetting) {
+                            withFrameNanos { }
+                            privacySectionRequester.bringIntoView()
+                            kotlinx.coroutines.delay(6500)
+                            highlightAiSetting = false
+                        }
+                    }
                     BackHandler(enabled = settingsPage.isNotEmpty()) { settingsPage = "" }
                     // Remember where the hub list was, so Back from a page returns to the same spot
                     // instead of jumping to the top. Pages themselves always open at the top.
@@ -2136,8 +2169,32 @@ fun HomeScreen(
                                 PrivacyToggleRow("Show typing and read receipts", privacySettings.showTypingStatus && privacySettings.sendReadReceipts) {
                                     PrivacyPreferences.update(context) { it.copy(showTypingStatus = !it.showTypingStatus, sendReadReceipts = !it.sendReadReceipts) }
                                 }
-                                PrivacyToggleRow("Allow AI processing", privacySettings.allowAiProcessing) {
-                                    PrivacyPreferences.update(context) { it.copy(allowAiProcessing = !it.allowAiProcessing) }
+                                if (highlightAiSetting) {
+                                    Row(
+                                        Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp))
+                                            .background(MaterialTheme.colorScheme.primary.copy(alpha = .12f))
+                                            .border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(16.dp))
+                                            .padding(horizontal = 10.dp, vertical = 7.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(Modifier.weight(1f)) {
+                                            Text("Allow AI processing", fontWeight = FontWeight.Bold)
+                                            Text("Turn on to let the assistant process the prompts you choose to send. It cannot override the admin's global AI switch.", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
+                                        Switch(privacySettings.allowAiProcessing, {
+                                            PrivacyPreferences.update(context) { it.copy(allowAiProcessing = it.allowAiProcessing.not()) }
+                                        })
+                                    }
+                                } else {
+                                    PrivacyToggleRow("Allow AI processing", privacySettings.allowAiProcessing) {
+                                        PrivacyPreferences.update(context) { it.copy(allowAiProcessing = !it.allowAiProcessing) }
+                                    }
+                                }
+                                if (returnToAssistantAfterAiSetup) {
+                                    OutlinedButton(
+                                        onClick = { returnToAssistantAfterAiSetup = false; onAssistant() },
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) { Icon(Icons.Default.AutoAwesome, null); Spacer(Modifier.width(7.dp)); Text("Return to AI assistant") }
                                 }
                                 PrivacyToggleRow("Hide notification content", privacySettings.hideNotificationContent) {
                                     PrivacyPreferences.update(context) { it.copy(hideNotificationContent = !it.hideNotificationContent) }
@@ -2608,6 +2665,10 @@ fun HomeScreen(
                 showGlobalSearch = false
                 onProfileSelected(it)
             },
+            onPostSelected = {
+                showGlobalSearch = false
+                onPostSelected(it)
+            },
             onDismiss = { showGlobalSearch = false }
         )
     }
@@ -2631,7 +2692,19 @@ fun HomeScreen(
         var groupName by remember { mutableStateOf("") }
         var groupPicUrl by remember { mutableStateOf("") }
         val selectedMembers = remember { mutableStateListOf<String>() }
+        var memberQuery by remember { mutableStateOf("") }
         var isUploadingGroupPic by remember { mutableStateOf(false) }
+        val memberFriendIds = remember(currentUser, allUsers) {
+            val me = currentUser
+            if (me == null) emptySet() else (me.friends + allUsers.filter { me.uid in it.friends }.map { it.uid }).toSet()
+        }
+        val selectableMembers = remember(allUsers, memberFriendIds, memberQuery) {
+            val query = memberQuery.trim().removePrefix("@").lowercase()
+            allUsers.asSequence().filter { it.uid in memberFriendIds }
+                .distinctBy { it.uid }
+                .filter { query.isBlank() || it.name.lowercase().contains(query) || it.username.lowercase().contains(query) }
+                .sortedBy { it.name.lowercase() }.toList()
+        }
 
         val imagePicker = rememberLauncherForActivityResult(
             contract = ActivityResultContracts.GetContent()
@@ -2701,7 +2774,19 @@ fun HomeScreen(
                         CircularProgressIndicator(modifier = Modifier.size(24.dp))
                     }
 
-                    Text("Select Members:", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleSmall)
+                    Text("Select friends", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleSmall)
+                    OutlinedTextField(
+                        value = memberQuery,
+                        onValueChange = { memberQuery = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        leadingIcon = { Icon(Icons.Default.Search, null) },
+                        placeholder = { Text("Search friends") },
+                        singleLine = true,
+                        shape = RoundedCornerShape(16.dp)
+                    )
+                    if (selectableMembers.isEmpty()) {
+                        Text(if (memberFriendIds.isEmpty()) "Add friends before inviting people to a group." else "No friends match this search.", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                    }
 
                     LazyColumn(
                         modifier = Modifier
@@ -2709,7 +2794,7 @@ fun HomeScreen(
                             .weight(1f),
                         verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        items(users) { user ->
+                        items(selectableMembers, key = { it.uid }) { user ->
                             val isSelected = selectedMembers.contains(user.uid)
                             Row(
                                 modifier = Modifier
@@ -2848,11 +2933,11 @@ fun SmartSearchDialog(
     users: List<User>,
     posts: List<Post>,
     onProfileSelected: (User) -> Unit,
+    onPostSelected: (Post) -> Unit,
     onDismiss: () -> Unit
 ) {
     var query by remember { mutableStateOf("") }
     var searchFilter by remember { mutableStateOf("All") }
-    var fullScreenVideo by remember { mutableStateOf<String?>(null) }
     val normalized = query.trim()
     val searchContext = LocalContext.current
     var recentSearches by remember { mutableStateOf(SmartSearch.recent(searchContext)) }
@@ -2873,8 +2958,6 @@ fun SmartSearchDialog(
             }
         }).take(60)
     }
-    fullScreenVideo?.let { FullScreenVideoPlayer(it) { fullScreenVideo = null } }
-
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing), color = MaterialTheme.colorScheme.background) {
             Column {
@@ -2983,7 +3066,7 @@ fun SmartSearchDialog(
                             item { Text(tr("Posts & media"), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary) }
                             items(matchedPosts, key = { "search_post_${it.id}" }) { post ->
                                 Card(
-                                    onClick = { rememberQuery(); if (post.videoUrl.isNotBlank()) fullScreenVideo = post.videoUrl },
+                                    onClick = { rememberQuery(); onPostSelected(post) },
                                     shape = RoundedCornerShape(22.dp)
                                 ) {
                                     Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -4093,6 +4176,7 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
     var showEditPost by remember { mutableStateOf(false) }
     var showReportPost by remember { mutableStateOf(false) }
     var showSendPost by remember { mutableStateOf(false) }
+    var sendPostQuery by remember { mutableStateOf("") }
     var showLikers by remember { mutableStateOf(false) }
     var playInlineVideo by remember(post.id) { mutableStateOf(false) }
     val currentUserId = FirebaseAuth.getInstance().currentUser?.uid ?: ""
@@ -4695,7 +4779,42 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
     }
 
     if (showSendPost) {
-        AlertDialog(onDismissRequest={showSendPost=false},title={Text(tr("Send post to chat"),fontWeight=FontWeight.ExtraBold)},text={LazyColumn(Modifier.heightIn(max=420.dp)){items(allUsers,key={it.uid}){person->ListItem(headlineContent={Text(person.name,fontWeight=FontWeight.Bold)},supportingContent={Text("@${person.username}")},leadingContent={AsyncImage(person.profileImageUrl.ifBlank{null},person.name,Modifier.size(42.dp).clip(CircleShape))},modifier=Modifier.clickable{viewModel.sendPostToUser(person,post){ok->Toast.makeText(context,if(ok)"Sent to ${person.name}" else "Send failed",Toast.LENGTH_SHORT).show()};showSendPost=false})}}},confirmButton={TextButton(onClick={showSendPost=false}){Text(tr("Cancel"))}})
+        val friendIds = remember(liveMe, allUsers) {
+            val me = liveMe
+            if (me == null) emptySet() else (me.friends + allUsers.filter { me.uid in it.friends }.map { it.uid }).toSet()
+        }
+        val recipients = remember(allUsers, friendIds, sendPostQuery) {
+            val query = sendPostQuery.trim().removePrefix("@").lowercase()
+            allUsers.asSequence().filter { it.uid in friendIds && it.uid != currentUserId }
+                .distinctBy { it.uid }
+                .filter { query.isBlank() || it.name.lowercase().contains(query) || it.username.lowercase().contains(query) }
+                .sortedBy { it.name.lowercase() }.toList()
+        }
+        AlertDialog(
+            onDismissRequest = { showSendPost = false; sendPostQuery = "" },
+            title = { Text("Send post to a friend", fontWeight = FontWeight.ExtraBold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(sendPostQuery, { sendPostQuery = it }, modifier = Modifier.fillMaxWidth(), leadingIcon = { Icon(Icons.Default.Search, null) }, placeholder = { Text("Search friends") }, singleLine = true, shape = RoundedCornerShape(16.dp))
+                    if (recipients.isEmpty()) Text(if (friendIds.isEmpty()) "Only friends can receive a shared post. Add friends first." else "No friends match this search.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    LazyColumn(Modifier.heightIn(max = 360.dp)) {
+                        items(recipients, key = { it.uid }) { person ->
+                            ListItem(
+                                headlineContent = { Text(person.name, fontWeight = FontWeight.Bold) },
+                                supportingContent = { Text("@${person.username}") },
+                                leadingContent = { AsyncImage(person.profileImageUrl.ifBlank { null }, person.name, Modifier.size(42.dp).clip(CircleShape)) },
+                                modifier = Modifier.clickable {
+                                    viewModel.sendPostToUser(person, post) { ok -> Toast.makeText(context, if (ok) "Sent to ${person.name}" else "Send failed", Toast.LENGTH_SHORT).show() }
+                                    showSendPost = false
+                                    sendPostQuery = ""
+                                }
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { showSendPost = false; sendPostQuery = "" }) { Text(tr("Cancel")) } }
+        )
     }
     if (showReportPost) {
         var reason by remember { mutableStateOf("") }

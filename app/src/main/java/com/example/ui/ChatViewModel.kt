@@ -571,6 +571,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _currentTabState = MutableStateFlow(0)
     val currentTabState: StateFlow<Int> = _currentTabState.asStateFlow()
+    private val _settingsPageRequest = MutableStateFlow("")
+    val settingsPageRequest: StateFlow<String> = _settingsPageRequest.asStateFlow()
+    fun requestSettingsPage(page: String) { _settingsPageRequest.value = page.take(40) }
+    fun consumeSettingsPageRequest() { _settingsPageRequest.value = "" }
 
     private val _selectedReelPostId = MutableStateFlow<String?>(null)
     val selectedReelPostId: StateFlow<String?> = _selectedReelPostId.asStateFlow()
@@ -1042,6 +1046,53 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             Log.e("CALL_ENGINE", "Call launch failed", error)
             CallEngine.reportFailure("Could not start call: ${error.message ?: error.javaClass.simpleName}")
         }
+    }
+
+    /** Generates an image through the authenticated Worker; OVH credentials never enter this app. */
+    fun generateAssistantImage(prompt: String, onResult: (File?, String) -> Unit) {
+        val user = FirebaseAuth.getInstance().currentUser ?: return onResult(null, "Please sign in again.")
+        val cleanPrompt = prompt.trim().take(1200)
+        if (cleanPrompt.isBlank()) return onResult(null, "Describe the image first.")
+        if (!PrivacyPreferences.settings.value.allowAiProcessing) return onResult(null, "AI processing is disabled in Privacy & Security.")
+        if (!_flagshipConfig.value.assistantEnabled) return onResult(null, "AI features are currently disabled by the admin.")
+        user.getIdToken(false).addOnSuccessListener { tokenResult ->
+            val token = tokenResult.token ?: return@addOnSuccessListener onResult(null, "Could not authenticate image request.")
+            viewModelScope.launch(Dispatchers.IO) {
+                try {
+                    val payload = JSONObject().put("prompt", cleanPrompt)
+                    val client = OkHttpClient.Builder().callTimeout(120, TimeUnit.SECONDS).build()
+                    executeRouted("ai", client) { base ->
+                        Request.Builder().url("$base/ai/image")
+                            .header("Authorization", "Bearer $token")
+                            .post(payload.toString().toRequestBody("application/json".toMediaTypeOrNull())).build()
+                    }.use { response ->
+                        val body = response.body
+                        if (!response.isSuccessful) {
+                            val detail = body?.string().orEmpty()
+                            val message = runCatching { JSONObject(detail).optString("error") }.getOrNull()
+                                ?.takeIf { it.isNotBlank() } ?: "Image generation failed (${response.code})"
+                            return@use withContext(Dispatchers.Main) { onResult(null, message) }
+                        }
+                        val bytes = body?.bytes() ?: byteArrayOf()
+                        if (bytes.isEmpty()) return@use withContext(Dispatchers.Main) { onResult(null, "The image provider returned an empty response.") }
+                        if (bytes.size > 20 * 1024 * 1024) return@use withContext(Dispatchers.Main) { onResult(null, "Generated image is too large to display safely.") }
+                        val extension = when {
+                            response.header("Content-Type").orEmpty().contains("png", true) -> "png"
+                            response.header("Content-Type").orEmpty().contains("jpeg", true) -> "jpg"
+                            bytes.size >= 8 && bytes[0] == 0x89.toByte() && bytes[1] == 0x50.toByte() -> "png"
+                            bytes.size >= 3 && bytes[0] == 0xFF.toByte() && bytes[1] == 0xD8.toByte() -> "jpg"
+                            else -> "img"
+                        }
+                        val dir = File(getApplication<Application>().cacheDir, "assistant_images").apply { mkdirs() }
+                        val file = File(dir, "generated_${System.currentTimeMillis()}.$extension")
+                        file.writeBytes(bytes)
+                        withContext(Dispatchers.Main) { onResult(file, "") }
+                    }
+                } catch (error: Throwable) {
+                    withContext(Dispatchers.Main) { onResult(null, error.localizedMessage ?: "Image generation connection failed") }
+                }
+            }
+        }.addOnFailureListener { onResult(null, it.localizedMessage ?: "Image authentication failed") }
     }
 
     fun askAssistant(prompt: String, memory: List<String>, onResult: (String) -> Unit) {
