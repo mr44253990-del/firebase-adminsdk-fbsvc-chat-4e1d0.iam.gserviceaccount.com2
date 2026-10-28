@@ -13,6 +13,7 @@ import android.content.pm.PackageManager
 import android.media.MediaPlayer
 import android.net.Uri
 import android.os.Build
+import android.text.format.DateUtils
 import android.provider.Settings
 import android.util.Log
 import android.widget.Toast
@@ -22,12 +23,14 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.window.Dialog
@@ -44,6 +47,8 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.VerticalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.text.ClickableText
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -55,9 +60,11 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import com.example.ui.theme.*
+import com.example.call.CallSkinPreferences
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
@@ -85,11 +92,11 @@ import android.widget.VideoView
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import com.example.R
+import androidx.compose.ui.graphics.lerp
 import com.example.data.ActivityNotification
 import com.example.security.AppLockManager
 import com.example.security.PrivacyPreferences
 import com.example.data.FriendRequest
-import com.example.data.FlagshipConfig
 import com.example.data.Group
 import com.example.data.MessageRequest
 import com.example.data.Post
@@ -110,10 +117,10 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-private data class VerifiedUpdateApk(val bytes: ByteArray, val versionCode: Long, val versionName: String)
+internal data class VerifiedUpdateApk(val bytes: ByteArray, val versionCode: Long, val versionName: String)
 
 @Suppress("DEPRECATION")
-private fun signerDigests(info: PackageInfo): Set<String> {
+internal fun signerDigests(info: PackageInfo): Set<String> {
     val signatures = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
         info.signingInfo?.apkContentsSigners.orEmpty()
     } else {
@@ -126,7 +133,7 @@ private fun signerDigests(info: PackageInfo): Set<String> {
 }
 
 @Suppress("DEPRECATION")
-private fun verifyUpdateApk(context: Context, uri: Uri): Result<VerifiedUpdateApk> = runCatching {
+internal fun verifyUpdateApk(context: Context, uri: Uri): Result<VerifiedUpdateApk> = runCatching {
     val temp = File(context.cacheDir, "flagship-update-check.apk")
     try {
         context.contentResolver.openInputStream(uri)?.use { input ->
@@ -187,12 +194,13 @@ private fun DeviceSessionRow(session: DeviceSession, onDelete: (DeviceSession) -
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun HomeScreen(
     viewModel: ChatViewModel,
     onUserSelected: (User) -> Unit,
     onProfileSelected: (User) -> Unit,
+    onPostSelected: (Post) -> Unit = {},
     onCreatePost: () -> Unit,
     onGroupSelected: (Group) -> Unit,
     onAssistant: () -> Unit,
@@ -204,6 +212,7 @@ fun HomeScreen(
     val uiScope = rememberCoroutineScope()
     val isOnlineState by viewModel.isNetworkAvailable.collectAsState()
     val currentUser by viewModel.currentUserState.collectAsState()
+    val appLanguage by AppLanguage.code.collectAsState()
     val users by viewModel.filteredUsersState.collectAsState()
     val groups by viewModel.groupsState.collectAsState()
     val stories by viewModel.storiesState.collectAsState()
@@ -215,14 +224,23 @@ fun HomeScreen(
         ).flatMap { group -> group.sortedBy { it.timestamp } }
     }
     val posts by viewModel.postsState.collectAsState()
+    val hasMorePosts by viewModel.hasMorePosts.collectAsState()
+    val loadingMorePosts by viewModel.loadingMorePosts.collectAsState()
     val webhookUrl by viewModel.webhookUrl.collectAsState()
     val gatewayHealth by viewModel.gatewayHealth.collectAsState()
+    val presenceWorkerUrl by viewModel.presenceWorkerUrl.collectAsState()
+    val presenceWorkerHealth by viewModel.presenceWorkerHealth.collectAsState()
+    val presenceDashboard by viewModel.presenceDashboard.collectAsState()
+    val storageRoutingConfig by viewModel.storageRoutingConfig.collectAsState()
+    val storageSetupHealth by viewModel.storageSetupHealth.collectAsState()
     val flagshipConfig by viewModel.flagshipConfig.collectAsState()
     val featureRequests by viewModel.featureRequests.collectAsState()
     val premiumRequests by viewModel.premiumRequests.collectAsState()
     val deviceSessions by viewModel.deviceSessions.collectAsState()
     val adminReports by viewModel.adminReports.collectAsState()
     val accountBanned by viewModel.accountBanned.collectAsState()
+    val forcedLogout by viewModel.forcedLogout.collectAsState()
+    val mfaGate by viewModel.mfaGate.collectAsState()
     val inAppNotification by viewModel.inAppNotification.collectAsState()
     val activityNotifications by viewModel.activityNotifications.collectAsState()
     val openActivitySignal by viewModel.openActivityCenterSignal.collectAsState()
@@ -235,17 +253,33 @@ fun HomeScreen(
     val mutedUsers by viewModel.mutedUserIds.collectAsState()
     val savedPostIds by viewModel.savedPostIds.collectAsState()
     val allUsers by viewModel.usersState.collectAsState()
+    val friendNotes by viewModel.friendNotesState.collectAsState()
+    LaunchedEffect(currentUser?.uid, currentUser?.friends) {
+        viewModel.observeFriendNotes(currentUser?.friends.orEmpty() + listOfNotNull(currentUser?.uid))
+    }
     val conversationUserIds by viewModel.conversationUserIds.collectAsState()
     val unreadCounts by viewModel.unreadCountsState.collectAsState()
 
     var searchQuery by remember { mutableStateOf("") }
+    var chatFilter by rememberSaveable { mutableStateOf("all") }
+    var showChatTools by rememberSaveable { mutableStateOf(false) }
     var feedFilter by rememberSaveable { mutableStateOf("All Posts") }
     var showAnalytics by remember { mutableStateOf(false) }
     var showAccountMenu by remember { mutableStateOf(false) }
     var showActivityCenter by remember { mutableStateOf(false) }
     var showGlobalSearch by remember { mutableStateOf(false) }
     var showLockSetup by remember { mutableStateOf(false) }
+    var showLockDisableConfirm by remember { mutableStateOf(false) }
     var showReportDialog by remember { mutableStateOf(false) }
+    var showAppGuide by remember { mutableStateOf(false) }
+    var showVersionWelcome by remember { mutableStateOf(false) }
+    var showWebPairDialog by remember { mutableStateOf(false) }
+    var showRevokeWebDialog by remember { mutableStateOf(false) }
+    var webPairCode by remember { mutableStateOf("") }
+    var webPairUrl by remember { mutableStateOf("") }
+    var webPairExpiresAt by remember { mutableLongStateOf(0L) }
+    var webPairLoading by remember { mutableStateOf(false) }
+    var webRevokeLoading by remember { mutableStateOf(false) }
     var showAllDeviceSessions by rememberSaveable { mutableStateOf(false) }
     var deviceSessionPendingDelete by remember { mutableStateOf<DeviceSession?>(null) }
     var showClearDeviceHistoryDialog by rememberSaveable { mutableStateOf(false) }
@@ -255,9 +289,15 @@ fun HomeScreen(
     var lockEnabled by remember { mutableStateOf(AppLockManager.isEnabled(context)) }
     val privacySettings by PrivacyPreferences.settings.collectAsState()
     val currentTab by viewModel.currentTabState.collectAsState()
+    val settingsPageRequest by viewModel.settingsPageRequest.collectAsState()
+    var chatChromeCollapsed by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(currentTab) { if (currentTab != 1) chatChromeCollapsed = false }
     val selectedReelPostId by viewModel.selectedReelPostId.collectAsState()
-    BackHandler(enabled = currentTab == 6) { viewModel.setCurrentTab(0) }
+    BackHandler(enabled = currentTab == 6 && !flagshipConfig.tiktokModeEnabled) { viewModel.setCurrentTab(0) }
+    BackHandler(enabled = currentTab == 7) { viewModel.setCurrentTab(3) }
     val isAdmin = FirebaseAuth.getInstance().currentUser?.email?.lowercase()?.trim()?.trimEnd('.') == "mr4425390@gmail.com"
+    val staffPermissions: Set<String>? = currentUser?.takeIf { !isAdmin && it.staffRole == "sub_admin" && it.staffPermissions.isNotEmpty() }?.staffPermissions?.toSet()
+    val isStaff = staffPermissions != null
     var dismissNotice by remember(flagshipConfig.updatedAt) { mutableStateOf(false) }
     val validUpdate = flagshipConfig.updateEnabled && flagshipConfig.apkUrl.startsWith("https://")
     // Version code is the single source of truth. A republished campaign must
@@ -288,6 +328,19 @@ fun HomeScreen(
             Toast.makeText(context, "Notification permission granted!", Toast.LENGTH_SHORT).show()
         }
     }
+    val backupStoragePermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (!granted) Toast.makeText(context, "Android 9 and earlier need storage permission for the single-file backup.", Toast.LENGTH_LONG).show()
+    }
+
+    LaunchedEffect(currentUser?.uid) {
+        if (currentUser != null && Build.VERSION.SDK_INT <= Build.VERSION_CODES.P &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED
+        ) {
+            backupStoragePermissionLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+        }
+    }
 
     LaunchedEffect(Unit) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -300,11 +353,35 @@ fun HomeScreen(
 
     val scaffoldBgColor = Color.Transparent
 
+    // First-launch guided tour (spotlight + blurred surroundings). Replayable from Settings.
+    var coachTourActive by remember { mutableStateOf(false) }
+    val coachReplay by CoachTour.replay.collectAsState()
+    LaunchedEffect(currentUser?.uid) {
+        if (currentUser != null) {
+            AppLanguage.load(context)
+            val previouslySeen = context.getSharedPreferences("convo_update_welcome", Context.MODE_PRIVATE)
+                .getInt("seen_version_code", 51)
+            if (com.example.BuildConfig.VERSION_CODE > previouslySeen) showVersionWelcome = true
+        }
+    }
+    LaunchedEffect(currentUser?.uid, showVersionWelcome) {
+        kotlinx.coroutines.delay(1400)
+        if (currentUser != null && !showVersionWelcome && !CoachTour.isDone(context)) coachTourActive = true
+    }
+    LaunchedEffect(coachReplay) { if (coachReplay && CoachTour.consumeReplay()) { kotlinx.coroutines.delay(350); coachTourActive = true } }
+
     Scaffold(
+        modifier = Modifier.fillMaxSize().coachBlurHost(coachTourActive && currentTab != 6, CoachTour.activeKey.value?.let { CoachTour.targets[it] }),
         containerColor = Color.Transparent,
         contentWindowInsets = androidx.compose.foundation.layout.WindowInsets(0, 0, 0, 0),
         topBar = {
-            if (currentTab != 6) Column(modifier = Modifier.fillMaxWidth()) {
+            if (currentTab != 6) {
+                AnimatedVisibility(
+                    visible = currentTab != 1 || !chatChromeCollapsed,
+                    enter = expandVertically(expandFrom = Alignment.Top) + fadeIn() + slideInVertically { -it / 3 },
+                    exit = shrinkVertically(shrinkTowards = Alignment.Top) + fadeOut() + slideOutVertically { -it / 3 }
+                ) {
+                    Column(modifier = Modifier.fillMaxWidth()) {
                 // WiFi Offline Mode indicator banner
                 if (!isOnlineState) {
                     Box(
@@ -331,47 +408,43 @@ fun HomeScreen(
                 // App branding top bar
                 TopAppBar(
                     title = {
-                        Column {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    text = "Convo Chat",
-                                    fontWeight = FontWeight.Black,
-                                    fontSize = 25.sp,
-                                    color = MaterialTheme.colorScheme.primary,
-                                    letterSpacing = (-0.8).sp
-                                )
-                                Spacer(Modifier.width(5.dp))
-                                Icon(
-                                    Icons.Default.Verified,
-                                    contentDescription = "Verified",
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(19.dp)
-                                )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(Modifier.size(40.dp).clip(CircleShape).background(Brush.linearGradient(listOf(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.tertiary))).padding(2.dp)) {
+                                Image(painterResource(R.drawable.img_app_logo), contentDescription = "Convo Chat", modifier = Modifier.fillMaxSize().clip(CircleShape))
                             }
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Box(
-                                    Modifier.size(8.dp).clip(CircleShape).background(
-                                        if (isOnlineState) Color(0xFF26E86F) else Color(0xFFFF5252)
+                            Spacer(Modifier.width(9.dp))
+                            Column {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        text = "Convo Chat",
+                                        fontWeight = FontWeight.Black,
+                                        fontSize = 23.sp,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        letterSpacing = (-0.8).sp
                                     )
-                                )
-                                Spacer(Modifier.width(6.dp))
-                                Text(
-                                    text = if (isOnlineState) "Online" else "Offline Cache Active",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
+                                    Spacer(Modifier.width(5.dp))
+                                    Icon(Icons.Default.Verified, contentDescription = "Verified", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+                                }
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Box(Modifier.size(7.dp).clip(CircleShape).background(if (isOnlineState) Color(0xFF26E86F) else Color(0xFFFF5252)))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(text = if (isOnlineState) "Online" else "Offline Cache Active", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
                             }
                         }
                     },
                     actions = {
-                        IconButton(onClick = onPremium) {
+                        if (currentTab != 1) IconButton(onClick = onPremium) {
                             Icon(Icons.Default.WorkspacePremium, contentDescription = "Convo Chat Premium", tint = Color(0xFFFFB300))
                         }
                         IconButton(onClick = { showGlobalSearch = true }) {
                             Icon(Icons.Outlined.Search, contentDescription = "Search people and media")
                         }
-                        if (isAdmin) IconButton(onClick = { viewModel.setCurrentTab(3) }) {
-                            Icon(Icons.Outlined.AdminPanelSettings, contentDescription = "Admin tools", tint = MaterialTheme.colorScheme.primary)
+                        if (currentTab == 1) IconButton(onClick = { if (lockEnabled) showLockDisableConfirm = true else showLockSetup = true }) {
+                            Icon(if (lockEnabled) Icons.Default.Lock else Icons.Default.LockOpen, contentDescription = if (lockEnabled) "App lock enabled" else "Set app lock", tint = MaterialTheme.colorScheme.primary)
+                        }
+                        if (isAdmin || isStaff) IconButton(onClick = { viewModel.setCurrentTab(3) }) {
+                            Icon(if (isStaff) Icons.Outlined.Shield else Icons.Outlined.AdminPanelSettings, contentDescription = if (isStaff) "Staff panel" else "Admin tools", tint = MaterialTheme.colorScheme.primary)
                         }
                         BadgedBox(
                             badge = {
@@ -388,7 +461,7 @@ fun HomeScreen(
                             }
                         }
                         Box {
-                            IconButton(onClick = { showAccountMenu = true }) {
+                            IconButton(onClick = { showAccountMenu = true }, modifier = Modifier.coachTarget("account_menu")) {
                                 AsyncImage(
                                     model = currentUser?.profileImageUrl?.ifBlank { null },
                                     contentDescription = "Account",
@@ -402,12 +475,33 @@ fun HomeScreen(
                                 onDismissRequest = { showAccountMenu = false }
                             ) {
                                 DropdownMenuItem(
-                                    text = { Text("Groups") },
+                                    text = { Text(tr("Convo Chat Premium")) },
+                                    leadingIcon = { Icon(Icons.Default.WorkspacePremium, null, tint = Color(0xFFFFB300)) },
+                                    onClick = { showAccountMenu = false; onPremium() }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text(tr("Search people and media")) },
+                                    leadingIcon = { Icon(Icons.Outlined.Search, null) },
+                                    onClick = { showAccountMenu = false; showGlobalSearch = true }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text(tr("Messages")) },
+                                    leadingIcon = { Icon(Icons.Outlined.ChatBubbleOutline, null) },
+                                    onClick = { showAccountMenu = false; viewModel.setCurrentTab(1) }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text(tr("Groups")) },
                                     leadingIcon = { Icon(Icons.Outlined.Groups, null) },
                                     onClick = { showAccountMenu = false; viewModel.setCurrentTab(2) }
                                 )
                                 DropdownMenuItem(
-                                    text = { Text("Profile & appearance") },
+                                    text = { Text(tr("My profile")) },
+                                    leadingIcon = { Icon(Icons.Outlined.AccountCircle, null) },
+                                    enabled = currentUser != null,
+                                    onClick = { showAccountMenu = false; currentUser?.let { onProfileSelected(it) } }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text(tr("Profile & settings")) },
                                     leadingIcon = { Icon(Icons.Outlined.Person, null) },
                                     onClick = {
                                         showAccountMenu = false
@@ -415,11 +509,16 @@ fun HomeScreen(
                                     }
                                 )
                                 DropdownMenuItem(
-                                    text = { Text("Discover people") },
+                                    text = { Text(tr("Discover people")) },
                                     leadingIcon = { Icon(Icons.Outlined.PersonAdd, null) },
                                     onClick = { showAccountMenu = false; viewModel.setCurrentTab(5) }
                                 )
                                 if (isAdmin) {
+                                    DropdownMenuItem(
+                                        text = { Text("Admin analytics dashboard") },
+                                        leadingIcon = { Icon(Icons.Outlined.Analytics, null) },
+                                        onClick = { showAccountMenu = false; viewModel.setCurrentTab(7) }
+                                    )
                                     DropdownMenuItem(
                                         text = { Text("Admin control center") },
                                         leadingIcon = { Icon(Icons.Outlined.AdminPanelSettings, null) },
@@ -427,7 +526,7 @@ fun HomeScreen(
                                     )
                                 }
                                 DropdownMenuItem(
-                                    text = { Text("Sign out", color = MaterialTheme.colorScheme.error) },
+                                    text = { Text(tr("Sign out"), color = MaterialTheme.colorScheme.error) },
                                     leadingIcon = { Icon(Icons.Outlined.Logout, null, tint = MaterialTheme.colorScheme.error) },
                                     onClick = {
                                         showAccountMenu = false
@@ -441,6 +540,11 @@ fun HomeScreen(
                         containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.72f)
                     )
                 )
+                    }
+                }
+                if (currentTab == 1 && chatChromeCollapsed) {
+                    Spacer(Modifier.fillMaxWidth().windowInsetsTopHeight(androidx.compose.foundation.layout.WindowInsets.statusBars))
+                }
             }
         },
         bottomBar = {
@@ -454,18 +558,21 @@ fun HomeScreen(
                 NavigationBarItem(
                     selected = currentTab == 0,
                     onClick = { viewModel.setCurrentTab(0) },
+                    modifier = Modifier.coachTarget("nav_home"),
                     icon = { Icon(Icons.Default.Home, contentDescription = "Home") },
-                    label = { Text("Home", fontSize = 10.sp) }
+                    label = { Text(tr("Home"), fontSize = 10.sp) }
                 )
                 NavigationBarItem(
                     selected = currentTab == 1,
                     onClick = { viewModel.setCurrentTab(1) },
+                    modifier = Modifier.coachTarget("nav_chats"),
                     icon = { Icon(Icons.Default.Chat, contentDescription = "Chats") },
-                    label = { Text("Chats", fontSize = 10.sp) }
+                    label = { Text(tr("Chats"), fontSize = 10.sp) }
                 )
                 NavigationBarItem(
                     selected = false,
                     onClick = { showCreateHub = true },
+                    modifier = Modifier.coachTarget("nav_create"),
                     icon = {
                         Box(Modifier.size(54.dp).clip(CircleShape).background(Brush.linearGradient(listOf(Color(0xFF674CFF), Color(0xFFFF36BE)))), contentAlignment = Alignment.Center) {
                             Icon(Icons.Default.Add, contentDescription = "Create", tint = Color.White, modifier = Modifier.size(28.dp))
@@ -473,34 +580,62 @@ fun HomeScreen(
                     },
                     label = null
                 )
-                NavigationBarItem(
+                // Always five slots so the create (+) button stays centred. When the admin
+                // turns Reels off (for everyone, admin included) the slot becomes Groups.
+                if (flagshipConfig.reelsEnabled) NavigationBarItem(
                     selected = currentTab == 6,
                     onClick = { viewModel.openReel() },
+                    modifier = Modifier.coachTarget("nav_slot4"),
                     icon = { Icon(Icons.Default.SmartDisplay, contentDescription = "Reels") },
-                    label = { Text("Reels", fontSize = 10.sp) }
+                    label = { Text(tr("Reels"), fontSize = 10.sp) }
+                ) else NavigationBarItem(
+                    selected = currentTab == 2,
+                    onClick = { viewModel.setCurrentTab(2) },
+                    modifier = Modifier.coachTarget("nav_slot4"),
+                    icon = { Icon(Icons.Default.Groups, contentDescription = "Groups") },
+                    label = { Text(tr("Groups"), fontSize = 10.sp) }
                 )
                 NavigationBarItem(
                     selected = currentTab == 5,
                     onClick = { viewModel.setCurrentTab(5) },
+                    modifier = Modifier.coachTarget("nav_friends"),
                     icon = { Icon(Icons.Default.PeopleAlt, contentDescription = "Friends") },
-                    label = { Text("Friends", fontSize = 10.sp) }
+                    label = { Text(tr("Friends"), fontSize = 10.sp) }
                 )
             }
         },
         floatingActionButton = {
-            if (currentTab == 0) {
+            if (currentTab == 0 && flagshipConfig.assistantEnabled) {
+                // Draggable: long-press-free drag moves the AI button anywhere; position is remembered.
+                val fabPrefs = remember { context.getSharedPreferences("convo_ai_fab", android.content.Context.MODE_PRIVATE) }
+                var fabX by remember { mutableFloatStateOf(fabPrefs.getFloat("x", 0f)) }
+                var fabY by remember { mutableFloatStateOf(fabPrefs.getFloat("y", 0f)) }
+                val fabConfig = androidx.compose.ui.platform.LocalConfiguration.current
+                val fabDensity = androidx.compose.ui.platform.LocalDensity.current
+                val maxLeft = with(fabDensity) { (fabConfig.screenWidthDp.dp - 88.dp).toPx() }.coerceAtLeast(0f)
+                val maxUp = with(fabDensity) { (fabConfig.screenHeightDp.dp - 220.dp).toPx() }.coerceAtLeast(0f)
                 FloatingActionButton(
                     onClick = onAssistant,
                     shape = CircleShape,
                     containerColor = MaterialTheme.colorScheme.primary,
                     contentColor = MaterialTheme.colorScheme.onPrimary,
-                    modifier = Modifier.size(56.dp)
+                    modifier = Modifier
+                        .offset { androidx.compose.ui.unit.IntOffset(fabX.toInt(), fabY.toInt()) }
+                        .pointerInput(Unit) {
+                            detectDragGestures(
+                                onDragEnd = { fabPrefs.edit().putFloat("x", fabX).putFloat("y", fabY).apply() }
+                            ) { change, drag ->
+                                change.consume()
+                                fabX = (fabX + drag.x).coerceIn(-maxLeft, 0f)
+                                fabY = (fabY + drag.y).coerceIn(-maxUp, 0f)
+                            }
+                        }
+                        .size(52.dp)
                 ) {
                     Icon(Icons.Default.AutoAwesome, contentDescription = "Open AI assistant", modifier = Modifier.size(26.dp))
                 }
             }
-        },
-        modifier = Modifier.fillMaxSize()
+        }
     ) { innerPadding ->
         Box(
             modifier = Modifier
@@ -511,7 +646,7 @@ fun HomeScreen(
             when (currentTab) {
                 0 -> {
                     val feedState = rememberLazyListState()
-                    val regularFeedPosts = remember(posts) { posts.filter { !it.isAdminReel || it.postEverywhere } }
+                    val regularFeedPosts = remember(posts, flagshipConfig.reelsEnabled) { posts.filter { (!it.isAdminReel || it.postEverywhere) && (flagshipConfig.reelsEnabled || isAdmin || !it.isReel) } }
                     val visibleFeedPosts = remember(regularFeedPosts, feedFilter, currentUser?.friends, currentUser?.following, savedPostIds) {
                         when (feedFilter) {
                             "Friends" -> regularFeedPosts.filter { it.senderId in currentUser?.friends.orEmpty() }
@@ -563,6 +698,13 @@ fun HomeScreen(
                                 }
                             )
                         }
+                        item(key = "polls") {
+                            ActivePollsSection(
+                                userName = currentUser?.name.orEmpty(),
+                                userPhoto = currentUser?.profileImageUrl.orEmpty(),
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)
+                            )
+                        }
                         item(key = "composer") {
                             Card(
                                 onClick = onCreatePost,
@@ -584,8 +726,8 @@ fun HomeScreen(
                                         )
                                         Spacer(Modifier.width(11.dp))
                                         Column(Modifier.weight(1f)) {
-                                            Text("What's on your mind, ${currentUser?.name?.substringBefore(' ') ?: "friend"}? ✨", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp)
-                                            Text("Share a moment with your community", color = MaterialTheme.colorScheme.primary, fontSize = 10.sp)
+                                            Text("What's on your mind, ${currentUser?.name?.substringBefore(' ') ?: "friend"}?", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp)
+                                            Text(tr("Share a moment with your community"), color = MaterialTheme.colorScheme.primary, fontSize = 10.sp)
                                         }
                                         Box(Modifier.size(50.dp).clip(CircleShape).background(Brush.linearGradient(listOf(Color(0xFF5C53FF), Color(0xFFFF35BE)))), contentAlignment = Alignment.Center) { Icon(Icons.Default.Send, "Create post", tint = Color.White) }
                                     }
@@ -650,8 +792,8 @@ fun HomeScreen(
                                 ) {
                                     Icon(Icons.Outlined.DynamicFeed, null, tint = MaterialTheme.colorScheme.primary.copy(alpha = .45f), modifier = Modifier.size(60.dp))
                                     Spacer(Modifier.height(10.dp))
-                                    Text("No posts yet", fontWeight = FontWeight.Bold)
-                                    Text("Share the first update with your community.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text(tr("No posts yet"), fontWeight = FontWeight.Bold)
+                                    Text(tr("Share the first update with your community."), color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
                             }
                         } else {
@@ -661,16 +803,61 @@ fun HomeScreen(
                                 }
                             }
                         }
+                        if (hasMorePosts || loadingMorePosts) item(key = "feed_page_footer") {
+                            Row(Modifier.fillMaxWidth().padding(vertical = 14.dp), horizontalArrangement = Arrangement.Center) {
+                                Button(onClick = viewModel::loadMorePosts, enabled = !loadingMorePosts) {
+                                    if (loadingMorePosts) {
+                                        CircularProgressIndicator(Modifier.size(17.dp), strokeWidth = 2.dp)
+                                        Spacer(Modifier.width(8.dp))
+                                        Text(tr("Loading more posts…"))
+                                    } else Text(tr("Load more posts"))
+                                }
+                            }
+                        }
                     }
                 }
                 1 -> {
                     val myUid = currentUser?.uid.orEmpty()
                     val sentRequestTargets = sentFriendRequests.mapNotNull { id -> id.removePrefix("${myUid}_").takeIf { it != id } }.toSet()
-                    val chatUsers = if (searchQuery.isNotBlank()) users else users.filter { user ->
+                    val conversationOrder by viewModel.conversationOrder.collectAsState()
+                    val recencyRank = remember(conversationOrder) { conversationOrder.withIndex().associate { it.value to it.index } }
+                    val contactMatchIds by ContactMatches.uids.collectAsState()
+                    val filteredChatUsers = if (searchQuery.isNotBlank()) users else users.filter { user ->
                         currentUser?.friends?.contains(user.uid) == true ||
+                            (flagshipConfig.contactsDiscoveryEnabled && contactMatchIds.contains(user.uid)) ||
                             conversationUserIds.contains(user.uid) ||
                             unreadCounts.containsKey(user.uid) ||
                             sentRequestTargets.contains(user.uid)
+                    }
+                    // People you actually chat with stay on top: unread first, then the most
+                    // recent conversations, then friends you have not messaged yet.
+                    val conversationPrefsVersion by ConversationPrefs.version.collectAsState()
+                    val chatUsers = remember(filteredChatUsers, recencyRank, unreadCounts) {
+                        filteredChatUsers.distinctBy { it.uid }.sortedWith(
+                            compareByDescending<User> { (unreadCounts[it.uid] ?: 0) > 0 }
+                                .thenBy { recencyRank[it.uid] ?: Int.MAX_VALUE }
+                                .thenBy { it.name.lowercase() }
+                        )
+                    }
+                    val displayedChatUsers = remember(chatUsers, chatFilter, unreadCounts, conversationPrefsVersion) {
+                        when (chatFilter) {
+                            "unread" -> chatUsers.filter { (unreadCounts[it.uid] ?: 0) > 0 && !ConversationPrefs.isArchived(context, it.uid) }
+                            "archived" -> chatUsers.filter { ConversationPrefs.isArchived(context, it.uid) }
+                            "locked" -> chatUsers.filter { ConversationPrefs.isLocked(context, it.uid) }
+                            else -> chatUsers.filter { !ConversationPrefs.isArchived(context, it.uid) && !ConversationPrefs.isLocked(context, it.uid) }
+                        }
+                    }
+                    val chatListState = rememberLazyListState()
+                    val chatCollapseThresholdPx = with(androidx.compose.ui.platform.LocalDensity.current) { 20.dp.toPx().toInt() }
+                    val chatHeaderCollapsed by remember(chatListState, displayedChatUsers, chatCollapseThresholdPx) {
+                        derivedStateOf {
+                            displayedChatUsers.isNotEmpty() &&
+                                (chatListState.firstVisibleItemIndex > 0 || chatListState.firstVisibleItemScrollOffset > chatCollapseThresholdPx)
+                        }
+                    }
+                    LaunchedEffect(chatHeaderCollapsed) {
+                        chatChromeCollapsed = chatHeaderCollapsed
+                        if (chatHeaderCollapsed) showChatTools = false
                     }
                     // Only friends, requests and real conversations appear until the user searches.
                     Column(
@@ -678,41 +865,100 @@ fun HomeScreen(
                             .fillMaxSize()
                             .padding(horizontal = 16.dp)
                     ) {
-                        Spacer(modifier = Modifier.height(12.dp))
-
-                        // Search contacts bar
+                        Spacer(modifier = Modifier.height(6.dp))
+                        // Search remains immediately available; secondary actions are tucked away
+                        // so the actual conversation list starts higher on screen.
                         OutlinedTextField(
                             value = searchQuery,
                             onValueChange = {
                                 searchQuery = it
                                 viewModel.searchUsers(it)
                             },
-                            placeholder = { Text("Search users by name...") },
+                            placeholder = { Text(tr("Search users by name...")) },
                             leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                            trailingIcon = { if (searchQuery.isNotBlank()) IconButton(onClick = { searchQuery = ""; viewModel.searchUsers("") }) { Icon(Icons.Default.Close, "Clear search") } },
                             modifier = Modifier.fillMaxWidth(),
                             singleLine = true,
                             shape = RoundedCornerShape(22.dp)
                         )
 
-                        Spacer(modifier = Modifier.height(14.dp))
-
-                        val activeContacts = chatUsers.filter { it.isOnline }.distinctBy { it.uid }
-                        if (searchQuery.isBlank() && activeContacts.isNotEmpty()) {
-                            ActiveContactsStrip(users = activeContacts, onSelect = onUserSelected)
-                            Spacer(modifier = Modifier.height(14.dp))
+                        if (searchQuery.isBlank()) {
+                            AnimatedVisibility(
+                                visible = !chatHeaderCollapsed,
+                                enter = expandVertically(expandFrom = Alignment.Top) + fadeIn(),
+                                exit = shrinkVertically(shrinkTowards = Alignment.Top) + fadeOut()
+                            ) {
+                                Column(Modifier.fillMaxWidth()) {
+                                    Spacer(Modifier.height(8.dp))
+                                    Card(
+                                        onClick = { showChatTools = !showChatTools },
+                                        modifier = Modifier.fillMaxWidth().animateContentSize(),
+                                        shape = RoundedCornerShape(18.dp),
+                                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .48f)),
+                                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = .55f))
+                                    ) {
+                                        Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                                            Box(Modifier.size(34.dp).clip(RoundedCornerShape(11.dp)).background(MaterialTheme.colorScheme.primary.copy(alpha = .12f)), contentAlignment = Alignment.Center) {
+                                                Icon(Icons.Default.Tune, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(19.dp))
+                                            }
+                                            Spacer(Modifier.width(10.dp))
+                                            Column(Modifier.weight(1f)) {
+                                                Text(tr("Tools & filters"), fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleSmall)
+                                                Text(if (chatFilter == "all") tr("Saved, calls, discovery and chat filters") else "${tr(chatFilter.replaceFirstChar { it.uppercase() })} ${tr("chats")}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                            }
+                                            Icon(if (showChatTools) Icons.Default.ExpandLess else Icons.Default.ExpandMore, if (showChatTools) "Collapse tools" else "Expand tools", tint = MaterialTheme.colorScheme.primary)
+                                        }
+                                    }
+                                    AnimatedVisibility(visible = showChatTools, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
+                                        Column(Modifier.fillMaxWidth().padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            AnnouncementBanner(Modifier.fillMaxWidth())
+                                            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                                AssistChip(onClick = { ProTools.open("saved") }, label = { Text(tr("Saved")) }, leadingIcon = { Icon(Icons.Default.Star, null, modifier = Modifier.size(16.dp)) })
+                                                AssistChip(onClick = { ProTools.open("calls") }, label = { Text(tr("Call history")) }, leadingIcon = { Icon(Icons.Default.Call, null, modifier = Modifier.size(16.dp)) })
+                                                AssistChip(onClick = { ProTools.open("search") }, label = { Text(tr("Search chats")) }, leadingIcon = { Icon(Icons.Default.ManageSearch, null, modifier = Modifier.size(16.dp)) })
+                                            }
+                                            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                                listOf("all" to "All", "unread" to "Unread", "archived" to "Archived", "locked" to "Locked").forEach { (key, label) ->
+                                                    FilterChip(selected = chatFilter == key, onClick = { chatFilter = key }, label = { Text(tr(label)) })
+                                                }
+                                            }
+                                            ContactsDiscoveryCard(viewModel, users, onUserSelected)
+                                            val friendIds = currentUser?.friends.orEmpty().toSet()
+                                            val noteMe = currentUser?.uid?.let { friendNotes[it] }
+                                            val noteFriends = chatUsers.filter { it.uid in friendIds }.map { user -> user to (friendNotes[user.uid] ?: UserNote()) }
+                                            NotesStrip(me = currentUser, myNote = noteMe, friends = noteFriends) { note ->
+                                                viewModel.publishNote(note) { ok -> Toast.makeText(context, if (ok) "Note updated" else "Could not update note", Toast.LENGTH_SHORT).show() }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
 
-                        if (chatUsers.isEmpty()) {
-                            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                Text("No conversations yet — search to find people", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        val activeContacts = chatUsers.filter { it.isOnline }.distinctBy { it.uid }
+                        AnimatedVisibility(
+                            visible = searchQuery.isBlank() && activeContacts.isNotEmpty() && !chatHeaderCollapsed,
+                            enter = expandVertically(expandFrom = Alignment.Top) + fadeIn(),
+                            exit = shrinkVertically(shrinkTowards = Alignment.Top) + fadeOut()
+                        ) {
+                            Column {
+                                ActiveContactsStrip(users = activeContacts, onSelect = onUserSelected)
+                                Spacer(Modifier.height(14.dp))
+                            }
+                        }
+
+                        if (displayedChatUsers.isEmpty()) {
+                            Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                                Text(if (chatUsers.isEmpty()) tr("No conversations yet — search to find people") else "Nothing in this filter yet", color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         } else {
                             LazyColumn(
-                                modifier = Modifier.fillMaxSize(),
+                                state = chatListState,
+                                modifier = Modifier.weight(1f),
                                 verticalArrangement = Arrangement.spacedBy(10.dp),
                                 contentPadding = PaddingValues(bottom = 16.dp)
                             ) {
-                                items(chatUsers) { user ->
+                                items(displayedChatUsers.sortedByDescending { ConversationPrefs.isPinned(context, it.uid) }, key = { it.uid }) { user ->
                                     val hasActiveStory = stories.any { it.senderId == user.uid }
                                     ChatConversationUserItem(
                                         user = user,
@@ -757,7 +1003,7 @@ fun HomeScreen(
                             ) {
                                 Icon(Icons.Default.GroupAdd, contentDescription = "(Create Group)", modifier = Modifier.size(16.dp))
                                 Spacer(modifier = Modifier.width(4.dp))
-                                Text("Create Group", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                Text(tr("Create Group"), fontSize = 11.sp, fontWeight = FontWeight.Bold)
                             }
                         }
 
@@ -766,8 +1012,8 @@ fun HomeScreen(
                                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                     Icon(Icons.Default.Forum, contentDescription = null, tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.4f), modifier = Modifier.size(56.dp))
                                     Spacer(modifier = Modifier.height(8.dp))
-                                    Text("You haven't joined any groups yet", fontWeight = FontWeight.SemiBold)
-                                    Text("Create a new group above to invite friends!", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text(tr("You haven't joined any groups yet"), fontWeight = FontWeight.SemiBold)
+                                    Text(tr("Create a new group above to invite friends!"), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
                             }
                         } else {
@@ -784,547 +1030,829 @@ fun HomeScreen(
                     }
                 }
                 3 -> {
-                    // SERVICE TAB (Strictly admin access restricted to mr4425390@gmail.com)
-                    val email = FirebaseAuth.getInstance().currentUser?.email ?: ""
-                    val isAdmin = email.lowercase().trim().trimEnd('.') == "mr4425390@gmail.com"
-
-                    if (!isAdmin) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(24.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Card(
-                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
-                                shape = RoundedCornerShape(28.dp),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Column(
-                                    modifier = Modifier.padding(24.dp),
-                                    horizontalAlignment = Alignment.CenterHorizontally
-                                ) {
-                                    Icon(Icons.Default.Block, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(60.dp))
-                                    Spacer(modifier = Modifier.height(14.dp))
-                                    Text(
-                                        text = "Admin access only",
-                                        style = MaterialTheme.typography.titleMedium,
-                                        fontWeight = FontWeight.ExtraBold,
-                                        color = MaterialTheme.colorScheme.onErrorContainer,
-                                        textAlign = TextAlign.Center
-                                    )
-                                    Spacer(modifier = Modifier.height(6.dp))
-                                    Text(
-                                        text = "The service configuration panel is restricted to the admin mr4425390@gmail.com. Non-authorized access is disabled.",
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color = MaterialTheme.colorScheme.onErrorContainer,
-                                        textAlign = TextAlign.Center
-                                    )
-                                }
-                            }
-                        }
+                    if (isAdmin || isStaff) {
+                        AdminControlCenterScreen(
+                            viewModel = viewModel,
+                            onOpenAnalytics = { viewModel.setCurrentTab(7) },
+                            staffPermissions = staffPermissions
+                        )
                     } else {
-                        // Admin Dashboard / Flagship Control
-                        LaunchedEffect(webhookUrl) { viewModel.testFcmGateway(webhookUrl); viewModel.loadAdminReports() }
-                        var draftUpdateEnabled by remember(flagshipConfig) { mutableStateOf(flagshipConfig.updateEnabled) }
-                        var draftVersionCode by remember(flagshipConfig) { mutableStateOf(flagshipConfig.latestVersionCode.toString()) }
-                        var draftVersionName by remember(flagshipConfig) { mutableStateOf(flagshipConfig.versionName) }
-                        var draftNotes by remember(flagshipConfig) { mutableStateOf(flagshipConfig.releaseNotes) }
-                        var draftApkUrl by remember(flagshipConfig) { mutableStateOf(flagshipConfig.apkUrl) }
-                        var draftApkKey by remember(flagshipConfig) { mutableStateOf(flagshipConfig.apkR2Key) }
-                        var draftNoticeEnabled by remember(flagshipConfig) { mutableStateOf(flagshipConfig.noticeEnabled) }
-                        var draftNoticeTitle by remember(flagshipConfig) { mutableStateOf(flagshipConfig.noticeTitle) }
-                        var draftNoticeBody by remember(flagshipConfig) { mutableStateOf(flagshipConfig.noticeBody) }
-                        var draftMaintenance by remember(flagshipConfig) { mutableStateOf(flagshipConfig.maintenanceMode) }
-                        var draftAssistantEnabled by remember(flagshipConfig) { mutableStateOf(flagshipConfig.assistantEnabled) }
-                        var draftAiModel by remember(flagshipConfig) { mutableStateOf(flagshipConfig.aiModel) }
-                        var draftAiName by remember(flagshipConfig) { mutableStateOf(flagshipConfig.aiDisplayName) }
-                        var draftAiPrompt by remember(flagshipConfig) { mutableStateOf(flagshipConfig.aiSystemPrompt) }
-                        var draftPremiumEnabled by remember(flagshipConfig) { mutableStateOf(flagshipConfig.premiumEnabled) }
-                        var draftPremiumUpsell by remember(flagshipConfig) { mutableStateOf(flagshipConfig.premiumUpsellEnabled) }
-                        var draftPaymentNumber by remember(flagshipConfig) { mutableStateOf(flagshipConfig.premiumPaymentNumber) }
-                        var draftMonthlyPrice by remember(flagshipConfig) { mutableStateOf(flagshipConfig.premiumMonthlyPrice.toString()) }
-                        var draftYearlyPrice by remember(flagshipConfig) { mutableStateOf(flagshipConfig.premiumYearlyPrice.toString()) }
-                        var draftLifetimePrice by remember(flagshipConfig) { mutableStateOf(flagshipConfig.premiumLifetimePrice.toString()) }
-                        var draftMonthlyEnabled by remember(flagshipConfig) { mutableStateOf(flagshipConfig.premiumMonthlyEnabled) }
-                        var draftYearlyEnabled by remember(flagshipConfig) { mutableStateOf(flagshipConfig.premiumYearlyEnabled) }
-                        var draftLifetimeEnabled by remember(flagshipConfig) { mutableStateOf(flagshipConfig.premiumLifetimeEnabled) }
-                        var draftBkash by remember(flagshipConfig) { mutableStateOf(flagshipConfig.premiumBkashEnabled) }
-                        var draftNagad by remember(flagshipConfig) { mutableStateOf(flagshipConfig.premiumNagadEnabled) }
-                        var draftRocket by remember(flagshipConfig) { mutableStateOf(flagshipConfig.premiumRocketEnabled) }
-                        var draftSmartReply by remember(flagshipConfig) { mutableStateOf(flagshipConfig.smartReplyEnabled) }
-                        var draftMemorySearch by remember(flagshipConfig) { mutableStateOf(flagshipConfig.memorySearchEnabled) }
-                        var draftTaskExtraction by remember(flagshipConfig) { mutableStateOf(flagshipConfig.taskExtractionEnabled) }
-                        var draftCallQuality by remember(flagshipConfig) { mutableStateOf(flagshipConfig.advancedCallQualityEnabled) }
-                        var draftAdvancedThemes by remember(flagshipConfig) { mutableStateOf(flagshipConfig.advancedThemesEnabled) }
-                        var draftCreatorProfile by remember(flagshipConfig) { mutableStateOf(flagshipConfig.creatorProfileEnabled) }
-                        var draftAnalytics by remember(flagshipConfig) { mutableStateOf(flagshipConfig.analyticsEnabled) }
-                        var draftFunEnabled by remember(flagshipConfig) { mutableStateOf(flagshipConfig.funCampaignEnabled) }
-                        var draftFunTitle by remember(flagshipConfig) { mutableStateOf(flagshipConfig.funCampaignTitle) }
-                        var draftFunBody by remember(flagshipConfig) { mutableStateOf(flagshipConfig.funCampaignBody) }
-                        var giftDays by remember { mutableStateOf("5") }
-                        var giftCount by remember { mutableStateOf("10") }
-                        var updateUploading by remember { mutableStateOf(false) }
-                        var updateUploadProgress by remember { mutableIntStateOf(0) }
-                        val updateApkPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-                            uri ?: return@rememberLauncherForActivityResult
-                            updateUploading = true
-                            updateUploadProgress = 0
-                            uiScope.launch {
-                                val candidate = withContext(Dispatchers.IO) { verifyUpdateApk(context, uri) }
-                                candidate.onSuccess { apk ->
-                                    draftVersionCode = apk.versionCode.toString()
-                                    if (apk.versionName.isNotBlank()) draftVersionName = apk.versionName
-                                    viewModel.uploadMediaToR2(apk.bytes, "application/vnd.android.package-archive", "update", "apk",
-                                        onProgress = { percent, _ -> updateUploadProgress = percent },
-                                        onSuccess = { media ->
-                                            updateUploading = false
-                                            draftApkUrl = media.publicUrl
-                                            draftApkKey = media.key
-                                            draftUpdateEnabled = true
-                                        },
-                                        onFailure = { error -> updateUploading = false; Toast.makeText(context, error, Toast.LENGTH_LONG).show() })
-                                }.onFailure { error ->
-                                    updateUploading = false
-                                    Toast.makeText(context, error.message ?: "APK verification failed", Toast.LENGTH_LONG).show()
-                                }
-                            }
-                        }
-                        Column(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(20.dp)
-                                .verticalScroll(rememberScrollState()),
-                            verticalArrangement = Arrangement.spacedBy(16.dp)
-                        ) {
-                            Text(
-                                text = "Admin control center",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-
-                            var adminUrlInput by remember { mutableStateOf(webhookUrl) }
-
-                            Card(shape = RoundedCornerShape(28.dp), modifier = Modifier.fillMaxWidth()) {
-                                Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                    Text("Flagship Update Control", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                                    Text("Every published APK starts a new required-update campaign. Each user installs it once; the admin keeps emergency access.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    Row(verticalAlignment = Alignment.CenterVertically) { Text("Publish APK update", Modifier.weight(1f)); Switch(draftUpdateEnabled, { draftUpdateEnabled = it }) }
-                                    if (flagshipConfig.updateId.isNotBlank()) Text("Campaign: ${flagshipConfig.updateId.take(8)} • installed users will not be asked twice", fontSize = 10.sp, color = MaterialTheme.colorScheme.primary)
-                                    Row(verticalAlignment = Alignment.CenterVertically) { Text("Maintenance mode", Modifier.weight(1f)); Switch(draftMaintenance, { draftMaintenance = it }) }
-                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        OutlinedTextField(draftVersionCode, { draftVersionCode = it.filter(Char::isDigit).take(8) }, label = { Text("Version code") }, singleLine = true, modifier = Modifier.weight(1f))
-                                        OutlinedTextField(draftVersionName, { draftVersionName = it.take(30) }, label = { Text("Version name") }, singleLine = true, modifier = Modifier.weight(1f))
-                                    }
-                                    OutlinedTextField(draftNotes, { draftNotes = it.take(4000) }, label = { Text("What's new / release notes") }, minLines = 4, modifier = Modifier.fillMaxWidth())
-                                    OutlinedButton(onClick = { updateApkPicker.launch("application/vnd.android.package-archive") }, enabled = !updateUploading, modifier = Modifier.fillMaxWidth()) {
-                                        Icon(Icons.Outlined.UploadFile, null); Spacer(Modifier.width(8.dp)); Text(if (draftApkUrl.isBlank()) "Choose signed APK" else "Replace update APK")
-                                    }
-                                    if (updateUploading) { LinearProgressIndicator(progress = { updateUploadProgress / 100f }, modifier = Modifier.fillMaxWidth()); Text("Uploading update • $updateUploadProgress%", fontSize = 11.sp) }
-                                    if (draftApkUrl.isNotBlank()) Text("APK ready: ${draftApkKey.ifBlank { draftApkUrl }}", fontSize = 10.sp, color = Color(0xFF45D483), maxLines = 2, overflow = TextOverflow.Ellipsis)
-                                    HorizontalDivider()
-                                    Text("Mistral AI Assistant", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                                    Row(verticalAlignment = Alignment.CenterVertically) { Text("Show assistant to all users", Modifier.weight(1f)); Switch(draftAssistantEnabled, { draftAssistantEnabled = it }) }
-                                    OutlinedTextField(draftAiName, { draftAiName = it.take(60) }, label = { Text("Assistant name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                                    OutlinedTextField(draftAiModel, { draftAiModel = it.filter { c -> c.isLetterOrDigit() || c in "-_." }.take(80) }, label = { Text("Mistral model") }, supportingText = { Text("Example: mistral-small-latest") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                                    OutlinedTextField(draftAiPrompt, { draftAiPrompt = it.take(2000) }, label = { Text("Safe system instructions") }, minLines = 3, modifier = Modifier.fillMaxWidth())
-                                    Text("API key is never stored in Android/Firestore. Set Worker secret MISTRAL_API_KEY.", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    HorizontalDivider()
-                                    Text("Remote premium feature flags", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                                    Text("These switches can stage-roll out capabilities without changing the APK.", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    Row(verticalAlignment = Alignment.CenterVertically) { Text("Smart replies", Modifier.weight(1f)); Switch(draftSmartReply, { draftSmartReply = it }) }
-                                    Row(verticalAlignment = Alignment.CenterVertically) { Text("AI memory search", Modifier.weight(1f)); Switch(draftMemorySearch, { draftMemorySearch = it }) }
-                                    Row(verticalAlignment = Alignment.CenterVertically) { Text("Task extraction", Modifier.weight(1f)); Switch(draftTaskExtraction, { draftTaskExtraction = it }) }
-                                    Row(verticalAlignment = Alignment.CenterVertically) { Text("Advanced call quality", Modifier.weight(1f)); Switch(draftCallQuality, { draftCallQuality = it }) }
-                                    Row(verticalAlignment = Alignment.CenterVertically) { Text("Advanced themes", Modifier.weight(1f)); Switch(draftAdvancedThemes, { draftAdvancedThemes = it }) }
-                                    Row(verticalAlignment = Alignment.CenterVertically) { Text("Creator profile", Modifier.weight(1f)); Switch(draftCreatorProfile, { draftCreatorProfile = it }) }
-                                    Row(verticalAlignment = Alignment.CenterVertically) { Text("Usage analytics", Modifier.weight(1f)); Switch(draftAnalytics, { draftAnalytics = it }) }
-                                    HorizontalDivider()
-                                    Text("Premium payment control", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                                    Row(verticalAlignment = Alignment.CenterVertically) { Text("Premium purchase enabled", Modifier.weight(1f)); Switch(draftPremiumEnabled, { draftPremiumEnabled = it }) }
-                                    Row(verticalAlignment = Alignment.CenterVertically) { Text("First-login Premium showcase", Modifier.weight(1f)); Switch(draftPremiumUpsell, { draftPremiumUpsell = it }) }
-                                    OutlinedTextField(draftPaymentNumber, { draftPaymentNumber = it.filter(Char::isDigit).take(15) }, label = { Text("Payment number") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                        FilterChip(draftMonthlyEnabled, { draftMonthlyEnabled = !draftMonthlyEnabled }, { Text("Monthly") })
-                                        FilterChip(draftYearlyEnabled, { draftYearlyEnabled = !draftYearlyEnabled }, { Text("Yearly") })
-                                        FilterChip(draftLifetimeEnabled, { draftLifetimeEnabled = !draftLifetimeEnabled }, { Text("Lifetime") })
-                                    }
-                                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                        OutlinedTextField(draftMonthlyPrice, { draftMonthlyPrice = it.filter(Char::isDigit).take(7) }, label = { Text("Monthly ৳") }, modifier = Modifier.weight(1f))
-                                        OutlinedTextField(draftYearlyPrice, { draftYearlyPrice = it.filter(Char::isDigit).take(7) }, label = { Text("Yearly ৳") }, modifier = Modifier.weight(1f))
-                                        OutlinedTextField(draftLifetimePrice, { draftLifetimePrice = it.filter(Char::isDigit).take(7) }, label = { Text("Lifetime ৳") }, modifier = Modifier.weight(1f))
-                                    }
-                                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                        FilterChip(draftBkash, { draftBkash = !draftBkash }, { Text("bKash") })
-                                        FilterChip(draftNagad, { draftNagad = !draftNagad }, { Text("Nagad") })
-                                        FilterChip(draftRocket, { draftRocket = !draftRocket }, { Text("Rocket") })
-                                    }
-                                    OutlinedButton(onClick = { viewModel.updateFlagshipFields(mapOf(
-                                        "assistantEnabled" to draftAssistantEnabled, "aiModel" to draftAiModel, "aiDisplayName" to draftAiName, "aiSystemPrompt" to draftAiPrompt,
-                                        "premiumEnabled" to draftPremiumEnabled, "premiumUpsellEnabled" to draftPremiumUpsell, "premiumPaymentNumber" to draftPaymentNumber,
-                                        "premiumMonthlyPrice" to (draftMonthlyPrice.toIntOrNull() ?: 199), "premiumYearlyPrice" to (draftYearlyPrice.toIntOrNull() ?: 1499), "premiumLifetimePrice" to (draftLifetimePrice.toIntOrNull() ?: 3999),
-                                        "premiumMonthlyEnabled" to draftMonthlyEnabled, "premiumYearlyEnabled" to draftYearlyEnabled, "premiumLifetimeEnabled" to draftLifetimeEnabled,
-                                        "premiumBkashEnabled" to draftBkash, "premiumNagadEnabled" to draftNagad, "premiumRocketEnabled" to draftRocket,
-                                        "smartReplyEnabled" to draftSmartReply, "memorySearchEnabled" to draftMemorySearch, "taskExtractionEnabled" to draftTaskExtraction,
-                                        "advancedCallQualityEnabled" to draftCallQuality, "advancedThemesEnabled" to draftAdvancedThemes,
-                                        "creatorProfileEnabled" to draftCreatorProfile, "analyticsEnabled" to draftAnalytics
-                                    )) { Toast.makeText(context, if (it) "AI & Premium saved" else "Save failed", Toast.LENGTH_LONG).show() } }, modifier = Modifier.fillMaxWidth()) { Text("Save AI & Premium only") }
-                                    HorizontalDivider()
-                                    Text("One-time Friday Fun campaign", fontWeight=FontWeight.Bold,color=MaterialTheme.colorScheme.primary)
-                                    Row(verticalAlignment=Alignment.CenterVertically){Text("Campaign enabled",Modifier.weight(1f));Switch(draftFunEnabled,{draftFunEnabled=it})}
-                                    OutlinedTextField(draftFunTitle,{draftFunTitle=it.take(100)},label={Text("Campaign title")},modifier=Modifier.fillMaxWidth())
-                                    OutlinedTextField(draftFunBody,{draftFunBody=it.take(500)},label={Text("Editable message")},minLines=2,modifier=Modifier.fillMaxWidth())
-                                    OutlinedButton(onClick={viewModel.updateFlagshipFields(mapOf("funCampaignEnabled" to draftFunEnabled,"funCampaignId" to "fun_${System.currentTimeMillis()}","funCampaignTitle" to draftFunTitle,"funCampaignBody" to draftFunBody)){Toast.makeText(context,if(it)"New campaign published" else "Publish failed",Toast.LENGTH_LONG).show()}},modifier=Modifier.fillMaxWidth()){Text("Publish as a new one-time campaign")}
-                                    HorizontalDivider()
-                                    Row(verticalAlignment = Alignment.CenterVertically) { Text("Show global notice", Modifier.weight(1f)); Switch(draftNoticeEnabled, { draftNoticeEnabled = it }) }
-                                    OutlinedTextField(draftNoticeTitle, { draftNoticeTitle = it.take(100) }, label = { Text("Notice title") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                                    OutlinedTextField(draftNoticeBody, { draftNoticeBody = it.take(1000) }, label = { Text("Notice details") }, minLines = 2, modifier = Modifier.fillMaxWidth())
-                                    OutlinedButton(onClick = { viewModel.updateFlagshipFields(mapOf("noticeEnabled" to draftNoticeEnabled, "noticeTitle" to draftNoticeTitle, "noticeBody" to draftNoticeBody, "maintenanceMode" to draftMaintenance)) { Toast.makeText(context, if (it) "Notice & maintenance saved" else "Save failed", Toast.LENGTH_LONG).show() } }, modifier = Modifier.fillMaxWidth()) { Text("Save Notice & Maintenance only") }
-                                    Button(onClick = {
-                                        val code = draftVersionCode.toIntOrNull() ?: com.example.BuildConfig.VERSION_CODE
-                                        viewModel.publishFlagshipConfig(
-                                            FlagshipConfig(
-                                                updateEnabled = draftUpdateEnabled, mandatoryUpdate = draftUpdateEnabled,
-                                                latestVersionCode = code, minimumVersionCode = if (draftUpdateEnabled) code else 1,
-                                                versionName = draftVersionName, apkUrl = draftApkUrl, apkR2Key = draftApkKey,
-                                                releaseNotes = draftNotes, noticeEnabled = draftNoticeEnabled,
-                                                noticeTitle = draftNoticeTitle, noticeBody = draftNoticeBody,
-                                                maintenanceMode = draftMaintenance,
-                                                assistantEnabled = draftAssistantEnabled,
-                                                aiModel = draftAiModel.ifBlank { "mistral-small-latest" },
-                                                aiDisplayName = draftAiName.ifBlank { "Convo Chat Assistant" },
-                                                aiSystemPrompt = draftAiPrompt,
-                                                premiumEnabled = draftPremiumEnabled,
-                                                premiumUpsellEnabled = draftPremiumUpsell,
-                                                premiumPaymentNumber = draftPaymentNumber.ifBlank { "01755070708" },
-                                                premiumMonthlyPrice = draftMonthlyPrice.toIntOrNull() ?: 199,
-                                                premiumYearlyPrice = draftYearlyPrice.toIntOrNull() ?: 1499,
-                                                premiumLifetimePrice = draftLifetimePrice.toIntOrNull() ?: 3999,
-                                                premiumMonthlyEnabled = draftMonthlyEnabled,
-                                                premiumYearlyEnabled = draftYearlyEnabled,
-                                                premiumLifetimeEnabled = draftLifetimeEnabled,
-                                                premiumBkashEnabled = draftBkash,
-                                                premiumNagadEnabled = draftNagad,
-                                                premiumRocketEnabled = draftRocket,
-                                                smartReplyEnabled = draftSmartReply,
-                                                memorySearchEnabled = draftMemorySearch,
-                                                taskExtractionEnabled = draftTaskExtraction,
-                                                advancedCallQualityEnabled = draftCallQuality,
-                                                advancedThemesEnabled = draftAdvancedThemes,
-                                                creatorProfileEnabled = draftCreatorProfile,
-                                                analyticsEnabled = draftAnalytics,
-                                                funCampaignEnabled = draftFunEnabled,
-                                                funCampaignId = flagshipConfig.funCampaignId,
-                                                funCampaignTitle = draftFunTitle,
-                                                funCampaignBody = draftFunBody
-                                            )
-                                        ) { ok -> Toast.makeText(context, if (ok) "Flagship configuration published" else "Publish failed", Toast.LENGTH_LONG).show() }
-                                    }, enabled = draftUpdateEnabled && draftApkUrl.startsWith("https://"), modifier = Modifier.fillMaxWidth()) { Icon(Icons.Outlined.Publish, null); Spacer(Modifier.width(8.dp)); Text("Publish APK Update only") }
-                                    if (flagshipConfig.updateEnabled) TextButton(onClick = { viewModel.publishFlagshipConfig(flagshipConfig.copy(updateEnabled = false, mandatoryUpdate = false)) }) { Text("Disable current update") }
-                                }
-                            }
-
-                            if (adminReports.isNotEmpty()) Card(shape = RoundedCornerShape(26.dp), modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer.copy(.45f))) {
-                                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                    Text("Safety reports (${adminReports.size})", fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.error)
-                                    adminReports.sortedByDescending { it.createdAt }.take(30).forEach { report ->
-                                        Surface(shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.surface.copy(.75f)) {
-                                            Column(Modifier.padding(12.dp)) { Text(report.category, fontWeight = FontWeight.Bold); Text(report.description, maxLines = 4, overflow = TextOverflow.Ellipsis); Text("Reporter: ${report.reporterEmail}", fontSize = 10.sp); if (report.targetUid.isNotBlank()) Row { Button(onClick = { viewModel.setUserBanned(report.targetUid, true, report.description) { _, message -> Toast.makeText(context, message, Toast.LENGTH_LONG).show() } }) { Text("Ban target") }; Spacer(Modifier.width(8.dp)); OutlinedButton(onClick = { viewModel.setUserBanned(report.targetUid, false) { _, message -> Toast.makeText(context, message, Toast.LENGTH_LONG).show() } }) { Text("Unban") } } }
-                                        }
-                                    }
-                                }
-                            }
-
-                            Card(shape = RoundedCornerShape(26.dp), modifier = Modifier.fillMaxWidth()) {
-                                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
-                                    Text("Premium Gift & Revoke", fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.primary)
-                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        OutlinedTextField(giftDays, { giftDays = it.filter(Char::isDigit).take(3) }, label = { Text("Days") }, modifier = Modifier.weight(1f), singleLine = true)
-                                        OutlinedTextField(giftCount, { giftCount = it.filter(Char::isDigit).take(3) }, label = { Text("Random users") }, modifier = Modifier.weight(1f), singleLine = true)
-                                    }
-                                    Button(onClick = { val days = giftDays.toIntOrNull()?.coerceIn(1,365) ?: 5; val targets = allUsers.filterNot { it.isPremium && (it.premiumPlan == "lifetime" || it.premiumUntil > System.currentTimeMillis()) }.shuffled().take(giftCount.toIntOrNull()?.coerceIn(1,100) ?: 10); viewModel.grantPremiumGift(targets.map { it.uid }, days) { Toast.makeText(context, if (it) "Gift sent to ${targets.size} users" else "Gift failed", Toast.LENGTH_LONG).show() } }, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Default.CardGiftcard, null); Spacer(Modifier.width(7.dp)); Text("Send random gifts") }
-                                    allUsers.filter { it.isPremium && (it.premiumPlan == "lifetime" || it.premiumUntil > System.currentTimeMillis()) }.take(15).forEach { person -> Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) { Text(person.name, Modifier.weight(1f), maxLines = 1); TextButton(onClick = { viewModel.revokePremium(person.uid) }) { Text("Cancel", color = MaterialTheme.colorScheme.error) } } }
-                                }
-                            }
-
-                            if (premiumRequests.isNotEmpty()) Card(shape = RoundedCornerShape(28.dp), modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
-                                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                    Text("Premium payment approvals (${premiumRequests.size})", fontWeight = FontWeight.ExtraBold)
-                                    premiumRequests.take(30).forEach { request ->
-                                        Surface(shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.surface.copy(.75f)) {
-                                            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                                    AsyncImage(request.userImageUrl.ifBlank { null }, request.userName, Modifier.size(38.dp).clip(CircleShape))
-                                                    Spacer(Modifier.width(8.dp)); Column { Text(request.userName, fontWeight = FontWeight.Bold); Text(request.userEmail, fontSize = 10.sp) }
-                                                }
-                                                Text("${request.plan.uppercase()} • ৳${request.amount} • ${request.paymentMethod.uppercase()}")
-                                                Text("Transaction: ${request.transactionId}", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
-                                                if (request.paymentProofUrl.isNotBlank()) AsyncImage(request.paymentProofUrl, "Payment screenshot", Modifier.fillMaxWidth().height(160.dp).clip(RoundedCornerShape(14.dp)), contentScale = ContentScale.Crop)
-                                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                                    Button(onClick = { viewModel.reviewPremiumRequest(request, true) { Toast.makeText(context, if (it) "Premium activated" else "Approval failed", Toast.LENGTH_LONG).show() } }, modifier = Modifier.weight(1f)) { Text("Approve") }
-                                                    OutlinedButton(onClick = { viewModel.reviewPremiumRequest(request, false) { Toast.makeText(context, if (it) "Request rejected" else "Reject failed", Toast.LENGTH_LONG).show() } }, modifier = Modifier.weight(1f)) { Text("Reject") }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-
-                            if (featureRequests.isNotEmpty()) Card(shape = RoundedCornerShape(28.dp), modifier = Modifier.fillMaxWidth()) {
-                                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
-                                    Text("User feature requests (${featureRequests.size})", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                                    featureRequests.take(20).forEach { request ->
-                                        Surface(color = MaterialTheme.colorScheme.surfaceVariant.copy(.45f), shape = RoundedCornerShape(16.dp)) {
-                                            Column(Modifier.padding(12.dp)) {
-                                                Text(request.title, fontWeight = FontWeight.Bold)
-                                                Text("${request.requesterName} • ${request.status}", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                                Text(request.description, maxLines = 3, overflow = TextOverflow.Ellipsis)
-                                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                                    TextButton(onClick = { viewModel.updateFeatureRequest(request.id, "accepted") }) { Text("Accept") }
-                                                    TextButton(onClick = { viewModel.updateFeatureRequest(request.id, "pending") }) { Text("Pending") }
-                                                    TextButton(onClick = { viewModel.updateFeatureRequest(request.id, "rejected") }) { Text("Reject", color = MaterialTheme.colorScheme.error) }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-
-                            Card(
-                                shape = RoundedCornerShape(28.dp),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Column(modifier = Modifier.padding(20.dp)) {
-                                    Text(
-                                        text = "Direct FCM Gateway Configuration",
-                                        style = MaterialTheme.typography.titleSmall,
-                                        fontWeight = FontWeight.Bold,
-                                        color = MaterialTheme.colorScheme.primary
-                                    )
-                                    Spacer(modifier = Modifier.height(6.dp))
-                                    Text(
-                                        text = "Messages, friend requests, tags and activity alerts are sent directly through your secure FCM v1 Worker. No n8n webhook is used. Keep the service-account key only in the Worker secret.",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                    Spacer(modifier = Modifier.height(14.dp))
-
-                                    OutlinedTextField(
-                                        value = adminUrlInput,
-                                        onValueChange = { adminUrlInput = it },
-                                        placeholder = { Text("https://solitary-hill-dcdc.mr44253990.workers.dev/") },
-                                        modifier = Modifier.fillMaxWidth(),
-                                        singleLine = true,
-                                        shape = RoundedCornerShape(18.dp)
-                                    )
-
-                                    Spacer(modifier = Modifier.height(12.dp))
-
-                                    Button(
-                                        onClick = {
-                                            viewModel.updateWebhookUrl(adminUrlInput)
-                                            Toast.makeText(context, "Saved direct FCM gateway URL!", Toast.LENGTH_SHORT).show()
-                                        },
-                                        modifier = Modifier.fillMaxWidth()
-                                    ) {
-                                        Text("Save FCM Gateway", fontWeight = FontWeight.Bold)
-                                    }
-                                    Spacer(Modifier.height(8.dp))
-                                    OutlinedButton(
-                                        onClick = { viewModel.testFcmGateway(adminUrlInput) },
-                                        modifier = Modifier.fillMaxWidth()
-                                    ) {
-                                        if (gatewayHealth.checking) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                                        else Icon(Icons.Outlined.HealthAndSafety, null)
-                                        Spacer(Modifier.width(8.dp))
-                                        Text("Test gateway")
-                                    }
-                                    Spacer(Modifier.height(8.dp))
-                                    Button(
-                                        onClick = { viewModel.sendAdminTestNotification() },
-                                        enabled = gatewayHealth.configured,
-                                        modifier = Modifier.fillMaxWidth()
-                                    ) {
-                                        Icon(Icons.Outlined.SendToMobile, null)
-                                        Spacer(Modifier.width(8.dp))
-                                        Text("Send test notification to this device")
-                                    }
-                                    Spacer(Modifier.height(10.dp))
-                                    Surface(
-                                        color = if (gatewayHealth.configured) Color(0xFF1F7A4D).copy(alpha = .16f) else MaterialTheme.colorScheme.errorContainer,
-                                        shape = RoundedCornerShape(16.dp),
-                                        modifier = Modifier.fillMaxWidth()
-                                    ) {
-                                        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                                            Icon(
-                                                if (gatewayHealth.configured) Icons.Default.CheckCircle else Icons.Default.Warning,
-                                                null,
-                                                tint = if (gatewayHealth.configured) Color(0xFF45D483) else MaterialTheme.colorScheme.error
-                                            )
-                                            Spacer(Modifier.width(9.dp))
-                                            Column {
-                                                Text(gatewayHealth.message, fontWeight = FontWeight.Bold)
-                                                if (gatewayHealth.projectId.isNotBlank()) {
-                                                    Text("Project: ${gatewayHealth.projectId} • Worker ${gatewayHealth.version}", fontSize = 11.sp)
-                                                    Text("R2 ${if (gatewayHealth.r2Configured) "✓" else "✗"}  •  TURN ${if (gatewayHealth.turnConfigured) "✓" else "✗"}  •  SFU ${if (gatewayHealth.sfuConfigured) "✓" else "✗"}", fontSize = 11.sp)
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-
-                            Card(shape = RoundedCornerShape(24.dp), modifier = Modifier.fillMaxWidth()) {
-                                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
-                                    Text("Infrastructure checklist", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                                    AdminStatusRow("Firebase / FCM", gatewayHealth.configured, "FIREBASE_SERVICE_ACCOUNT")
-                                    AdminStatusRow("Cloudflare R2", gatewayHealth.r2Configured, "MEDIA_BUCKET + R2_PUBLIC_BASE_URL")
-                                    AdminStatusRow("TURN calling", gatewayHealth.turnConfigured, "TURN_TOKEN_ID + TURN_API_TOKEN")
-                                    AdminStatusRow("Realtime SFU", gatewayHealth.sfuConfigured, "CALLS_APP_ID + CALLS_APP_TOKEN")
-                                    Text("Post and reel media retention: 10 days", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                }
-                            }
-
-                            Card(shape = RoundedCornerShape(24.dp), modifier = Modifier.fillMaxWidth()) {
-                                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Text("Smart admin actions", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        OutlinedButton(onClick = { viewModel.testFcmGateway(webhookUrl) }, modifier = Modifier.weight(1f)) { Text("Health check") }
-                                        OutlinedButton(onClick = { viewModel.loadPosts(); viewModel.loadStories(); viewModel.loadGroups() }, modifier = Modifier.weight(1f)) { Text("Refresh data") }
-                                    }
-                                    Button(onClick = { viewModel.sendAdminTestNotification() }, enabled = gatewayHealth.configured, modifier = Modifier.fillMaxWidth()) {
-                                        Icon(Icons.Outlined.SendToMobile, null); Spacer(Modifier.width(8.dp)); Text("Send diagnostic push")
-                                    }
-                                }
-                            }
-
-                            Card(
-                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
-                                shape = RoundedCornerShape(24.dp),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(16.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Icon(Icons.Default.VerifiedUser, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimaryContainer, modifier = Modifier.size(24.dp))
-                                    Spacer(modifier = Modifier.width(12.dp))
-                                    Column {
-                                        Text("Admin Session Authenticated", color = MaterialTheme.colorScheme.onPrimaryContainer, fontWeight = FontWeight.Bold)
-                                        Text("Logged in as: mr4425390@gmail.com", color = MaterialTheme.colorScheme.onPrimaryContainer, fontSize = 11.sp)
-                                    }
-                                }
-                            }
-                        }
+                        AdminAccessDeniedScreen()
                     }
                 }
                 4 -> {
-                    LaunchedEffect(Unit) { viewModel.refreshDeviceSessions() }
-                    // SETTINGS & PROFILE TAB: Theme selector + User details modification
+                    val themeSectionRequester = remember { BringIntoViewRequester() }
+                    val callSkinSectionRequester = remember { BringIntoViewRequester() }
+                    val profileSectionRequester = remember { BringIntoViewRequester() }
+                    val privacySectionRequester = remember { BringIntoViewRequester() }
+                    val notificationsSectionRequester = remember { BringIntoViewRequester() }
+                    val devicesSectionRequester = remember { BringIntoViewRequester() }
+                    val blockedSectionRequester = remember { BringIntoViewRequester() }
+                    var showSettingsNavigationMenu by remember { mutableStateOf(false) }
+                    var showSettingsMoreMenu by remember { mutableStateOf(false) }
+                    // Each hub row opens its own page; "" is the hub itself.
+                    var settingsPage by rememberSaveable { mutableStateOf("") }
+                    var highlightAiSetting by remember { mutableStateOf(false) }
+                    var returnToAssistantAfterAiSetup by remember { mutableStateOf(false) }
+                    val settingsScroll = rememberScrollState()
+                    LaunchedEffect(settingsPageRequest) {
+                        if (settingsPageRequest.isNotBlank()) {
+                            settingsPage = if (settingsPageRequest.startsWith("privacy")) "privacy" else settingsPageRequest
+                            highlightAiSetting = settingsPageRequest == "privacy-ai"
+                            returnToAssistantAfterAiSetup = settingsPageRequest == "privacy-ai"
+                            viewModel.consumeSettingsPageRequest()
+                        }
+                    }
+                    LaunchedEffect(settingsPage, highlightAiSetting) {
+                        if (settingsPage == "privacy" && highlightAiSetting) {
+                            withFrameNanos { }
+                            privacySectionRequester.bringIntoView()
+                            kotlinx.coroutines.delay(6500)
+                            highlightAiSetting = false
+                        }
+                    }
+                    BackHandler(enabled = settingsPage.isNotEmpty()) { settingsPage = "" }
+                    // Remember where the hub list was, so Back from a page returns to the same spot
+                    // instead of jumping to the top. Pages themselves always open at the top.
+                    var hubScrollPosition by rememberSaveable { mutableIntStateOf(0) }
+                    LaunchedEffect(settingsPage) {
+                        if (settingsPage.isEmpty()) {
+                            val target = hubScrollPosition
+                            var tries = 0
+                            withFrameNanos { }
+                            while (tries < 8 && settingsScroll.maxValue < target) { withFrameNanos { }; tries++ }
+                            settingsScroll.scrollTo(target.coerceAtMost(settingsScroll.maxValue))
+                            snapshotFlow { settingsScroll.value }.collect { hubScrollPosition = it }
+                        } else settingsScroll.scrollTo(0)
+                    }
+                    LaunchedEffect(Unit) { ChatPreferences.load(context); currentUser?.uid?.let { ProfileViewerStore.load(context, it) } }
+                    val callSkinId by CallSkinPreferences.selectedId.collectAsState()
+                    LaunchedEffect(Unit) { CallSkinPreferences.load(context); viewModel.refreshDeviceSessions() }
+                    // Settings hub: account first, grouped controls, and clear shortcuts.
                     Column(
                         modifier = Modifier
                             .fillMaxSize()
-                            .padding(18.dp)
-                            .verticalScroll(rememberScrollState()),
-                        verticalArrangement = Arrangement.spacedBy(16.dp),
+                            .padding(horizontal = 18.dp, vertical = 10.dp)
+                            .verticalScroll(settingsScroll),
+                        verticalArrangement = Arrangement.spacedBy(18.dp),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        Box(Modifier.fillMaxWidth().glassmorphic(isDark = MaterialTheme.colorScheme.background.luminance() < .5f, backgroundColor = MaterialTheme.colorScheme.surface.copy(.68f), borderColor = MaterialTheme.colorScheme.primary.copy(.38f), shape = RoundedCornerShape(28.dp)).padding(18.dp)) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Box(Modifier.size(48.dp).clip(CircleShape).background(Brush.linearGradient(listOf(Color(0xFF6C58FF), Color(0xFFFF46B8)))), contentAlignment = Alignment.Center) { Icon(Icons.Default.Tune, null, tint = Color.White) }
-                                Spacer(Modifier.width(12.dp)); Column { Text("Liquid Control Center", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface); Text("Profile • themes • privacy • notifications • premium", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp) }
+                        if (settingsPage.isEmpty()) {
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Box {
+                                IconButton(onClick = { showSettingsNavigationMenu = true }) {
+                                    Icon(Icons.Default.Menu, contentDescription = "Open app menu")
+                                }
+                                DropdownMenu(
+                                    expanded = showSettingsNavigationMenu,
+                                    onDismissRequest = { showSettingsNavigationMenu = false }
+                                ) {
+                                    DropdownMenuItem(text = { Text(tr("Home")) }, leadingIcon = { Icon(Icons.Outlined.Home, null) }, onClick = { showSettingsNavigationMenu = false; viewModel.setCurrentTab(0) })
+                                    DropdownMenuItem(text = { Text(tr("Messages")) }, leadingIcon = { Icon(Icons.Outlined.ChatBubbleOutline, null) }, onClick = { showSettingsNavigationMenu = false; viewModel.setCurrentTab(1) })
+                                    DropdownMenuItem(text = { Text(tr("Groups")) }, leadingIcon = { Icon(Icons.Outlined.Groups, null) }, onClick = { showSettingsNavigationMenu = false; viewModel.setCurrentTab(2) })
+                                    DropdownMenuItem(text = { Text(tr("Discover people")) }, leadingIcon = { Icon(Icons.Outlined.Search, null) }, onClick = { showSettingsNavigationMenu = false; viewModel.setCurrentTab(5) })
+                                    if (isAdmin || isStaff) DropdownMenuItem(text = { Text(if (isStaff) "Staff panel" else "Admin tools") }, leadingIcon = { Icon(Icons.Outlined.AdminPanelSettings, null) }, onClick = { showSettingsNavigationMenu = false; viewModel.setCurrentTab(3) })
+                                }
+                            }
+                            Column(Modifier.weight(1f)) {
+                                Text(tr("Profile & settings"), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold)
+                                Text(tr("Your account, messages and preferences"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            Box {
+                                IconButton(onClick = { showSettingsMoreMenu = true }) {
+                                    Icon(Icons.Default.MoreHoriz, contentDescription = "More account options")
+                                }
+                                DropdownMenu(
+                                    expanded = showSettingsMoreMenu,
+                                    onDismissRequest = { showSettingsMoreMenu = false }
+                                ) {
+                                    DropdownMenuItem(
+                                        text = { Text(tr("My profile")) },
+                                        leadingIcon = { Icon(Icons.Outlined.AccountCircle, null) },
+                                        enabled = currentUser != null,
+                                        onClick = { showSettingsMoreMenu = false; currentUser?.let { onProfileSelected(it) } }
+                                    )
+                                    DropdownMenuItem(text = { Text(tr("QR & contacts")) }, leadingIcon = { Icon(Icons.Outlined.QrCode2, null) }, onClick = { showSettingsMoreMenu = false; onQrContacts() })
+                                    DropdownMenuItem(text = { Text(tr("Convo Chat Premium")) }, leadingIcon = { Icon(Icons.Outlined.WorkspacePremium, null, tint = Color(0xFFFFA000)) }, onClick = { showSettingsMoreMenu = false; onPremium() })
+                                    DropdownMenuItem(text = { Text(tr("Report a problem")) }, leadingIcon = { Icon(Icons.Outlined.ReportProblem, null) }, onClick = { showSettingsMoreMenu = false; showReportDialog = true })
+                                    DropdownMenuItem(
+                                        text = { Text(tr("Sign out"), color = MaterialTheme.colorScheme.error) },
+                                        leadingIcon = { Icon(Icons.Outlined.Logout, null, tint = MaterialTheme.colorScheme.error) },
+                                        onClick = { showSettingsMoreMenu = false; viewModel.logout { onSignOut() } }
+                                    )
+                                }
                             }
                         }
 
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            Card(onClick = { currentUser?.let(onProfileSelected) }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(22.dp)) {
-                                Column(Modifier.padding(14.dp), horizontalAlignment = Alignment.CenterHorizontally) { Icon(Icons.Outlined.AccountCircle, null, tint = MaterialTheme.colorScheme.primary); Spacer(Modifier.height(5.dp)); Text("View my profile", fontWeight = FontWeight.Bold, fontSize = 12.sp) }
-                            }
-                            Card(onClick = onQrContacts, modifier = Modifier.weight(1f), shape = RoundedCornerShape(22.dp)) {
-                                Column(Modifier.padding(14.dp), horizontalAlignment = Alignment.CenterHorizontally) { Icon(Icons.Outlined.QrCode2, null, tint = MaterialTheme.colorScheme.primary); Spacer(Modifier.height(5.dp)); Text("QR & Contact", fontWeight = FontWeight.Bold, fontSize = 12.sp) }
-                            }
-                            Card(onClick = { viewModel.setCurrentTab(2) }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(22.dp)) {
-                                Column(Modifier.padding(14.dp), horizontalAlignment = Alignment.CenterHorizontally) { Icon(Icons.Outlined.Groups, null, tint = MaterialTheme.colorScheme.primary); Spacer(Modifier.height(5.dp)); Text("Groups", fontWeight = FontWeight.Bold, fontSize = 12.sp) }
-                            }
-                        }
-
-                        Card(onClick = onPremium, shape = RoundedCornerShape(24.dp), modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
-                            Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Default.WorkspacePremium, null, tint = Color(0xFFFFA000), modifier = Modifier.size(34.dp))
-                                Spacer(Modifier.width(12.dp)); Column(Modifier.weight(1f)) { Text("Convo Chat Premium", fontWeight = FontWeight.ExtraBold); Text("Plans, verified badge and exclusive tools", fontSize = 11.sp) }
-                                Icon(Icons.Default.ChevronRight, null)
-                            }
-                        }
-
-                        // 1. Theme selection block
-                        Card(
-                            shape = RoundedCornerShape(28.dp),
+                        val activePremium = currentUser?.isPremium == true &&
+                            (currentUser?.premiumPlan == "lifetime" || (currentUser?.premiumUntil ?: 0L) > System.currentTimeMillis())
+                        Surface(
                             modifier = Modifier.fillMaxWidth()
+                                .liquidCard(shape = RoundedCornerShape(30.dp))
+                                .background(Brush.verticalGradient(listOf(MaterialTheme.colorScheme.primary.copy(alpha = .28f), MaterialTheme.colorScheme.tertiary.copy(alpha = .10f), Color.Transparent))),
+                            shape = RoundedCornerShape(30.dp),
+                            color = Color.Transparent
                         ) {
-                            Column(modifier = Modifier.padding(16.dp)) {
+                            Column(
+                                Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 20.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(7.dp)
+                            ) {
+                                Box(Modifier.size(98.dp).clip(CircleShape).background(ProfileRingBrush).padding(4.dp)) {
+                                    if (!currentUser?.profileImageUrl.isNullOrBlank()) {
+                                        AsyncImage(
+                                            model = currentUser?.profileImageUrl,
+                                            contentDescription = currentUser?.name ?: "Your profile",
+                                            error = painterResource(R.drawable.img_app_logo),
+                                            contentScale = ContentScale.Crop,
+                                            modifier = Modifier.fillMaxSize().clip(CircleShape)
+                                        )
+                                    } else {
+                                        Box(Modifier.fillMaxSize().clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer), contentAlignment = Alignment.Center) {
+                                            Icon(Icons.Default.Person, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(40.dp))
+                                        }
+                                    }
+                                }
+                                Text(currentUser?.name?.ifBlank { "Your Convo account" } ?: "Your Convo account", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 Text(
-                                    text = "Choose Application Theme",
-                                    style = MaterialTheme.typography.titleSmall,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.primary
+                                    currentUser?.username?.takeIf { it.isNotBlank() }?.let { "@$it" } ?: "Your profile, privacy and chats in one place",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
                                 )
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text(
-                                    text = "Personalize your layout with custom dynamic palettes.",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
+                                if (currentUser?.staffRole == "sub_admin") StaffBadge(currentUser?.staffTitle.orEmpty().ifBlank { "Sub-admin" } + " • Convo staff")
+                                Surface(
+                                    color = if (activePremium) Color(0xFFFFE6A8) else MaterialTheme.colorScheme.primaryContainer,
+                                    shape = CircleShape
+                                ) {
+                                    Row(Modifier.padding(horizontal = 12.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(if (activePremium) Icons.Outlined.WorkspacePremium else Icons.Outlined.VerifiedUser, null, tint = if (activePremium) Color(0xFF8A5A00) else MaterialTheme.colorScheme.primary, modifier = Modifier.size(15.dp))
+                                        Spacer(Modifier.width(6.dp))
+                                        Text(if (activePremium) "Convo Premium" else "Convo account", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = if (activePremium) Color(0xFF8A5A00) else MaterialTheme.colorScheme.primary)
+                                    }
+                                }
+                                OutlinedButton(
+                                    onClick = { currentUser?.let { onProfileSelected(it) } },
+                                    enabled = currentUser != null,
+                                    shape = RoundedCornerShape(16.dp),
+                                    contentPadding = PaddingValues(horizontal = 18.dp, vertical = 8.dp)
+                                ) {
+                                    Text(tr("Manage account"), fontWeight = FontWeight.Bold)
+                                    Spacer(Modifier.width(6.dp))
+                                    Icon(Icons.Default.ChevronRight, null, modifier = Modifier.size(18.dp))
+                                }
+                            }
+                        }
 
-                                Spacer(modifier = Modifier.height(14.dp))
+                        SettingsHubGroup("Account & messages") {
+                            SettingsHubRow(
+                                icon = Icons.Outlined.Person,
+                                title = "Profile details",
+                                subtitle = "Edit your photo, bio and account information",
+                                accent = Color(0xFF5B6FE8),
+                                onClick = { settingsPage = "profile" }
+                            )
+                            SettingsHubDivider()
+                            SettingsHubRow(
+                                icon = Icons.Outlined.ChatBubbleOutline,
+                                title = "Messages",
+                                subtitle = "Open conversations and message requests",
+                                trailingValue = "Chats",
+                                accent = Color(0xFF2789E8),
+                                onClick = { viewModel.setCurrentTab(1) }
+                            )
+                            SettingsHubDivider()
+                            SettingsHubRow(
+                                icon = Icons.Outlined.Forum,
+                                title = "Chat settings",
+                                subtitle = "Quick reaction, text size, Enter to send, link previews",
+                                accent = Color(0xFF0E9F75),
+                                onClick = { settingsPage = "chat" }
+                            )
+                            SettingsHubDivider()
+                            SettingsHubRow(
+                                icon = Icons.Outlined.QrCode2,
+                                title = "QR & contacts",
+                                subtitle = "Share your profile or connect with friends",
+                                accent = Color(0xFF32A68B),
+                                onClick = onQrContacts
+                            )
+                        }
 
-                                val themes = listOf(
-                                    "Dynamic" to Color(0xFF7C5CFC),
-                                    "Aurora Light" to Color(0xFF765BFF),
-                                    "Light" to Color(0xFFF0F2FA),
-                                    "Dark" to Color(0xFF171A24),
-                                    "AMOLED" to Color.Black,
-                                    "Chocolate" to Color(0xFF6D4C41),
-                                    "Ocean" to Color(0xFF0288D1),
-                                    "Ocean Calm" to Color(0xFF70D8C5),
-                                    "Forest" to Color(0xFF2E7D32),
-                                    "Midnight" to Color(0xFF4A148C),
-                                    "Liquid Aurora" to Color(0xFF8B72FF),
-                                    "Glass Ocean" to Color(0xFF00B8D4),
-                                    "Glass Rose" to Color(0xFFFF63B7),
-                                    "Obsidian Neon" to Color(0xFF00E5C3),
-                                    "Neon Pulse" to Color(0xFFFF4DA6),
-                                    "Frosted Light" to Color(0xFFD9D6FF),
-                                    "Royal Gold" to Color(0xFFFFC857),
-                                    "Cyber Lime" to Color(0xFFB7FF3C),
-                                    "Rose Quartz" to Color(0xFFF4A6C8)
-                                )
+                        SettingsHubGroup("Personalization") {
+                            SettingsHubRow(
+                                icon = Icons.Outlined.Palette,
+                                title = "App theme",
+                                subtitle = "Choose the look of Convo Chat",
+                                trailingValue = currentTheme,
+                                accent = Color(0xFF765BFF),
+                                onClick = { settingsPage = "theme" }
+                            )
+                            SettingsHubDivider()
+                            SettingsHubRow(
+                                icon = Icons.Outlined.Call,
+                                title = "Call appearance",
+                                subtitle = "Pick a style for audio and video calls",
+                                trailingValue = CallSkinPreferences.palette(callSkinId).label,
+                                accent = Color(0xFF13A6B7),
+                                onClick = { settingsPage = "call" }
+                            )
+                            SettingsHubDivider()
+                            SettingsHubRow(
+                                icon = Icons.Outlined.Chat,
+                                title = "Chat backgrounds",
+                                subtitle = "Default background, photo backgrounds and themes",
+                                accent = Color(0xFF8B62D9),
+                                onClick = { settingsPage = "backgrounds" }
+                            )
+                            SettingsHubDivider()
+                            SettingsHubRow(
+                                icon = Icons.Outlined.ChatBubbleOutline,
+                                title = "Bubbles & spacing",
+                                subtitle = "Liquid, neon, outline or no border · side space · 24h time",
+                                trailingValue = ChatAppearance.label(ChatPreferences.appearance.collectAsState().value.bubbleStyle),
+                                accent = Color(0xFFA66BFF),
+                                onClick = { settingsPage = "bubbles" }
+                            )
+                            SettingsHubDivider()
+                            SettingsHubRow(
+                                icon = Icons.Outlined.MusicNote,
+                                title = "Sounds",
+                                subtitle = "Your own notification and typing sounds",
+                                accent = Color(0xFFE5674B),
+                                onClick = { settingsPage = "sounds" }
+                            )
+                        }
 
-                                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    items(themes, key = { it.first }) { (themeName, themeColor) ->
-                                        Surface(
-                                            color = if (currentTheme == themeName) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(.45f),
-                                            shape = RoundedCornerShape(16.dp),
-                                            modifier = Modifier.width(94.dp).clickable {
-                                                if (viewModel.updateTheme(themeName)) {
-                                                    Toast.makeText(context, "$themeName theme applied!", Toast.LENGTH_SHORT).show()
-                                                } else {
-                                                    Toast.makeText(context, "Premium entitlement and Advanced themes flag are required", Toast.LENGTH_LONG).show()
-                                                }
+                        SettingsHubGroup("Privacy & permissions") {
+                            SettingsHubRow(
+                                icon = Icons.Outlined.Security,
+                                title = "Privacy controls",
+                                subtitle = "Presence, receipts, AI and screen protection",
+                                accent = Color(0xFF3287D5),
+                                onClick = { settingsPage = "privacy" }
+                            )
+                            SettingsHubDivider()
+                            SettingsHubRow(
+                                icon = Icons.Outlined.NotificationsActive,
+                                title = "Notifications & calls",
+                                subtitle = "Sounds, alerts and incoming-call access",
+                                accent = Color(0xFFE79024),
+                                onClick = { settingsPage = "notifications" }
+                            )
+                            SettingsHubDivider()
+                            SettingsHubRow(
+                                icon = Icons.Outlined.Visibility,
+                                title = "Profile viewers",
+                                subtitle = "See who visited your profile",
+                                trailingValue = ProfileViewerStore.viewers.collectAsState().value.count { it.lastViewedAt >= System.currentTimeMillis() - 7L * 24 * 60 * 60 * 1000 }.let { if (it > 0) "$it this week" else null },
+                                accent = Color(0xFFD18B12),
+                                onClick = { settingsPage = "viewers" }
+                            )
+                        }
+
+                        SettingsHubGroup("Smart tools") {
+                            SettingsHubRow(
+                                icon = Icons.Default.Bookmark,
+                                title = "Saved, calls & global search",
+                                subtitle = "Your new message library and communication tools",
+                                accent = Color(0xFF6750A4),
+                                onClick = { ProTools.open("hub") }
+                            )
+                            SettingsHubDivider()
+                            SettingsHubRow(
+                                icon = Icons.Default.AutoAwesome,
+                                title = "Smart tools",
+                                subtitle = "Quiet hours, motion, live location and storage",
+                                accent = Color(0xFF00A3A3),
+                                onClick = { settingsPage = "smart" }
+                            )
+                        }
+
+                        SettingsHubGroup("More") {
+                            SettingsHubRow(
+                                icon = Icons.Default.Translate,
+                                title = "Language",
+                                subtitle = "English or বাংলা",
+                                trailingValue = AppLanguage.options.firstOrNull { it.code == appLanguage }?.nativeName,
+                                accent = Color(0xFF6C4DF5),
+                                onClick = { settingsPage = "language" }
+                            )
+                            SettingsHubDivider()
+                            SettingsHubRow(
+                                icon = Icons.Default.Explore,
+                                title = "Replay app tour",
+                                subtitle = "Show the guided tour of the main buttons again",
+                                accent = Color(0xFFFF6FB5),
+                                onClick = { viewModel.setCurrentTab(0); CoachTour.requestReplay() }
+                            )
+                            SettingsHubDivider()
+                            SettingsHubRow(
+                                icon = Icons.Outlined.MenuBook,
+                                title = "Offline app guide",
+                                subtitle = "Read the bundled English or Bengali feature guide",
+                                accent = Color(0xFF168A79),
+                                onClick = { showAppGuide = true }
+                            )
+                            SettingsHubDivider()
+                            SettingsHubRow(
+                                icon = Icons.Outlined.Security,
+                                title = "Account security",
+                                subtitle = "Two-step verification, backup codes, devices & alerts",
+                                accent = Color(0xFF397BCC),
+                                onClick = { settingsPage = "devices" }
+                            )
+                            SettingsHubDivider()
+                            SettingsHubRow(
+                                icon = Icons.Outlined.Block,
+                                title = "Blocked accounts",
+                                subtitle = "Manage who can contact you",
+                                accent = Color(0xFF718096),
+                                onClick = { settingsPage = "blocked" }
+                            )
+                            SettingsHubDivider()
+                            SettingsHubRow(
+                                icon = Icons.Default.Download,
+                                title = "Download my data",
+                                subtitle = "Export your profile and posts as JSON",
+                                accent = Color(0xFF0097A7),
+                                onClick = { exportMyData(context, currentUser, posts) }
+                            )
+                            SettingsHubDivider()
+                            SettingsHubRow(
+                                icon = Icons.Outlined.WorkspacePremium,
+                                title = "Convo Chat Premium",
+                                subtitle = "Plans and exclusive features",
+                                accent = Color(0xFFD18B12),
+                                onClick = onPremium
+                            )
+                        }
+                        } else {
+                            SettingsPageHero(settingsPage, tr(settingsPageTitle(settingsPage)), tr(settingsPageSubtitle(settingsPage))) { settingsPage = "" }
+                        }
+
+                        if (settingsPage == "theme") {
+                        val themeUnlocked = flagshipConfig.advancedThemesEnabled && viewModel.hasActivePremiumEntitlement()
+                        val themeGroups = listOf(
+                            Triple("Liquid glass", "Milky glass, neon and scene-matched looks (pair them with the Scenes chat themes)", listOf(
+                                AppThemePreview("Milk Liquid Glass", Color(0xFFFBF8F3), Color.White, Color(0xFF6F78F0)),
+                                AppThemePreview("Neon Glass", Color(0xFF0A0718), Color(0xFF181332), Color(0xFFB794FF)),
+                                AppThemePreview("Matrix", Color(0xFF000502), Color(0xFF07140C), Color(0xFF39FF88)),
+                                AppThemePreview("Dream Pink", Color(0xFFFFF4F9), Color.White, Color(0xFFE94B9A)),
+                                AppThemePreview("Ocean Glass", Color(0xFF031523), Color(0xFF0A2840), Color(0xFF66C2FF))
+                            )),
+                            Triple("Light", "Bright, clean and easy on the eyes in daylight", listOf(
+                                AppThemePreview("Aurora Light", Color(0xFFF7F5FF), Color.White, Color(0xFF765BFF)),
+                                AppThemePreview("Light", Color(0xFFF0F2FA), Color.White, Color(0xFF5B6FE8)),
+                                AppThemePreview("Frosted Light", Color(0xFFF5F5FF), Color(0xFFFCFAFF), Color(0xFF6554D9)),
+                                AppThemePreview("Sky Light", Color(0xFFF3F9FF), Color.White, Color(0xFF1E88E5)),
+                                AppThemePreview("Mint Light", Color(0xFFF2FCF8), Color.White, Color(0xFF0E9F75)),
+                                AppThemePreview("Peach Light", Color(0xFFFFF6F2), Color.White, Color(0xFFE5674B)),
+                                AppThemePreview("Lavender Light", Color(0xFFFAF6FF), Color.White, Color(0xFF8E5CF7)),
+                                AppThemePreview("Sand Light", Color(0xFFFBF7F0), Color(0xFFFFFDF9), Color(0xFFA0672C))
+                            )),
+                            Triple("Dark & smart", "Smart follows system light/dark and uses your Android wallpaper palette when supported", listOf(
+                                AppThemePreview("Smart", Color(0xFF191622), Color(0xFF282536), Color(0xFF8B7CFF)),
+                                AppThemePreview("Dynamic", Color(0xFF1B1530), Color(0xFF2A2245), Color(0xFF7C5CFC)),
+                                AppThemePreview("Dark", Color(0xFF171A24), Color(0xFF222634), Color(0xFF8C9EFF)),
+                                AppThemePreview("AMOLED", Color.Black, Color(0xFF121212), Color(0xFF9E8BFF)),
+                                AppThemePreview("Midnight", Color(0xFF07030D), Color(0xFF190D28), Color(0xFFE3B9FF)),
+                                AppThemePreview("Ocean", Color(0xFF001017), Color(0xFF062532), Color(0xFF83E6F2)),
+                                AppThemePreview("Ocean Calm", Color(0xFF00151E), Color(0xFF07313D), Color(0xFF8CEBFF)),
+                                AppThemePreview("Forest", Color(0xFF050D08), Color(0xFF102319), Color(0xFFA7E3AE)),
+                                AppThemePreview("Chocolate", Color(0xFF100805), Color(0xFF21120D), Color(0xFFE8C7B5)),
+                                AppThemePreview("Coffee", Color(0xFF110B07), Color(0xFF23170F), Color(0xFFE2B98E)),
+                                AppThemePreview("Berry Night", Color(0xFF14060E), Color(0xFF2A0F20), Color(0xFFFF7AA8)),
+                                AppThemePreview("Lo-fi", Color(0xFF110A1C), Color(0xFF221634), Color(0xFFFFB38A)),
+                                AppThemePreview("Slate", Color(0xFF0D1117), Color(0xFF161B22), Color(0xFF9EC1FF)),
+                                AppThemePreview("Crimson", Color(0xFF120506), Color(0xFF250C0E), Color(0xFFFF6B6B)),
+                                AppThemePreview("Emerald", Color(0xFF02100A), Color(0xFF0A2218), Color(0xFF4EE3A2))
+                            )),
+                            Triple("Anime & vivid", "Inspired by anime skies, neon cities and cozy evenings", listOf(
+                                AppThemePreview("Anime Sky", Color(0xFFF1F8FF), Color.White, Color(0xFF2F80ED)),
+                                AppThemePreview("Sakura Night", Color(0xFF120A16), Color(0xFF261729), Color(0xFFFF9EC4)),
+                                AppThemePreview("Neo Tokyo", Color(0xFF05010F), Color(0xFF160B2C), Color(0xFFFF4FD8)),
+                                AppThemePreview("Sunset Rooftop", Color(0xFF130C1F), Color(0xFF261A36), Color(0xFFFFB067)),
+                                AppThemePreview("Nordic", Color(0xFF242933), Color(0xFF2E3440), Color(0xFF88C0D0)),
+                                AppThemePreview("Terminal", Color(0xFF020402), Color(0xFF0C120C), Color(0xFF7CFC00)),
+                                AppThemePreview("Ruby", Color(0xFF110307), Color(0xFF240A12), Color(0xFFFF5C7A)),
+                                AppThemePreview("Rose Light", Color(0xFFFFF5F8), Color.White, Color(0xFFD6336C)),
+                                AppThemePreview("Teal Light", Color(0xFFF1FBFA), Color.White, Color(0xFF00897B)),
+                                AppThemePreview("Mono Light", Color(0xFFF8F9FA), Color.White, Color(0xFF212529))
+                            )),
+                            Triple("Fresh picks", "New hand-tuned themes: aurora, volcano, cyberpunk, paper and more", listOf(
+                                AppThemePreview("Aurora Borealis", Color(0xFF02101A), Color(0xFF0A2230), Color(0xFF5CFFC8)),
+                                AppThemePreview("Midnight Ocean", Color(0xFF020814), Color(0xFF0A1730), Color(0xFF4FC3F7)),
+                                AppThemePreview("Volcano", Color(0xFF120402), Color(0xFF2A0D06), Color(0xFFFF7043)),
+                                AppThemePreview("Lavender Dusk", Color(0xFF110B1E), Color(0xFF221839), Color(0xFFC6A8FF)),
+                                AppThemePreview("Cyberpunk", Color(0xFF07010D), Color(0xFF1A0626), Color(0xFFFFE600)),
+                                AppThemePreview("Deep Forest", Color(0xFF030B06), Color(0xFF0D1F14), Color(0xFF8BD17C)),
+                                AppThemePreview("Graphite", Color(0xFF0E0F11), Color(0xFF1B1D21), Color(0xFFE0E3E8)),
+                                AppThemePreview("Arctic Light", Color(0xFFF2F8FC), Color(0xFFFFFFFF), Color(0xFF0277BD)),
+                                AppThemePreview("Lemonade Light", Color(0xFFFFFCEE), Color(0xFFFFFFFF), Color(0xFFC28A00)),
+                                AppThemePreview("Paper Light", Color(0xFFFAF8F3), Color(0xFFFFFFFF), Color(0xFF3E4A59))
+                            )),
+                            Triple("Premium", if (themeUnlocked) "Unlocked with Convo Premium" else "Unlock with Convo Premium", listOf(
+                                AppThemePreview("Royal Gold", Color(0xFF120C02), Color(0xFF241806), Color(0xFFFFD166)),
+                                AppThemePreview("Galaxy", Color(0xFF05030F), Color(0xFF140C2A), Color(0xFFB69CFF)),
+                                AppThemePreview("Diamond", Color(0xFF070A1C), Color(0xFF131A3A), Color(0xFFE0E7FF)),
+                                AppThemePreview("Sapphire", Color(0xFF040A1C), Color(0xFF0D1836), Color(0xFF7FA8FF)),
+                                AppThemePreview("Liquid Aurora", Color(0xFF070817), Color(0xFF17152E), Color(0xFFC5B4FF)),
+                                AppThemePreview("Glass Ocean", Color(0xFF001018), Color(0xFF062A38), Color(0xFF79ECFF)),
+                                AppThemePreview("Glass Rose", Color(0xFF160711), Color(0xFF301327), Color(0xFFFFA9D6)),
+                                AppThemePreview("Obsidian Neon", Color.Black, Color(0xFF0A0B12), Color(0xFF00F0D0)),
+                                AppThemePreview("Neon Pulse", Color(0xFF0B0612), Color(0xFF1A0C27), Color(0xFFFF4DA6)),
+                                AppThemePreview("Cyber Lime", Color(0xFF071006), Color(0xFF102014), Color(0xFFC8FF4D)),
+                                AppThemePreview("Rose Quartz", Color(0xFF140810), Color(0xFF2A1423), Color(0xFFFFB3CF))
+                            ))
+                        )
+                        themeGroups.forEach { (groupTitle, groupSubtitle, groupThemes) ->
+                            SettingsHubGroup(groupTitle) {
+                                Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    Text(groupSubtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    groupThemes.chunked(3).forEach { rowThemes ->
+                                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                            rowThemes.forEach { preview ->
+                                                val locked = preview.name in PREMIUM_APP_THEMES && !themeUnlocked
+                                                AppThemeTile(
+                                                    preview = preview,
+                                                    selected = currentTheme.equals(preview.name, ignoreCase = true),
+                                                    locked = locked,
+                                                    modifier = Modifier.weight(1f),
+                                                    onClick = {
+                                                        if (viewModel.updateTheme(preview.name)) {
+                                                            Toast.makeText(context, "${preview.name} theme applied", Toast.LENGTH_SHORT).show()
+                                                        } else {
+                                                            Toast.makeText(context, "${preview.name} is a Convo Premium theme", Toast.LENGTH_LONG).show()
+                                                            onPremium()
+                                                        }
+                                                    }
+                                                )
                                             }
-                                        ) {
-                                            Column(Modifier.padding(vertical = 10.dp, horizontal = 5.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                                                Box(Modifier.size(27.dp).clip(CircleShape).background(themeColor).border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape))
-                                                Spacer(Modifier.height(5.dp))
-                                                Text(themeName, fontSize = 10.sp, maxLines = 1, fontWeight = if (currentTheme == themeName) FontWeight.ExtraBold else FontWeight.Medium)
-                                                if (currentTheme == themeName) Icon(Icons.Default.Check, "Active", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(14.dp))
-                                            }
+                                            repeat(3 - rowThemes.size) { Spacer(Modifier.weight(1f)) }
                                         }
                                     }
                                 }
                             }
                         }
+                        }
 
+                        if (settingsPage == "call") {
+                        Text(
+                            "Your call skin is saved on this phone and used for audio, video and group calls.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        CallSkinPreferences.options.map { it.category }.distinct().forEach { category ->
+                            SettingsHubGroup(category) {
+                                Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    CallSkinPreferences.options.filter { it.category == category }.chunked(3).forEach { rowSkins ->
+                                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                            rowSkins.forEach { option ->
+                                                val selected = callSkinId == option.id
+                                                Column(
+                                                    Modifier.weight(1f).clip(RoundedCornerShape(18.dp)).clickable {
+                                                        CallSkinPreferences.select(context, option.id)
+                                                        Toast.makeText(context, "${option.label} call skin applied", Toast.LENGTH_SHORT).show()
+                                                    },
+                                                    horizontalAlignment = Alignment.CenterHorizontally
+                                                ) {
+                                                    Box(
+                                                        Modifier.fillMaxWidth().height(118.dp).clip(RoundedCornerShape(18.dp))
+                                                            .background(Brush.verticalGradient(option.background))
+                                                            .border(if (selected) 3.dp else 1.dp, if (selected) option.accent else Color.White.copy(alpha = .16f), RoundedCornerShape(18.dp))
+                                                    ) {
+                                                        ThemeTextureLayer(option.texture, option.accent, .85f)
+                                                        Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
+                                                            Box(Modifier.size(34.dp).clip(CircleShape).background(option.accent.copy(alpha = .35f)).border(1.5.dp, option.accent, CircleShape), contentAlignment = Alignment.Center) {
+                                                                Icon(Icons.Default.Person, null, tint = Color.White, modifier = Modifier.size(20.dp))
+                                                            }
+                                                            Spacer(Modifier.height(8.dp))
+                                                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                                                Box(Modifier.size(18.dp).clip(CircleShape).background(Color(0xFFE53935)), contentAlignment = Alignment.Center) { Icon(Icons.Default.CallEnd, null, tint = Color.White, modifier = Modifier.size(11.dp)) }
+                                                                Box(Modifier.size(18.dp).clip(CircleShape).background(option.surface), contentAlignment = Alignment.Center) { Icon(Icons.Default.Call, null, tint = option.accent, modifier = Modifier.size(11.dp)) }
+                                                            }
+                                                        }
+                                                        if (selected) Box(Modifier.align(Alignment.TopEnd).padding(6.dp).size(20.dp).clip(CircleShape).background(option.accent), contentAlignment = Alignment.Center) {
+                                                            Icon(Icons.Default.Check, "Active", tint = Color.Black, modifier = Modifier.size(13.dp))
+                                                        }
+                                                    }
+                                                    Spacer(Modifier.height(5.dp))
+                                                    Text(option.label, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 11.sp, fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.Medium)
+                                                }
+                                            }
+                                            repeat(3 - rowSkins.size) { Spacer(Modifier.weight(1f)) }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        }
+
+                        if (settingsPage == "chat") {
+                        val quickReaction by ChatPreferences.quickReaction.collectAsState()
+                        val chatTextScale by ChatPreferences.textScale.collectAsState()
+                        val enterToSend by ChatPreferences.enterToSend.collectAsState()
+                        var customReaction by remember { mutableStateOf("") }
+                        SettingsHubGroup("Quick reaction") {
+                            Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                Text("Shown in place of Send while the message box is empty. Tap it to send instantly.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                ChatPreferences.reactionChoices.chunked(6).forEach { rowEmojis ->
+                                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        rowEmojis.forEach { emoji ->
+                                            val selected = quickReaction == emoji
+                                            Box(
+                                                Modifier.weight(1f).height(48.dp).clip(RoundedCornerShape(14.dp))
+                                                    .background(if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .5f))
+                                                    .border(if (selected) 2.dp else 0.dp, if (selected) MaterialTheme.colorScheme.primary else Color.Transparent, RoundedCornerShape(14.dp))
+                                                    .clickable { ChatPreferences.setQuickReaction(context, emoji) },
+                                                contentAlignment = Alignment.Center
+                                            ) { Text(emoji, fontSize = 22.sp) }
+                                        }
+                                    }
+                                }
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    OutlinedTextField(
+                                        value = customReaction,
+                                        onValueChange = { customReaction = it.take(8) },
+                                        modifier = Modifier.weight(1f),
+                                        singleLine = true,
+                                        label = { Text(tr("Any other emoji")) }
+                                    )
+                                    Spacer(Modifier.width(8.dp))
+                                    FilledTonalButton(onClick = {
+                                        if (customReaction.isNotBlank()) { ChatPreferences.setQuickReaction(context, customReaction); customReaction = "" }
+                                    }, enabled = customReaction.isNotBlank()) { Text(tr("Use")) }
+                                }
+                                Text(tr("Convo animated stickers"), fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                ConvoStickers.all.chunked(5).forEach { rowStickers ->
+                                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        rowStickers.forEach { sticker ->
+                                            val selected = quickReaction == sticker.token
+                                            Box(
+                                                Modifier.weight(1f).height(56.dp).clip(RoundedCornerShape(16.dp))
+                                                    .background(if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .5f))
+                                                    .border(if (selected) 2.dp else 0.dp, if (selected) MaterialTheme.colorScheme.primary else Color.Transparent, RoundedCornerShape(16.dp))
+                                                    .clickable { ChatPreferences.setQuickReaction(context, sticker.token) },
+                                                contentAlignment = Alignment.Center
+                                            ) { ConvoStickerView(sticker.token, 44.dp) }
+                                        }
+                                    }
+                                }
+                                Text("Current: ${convoStickerPreview(quickReaction)}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                            }
+                        }
+                        SettingsHubGroup("Reading & typing") {
+                            Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text(tr("Message text size"), fontWeight = FontWeight.Bold)
+                                Slider(
+                                    value = chatTextScale,
+                                    onValueChange = { ChatPreferences.setTextScale(context, it) },
+                                    valueRange = 0.85f..1.3f,
+                                    steps = 8
+                                )
+                                Surface(shape = RoundedCornerShape(20.dp, 20.dp, 6.dp, 20.dp), color = MaterialTheme.colorScheme.primary, modifier = Modifier.align(Alignment.End)) {
+                                    Text(tr("This is how your messages look"), color = MaterialTheme.colorScheme.onPrimary, fontSize = (14 * chatTextScale).sp, modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp))
+                                }
+                                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                    Column(Modifier.weight(1f)) {
+                                        Text(tr("Enter key sends"), fontWeight = FontWeight.Bold)
+                                        Text(tr("Press Enter on the keyboard to send instead of adding a new line"), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    Switch(checked = enterToSend, onCheckedChange = { ChatPreferences.setEnterToSend(context, it) })
+                                }
+                                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                    Column(Modifier.weight(1f)) {
+                                        Text(tr("Link previews"), fontWeight = FontWeight.Bold)
+                                        Text(tr("Show a title, image and site icon for links in chats and posts"), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    Switch(checked = privacySettings.allowLinkPreviewFetch, onCheckedChange = { enabled -> PrivacyPreferences.update(context) { it.copy(allowLinkPreviewFetch = enabled) } })
+                                }
+                            }
+                        }
+                        SettingsHubGroup("More for chats") {
+                            SettingsHubRow(icon = Icons.Outlined.Wallpaper, title = "Default chat background", subtitle = "Used in chats that do not have their own theme", trailingValue = ChatPreferences.defaultChatTheme.collectAsState().value.removePrefix(CHAT_IMAGE_THEME_PREFIX).let { if (it.startsWith("https://")) "Photo" else it }, accent = Color(0xFF8B62D9), onClick = { settingsPage = "backgrounds" })
+                            SettingsHubDivider()
+                            SettingsHubRow(icon = Icons.Outlined.MusicNote, title = "Notification & typing sounds", subtitle = "Use your own MP3 sounds", accent = Color(0xFFE5674B), onClick = { settingsPage = "sounds" })
+                        }
+                        }
+
+                        if (settingsPage == "bubbles") {
+                            SettingsHubGroup("Live preview & style") {
+                                ChatAppearanceEditor(
+                                    spec = ChatThemeCatalog.find(ChatPreferences.defaultChatTheme.collectAsState().value)?.takeIf { !it.adaptive },
+                                    modifier = Modifier.fillMaxWidth().padding(14.dp)
+                                )
+                            }
+                        }
+
+                        if (settingsPage == "sounds") {
+                        val soundsVersion by ChatPreferences.soundsVersion.collectAsState()
+                        val globalSoundUrls by viewModel.globalSoundUrls.collectAsState()
+                        var pendingSoundKind by remember { mutableStateOf<String?>(null) }
+                        var soundBusy by remember { mutableStateOf(false) }
+                        val soundPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+                            val kind = pendingSoundKind
+                            pendingSoundKind = null
+                            if (uri != null && kind != null) {
+                                val displayName = runCatching {
+                                    context.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+                                        if (c.moveToFirst()) c.getString(0) else null
+                                    }
+                                }.getOrNull() ?: "Custom sound"
+                                soundBusy = true
+                                uiScope.launch {
+                                    val error = AppSoundStore.importLocal(context, uri, kind, displayName)
+                                    soundBusy = false
+                                    if (error == null) {
+                                        AppSoundStore.playCustom(context, kind)
+                                        Toast.makeText(context, "Sound saved on this phone", Toast.LENGTH_SHORT).show()
+                                    } else Toast.makeText(context, error, Toast.LENGTH_LONG).show()
+                                }
+                            }
+                        }
+                        Text("Pick an MP3 (or any audio up to 15 seconds and 2 MB). It is saved on this phone and replaces the built-in sound. If Convo publishes a default sound, it downloads quietly in the background.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.fillMaxWidth())
+                        var likeSoundOn by remember { mutableStateOf(LikeSound.isEnabled(context)) }
+                        Row(
+                            Modifier.fillMaxWidth().liquidCard(shape = RoundedCornerShape(22.dp)).clickable { likeSoundOn = !likeSoundOn; LikeSound.setEnabled(context, likeSoundOn) }.padding(14.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Outlined.FavoriteBorder, null, tint = MaterialTheme.colorScheme.primary)
+                            Spacer(Modifier.width(12.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(tr("Like sound"), fontWeight = FontWeight.Bold)
+                                Text(tr("Play a soft pop when you like or react to a message"), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            Switch(likeSoundOn, { likeSoundOn = it; LikeSound.setEnabled(context, it) })
+                        }
+                        var autoSaveOn by remember { mutableStateOf(ReceivedFiles.autoDownloadEnabled(context)) }
+                        val autoSaveAllowed = flagshipConfig.autoSaveReceivedFilesEnabled
+                        Row(
+                            Modifier.fillMaxWidth().liquidCard(shape = RoundedCornerShape(22.dp)).clickable(enabled = autoSaveAllowed) { autoSaveOn = !autoSaveOn; ReceivedFiles.setAutoDownload(context, autoSaveOn) }.padding(14.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Default.Download, null, tint = if (autoSaveAllowed) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+                            Spacer(Modifier.width(12.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(tr("Auto-save received media"), fontWeight = FontWeight.Bold)
+                                Text(
+                                    if (autoSaveAllowed) tr("Photos, PDFs and files you receive are saved to Downloads/Convo Chat, sorted by type") else tr("Automatic saving is currently disabled by the administrator; manual downloads still work"),
+                                    fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Switch(checked = autoSaveOn && autoSaveAllowed, onCheckedChange = { autoSaveOn = it; ReceivedFiles.setAutoDownload(context, it) }, enabled = autoSaveAllowed)
+                        }
+                        listOf(
+                            Triple(AppSoundStore.NOTIFICATION, "Message notification", Icons.Outlined.NotificationsActive),
+                            Triple(AppSoundStore.TYPING, "Typing indicator", Icons.Outlined.Keyboard),
+                            Triple(AppSoundStore.LIKE, "Like / reaction", Icons.Outlined.FavoriteBorder)
+                        ).forEach { (kind, label, icon) ->
+                            val description = remember(soundsVersion, globalSoundUrls) { AppSoundStore.describe(context, kind) }
+                            val hasLocal = remember(soundsVersion) { AppSoundStore.hasLocal(context, kind) }
+                            SettingsHubGroup(label) {
+                                Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Box(Modifier.size(42.dp).clip(RoundedCornerShape(13.dp)).background(MaterialTheme.colorScheme.primaryContainer), contentAlignment = Alignment.Center) {
+                                            Icon(icon, null, tint = MaterialTheme.colorScheme.primary)
+                                        }
+                                        Spacer(Modifier.width(12.dp))
+                                        Column(Modifier.weight(1f)) {
+                                            Text(description, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                            Text(if (hasLocal) "Your sound" else "Default", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
+                                        IconButton(onClick = {
+                                            if (kind == AppSoundStore.LIKE) LikeSound.play(context, force = true)
+                                            else if (!AppSoundStore.playCustom(context, kind)) Toast.makeText(context, "Using the built-in sound", Toast.LENGTH_SHORT).show()
+                                        }) { Icon(Icons.Default.PlayArrow, "Preview sound") }
+                                    }
+                                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                        Button(onClick = { pendingSoundKind = kind; soundPicker.launch("audio/*") }, enabled = !soundBusy, modifier = Modifier.weight(1f)) {
+                                            Icon(Icons.Outlined.UploadFile, null); Spacer(Modifier.width(6.dp)); Text(if (hasLocal) "Change" else "Choose MP3")
+                                        }
+                                        if (hasLocal) OutlinedButton(onClick = { AppSoundStore.clearLocal(context, kind); Toast.makeText(context, "Back to the default sound", Toast.LENGTH_SHORT).show() }, modifier = Modifier.weight(1f)) { Text(tr("Reset")) }
+                                    }
+                                }
+                            }
+                        }
+                        if (soundBusy) LinearProgressIndicator(Modifier.fillMaxWidth())
+                        Text("Turn sounds on or off in Notifications & calls.", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+
+                        if (settingsPage == "backgrounds") {
+                        val defaultChatTheme by ChatPreferences.defaultChatTheme.collectAsState()
+                        val backgroundImages by viewModel.chatBackgroundImages.collectAsState()
+                        Text("Pick the default background for your chats. Any chat can still use its own theme from the chat menu, Chat theme.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.fillMaxWidth())
+                        ChatThemeGallery(
+                            selected = defaultChatTheme,
+                            premiumActive = viewModel.hasActivePremiumEntitlement(),
+                            images = backgroundImages,
+                            onSelect = { value ->
+                                ChatPreferences.setDefaultChatTheme(context, value)
+                                Toast.makeText(context, "Default chat background updated", Toast.LENGTH_SHORT).show()
+                            },
+                            onLocked = {
+                                Toast.makeText(context, "This background is part of Convo Premium", Toast.LENGTH_LONG).show()
+                                onPremium()
+                            },
+                            modifier = Modifier.fillMaxWidth().height(640.dp)
+                        )
+                        }
+
+                        if (settingsPage == "viewers") {
+                        val profileViewers by ProfileViewerStore.viewers.collectAsState()
+                        val shareVisits by ProfileViewerStore.shareVisits.collectAsState()
+                        val viewersUnlocked = viewModel.hasActivePremiumEntitlement()
+                        var confirmClearViewers by remember { mutableStateOf(false) }
+                        val nowMs = rememberTickingNow(60_000L)
+                        val dayAgo = nowMs - 24L * 60 * 60 * 1000
+                        val weekAgo = nowMs - 7L * 24 * 60 * 60 * 1000
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            listOf(
+                                "Today" to profileViewers.count { it.lastViewedAt >= dayAgo },
+                                "7 days" to profileViewers.count { it.lastViewedAt >= weekAgo },
+                                "All" to profileViewers.size
+                            ).forEach { (label, count) ->
+                                Surface(Modifier.weight(1f), shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = .6f)) {
+                                    Column(Modifier.padding(vertical = 14.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                                        Text(count.toString(), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.primary)
+                                        Text(label, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                }
+                            }
+                        }
+                        SettingsHubGroup(if (viewersUnlocked) "Recent visitors" else "Recent visitors (Premium)") {
+                            if (!viewersUnlocked) {
+                                Column(Modifier.fillMaxWidth().padding(18.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Icon(Icons.Outlined.Lock, null, tint = Color(0xFFD18B12), modifier = Modifier.size(34.dp))
+                                    Text("See exactly who viewed your profile", fontWeight = FontWeight.ExtraBold, textAlign = TextAlign.Center)
+                                    Text("Everyone sees the count. Names and times are part of Convo Premium.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
+                                    Button(onClick = onPremium) { Icon(Icons.Outlined.WorkspacePremium, null); Spacer(Modifier.width(6.dp)); Text(tr("Get Premium")) }
+                                }
+                            } else if (profileViewers.isEmpty()) {
+                                Text("No visits yet. New visits appear here as they happen.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(18.dp))
+                            } else {
+                                profileViewers.sortedByDescending { it.lastViewedAt }.take(100).forEachIndexed { index, viewer ->
+                                    if (index > 0) SettingsHubDivider()
+                                    val viewerUser = allUsers.firstOrNull { it.uid == viewer.viewerId }
+                                    Row(
+                                        Modifier.fillMaxWidth().clickable(enabled = viewerUser != null) { viewerUser?.let { onProfileSelected(it) } }.padding(horizontal = 14.dp, vertical = 10.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        val avatar = viewerUser?.profileImageUrl?.takeIf { it.isNotBlank() } ?: viewer.imageUrl
+                                        if (avatar.isNotBlank()) {
+                                            AsyncImage(model = avatar, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.size(42.dp).clip(CircleShape))
+                                        } else {
+                                            Box(Modifier.size(42.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer), contentAlignment = Alignment.Center) {
+                                                Text(viewer.name.take(1).uppercase().ifBlank { "?" }, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                                            }
+                                        }
+                                        Spacer(Modifier.width(12.dp))
+                                        Column(Modifier.weight(1f)) {
+                                            Text(viewerUser?.name?.takeIf { it.isNotBlank() } ?: viewer.name.ifBlank { "Convo user" }, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                            Text(
+                                                buildString {
+                                                    append(relativeTimeLabel(viewer.lastViewedAt, nowMs))
+                                                    if (viewer.visits > 1) append(" · ${viewer.visits} visits")
+                                                },
+                                                fontSize = 11.sp,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                        Icon(Icons.Default.ChevronRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                }
+                            }
+                        }
+                        SettingsHubGroup("Privacy") {
+                            Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Column(Modifier.weight(1f)) {
+                                    Text("Share my visits", fontWeight = FontWeight.Bold)
+                                    Text("When off, people are not told that you viewed their profile", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                                Switch(checked = shareVisits, onCheckedChange = { ProfileViewerStore.setShareVisits(context, it) })
+                            }
+                            SettingsHubDivider()
+                            SettingsHubRow(icon = Icons.Outlined.DeleteOutline, title = "Clear visitor history", subtitle = "History is stored only on this phone", accent = Color(0xFFE53935), onClick = { confirmClearViewers = true }, enabled = profileViewers.isNotEmpty())
+                        }
+                        if (confirmClearViewers) {
+                            AlertDialog(
+                                onDismissRequest = { confirmClearViewers = false },
+                                title = { Text("Clear visitor history?") },
+                                text = { Text("This removes the saved list from this phone. It cannot be undone.") },
+                                confirmButton = {
+                                    TextButton(onClick = {
+                                        confirmClearViewers = false
+                                        currentUser?.uid?.let { ProfileViewerStore.clear(context, it) }
+                                    }) { Text(tr("Clear"), color = MaterialTheme.colorScheme.error) }
+                                },
+                                dismissButton = { TextButton(onClick = { confirmClearViewers = false }) { Text(tr("Cancel")) } }
+                            )
+                        }
+                        }
+
+                        if (settingsPage == "profile") {
                         // 2. Profile Details Modification
                         currentUser?.let { user ->
                             var inputName by remember { mutableStateOf(user.name) }
@@ -1403,26 +1931,36 @@ fun HomeScreen(
 
                             Card(
                                 shape = RoundedCornerShape(28.dp),
-                                modifier = Modifier.fillMaxWidth()
+                                colors = CardDefaults.cardColors(containerColor = Color.Transparent),
+                                modifier = Modifier.fillMaxWidth().bringIntoViewRequester(profileSectionRequester)
+                                    .liquidCard(shape = RoundedCornerShape(28.dp))
+                                    .background(Brush.verticalGradient(listOf(Color(0xFF637BFF).copy(alpha = .22f), Color(0xFFE755B6).copy(alpha = .10f), Color.Transparent), endY = 700f))
                             ) {
                                 Column(
                                     modifier = Modifier.padding(16.dp),
                                     horizontalAlignment = Alignment.CenterHorizontally
                                 ) {
                                     Text(
-                                        text = "Modify User Details",
-                                        style = MaterialTheme.typography.titleSmall,
-                                        fontWeight = FontWeight.Bold,
+                                        text = "Edit your profile",
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = FontWeight.ExtraBold,
                                         color = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.align(Alignment.Start)
+                                    )
+                                    Text(
+                                        text = "Tap the photo to change it. Changes show on your profile after you save.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         modifier = Modifier.align(Alignment.Start)
                                     )
                                     Spacer(modifier = Modifier.height(12.dp))
 
                                     Box(
                                         modifier = Modifier
-                                            .size(90.dp)
+                                            .size(96.dp)
+                                            .clip(CircleShape)
                                             .clickable { galleryLauncher.launch("image/*") }
-                                            .border(2.dp, MaterialTheme.colorScheme.primary, CircleShape),
+                                            .border(3.dp, ProfileRingBrush, CircleShape),
                                         contentAlignment = Alignment.Center
                                     ) {
                                         if (inputProfileUrl.isNotBlank()) {
@@ -1489,8 +2027,8 @@ fun HomeScreen(
                                     OutlinedTextField(
                                         value = inputBio,
                                         onValueChange = { inputBio = it },
-                                        label = { Text("Bio") },
-                                        placeholder = { Text("Tell people about yourself") },
+                                        label = { Text(tr("Bio")) },
+                                        placeholder = { Text(tr("Tell people about yourself")) },
                                         modifier = Modifier.fillMaxWidth(),
                                         maxLines = 3,
                                         shape = RoundedCornerShape(18.dp)
@@ -1556,8 +2094,8 @@ fun HomeScreen(
                                     }
                                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                                         Column(Modifier.weight(1f)) {
-                                            Text("Automatic away reply", fontWeight = FontWeight.Bold)
-                                            Text("Reply when you are unavailable.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            Text(tr("Automatic away reply"), fontWeight = FontWeight.Bold)
+                                            Text(tr("Reply when you are unavailable."), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         }
                                         Switch(checked = awayReplyEnabled, onCheckedChange = { awayReplyEnabled = it })
                                     }
@@ -1565,7 +2103,7 @@ fun HomeScreen(
                                         OutlinedTextField(
                                             value = awayReplyText,
                                             onValueChange = { awayReplyText = it.take(240) },
-                                            label = { Text("Away reply message") },
+                                            label = { Text(tr("Away reply message")) },
                                             placeholder = { Text("I am offline right now. I will reply later.") },
                                             modifier = Modifier.fillMaxWidth(),
                                             maxLines = 3,
@@ -1581,14 +2119,17 @@ fun HomeScreen(
                                         )
                                     }
                                     Spacer(modifier = Modifier.height(10.dp))
-                                    Text("Cover photo", fontWeight = FontWeight.Bold, modifier = Modifier.align(Alignment.Start))
+                                    Text(tr("Cover photo"), fontWeight = FontWeight.Bold, modifier = Modifier.align(Alignment.Start))
                                     Box(Modifier.fillMaxWidth().height(150.dp).clip(RoundedCornerShape(20.dp)).background(Brush.linearGradient(listOf(MaterialTheme.colorScheme.primaryContainer, MaterialTheme.colorScheme.secondaryContainer))), contentAlignment = Alignment.Center) {
-                                        if (inputCoverUrl.isNotBlank()) AsyncImage(inputCoverUrl, "Cover preview", contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize().graphicsLayer { scaleX = coverScale; scaleY = coverScale; translationY = coverOffsetY * 70f })
+                                        ProfileCoverArt(inputCoverUrl, user.uid, Modifier.fillMaxSize(), coverScale, coverOffsetY)
                                         if (isUploadingCover) CircularProgressIndicator()
                                     }
                                     OutlinedButton(onClick = { coverLauncher.launch("image/*") }, enabled = !isUploadingCover, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Outlined.UploadFile, null); Spacer(Modifier.width(6.dp)); Text(if (inputCoverUrl.isBlank()) "Upload cover photo" else "Replace cover photo") }
-                                    Text("Zoom", fontSize = 11.sp); Slider(coverScale, { coverScale = it }, valueRange = 1f..2f)
-                                    Text("Vertical position", fontSize = 11.sp); Slider(coverOffsetY, { coverOffsetY = it }, valueRange = -1f..1f)
+                                    CoverPresetPicker(selectedUrl = inputCoverUrl, onSelect = { inputCoverUrl = it; coverScale = 1f; coverOffsetY = 0f })
+                                    if (inputCoverUrl.isNotBlank() && !inputCoverUrl.startsWith("preset:")) {
+                                        Text(tr("Zoom"), fontSize = 11.sp); Slider(coverScale, { coverScale = it }, valueRange = 1f..2f)
+                                        Text(tr("Vertical position"), fontSize = 11.sp); Slider(coverOffsetY, { coverOffsetY = it }, valueRange = -1f..1f)
+                                    }
                                     Spacer(modifier = Modifier.height(14.dp))
 
                                     Button(
@@ -1624,18 +2165,20 @@ fun HomeScreen(
                                         },
                                         modifier = Modifier.fillMaxWidth()
                                     ) {
-                                        Text("Save Changes", fontWeight = FontWeight.Bold)
+                                        Text(tr("Save Changes"), fontWeight = FontWeight.Bold)
                                     }
                                 }
                             }
                         }
+                        }
 
+                        if (settingsPage == "privacy") {
                         Card(shape = RoundedCornerShape(28.dp), modifier = Modifier.fillMaxWidth()) {
                             Column(Modifier.padding(16.dp)) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Icon(Icons.Outlined.Lock, null, tint = MaterialTheme.colorScheme.primary)
                                     Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
-                                        Text("App lock", fontWeight = FontWeight.Bold)
+                                        Text(tr("App lock"), fontWeight = FontWeight.Bold)
                                         Text(if (lockEnabled) "PIN and notification privacy enabled" else "Protect Convo Chat with PIN or biometrics", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                     Switch(checked = lockEnabled, onCheckedChange = {
@@ -1644,19 +2187,19 @@ fun HomeScreen(
                                 }
                                 if (lockEnabled && AppLockManager.canUseBiometric(context)) {
                                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                                        Text("Biometric unlock", Modifier.weight(1f))
+                                        Text(tr("Biometric unlock"), Modifier.weight(1f))
                                         Switch(AppLockManager.isBiometricEnabled(context), { AppLockManager.setBiometric(context, it) })
                                     }
                                 }
                             }
                         }
 
-                        Card(shape = RoundedCornerShape(28.dp), modifier = Modifier.fillMaxWidth()) {
+                        Card(shape = RoundedCornerShape(28.dp), modifier = Modifier.fillMaxWidth().bringIntoViewRequester(privacySectionRequester)) {
                             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Icon(Icons.Outlined.Security, null, tint = MaterialTheme.colorScheme.primary)
                                     Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
-                                        Text("Privacy & Security", fontWeight = FontWeight.Bold)
+                                        Text(tr("Privacy & Security"), fontWeight = FontWeight.Bold)
                                         Text("Control presence, receipts, AI consent and sensitive-screen protection.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                 }
@@ -1669,20 +2212,49 @@ fun HomeScreen(
                                 PrivacyToggleRow("Show typing and read receipts", privacySettings.showTypingStatus && privacySettings.sendReadReceipts) {
                                     PrivacyPreferences.update(context) { it.copy(showTypingStatus = !it.showTypingStatus, sendReadReceipts = !it.sendReadReceipts) }
                                 }
-                                PrivacyToggleRow("Allow AI processing", privacySettings.allowAiProcessing) {
-                                    PrivacyPreferences.update(context) { it.copy(allowAiProcessing = !it.allowAiProcessing) }
+                                if (highlightAiSetting) {
+                                    Row(
+                                        Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp))
+                                            .background(MaterialTheme.colorScheme.primary.copy(alpha = .12f))
+                                            .border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(16.dp))
+                                            .padding(horizontal = 10.dp, vertical = 7.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(Modifier.weight(1f)) {
+                                            Text("Allow AI processing", fontWeight = FontWeight.Bold)
+                                            Text("Turn on to let the assistant process the prompts you choose to send. It cannot override the admin's global AI switch.", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
+                                        Switch(privacySettings.allowAiProcessing, {
+                                            PrivacyPreferences.update(context) { it.copy(allowAiProcessing = it.allowAiProcessing.not()) }
+                                        })
+                                    }
+                                } else {
+                                    PrivacyToggleRow("Allow AI processing", privacySettings.allowAiProcessing) {
+                                        PrivacyPreferences.update(context) { it.copy(allowAiProcessing = !it.allowAiProcessing) }
+                                    }
+                                }
+                                if (returnToAssistantAfterAiSetup) {
+                                    OutlinedButton(
+                                        onClick = { returnToAssistantAfterAiSetup = false; onAssistant() },
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) { Icon(Icons.Default.AutoAwesome, null); Spacer(Modifier.width(7.dp)); Text("Return to AI assistant") }
                                 }
                                 PrivacyToggleRow("Hide notification content", privacySettings.hideNotificationContent) {
                                     PrivacyPreferences.update(context) { it.copy(hideNotificationContent = !it.hideNotificationContent) }
                                 }
-                                PrivacyToggleRow("Protect sensitive screens from screenshots", privacySettings.preventScreenshotOnSensitiveScreens) {
-                                    PrivacyPreferences.update(context) { it.copy(preventScreenshotOnSensitiveScreens = !it.preventScreenshotOnSensitiveScreens) }
+                                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Icons.Outlined.Shield, null, tint = MaterialTheme.colorScheme.primary)
+                                    Column(Modifier.weight(1f).padding(start = 12.dp)) {
+                                        Text(tr("Screenshot protection"), fontWeight = FontWeight.SemiBold)
+                                        Text("Always on inside chats and calls. Screenshots are allowed everywhere else.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    Icon(Icons.Default.Lock, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
                                 }
                                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                                     Icon(Icons.Outlined.Timer, null, tint = MaterialTheme.colorScheme.primary)
                                     Column(Modifier.weight(1f).padding(start = 12.dp)) {
-                                        Text("Disappearing messages", fontWeight = FontWeight.SemiBold)
-                                        Text("Outgoing messages hide after the selected time", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text(tr("Disappearing messages"), fontWeight = FontWeight.SemiBold)
+                                        Text(tr("Outgoing messages hide after the selected time"), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     }
                                     val expiryLabel = when (privacySettings.disappearingMessageSeconds) {
                                         10 -> "10 sec"
@@ -1704,14 +2276,16 @@ fun HomeScreen(
                                 }
                             }
                         }
+                        }
 
-                        Card(shape = RoundedCornerShape(28.dp), modifier = Modifier.fillMaxWidth()) {
+                        if (settingsPage == "notifications") {
+                        Card(shape = RoundedCornerShape(28.dp), modifier = Modifier.fillMaxWidth().bringIntoViewRequester(notificationsSectionRequester)) {
                             Column(Modifier.padding(16.dp)) {
-                                Text("Sounds & activity", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-                                Text("Control notification and live typing feedback.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(tr("Sounds & activity"), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                                Text(tr("Control notification and live typing feedback."), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                                     Icon(Icons.Outlined.NotificationsActive, null, tint = MaterialTheme.colorScheme.primary)
-                                    Text("Notification sounds", Modifier.padding(start = 12.dp).weight(1f))
+                                    Text(tr("Notification sounds"), Modifier.padding(start = 12.dp).weight(1f))
                                     Switch(
                                         checked = notificationSounds,
                                         onCheckedChange = { viewModel.updateSoundPreferences(it, typingSounds) }
@@ -1719,32 +2293,115 @@ fun HomeScreen(
                                 }
                                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                                     Icon(Icons.Outlined.Keyboard, null, tint = MaterialTheme.colorScheme.primary)
-                                    Text("Typing indicator sound", Modifier.padding(start = 12.dp).weight(1f))
+                                    Text(tr("Typing indicator sound"), Modifier.padding(start = 12.dp).weight(1f))
                                     Switch(
                                         checked = typingSounds,
                                         onCheckedChange = { viewModel.updateSoundPreferences(notificationSounds, it) }
                                     )
                                 }
-                                if (Build.VERSION.SDK_INT >= 34) {
-                                    val manager = context.getSystemService(android.app.NotificationManager::class.java)
-                                    if (!manager.canUseFullScreenIntent()) {
-                                        OutlinedButton(
-                                            onClick = {
-                                                context.startActivity(Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT).apply {
-                                                    data = Uri.parse("package:${context.packageName}")
-                                                })
-                                            }, modifier = Modifier.fillMaxWidth()
-                                        ) { Icon(Icons.Default.Call, null); Spacer(Modifier.width(8.dp)); Text("Allow full-screen incoming calls") }
+                                val notificationManager = androidx.core.app.NotificationManagerCompat.from(context)
+                                val systemNotificationManager = context.getSystemService(android.app.NotificationManager::class.java)
+                                val appNotificationsEnabled = notificationManager.areNotificationsEnabled()
+                                val callChannelImportance = if (Build.VERSION.SDK_INT >= 26) {
+                                    systemNotificationManager.getNotificationChannel("convo_calls_v4")?.importance
+                                        ?: android.app.NotificationManager.IMPORTANCE_HIGH
+                                } else android.app.NotificationManager.IMPORTANCE_HIGH
+                                val callChannelEnabled = callChannelImportance >= android.app.NotificationManager.IMPORTANCE_HIGH
+                                val fullScreenAllowed = Build.VERSION.SDK_INT < 34 || systemNotificationManager.canUseFullScreenIntent()
+                                val callAlertsReady = appNotificationsEnabled && callChannelEnabled && fullScreenAllowed
+                                Surface(
+                                    color = if (callAlertsReady) Color(0xFF1F7A4D).copy(alpha = .14f) else MaterialTheme.colorScheme.errorContainer.copy(alpha = .6f),
+                                    shape = RoundedCornerShape(16.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(if (callAlertsReady) Icons.Default.CheckCircle else Icons.Default.Warning, null, tint = if (callAlertsReady) Color(0xFF2CBF79) else MaterialTheme.colorScheme.error)
+                                        Spacer(Modifier.width(9.dp))
+                                        Column {
+                                            Text(if (callAlertsReady) "Lock-screen call alerts are enabled" else "Incoming-call access needs attention", fontWeight = FontWeight.Bold)
+                                            Text("Android can still choose a heads-up banner while the phone is unlocked.", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
                                     }
+                                }
+                                if (!appNotificationsEnabled) {
+                                    OutlinedButton(
+                                        onClick = {
+                                            val settingsIntent = if (Build.VERSION.SDK_INT >= 26) {
+                                                Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+                                            } else Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}"))
+                                            context.startActivity(settingsIntent)
+                                        }, modifier = Modifier.fillMaxWidth()
+                                    ) { Icon(Icons.Default.NotificationsActive, null); Spacer(Modifier.width(8.dp)); Text(tr("Enable app notifications")) }
+                                }
+                                if (Build.VERSION.SDK_INT >= 26 && !callChannelEnabled) {
+                                    OutlinedButton(
+                                        onClick = {
+                                            context.startActivity(Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS)
+                                                .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+                                                .putExtra(Settings.EXTRA_CHANNEL_ID, "convo_calls_v4"))
+                                        }, modifier = Modifier.fillMaxWidth()
+                                    ) { Icon(Icons.Default.Notifications, null); Spacer(Modifier.width(8.dp)); Text(tr("Enable incoming-call channel")) }
+                                }
+                                if (Build.VERSION.SDK_INT >= 34 && !fullScreenAllowed) {
+                                    OutlinedButton(
+                                        onClick = {
+                                            context.startActivity(Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT).apply {
+                                                data = Uri.parse("package:${context.packageName}")
+                                            })
+                                        }, modifier = Modifier.fillMaxWidth()
+                                    ) { Icon(Icons.Default.Call, null); Spacer(Modifier.width(8.dp)); Text(tr("Allow full-screen incoming calls")) }
                                 }
                             }
                         }
+                        }
 
-                        Card(shape = RoundedCornerShape(28.dp), modifier = Modifier.fillMaxWidth()) {
+                        if (settingsPage == "devices") {
+                        TwoFactorCard()
+                        Card(shape = RoundedCornerShape(26.dp), modifier = Modifier.fillMaxWidth()) {
+                            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Icons.Outlined.LaptopChromebook, null, tint = MaterialTheme.colorScheme.primary)
+                                    Spacer(Modifier.width(9.dp))
+                                    Text(if (appLanguage == "bn") "ওয়েব কম্প্যানিয়ন" else "Web companion", fontWeight = FontWeight.Bold)
+                                }
+                                Text(
+                                    if (appLanguage == "bn") "আপনার স্পষ্ট অনুমতিতে ৯০ সেকেন্ডের একবার-ব্যবহারযোগ্য কোড তৈরি হবে। ব্রাউজার সেশন ১২ ঘণ্টা থাকে; এই ফোন থেকে সব সেশন বাতিল করা যাবে।" else "Create a one-time 90-second code only when you choose. Browser sessions last 12 hours and can be revoked from this phone.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Button(
+                                    onClick = {
+                                        webPairLoading = true
+                                        viewModel.createWebCompanionPairing { pairing, error ->
+                                            webPairLoading = false
+                                            if (pairing != null) {
+                                                webPairCode = pairing.code
+                                                webPairUrl = pairing.companionUrl
+                                                webPairExpiresAt = pairing.expiresAt
+                                                showWebPairDialog = true
+                                            } else Toast.makeText(context, error.ifBlank { "Pairing failed" }, Toast.LENGTH_LONG).show()
+                                        }
+                                    },
+                                    enabled = !webPairLoading,
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    if (webPairLoading) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                                    else Icon(Icons.Outlined.LaptopChromebook, null)
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(if (appLanguage == "bn") "ব্রাউজার সংযোগ করুন" else "Link my browser")
+                                }
+                                OutlinedButton(onClick = { showRevokeWebDialog = true }, modifier = Modifier.fillMaxWidth()) {
+                                    Icon(Icons.Outlined.LinkOff, null)
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(if (appLanguage == "bn") "সব ওয়েব সেশন বাতিল করুন" else "Revoke all web sessions")
+                                }
+                            }
+                        }
+                        Card(shape = RoundedCornerShape(28.dp), modifier = Modifier.fillMaxWidth().bringIntoViewRequester(devicesSectionRequester)) {
                             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.Devices, null, tint = MaterialTheme.colorScheme.primary); Spacer(Modifier.width(9.dp)); Text("Devices & sessions", fontWeight = FontWeight.ExtraBold, modifier = Modifier.weight(1f)); IconButton(onClick = viewModel::refreshDeviceSessions) { Icon(Icons.Default.Refresh, "Refresh") } }
+                                Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.Devices, null, tint = MaterialTheme.colorScheme.primary); Spacer(Modifier.width(9.dp)); Text(tr("Devices & sessions"), fontWeight = FontWeight.ExtraBold, modifier = Modifier.weight(1f)); IconButton(onClick = viewModel::refreshDeviceSessions) { Icon(Icons.Default.Refresh, "Refresh") } }
                                 Text("Approximate city/region comes from the connection edge. Exact home location and full IP are not stored.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                if (deviceSessions.isEmpty()) TextButton(onClick = viewModel::refreshDeviceSessions) { Text("Load signed-in devices") }
+                                if (deviceSessions.isEmpty()) TextButton(onClick = viewModel::refreshDeviceSessions) { Text(tr("Load signed-in devices")) }
                                 deviceSessions.take(3).forEach { session ->
                                     DeviceSessionRow(session = session, onDelete = { deviceSessionPendingDelete = it })
                                 }
@@ -1757,25 +2414,69 @@ fun HomeScreen(
                                     TextButton(onClick = { showClearDeviceHistoryDialog = true }, modifier = Modifier.fillMaxWidth()) {
                                         Icon(Icons.Default.ClearAll, null)
                                         Spacer(Modifier.width(7.dp))
-                                        Text("Delete all device history")
+                                        Text(tr("Delete all device history"))
                                     }
                                 }
-                                Button(onClick = { viewModel.logout { onSignOut() } }, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Default.SwitchAccount, null); Spacer(Modifier.width(7.dp)); Text("Switch account") }
-                                OutlinedButton(onClick = { viewModel.logoutAllDevices { ok, message -> Toast.makeText(context, message, Toast.LENGTH_LONG).show(); if (ok) onSignOut() } }, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Default.Logout, null); Spacer(Modifier.width(7.dp)); Text("Log out all devices") }
+                                Button(onClick = { viewModel.logout { onSignOut() } }, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Default.SwitchAccount, null); Spacer(Modifier.width(7.dp)); Text(tr("Switch account")) }
+                                OutlinedButton(onClick = { viewModel.logoutAllDevices { ok, message -> Toast.makeText(context, message, Toast.LENGTH_LONG).show(); if (ok) onSignOut() } }, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Default.Logout, null); Spacer(Modifier.width(7.dp)); Text(tr("Log out all devices")) }
                                 TextButton(onClick = { showReportDialog = true }, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Default.ReportProblem, null); Spacer(Modifier.width(7.dp)); Text("Report a problem to AI/Admin") }
                             }
                         }
+                        }
 
+                        if (showWebPairDialog) {
+                            AlertDialog(
+                                onDismissRequest = { showWebPairDialog = false; webPairCode = "" },
+                                title = { Text(if (appLanguage == "bn") "ব্রাউজার পেয়ার করুন" else "Pair your browser") },
+                                text = {
+                                    Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                                        Text(if (appLanguage == "bn") "শুধু নিজের বিশ্বস্ত ব্রাউজারে এই কোডটি লিখুন। ৯০ সেকেন্ড পর কোডটি মেয়াদোত্তীর্ণ হবে।" else "Enter this code only in your own trusted browser. It expires in 90 seconds.")
+                                        Text(webPairCode, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.primary)
+                                        Text(webPairUrl, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text(
+                                            if (appLanguage == "bn") "মেয়াদ শেষ: ${SimpleDateFormat("h:mm:ss a", Locale.getDefault()).format(Date(webPairExpiresAt))}" else "Expires at ${SimpleDateFormat("h:mm:ss a", Locale.getDefault()).format(Date(webPairExpiresAt))}",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.tertiary
+                                        )
+                                        Text(if (appLanguage == "bn") "সেশন ১২ ঘণ্টা পর নিজে থেকে শেষ হবে। Account security থেকে সব ওয়েব সেশন বাতিল করতে পারবেন।" else "The browser session expires after 12 hours. Revoke every web session here at any time.", style = MaterialTheme.typography.bodySmall)
+                                        TextButton(onClick = {
+                                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                            clipboard.setPrimaryClip(ClipData.newPlainText("Convo Chat pairing code", webPairCode))
+                                            Toast.makeText(context, if (appLanguage == "bn") "কোড কপি হয়েছে" else "Pairing code copied", Toast.LENGTH_SHORT).show()
+                                        }) { Icon(Icons.Default.ContentCopy, null); Spacer(Modifier.width(6.dp)); Text(if (appLanguage == "bn") "কোড কপি করুন" else "Copy code") }
+                                    }
+                                },
+                                confirmButton = { TextButton(onClick = { showWebPairDialog = false; webPairCode = "" }) { Text(if (appLanguage == "bn") "সম্পন্ন" else "Done") } }
+                            )
+                        }
+                        if (showRevokeWebDialog) {
+                            AlertDialog(
+                                onDismissRequest = { if (!webRevokeLoading) showRevokeWebDialog = false },
+                                title = { Text(if (appLanguage == "bn") "সব ব্রাউজার সেশন বাতিল করবেন?" else "Revoke all web sessions?") },
+                                text = { Text(if (appLanguage == "bn") "সব পেয়ার করা ব্রাউজার সেশন সঙ্গে সঙ্গে বাতিল হবে।" else "Every paired browser session will be invalidated. You can link a browser again later.") },
+                                confirmButton = {
+                                    TextButton(enabled = !webRevokeLoading, onClick = {
+                                        webRevokeLoading = true
+                                        viewModel.revokeWebCompanionSessions { ok, message ->
+                                            webRevokeLoading = false
+                                            showRevokeWebDialog = false
+                                            Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+                                        }
+                                    }) { Text(if (appLanguage == "bn") "বাতিল করুন" else "Revoke all", color = MaterialTheme.colorScheme.error) }
+                                },
+                                dismissButton = { TextButton(enabled = !webRevokeLoading, onClick = { showRevokeWebDialog = false }) { Text(if (appLanguage == "bn") "ফিরে যান" else "Cancel") } }
+                            )
+                        }
                         if (showAllDeviceSessions) {
                             AlertDialog(
                                 onDismissRequest = { showAllDeviceSessions = false },
-                                title = { Text("All signed-in devices") },
+                                title = { Text(tr("All signed-in devices")) },
                                 text = {
                                     LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.heightIn(max = 520.dp)) {
                                         items(deviceSessions, key = { it.sessionId }) { session -> DeviceSessionRow(session = session, onDelete = { deviceSessionPendingDelete = it }) }
                                     }
                                 },
-                                confirmButton = { TextButton(onClick = { showAllDeviceSessions = false }) { Text("Done") } }
+                                confirmButton = { TextButton(onClick = { showAllDeviceSessions = false }) { Text(tr("Done")) } }
                             )
                         }
                         if (showClearDeviceHistoryDialog) {
@@ -1787,9 +2488,9 @@ fun HomeScreen(
                                     TextButton(onClick = {
                                         showClearDeviceHistoryDialog = false
                                         viewModel.clearDeviceSessions { _, message -> Toast.makeText(context, message, Toast.LENGTH_LONG).show() }
-                                    }) { Text("Delete all", color = MaterialTheme.colorScheme.error) }
+                                    }) { Text(tr("Delete all"), color = MaterialTheme.colorScheme.error) }
                                 },
-                                dismissButton = { TextButton(onClick = { showClearDeviceHistoryDialog = false }) { Text("Cancel") } }
+                                dismissButton = { TextButton(onClick = { showClearDeviceHistoryDialog = false }) { Text(tr("Cancel")) } }
                             )
                         }
                         deviceSessionPendingDelete?.let { session ->
@@ -1801,12 +2502,21 @@ fun HomeScreen(
                                     TextButton(onClick = {
                                         deviceSessionPendingDelete = null
                                         viewModel.deleteDeviceSession(session.sessionId) { ok, message -> Toast.makeText(context, message, Toast.LENGTH_LONG).show() }
-                                    }) { Text("Delete", color = MaterialTheme.colorScheme.error) }
+                                    }) { Text(tr("Delete"), color = MaterialTheme.colorScheme.error) }
                                 },
-                                dismissButton = { TextButton(onClick = { deviceSessionPendingDelete = null }) { Text("Cancel") } }
+                                dismissButton = { TextButton(onClick = { deviceSessionPendingDelete = null }) { Text(tr("Cancel")) } }
                             )
                         }
 
+                        if (settingsPage == "smart") {
+                            SmartSettingsPage()
+                        }
+
+                        if (settingsPage == "language") {
+                            LanguageSettingsPage()
+                        }
+
+                        if (settingsPage == "blocked") {
                         // 3. Blocked Users Management
                         val allUsers by viewModel.usersState.collectAsState()
                         currentUser?.let { user ->
@@ -1814,7 +2524,7 @@ fun HomeScreen(
                             Spacer(modifier = Modifier.height(16.dp))
                             Card(
                                 shape = RoundedCornerShape(28.dp),
-                                modifier = Modifier.fillMaxWidth(),
+                                modifier = Modifier.fillMaxWidth().bringIntoViewRequester(blockedSectionRequester),
                                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
                             ) {
                                 Column(modifier = Modifier.padding(16.dp)) {
@@ -1871,7 +2581,7 @@ fun HomeScreen(
                                                             }
                                                         }
                                                     ) {
-                                                        Text("Unblock", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
+                                                        Text(tr("Unblock"), color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
                                                     }
                                                 }
                                             }
@@ -1880,19 +2590,34 @@ fun HomeScreen(
                                 }
                             }
                         }
+                        }
                     }
                 }
                 6 -> {
-                    ReelsFeedScreen(
-                        posts = posts,
-                        users = allUsers,
-                        viewModel = viewModel,
-                        initialPostId = selectedReelPostId,
-                        onProfileSelected = onProfileSelected,
-                        onCreateReel = { viewModel.prepareComposer("reel"); onCreatePost() },
-                        onClose = { viewModel.setCurrentTab(0) }
-                    )
+                    if (!flagshipConfig.reelsEnabled && !isAdmin) {
+                        LaunchedEffect(Unit) { viewModel.setCurrentTab(0) }
+                    } else if (flagshipConfig.tiktokModeEnabled) {
+                        TikTokBrowserScreen(onClose = { viewModel.setCurrentTab(0) })
+                    } else {
+                        ReelsFeedScreen(
+                            posts = posts,
+                            users = allUsers,
+                            viewModel = viewModel,
+                            initialPostId = selectedReelPostId,
+                            onProfileSelected = onProfileSelected,
+                            onCreateReel = { viewModel.prepareComposer("reel"); onCreatePost() },
+                            onClose = { viewModel.setCurrentTab(0) }
+                        )
+                    }
                 }
+                7 -> AdminAnalyticsDashboard(
+                    users = allUsers,
+                    posts = posts,
+                    stories = stories,
+                    reports = adminReports,
+                    onRefreshReports = { viewModel.loadAdminReports() },
+                    onOpenControlCenter = { viewModel.setCurrentTab(3) }
+                )
                 5 -> {
                     var peopleQuery by remember { mutableStateOf("") }
                     val visiblePeople = allUsers.filter {
@@ -1904,15 +2629,15 @@ fun HomeScreen(
                     )
                     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
                         Spacer(Modifier.height(12.dp))
-                        Text("Discover people", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                        Text("Find new accounts and build your circle.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(tr("Discover people"), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                        Text(tr("Find new accounts and build your circle."), color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Spacer(Modifier.height(12.dp))
                         OutlinedTextField(
                             value = peopleQuery,
                             onValueChange = { peopleQuery = it },
                             modifier = Modifier.fillMaxWidth(),
                             leadingIcon = { Icon(Icons.Default.Search, null) },
-                            placeholder = { Text("Search people") },
+                            placeholder = { Text(tr("Search people")) },
                             singleLine = true,
                             shape = CircleShape
                         )
@@ -1934,23 +2659,23 @@ fun HomeScreen(
                                         Column(Modifier.weight(1f)) {
                                             Text(person.name, fontWeight = FontWeight.Bold)
                                             Text("@${person.username}", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
-                                            Text("${person.friends.size} friends", color = MaterialTheme.colorScheme.primary, fontSize = 11.sp)
+                                            MutualFriendsLine(person, currentUser?.friends?.toSet().orEmpty(), allUsers, fallback = "${person.friends.size} friends")
                                         }
                                         IconButton(onClick = { viewModel.toggleFollow(person) }) {
                                             Icon(if (isFollowing) Icons.Default.PersonRemove else Icons.Default.PersonAdd, if (isFollowing) "Unfollow" else "Follow", tint = MaterialTheme.colorScheme.primary)
                                         }
                                         when {
-                                            isFriend -> AssistChip(onClick = { onUserSelected(person) }, label = { Text("Message") })
+                                            isFriend -> AssistChip(onClick = { onUserSelected(person) }, label = { Text(tr("Message")) })
                                             isRequested -> OutlinedButton(onClick = {
                                                 viewModel.cancelFriendRequest(person.uid) { ok ->
                                                     Toast.makeText(context, if (ok) "Request cancelled" else "Could not cancel", Toast.LENGTH_SHORT).show()
                                                 }
-                                            }) { Text("Cancel") }
+                                            }) { Text(tr("Cancel")) }
                                             else -> Button(onClick = {
                                                 viewModel.sendFriendRequest(person) { _, message ->
                                                     Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
                                                 }
-                                            }) { Text("Add") }
+                                            }) { Text(tr("Add")) }
                                         }
                                     }
                                 }
@@ -1970,34 +2695,16 @@ fun HomeScreen(
                     .padding(16.dp)
             ) {
                 inAppNotification?.let { notif ->
-                    Card(
-                        shape = RoundedCornerShape(24.dp),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable {
-                                val target = users.find { it.uid == notif.senderId }
-                                if (target != null) {
-                                    onUserSelected(target)
-                                }
-                                viewModel.dismissInAppNotification()
-                            }
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(16.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(Icons.Default.Message, contentDescription = null, tint = MaterialTheme.colorScheme.onSecondaryContainer)
-                            Spacer(modifier = Modifier.width(12.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(notif.senderName, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSecondaryContainer)
-                                Text(notif.text, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSecondaryContainer)
-                            }
-                            IconButton(onClick = { viewModel.dismissInAppNotification() }) {
-                                Icon(Icons.Default.Close, contentDescription = "Dismiss")
-                            }
-                        }
-                    }
+                    val sender = users.find { it.uid == notif.senderId }
+                    InAppMessageBanner(
+                        data = notif,
+                        sender = sender,
+                        onOpen = {
+                            if (sender != null) onUserSelected(sender)
+                            viewModel.dismissInAppNotification()
+                        },
+                        onDismiss = { viewModel.dismissInAppNotification() }
+                    )
                 }
             }
         }
@@ -2005,23 +2712,72 @@ fun HomeScreen(
 
     // A valid published update has the highest priority. The dialog is truly
     // blocking for every non-admin user until PackageManager confirms install.
+    // A maintenance timer ends maintenance automatically for users when it reaches zero.
+    var maintenanceExpired by remember(flagshipConfig.maintenanceEndsAt) { mutableStateOf(false) }
+    LaunchedEffect(flagshipConfig.maintenanceEndsAt) {
+        val end = flagshipConfig.maintenanceEndsAt
+        if (end > 0L) {
+            val wait = end - System.currentTimeMillis()
+            if (wait > 0L) kotlinx.coroutines.delay(wait)
+            maintenanceExpired = true
+        }
+    }
+
+    if (coachTourActive && currentTab != 6) {
+        CoachMarkOverlay(CoachTour.homeSteps, onFinish = { coachTourActive = false })
+    }
+    if (showAppGuide) OfflineAppGuideDialog(onDismiss = { showAppGuide = false })
+    if (showVersionWelcome && !updateRequired && (!flagshipConfig.maintenanceMode || maintenanceExpired)) {
+        val welcomePrefs = remember(context) { context.getSharedPreferences("convo_update_welcome", Context.MODE_PRIVATE) }
+        val markWelcomeSeen = {
+            welcomePrefs.edit().putInt("seen_version_code", com.example.BuildConfig.VERSION_CODE).apply()
+            showVersionWelcome = false
+        }
+        AppVersionWelcomeDialog(
+            versionName = com.example.BuildConfig.VERSION_NAME,
+            onStartTour = {
+                markWelcomeSeen()
+                viewModel.setCurrentTab(0)
+                CoachTour.requestReplay()
+            },
+            onReadGuide = {
+                markWelcomeSeen()
+                CoachTour.markDone(context)
+                showAppGuide = true
+            },
+            onDismiss = {
+                markWelcomeSeen()
+                CoachTour.markDone(context)
+            }
+        )
+    }
+
     if (updateRequired) {
         FlagshipUpdateDialog(flagshipConfig, mandatory = true, onLater = {})
-    } else if (!isAdmin && flagshipConfig.maintenanceMode) {
-        Dialog(onDismissRequest = {}, properties = DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false)) {
-            Surface(shape = RoundedCornerShape(30.dp)) {
-                Column(Modifier.padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(Icons.Outlined.Construction, null, Modifier.size(54.dp), tint = MaterialTheme.colorScheme.primary)
-                    Spacer(Modifier.height(12.dp)); Text("Convo Chat maintenance", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                    Text(flagshipConfig.noticeBody.ifBlank { "We are preparing a better Convo Chat experience. Please try again later." }, textAlign = TextAlign.Center)
-                }
-            }
+    } else if (!isAdmin && flagshipConfig.maintenanceMode && !maintenanceExpired) {
+        Dialog(onDismissRequest = {}, properties = DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false, usePlatformDefaultWidth = false)) {
+            MaintenanceCountdownCard(
+                title = flagshipConfig.maintenanceTitle.ifBlank { "Convo Chat maintenance" },
+                message = flagshipConfig.noticeBody.ifBlank { "We are preparing a better Convo Chat experience. Please try again later." },
+                endsAt = flagshipConfig.maintenanceEndsAt,
+                startedAt = flagshipConfig.updatedAt
+            )
         }
     } else if (flagshipConfig.noticeEnabled && !dismissNotice && flagshipConfig.noticeTitle.isNotBlank()) {
         AnimatedGlobalNotice(
             title = flagshipConfig.noticeTitle,
             body = flagshipConfig.noticeBody,
             onDismiss = { dismissNotice = true }
+        )
+    }
+
+    if (showLockDisableConfirm) {
+        AlertDialog(
+            onDismissRequest = { showLockDisableConfirm = false },
+            title = { Text("Turn off app lock?") },
+            text = { Text("Your app PIN and biometric lock will be disabled on this device.") },
+            confirmButton = { TextButton(onClick = { AppLockManager.disable(context); lockEnabled = false; showLockDisableConfirm = false }) { Text("Turn off") } },
+            dismissButton = { TextButton(onClick = { showLockDisableConfirm = false }) { Text(tr("Cancel")) } }
         )
     }
 
@@ -2035,8 +2791,8 @@ fun HomeScreen(
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text("Choose a 4–8 digit PIN. Notification content will be hidden while lock is enabled.")
-                    OutlinedTextField(pin, { pin = it.filter(Char::isDigit).take(8) }, label = { Text("PIN") }, singleLine = true)
-                    OutlinedTextField(confirmPin, { confirmPin = it.filter(Char::isDigit).take(8) }, label = { Text("Confirm PIN") }, singleLine = true)
+                    OutlinedTextField(pin, { pin = it.filter(Char::isDigit).take(8) }, label = { Text(tr("PIN")) }, singleLine = true)
+                    OutlinedTextField(confirmPin, { confirmPin = it.filter(Char::isDigit).take(8) }, label = { Text(tr("Confirm PIN")) }, singleLine = true)
                     if (AppLockManager.canUseBiometric(context)) {
                         Row(verticalAlignment = Alignment.CenterVertically) { Text("Enable biometric unlock", Modifier.weight(1f)); Switch(biometric, { biometric = it }) }
                     }
@@ -2047,9 +2803,9 @@ fun HomeScreen(
                     if (pin == confirmPin && AppLockManager.setLock(context, pin, biometric)) {
                         lockEnabled = true; showLockSetup = false
                     } else Toast.makeText(context, "PINs must match and contain 4–8 digits", Toast.LENGTH_LONG).show()
-                }) { Text("Enable lock") }
+                }) { Text(tr("Enable lock")) }
             },
-            dismissButton = { TextButton(onClick = { showLockSetup = false }) { Text("Cancel") } }
+            dismissButton = { TextButton(onClick = { showLockSetup = false }) { Text(tr("Cancel")) } }
         )
     }
 
@@ -2060,6 +2816,10 @@ fun HomeScreen(
             onProfileSelected = {
                 showGlobalSearch = false
                 onProfileSelected(it)
+            },
+            onPostSelected = {
+                showGlobalSearch = false
+                onPostSelected(it)
             },
             onDismiss = { showGlobalSearch = false }
         )
@@ -2084,7 +2844,19 @@ fun HomeScreen(
         var groupName by remember { mutableStateOf("") }
         var groupPicUrl by remember { mutableStateOf("") }
         val selectedMembers = remember { mutableStateListOf<String>() }
+        var memberQuery by remember { mutableStateOf("") }
         var isUploadingGroupPic by remember { mutableStateOf(false) }
+        val memberFriendIds = remember(currentUser, allUsers) {
+            val me = currentUser
+            if (me == null) emptySet() else (me.friends + allUsers.filter { me.uid in it.friends }.map { it.uid }).toSet()
+        }
+        val selectableMembers = remember(allUsers, memberFriendIds, memberQuery) {
+            val query = memberQuery.trim().removePrefix("@").lowercase()
+            allUsers.asSequence().filter { it.uid in memberFriendIds }
+                .distinctBy { it.uid }
+                .filter { query.isBlank() || it.name.lowercase().contains(query) || it.username.lowercase().contains(query) }
+                .sortedBy { it.name.lowercase() }.toList()
+        }
 
         val imagePicker = rememberLauncherForActivityResult(
             contract = ActivityResultContracts.GetContent()
@@ -2119,7 +2891,7 @@ fun HomeScreen(
 
         AlertDialog(
             onDismissRequest = { showCreateGroupDialog = false },
-            title = { Text("Create a group", fontWeight = FontWeight.Bold) },
+            title = { Text(tr("Create a group"), fontWeight = FontWeight.Bold) },
             text = {
                 Column(
                     modifier = Modifier
@@ -2130,7 +2902,7 @@ fun HomeScreen(
                     OutlinedTextField(
                         value = groupName,
                         onValueChange = { groupName = it },
-                        placeholder = { Text("Group Name") },
+                        placeholder = { Text(tr("Group Name")) },
                         modifier = Modifier.fillMaxWidth()
                     )
 
@@ -2154,7 +2926,19 @@ fun HomeScreen(
                         CircularProgressIndicator(modifier = Modifier.size(24.dp))
                     }
 
-                    Text("Select Members:", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleSmall)
+                    Text("Select friends", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleSmall)
+                    OutlinedTextField(
+                        value = memberQuery,
+                        onValueChange = { memberQuery = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        leadingIcon = { Icon(Icons.Default.Search, null) },
+                        placeholder = { Text("Search friends") },
+                        singleLine = true,
+                        shape = RoundedCornerShape(16.dp)
+                    )
+                    if (selectableMembers.isEmpty()) {
+                        Text(if (memberFriendIds.isEmpty()) "Add friends before inviting people to a group." else "No friends match this search.", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                    }
 
                     LazyColumn(
                         modifier = Modifier
@@ -2162,7 +2946,7 @@ fun HomeScreen(
                             .weight(1f),
                         verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        items(users) { user ->
+                        items(selectableMembers, key = { it.uid }) { user ->
                             val isSelected = selectedMembers.contains(user.uid)
                             Row(
                                 modifier = Modifier
@@ -2199,12 +2983,12 @@ fun HomeScreen(
                     },
                     enabled = !isUploadingGroupPic
                 ) {
-                    Text("Create", fontWeight = FontWeight.Bold)
+                    Text(tr("Create"), fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showCreateGroupDialog = false }) {
-                    Text("Cancel")
+                    Text(tr("Cancel"))
                 }
             }
         )
@@ -2215,9 +2999,20 @@ fun HomeScreen(
     if (!showFunCampaign && showPremiumUpsell) AlertDialog(
         onDismissRequest = {},
         icon = { Icon(Icons.Default.WorkspacePremium, null, tint = Color(0xFFFFB300), modifier = Modifier.size(50.dp)) },
-        title = { Text("Unlock Convo Premium", fontWeight = FontWeight.Black) },
-        text = { Column(verticalArrangement = Arrangement.spacedBy(7.dp)) { Text("✨ Verified Premium badge"); Text("🤖 Advanced AI and smart tools"); Text("🎨 Exclusive Liquid Glass themes"); Text("📊 Story and creator insights"); Text("🎵 Custom call ringtone"); Text("💬 Priority Admin support") } },
-        confirmButton = { Button(onClick = { showPremiumUpsell = false; onPremium() }) { Text("View Premium") } },
+        title = { Text(tr("Unlock Convo Premium"), fontWeight = FontWeight.Black) },
+        text = { Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
+            listOf(
+                Icons.Default.Verified to "Verified Premium badge", Icons.Default.SmartToy to "Advanced AI and smart tools",
+                Icons.Default.Palette to "Exclusive Liquid Glass themes", Icons.Default.Insights to "Story and creator insights",
+                Icons.Default.MusicNote to "Custom call ringtone", Icons.Default.SupportAgent to "Priority Admin support"
+            ).forEach { (icon, label) ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(28.dp).clip(RoundedCornerShape(9.dp)).background(Brush.linearGradient(listOf(Color(0xFFFFC233), Color(0xFFFF7A59)))), contentAlignment = Alignment.Center) { Icon(icon, null, tint = Color.White, modifier = Modifier.size(16.dp)) }
+                    Spacer(Modifier.width(10.dp)); Text(label)
+                }
+            }
+        } },
+        confirmButton = { Button(onClick = { showPremiumUpsell = false; onPremium() }) { Text(tr("View Premium")) } },
         dismissButton = { TextButton(onClick = { currentUser?.uid?.let { upsellPrefs.edit().putBoolean("dismissed_$it", true).apply() }; showPremiumUpsell = false }) { Text("Skip forever") } }
     )
 
@@ -2225,9 +3020,9 @@ fun HomeScreen(
         AlertDialog(
             onDismissRequest = {},
             icon = { Icon(Icons.Default.WorkspacePremium, null, tint = Color(0xFFFFB300), modifier = Modifier.size(54.dp)) },
-            title = { Text("🎉 Congratulations!", fontWeight = FontWeight.Black, textAlign = TextAlign.Center) },
+            title = { Text("Congratulations!", fontWeight = FontWeight.Black, textAlign = TextAlign.Center) },
             text = { Column(horizontalAlignment = Alignment.CenterHorizontally) { Text("${premiumUser.name}, Convo Chat Premium is active!", textAlign = TextAlign.Center); Spacer(Modifier.height(10.dp)); val days = if (premiumUser.premiumPlan == "lifetime") "Lifetime" else "${((premiumUser.premiumUntil - System.currentTimeMillis()).coerceAtLeast(0) / 86_400_000L) + 1} days remaining"; Text(days, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.ExtraBold); if (premiumUser.premiumPlan == "trial") { Spacer(Modifier.height(8.dp)); Text("Your one-time 14-day free trial has started.", textAlign = TextAlign.Center) } } },
-            confirmButton = { Button(onClick = { premiumWelcomeKey?.let { context.getSharedPreferences("convo_premium_welcome", Context.MODE_PRIVATE).edit().putBoolean(it, true).apply() }; showPremiumWelcome = false }) { Text("Explore Premium") } }
+            confirmButton = { Button(onClick = { premiumWelcomeKey?.let { context.getSharedPreferences("convo_premium_welcome", Context.MODE_PRIVATE).edit().putBoolean(it, true).apply() }; showPremiumWelcome = false }) { Text(tr("Explore Premium")) } }
         )
     }
 
@@ -2237,13 +3032,22 @@ fun HomeScreen(
         AlertDialog(
             onDismissRequest = { showReportDialog = false },
             title = { Text("Report to Convo AI & Admin", fontWeight = FontWeight.ExtraBold) },
-            text = { Column(verticalArrangement = Arrangement.spacedBy(9.dp)) { Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) { listOf("app_problem", "user", "post", "safety").forEach { FilterChip(category == it, { category = it }, { Text(it.replace('_',' ')) }) } }; OutlinedTextField(details, { details = it.take(3000) }, label = { Text("What happened?") }, minLines = 5, modifier = Modifier.fillMaxWidth()); Text("AI can help diagnose the issue; submitting sends it to ADMIN RAKIB.", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp) } },
-            confirmButton = { Button(onClick = { viewModel.submitUserReport("", category, details) { ok, message -> Toast.makeText(context, message, Toast.LENGTH_LONG).show(); if (ok) showReportDialog = false } }, enabled = details.length >= 10) { Text("Submit report") } },
-            dismissButton = { TextButton(onClick = { showReportDialog = false }) { Text("Cancel") } }
+            text = { Column(verticalArrangement = Arrangement.spacedBy(9.dp)) { Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) { listOf("app_problem", "user", "post", "safety").forEach { FilterChip(category == it, { category = it }, { Text(it.replace('_',' ')) }) } }; OutlinedTextField(details, { details = it.take(3000) }, label = { Text(tr("What happened?")) }, minLines = 5, modifier = Modifier.fillMaxWidth()); Text("AI can help diagnose the issue; submitting sends it to ADMIN RAKIB.", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp) } },
+            confirmButton = { Button(onClick = { viewModel.submitUserReport("", category, details) { ok, message -> Toast.makeText(context, message, Toast.LENGTH_LONG).show(); if (ok) showReportDialog = false } }, enabled = details.length >= 10) { Text(tr("Submit report")) } },
+            dismissButton = { TextButton(onClick = { showReportDialog = false }) { Text(tr("Cancel")) } }
         )
     }
 
-    if (accountBanned) AlertDialog(onDismissRequest = {}, title = { Text("Account suspended") }, text = { Text("This account was disabled by ADMIN RAKIB after review. Contact support from another account if you believe this is a mistake.") }, confirmButton = { Button(onClick = { viewModel.logout { onSignOut() } }) { Text("Sign out") } })
+    mfaGate?.let { gate ->
+        if (!forcedLogout && !accountBanned) MfaGateDialog(
+            method = gate.method.ifBlank { "email" },
+            maskedEmail = gate.email.ifBlank { "your e-mail" },
+            onVerified = { viewModel.mfaVerified() },
+            onSignOut = { viewModel.logout { onSignOut() } }
+        )
+    }
+    if (forcedLogout && !accountBanned) AlertDialog(onDismissRequest = {}, icon = { Icon(Icons.Default.Logout, null) }, title = { Text("Signed out by admin") }, text = { Text("For security, this session was ended by the administrator. Please sign in again.") }, confirmButton = { Button(onClick = { viewModel.logout { onSignOut() } }) { Text(tr("Sign in again")) } })
+    if (accountBanned) AlertDialog(onDismissRequest = {}, title = { Text(tr("Account suspended")) }, text = { Text("This account was disabled by ADMIN RAKIB after review. Contact support from another account if you believe this is a mistake.") }, confirmButton = { Button(onClick = { viewModel.logout { onSignOut() } }) { Text(tr("Sign out")) } })
 
     if (showAnalytics) {
         AccountAnalyticsSheet(currentUser = currentUser, posts = posts.filter { it.senderId == currentUser?.uid }, onDismiss = { showAnalytics = false })
@@ -2281,29 +3085,31 @@ fun SmartSearchDialog(
     users: List<User>,
     posts: List<Post>,
     onProfileSelected: (User) -> Unit,
+    onPostSelected: (Post) -> Unit,
     onDismiss: () -> Unit
 ) {
     var query by remember { mutableStateOf("") }
     var searchFilter by remember { mutableStateOf("All") }
-    var fullScreenVideo by remember { mutableStateOf<String?>(null) }
     val normalized = query.trim()
-    val matchedUsers = if (normalized.isBlank() || (searchFilter != "All" && searchFilter != "People")) emptyList() else users.filter {
-        it.name.contains(normalized, true) || it.username.contains(normalized, true) || it.bio.contains(normalized, true)
+    val searchContext = LocalContext.current
+    var recentSearches by remember { mutableStateOf(SmartSearch.recent(searchContext)) }
+    val trendingTags = remember(posts) { SmartSearch.trendingTags(posts) }
+    val parsedQuery = remember(normalized) { SmartSearch.parse(normalized) }
+    fun rememberQuery() { SmartSearch.remember(searchContext, normalized); recentSearches = SmartSearch.recent(searchContext) }
+    val matchedUsers = remember(parsedQuery, users, searchFilter) {
+        if (normalized.isBlank() || (searchFilter != "All" && searchFilter != "People")) emptyList() else SmartSearch.rankUsers(parsedQuery, users).take(30)
     }
-    val matchedPosts = if (normalized.isBlank() || searchFilter == "People") emptyList() else posts.filter { post ->
-        if (post.isAdminReel && !post.postEverywhere) return@filter false
-        val textMatch = post.title.contains(normalized, true) || post.text.contains(normalized, true) ||
-            post.feeling.contains(normalized, true) || post.tags.any { it.contains(normalized.removePrefix("#"), true) }
-        val mediaMatch = when (searchFilter) {
-            "Photos" -> post.imageUrl.isNotBlank() || post.imageUrls.isNotEmpty()
-            "Videos" -> post.videoUrl.isNotBlank() || post.isReel
-            "Audio" -> post.audioUrl.isNotBlank()
-            else -> true
-        }
-        textMatch && mediaMatch
+    val matchedPosts = remember(parsedQuery, posts, searchFilter) {
+        if (normalized.isBlank() || searchFilter == "People") emptyList() else SmartSearch.rankPosts(parsedQuery, posts.filter { post ->
+            if (post.isAdminReel && !post.postEverywhere) return@filter false
+            when (searchFilter) {
+                "Photos" -> post.imageUrl.isNotBlank() || post.imageUrls.isNotEmpty()
+                "Videos" -> post.videoUrl.isNotBlank() || post.isReel
+                "Audio" -> post.audioUrl.isNotBlank()
+                else -> true
+            }
+        }).take(60)
     }
-    fullScreenVideo?.let { FullScreenVideoPlayer(it) { fullScreenVideo = null } }
-
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing), color = MaterialTheme.colorScheme.background) {
             Column {
@@ -2312,7 +3118,9 @@ fun SmartSearchDialog(
                         value = query,
                         onValueChange = { query = it },
                         modifier = Modifier.weight(1f),
-                        placeholder = { Text("Search people, posts, videos and photos") },
+                        placeholder = { Text("Search • @people • #tags") },
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = androidx.compose.ui.text.input.ImeAction.Search),
+                        keyboardActions = androidx.compose.foundation.text.KeyboardActions(onSearch = { rememberQuery() }),
                         leadingIcon = { Icon(Icons.Default.Search, null) },
                         trailingIcon = {
                             if (query.isNotEmpty()) IconButton(onClick = { query = "" }) { Icon(Icons.Default.Close, "Clear") }
@@ -2335,32 +3143,82 @@ fun SmartSearchDialog(
                     }
                 }
                 if (normalized.isBlank()) {
-                    Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-                        Icon(Icons.Outlined.ManageSearch, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(68.dp))
-                        Text("Search everything", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                        Text("People • Posts • Videos • Photos", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                        if (recentSearches.isNotEmpty()) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(tr("Recent"), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                                TextButton(onClick = { SmartSearch.clear(searchContext); recentSearches = emptyList() }) { Text(tr("Clear all")) }
+                            }
+                            recentSearches.forEach { recent ->
+                                Row(
+                                    Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).clickable { query = recent }.padding(horizontal = 6.dp, vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(Icons.Default.History, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Spacer(Modifier.width(10.dp))
+                                    Text(recent, Modifier.weight(1f))
+                                    IconButton(onClick = { SmartSearch.forget(searchContext, recent); recentSearches = SmartSearch.recent(searchContext) }, modifier = Modifier.size(28.dp)) {
+                                        Icon(Icons.Default.Close, "Remove", modifier = Modifier.size(16.dp))
+                                    }
+                                }
+                            }
+                        }
+                        if (trendingTags.isNotEmpty()) {
+                            Text(tr("Trending this week"), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                trendingTags.forEach { tag ->
+                                    AssistChip(onClick = { query = "#$tag" }, label = { Text("#$tag") }, leadingIcon = { Icon(Icons.Default.TrendingUp, null, Modifier.size(16.dp)) })
+                                }
+                            }
+                        }
+                        val onlinePeople = remember(users) { users.filter { it.isOnline && (it.onlineUntil <= 0L || it.onlineUntil > System.currentTimeMillis()) }.take(12) }
+                        if (onlinePeople.isNotEmpty()) {
+                            Text(tr("Active now"), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                onlinePeople.forEach { person ->
+                                    Column(Modifier.width(64.dp).clickable { onProfileSelected(person) }, horizontalAlignment = Alignment.CenterHorizontally) {
+                                        Box {
+                                            AsyncImage(person.profileImageUrl.ifBlank { null }, person.name, error = painterResource(R.drawable.img_app_logo), contentScale = ContentScale.Crop, modifier = Modifier.size(54.dp).clip(CircleShape))
+                                            Box(Modifier.align(Alignment.BottomEnd).size(14.dp).clip(CircleShape).background(MaterialTheme.colorScheme.background).padding(2.dp).clip(CircleShape).background(Color(0xFF22C55E)))
+                                        }
+                                        Text(person.name.substringBefore(' '), fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    }
+                                }
+                            }
+                        }
+                        Column(Modifier.fillMaxWidth().padding(top = 18.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                            Icon(Icons.Outlined.ManageSearch, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(56.dp))
+                            Text(tr("Search everything"), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                            Text("Type @name for people, #tag for hashtags. Small typos are OK.", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp, textAlign = TextAlign.Center)
+                        }
+                    }
+                } else if (matchedUsers.isEmpty() && matchedPosts.isEmpty()) {
+                    Column(Modifier.fillMaxSize().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                        Icon(Icons.Default.SearchOff, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(56.dp))
+                        Text("No results for “$normalized”", fontWeight = FontWeight.Bold)
+                        Text("Try fewer words, another spelling, or a different filter.", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp, textAlign = TextAlign.Center)
                     }
                 } else {
                     LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         if (matchedUsers.isNotEmpty()) {
-                            item { Text("People", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary) }
+                            item { Text(tr("People"), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary) }
                             items(matchedUsers, key = { "search_user_${it.uid}" }) { user ->
                                 Row(
-                                    Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).clickable { onProfileSelected(user) }
+                                    Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).clickable { rememberQuery(); onProfileSelected(user) }
                                         .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .45f)).padding(10.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     AsyncImage(user.profileImageUrl.ifBlank { null }, user.name, error = painterResource(R.drawable.img_app_logo), modifier = Modifier.size(46.dp).clip(CircleShape))
                                     Spacer(Modifier.width(10.dp))
-                                    Column { Text(user.name, fontWeight = FontWeight.Bold); Text("@${user.username}", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                                    Column { Text(user.name, fontWeight = FontWeight.Bold); Text("@${user.username}", color = MaterialTheme.colorScheme.onSurfaceVariant); MutualFriendsLine(user, Mentions.friendIds, users) }
                                 }
                             }
                         }
                         if (matchedPosts.isNotEmpty()) {
-                            item { Text("Posts & media", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary) }
+                            item { Text(tr("Posts & media"), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary) }
                             items(matchedPosts, key = { "search_post_${it.id}" }) { post ->
                                 Card(
-                                    onClick = { if (post.videoUrl.isNotBlank()) fullScreenVideo = post.videoUrl },
+                                    onClick = { rememberQuery(); onPostSelected(post) },
                                     shape = RoundedCornerShape(22.dp)
                                 ) {
                                     Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -2383,7 +3241,7 @@ fun SmartSearchDialog(
                                             Text(post.text, maxLines = 2, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                             when {
                                                 post.videoUrl.isNotBlank() || post.isReel -> Text("Video • tap to play", color = MaterialTheme.colorScheme.primary, fontSize = 11.sp)
-                                                post.imageUrl.isNotBlank() || post.imageUrls.isNotEmpty() -> Text("Photo", color = MaterialTheme.colorScheme.primary, fontSize = 11.sp)
+                                                post.imageUrl.isNotBlank() || post.imageUrls.isNotEmpty() -> Text(tr("Photo"), color = MaterialTheme.colorScheme.primary, fontSize = 11.sp)
                                                 post.audioUrl.isNotBlank() -> Text("Audio post", color = MaterialTheme.colorScheme.primary, fontSize = 11.sp)
                                             }
                                         }
@@ -2431,7 +3289,7 @@ fun ActivityCenterDialog(
                     Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 12.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Activity", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                    Text(tr("Activity"), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                     IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, "Close") }
                 }
                 if (notifications.isEmpty() && requests.isEmpty() && messageRequests.isEmpty()) {
@@ -2442,7 +3300,7 @@ fun ActivityCenterDialog(
                     ) {
                         Icon(Icons.Outlined.NotificationsNone, null, Modifier.size(64.dp), tint = MaterialTheme.colorScheme.primary.copy(alpha = .5f))
                         Spacer(Modifier.height(12.dp))
-                        Text("No activity yet", fontWeight = FontWeight.Bold)
+                        Text(tr("No activity yet"), fontWeight = FontWeight.Bold)
                         Text("Likes, comments, views and requests appear here.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 } else {
@@ -2451,7 +3309,7 @@ fun ActivityCenterDialog(
                         verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         if (requests.isNotEmpty()) {
-                            item { Text("Friend requests", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary) }
+                            item { Text(tr("Friend requests"), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary) }
                             items(requests, key = { "request_${it.id}" }) { request ->
                                 Card(shape = RoundedCornerShape(24.dp)) {
                                     Column(Modifier.padding(14.dp)) {
@@ -2465,20 +3323,20 @@ fun ActivityCenterDialog(
                                             Spacer(Modifier.width(12.dp))
                                             Column(Modifier.weight(1f)) {
                                                 Text(request.senderName, fontWeight = FontWeight.Bold)
-                                                Text("sent you a friend request", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                                Text(tr("sent you a friend request"), color = MaterialTheme.colorScheme.onSurfaceVariant)
                                             }
                                         }
                                         Spacer(Modifier.height(10.dp))
                                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                            Button(onClick = { onAccept(request) }, modifier = Modifier.weight(1f)) { Text("Accept") }
-                                            OutlinedButton(onClick = { onReject(request) }, modifier = Modifier.weight(1f)) { Text("Delete") }
+                                            Button(onClick = { onAccept(request) }, modifier = Modifier.weight(1f)) { Text(tr("Accept")) }
+                                            OutlinedButton(onClick = { onReject(request) }, modifier = Modifier.weight(1f)) { Text(tr("Delete")) }
                                         }
                                     }
                                 }
                             }
                         }
                         if (messageRequests.isNotEmpty()) {
-                            item { Text("Message requests", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary) }
+                            item { Text(tr("Message requests"), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary) }
                             items(messageRequests, key = { "message_request_${it.id}" }) { request ->
                                 var quickReply by remember(request.id) { mutableStateOf("") }
                                 Card(shape = RoundedCornerShape(24.dp)) {
@@ -2488,14 +3346,14 @@ fun ActivityCenterDialog(
                                         OutlinedTextField(quickReply, { quickReply = it.take(600) }, placeholder = { Text("Reply to auto-accept…") }, modifier = Modifier.fillMaxWidth(), maxLines = 3, shape = RoundedCornerShape(18.dp))
                                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                             Button(onClick = { if (quickReply.isNotBlank()) onReplyMessage(request, quickReply) else onAcceptMessage(request) }, modifier = Modifier.weight(1f)) { Text(if (quickReply.isBlank()) "Accept" else "Reply & Accept") }
-                                            OutlinedButton(onClick = { onRejectMessage(request) }, modifier = Modifier.weight(1f)) { Text("Delete") }
+                                            OutlinedButton(onClick = { onRejectMessage(request) }, modifier = Modifier.weight(1f)) { Text(tr("Delete")) }
                                         }
                                     }
                                 }
                             }
                         }
                         if (notifications.isNotEmpty()) {
-                            item { Text("Recent activity", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary) }
+                            item { Text(tr("Recent activity"), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary) }
                             items(notifications, key = { "activity_${it.id}" }) { item ->
                                 val icon = when (item.type) {
                                     "post_reaction", "story_reaction" -> Icons.Outlined.Favorite
@@ -2572,7 +3430,7 @@ fun FullScreenStoryViewer(
                 ) {
                     Icon(Icons.Outlined.CheckCircle, null, tint = Color.White, modifier = Modifier.size(64.dp))
                     Spacer(Modifier.height(16.dp))
-                    Text("No more stories", color = Color.White, style = MaterialTheme.typography.headlineSmall)
+                    Text(tr("No more stories"), color = Color.White, style = MaterialTheme.typography.headlineSmall)
                     Spacer(Modifier.height(8.dp))
                     Text("Tap to view the previous story", color = Color.White.copy(alpha = .65f))
                 }
@@ -2726,7 +3584,7 @@ fun FullScreenStoryViewer(
                         OutlinedTextField(
                             value = replyText,
                             onValueChange = { replyText = it },
-                            placeholder = { Text("Reply to story…", color = Color.White.copy(alpha = .7f)) },
+                            placeholder = { Text(tr("Reply to story…"), color = Color.White.copy(alpha = .7f)) },
                             modifier = Modifier.weight(1f),
                             singleLine = true,
                             shape = CircleShape,
@@ -2777,14 +3635,14 @@ fun ReelsFeedScreen(
         Column(Modifier.fillMaxSize().background(Color.Black).windowInsetsPadding(WindowInsets.statusBars).padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = onClose) { Icon(Icons.Default.ArrowBack, "Back", tint = Color.White) }
-                Text("Reels", color = Color.White, fontWeight = FontWeight.Black, fontSize = 27.sp, modifier = Modifier.weight(1f))
+                Text(tr("Reels"), color = Color.White, fontWeight = FontWeight.Black, fontSize = 27.sp, modifier = Modifier.weight(1f))
                 IconButton(onClick = onCreateReel) { Icon(Icons.Default.Add, "Create reel", tint = Color.White) }
             }
             Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
                 Icon(Icons.Outlined.VideoLibrary, null, Modifier.size(72.dp), tint = MaterialTheme.colorScheme.primary)
-                Spacer(Modifier.height(12.dp)); Text("No reels yet", color = Color.White, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(12.dp)); Text(tr("No reels yet"), color = Color.White, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                 Text("Create a reel or switch feed.", color = Color.White.copy(.65f), textAlign = TextAlign.Center)
-                Spacer(Modifier.height(12.dp)); Button(onClick = onCreateReel) { Icon(Icons.Default.Add, null); Spacer(Modifier.width(6.dp)); Text("Create Reel") }
+                Spacer(Modifier.height(12.dp)); Button(onClick = onCreateReel) { Icon(Icons.Default.Add, null); Spacer(Modifier.width(6.dp)); Text(tr("Create Reel")) }
             }
         }
         return
@@ -2804,7 +3662,7 @@ fun ReelsFeedScreen(
             val source = reels[page % reels.size]
             ImmersiveVideoPage(
                 post = source, owner = users.find { it.uid == source.senderId },
-                isActive = pager.currentPage == page, viewModel = viewModel,
+                isActive = pager.currentPage == page, viewModel = viewModel, pageKey = page,
                 onProfileSelected = { user -> VideoPlayerManager.pause(); onProfileSelected(user) }
             )
         }
@@ -2847,7 +3705,7 @@ fun VerticalVideoFeedDialog(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Surface(color = Color.Black.copy(alpha = .36f), shape = CircleShape) {
-                    Text("Videos", color = Color.White, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 16.dp, vertical = 9.dp))
+                    Text(tr("Videos"), color = Color.White, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 16.dp, vertical = 9.dp))
                 }
                 Spacer(Modifier.weight(1f))
                 IconButton(onClick = onDismiss, modifier = Modifier.background(Color.Black.copy(alpha = .42f), CircleShape)) {
@@ -2865,7 +3723,8 @@ private fun ImmersiveVideoPage(
     owner: User?,
     isActive: Boolean,
     viewModel: ChatViewModel,
-    onProfileSelected: (User) -> Unit
+    onProfileSelected: (User) -> Unit,
+    pageKey: Int = 0
 ) {
     val context = LocalContext.current
     var isPaused by remember(post.id) { mutableStateOf(false) }
@@ -2891,7 +3750,7 @@ private fun ImmersiveVideoPage(
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         when {
             post.videoUrl.isNotBlank() -> SharedCachedVideo(
-                ownerId = "reel_${post.id}", videoUrl = post.videoUrl,
+                ownerId = "reel_${post.id}_$pageKey", videoUrl = post.videoUrl,
                 thumbnailUrl = post.thumbnailUrl.ifBlank { post.imageUrl }, active = isActive,
                 playWhenReady = isActive && !isPaused, sound = true, modifier = Modifier.fillMaxSize()
             )
@@ -2979,6 +3838,7 @@ private fun ImmersiveVideoPage(
         }
     }
 
+    var reelStickersOpen by remember(post.id) { mutableStateOf(false) }
     if (showComments) {
         val commentsSheet = rememberModalBottomSheetState(skipPartiallyExpanded = false)
         ModalBottomSheet(
@@ -2990,12 +3850,12 @@ private fun ImmersiveVideoPage(
         ) {
             Column(Modifier.fillMaxWidth().heightIn(min = 360.dp, max = 560.dp).padding(horizontal = 16.dp).padding(bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Comments", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold, modifier = Modifier.weight(1f))
+                    Text(tr("Comments"), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold, modifier = Modifier.weight(1f))
                     Text(post.comments.size.toString(), color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
                 }
                 HorizontalDivider()
                 LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (post.comments.isEmpty()) item { Box(Modifier.fillParentMaxWidth().padding(36.dp), contentAlignment = Alignment.Center) { Text("No comments yet — start the conversation", color = MaterialTheme.colorScheme.onSurfaceVariant) } }
+                    if (post.comments.isEmpty()) item { Box(Modifier.fillParentMaxWidth().padding(36.dp), contentAlignment = Alignment.Center) { Text(tr("No comments yet — start the conversation"), color = MaterialTheme.colorScheme.onSurfaceVariant) } }
                     items(post.comments, key = { it.commentId }) { item ->
                         val person = if (item.senderId == currentUser?.uid) currentUser else commentUsers.find { it.uid == item.senderId }
                         Row(verticalAlignment = Alignment.Top) {
@@ -3005,10 +3865,10 @@ private fun ImmersiveVideoPage(
                                 Column(Modifier.padding(11.dp)) {
                                     Text(item.senderName, fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.primary, modifier = Modifier.clickable { person?.let(onProfileSelected) })
                                     if (item.replyToName.isNotBlank()) Text("Replying to ${item.replyToName}", color = MaterialTheme.colorScheme.secondary, fontSize = 9.sp)
-                                    Spacer(Modifier.height(2.dp)); Text(item.text)
+                                    Spacer(Modifier.height(2.dp)); CommentBody(item.text)
                                     Row(verticalAlignment = Alignment.CenterVertically) {
-                                        TextButton(onClick = { viewModel.reactToPostComment(post.id,item.commentId) }, contentPadding = PaddingValues(horizontal=4.dp)) { Text(if (item.reactions.containsKey(currentUser?.uid.orEmpty())) "♥ ${item.reactions.size}" else "♡ ${item.reactions.size}") }
-                                        TextButton(onClick = { replyingToComment = item }, contentPadding = PaddingValues(horizontal=6.dp)) { Text("Reply") }
+                                        CommentReactionControl(item.reactions, currentUser?.uid.orEmpty()) { emoji -> viewModel.reactToPostComment(post.id, item.commentId, emoji) }
+                                        TextButton(onClick = { replyingToComment = item }, contentPadding = PaddingValues(horizontal=6.dp)) { Text(tr("Reply")) }
                                     }
                                 }
                             }
@@ -3016,9 +3876,16 @@ private fun ImmersiveVideoPage(
                     }
                 }
                 replyingToComment?.let { target -> AssistChip(onClick = { replyingToComment = null }, label = { Text("Replying to ${target.senderName} • tap to cancel") }, leadingIcon = { Icon(Icons.Default.Reply,null) }) }
+                CommentStickerTray(reelStickersOpen) { token ->
+                    val target = replyingToComment
+                    viewModel.commentOnPost(post.id, token, target?.commentId.orEmpty(), target?.senderName.orEmpty())
+                    replyingToComment = null; reelStickersOpen = false
+                }
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    OutlinedTextField(comment, { comment = it.take(600) }, modifier = Modifier.weight(1f), placeholder = { Text(if(replyingToComment==null)"Add a comment…" else "Write a reply…") }, maxLines = 3, shape = RoundedCornerShape(24.dp))
+                    AsyncImage(currentUser?.profileImageUrl?.ifBlank { null }, "Me", error = painterResource(R.drawable.img_app_logo), contentScale = ContentScale.Crop, modifier = Modifier.size(34.dp).clip(CircleShape))
                     Spacer(Modifier.width(6.dp))
+                    OutlinedTextField(comment, { comment = it.take(600) }, modifier = Modifier.weight(1f), placeholder = { Text(if(replyingToComment==null)"Add a comment…" else "Write a reply…") }, maxLines = 3, shape = RoundedCornerShape(24.dp))
+                    CommentStickerToggle(reelStickersOpen) { reelStickersOpen = !reelStickersOpen }
                     FilledIconButton(onClick = { if (comment.isNotBlank()) { val target=replyingToComment; viewModel.commentOnPost(post.id, comment.trim(), target?.commentId.orEmpty(), target?.senderName.orEmpty()); comment = ""; replyingToComment=null } }) { Icon(Icons.Default.Send, "Send") }
                 }
             }
@@ -3120,7 +3987,7 @@ private fun AnimatedGlobalNotice(title: String, body: String, onDismiss: () -> U
                         Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Black, modifier = Modifier.weight(1f))
                     }
                     Text(body, color = MaterialTheme.colorScheme.onSurfaceVariant, lineHeight = 21.sp)
-                    Button(onClick = onDismiss, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp)) { Text("Got it") }
+                    Button(onClick = onDismiss, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp)) { Text(tr("Got it")) }
                 }
             }
         }
@@ -3252,7 +4119,7 @@ private fun SuggestedPeopleStrip(
         Column(Modifier.padding(vertical = 12.dp)) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Default.PersonSearch, null, tint = MaterialTheme.colorScheme.primary)
-                Spacer(Modifier.width(8.dp)); Text("Suggested for you", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.ExtraBold, modifier = Modifier.weight(1f))
+                Spacer(Modifier.width(8.dp)); Text(tr("Suggested for you"), color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.ExtraBold, modifier = Modifier.weight(1f))
                 Text("Smart matches", color = MaterialTheme.colorScheme.primary, fontSize = 10.sp)
             }
             Spacer(Modifier.height(9.dp))
@@ -3278,7 +4145,7 @@ private fun SuggestedPeopleStrip(
                             }
                             Text(if (mutual > 0) "$mutual mutual friends" else "@${person.username}", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
                             Spacer(Modifier.height(7.dp))
-                            Button(onClick = { onFollow(person) }, modifier = Modifier.fillMaxWidth().height(34.dp), contentPadding = PaddingValues(0.dp), shape = CircleShape) { Text("Follow", fontSize = 11.sp) }
+                            Button(onClick = { onFollow(person) }, modifier = Modifier.fillMaxWidth().height(34.dp), contentPadding = PaddingValues(0.dp), shape = CircleShape) { Text(tr("Follow"), fontSize = 11.sp) }
                         }
                     }
                 }
@@ -3365,7 +4232,7 @@ fun StoriesHorizontalSection(
     if (showAddStoryDialog) {
         AlertDialog(
             onDismissRequest = { showAddStoryDialog = false },
-            title = { Text("Add Story", fontWeight = FontWeight.Bold) },
+            title = { Text(tr("Add Story"), fontWeight = FontWeight.Bold) },
             text = { Text("Choose what type of story you want to share:") },
             confirmButton = {
                 Button(onClick = {
@@ -3374,7 +4241,7 @@ fun StoriesHorizontalSection(
                 }) {
                     Icon(Icons.Default.Photo, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text("Photo Story")
+                    Text(tr("Photo Story"))
                 }
             },
             dismissButton = {
@@ -3387,7 +4254,7 @@ fun StoriesHorizontalSection(
                 ) {
                     Icon(Icons.Default.Videocam, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text("Video Story")
+                    Text(tr("Video Story"))
                 }
             }
         )
@@ -3451,9 +4318,9 @@ private fun animatedPostScale(postId: String, animation: String): Float {
 }
 
 @Composable
-fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (User) -> Unit = {}, autoPlayVideo: Boolean = false, allowInlineVideo: Boolean = false) {
+fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (User) -> Unit = {}, autoPlayVideo: Boolean = false, allowInlineVideo: Boolean = false, startWithComments: Boolean = false) {
     val context = LocalContext.current
-    var isCommentsExpanded by remember { mutableStateOf(false) }
+    var isCommentsExpanded by remember { mutableStateOf(startWithComments) }
     var commentInputText by remember { mutableStateOf("") }
     var replyingFeedComment by remember(post.id) { mutableStateOf<PostComment?>(null) }
     var commentLimit by remember(post.id) { mutableIntStateOf(12) }
@@ -3461,6 +4328,7 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
     var showEditPost by remember { mutableStateOf(false) }
     var showReportPost by remember { mutableStateOf(false) }
     var showSendPost by remember { mutableStateOf(false) }
+    var sendPostQuery by remember { mutableStateOf("") }
     var showLikers by remember { mutableStateOf(false) }
     var playInlineVideo by remember(post.id) { mutableStateOf(false) }
     val currentUserId = FirebaseAuth.getInstance().currentUser?.uid ?: ""
@@ -3475,7 +4343,10 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
     }
 
     // Get commenters' profiles
-    val currentUserProfile = allUsers.find { it.uid == currentUserId }
+    // The users list may not contain the signed-in account, so read "me" from the live profile.
+    val liveMe by viewModel.currentUserState.collectAsState()
+    var feedStickersOpen by remember(post.id) { mutableStateOf(false) }
+    val currentUserProfile = liveMe?.takeIf { it.uid == currentUserId } ?: allUsers.find { it.uid == currentUserId }
     val currentUserPic = currentUserProfile?.profileImageUrl ?: ""
     val postOwner = allUsers.find { it.uid == post.senderId }
     val mediaImages = post.imageUrls.ifEmpty { post.imageUrl.takeIf { it.isNotBlank() }?.let(::listOf).orEmpty() }
@@ -3487,6 +4358,7 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
     val postContainerModifier = (if (styledPost) {
         Modifier.fillMaxWidth()
             .background(Brush.linearGradient(postBackgroundColors(post.backgroundStyle)), postShape)
+            .then(postCanvasTexture(post.backgroundStyle).let { tex -> if (tex == "none") Modifier else Modifier.clip(postShape).drawBehind { drawThemeTexture(tex, Color.White, 1.2f) } })
             .border(1.dp, Color.White.copy(alpha = .24f), postShape)
     } else {
         Modifier.fillMaxWidth().glassmorphic(isDark = isDark, shape = postShape)
@@ -3502,20 +4374,37 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    AsyncImage(
-                        model = post.senderProfilePic.ifBlank { null },
-                        contentDescription = post.senderName,
-                        error = painterResource(id = R.drawable.img_app_logo),
-                        modifier = Modifier
-                            .size(40.dp)
-                            .clip(CircleShape)
-                            .clickable { postOwner?.let(onProfileSelected) }
-                            .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.3f), CircleShape)
-                    )
+                    Box(
+                        Modifier.size(46.dp).clip(CircleShape)
+                            .background(Brush.sweepGradient(if (post.autoGenerated) listOf(Color(0xFF00C6FF), Color(0xFF7C4DFF), Color(0xFFFF4FD8), Color(0xFF00C6FF)) else listOf(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.tertiary, MaterialTheme.colorScheme.secondary, MaterialTheme.colorScheme.primary))),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        AsyncImage(
+                            model = post.senderProfilePic.ifBlank { null },
+                            contentDescription = post.senderName,
+                            error = painterResource(id = R.drawable.img_app_logo),
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier
+                                .size(41.dp)
+                                .clip(CircleShape)
+                                .border(2.dp, MaterialTheme.colorScheme.surface, CircleShape)
+                                .clickable { postOwner?.let(onProfileSelected) }
+                        )
+                    }
                     Spacer(modifier = Modifier.width(10.dp))
                     Column {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(post.senderName, fontWeight = FontWeight.Bold, fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurface)
+                            Text(post.senderName, fontWeight = FontWeight.Bold, fontSize = 15.sp, color = primaryPostText, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 170.dp))
+                            if (post.autoGenerated) {
+                                Spacer(Modifier.width(6.dp))
+                                Row(
+                                    Modifier.clip(RoundedCornerShape(50)).background(Brush.horizontalGradient(listOf(Color(0xFF00C6FF), Color(0xFF7C4DFF), Color(0xFFFF4FD8)))).padding(horizontal = 7.dp, vertical = 2.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(Icons.Default.AutoAwesome, null, tint = Color.White, modifier = Modifier.size(10.dp))
+                                    Text(" AI", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Black)
+                                }
+                            }
                             if (postOwner?.activeProfileType.equals("Creator", ignoreCase = true)) {
                                 Spacer(Modifier.width(5.dp)); Icon(Icons.Outlined.AutoAwesome, "Creator", tint = Color(0xFF6C4BFF), modifier = Modifier.size(15.dp))
                                 Text(" CREATOR", color = Color(0xFF6C4BFF), fontSize = 9.sp, fontWeight = FontWeight.ExtraBold)
@@ -3524,40 +4413,47 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
                                 Spacer(Modifier.width(5.dp)); Icon(Icons.Outlined.Verified, "Moderator", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(15.dp))
                                 Text(" MOD", color = MaterialTheme.colorScheme.primary, fontSize = 9.sp, fontWeight = FontWeight.Bold)
                             }
+                            if (postOwner?.staffRole == "sub_admin") {
+                                Spacer(Modifier.width(5.dp)); Icon(Icons.Default.Shield, "Staff", tint = Color(0xFF3949AB), modifier = Modifier.size(14.dp))
+                                Text(" STAFF", color = Color(0xFF3949AB), fontSize = 9.sp, fontWeight = FontWeight.ExtraBold)
+                            }
                         }
+                        val metaColor = if (styledPost) Color.White.copy(alpha = .82f) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f)
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(
-                                text = if (post.isPrivate) "🔒 Private" else "🌐 Public",
+                                text = relativeTimeLabel(post.timestamp),
                                 fontSize = 11.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                                color = metaColor
                             )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = "•",
-                                fontSize = 11.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = SimpleDateFormat("hh:mm a", Locale.getDefault()).apply {
-                                    timeZone = TimeZone.getTimeZone("Asia/Dhaka")
-                                }.format(Date(post.timestamp)),
-                                fontSize = 11.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
-                            )
+                            Text("  ·  ", fontSize = 11.sp, color = metaColor.copy(alpha = .5f))
+                            Icon(if (post.isPrivate) Icons.Outlined.Lock else Icons.Outlined.Public, if (post.isPrivate) "Private" else "Public", tint = metaColor, modifier = Modifier.size(12.dp))
+                            if (post.autoGenerated && post.autoPostType.isNotBlank()) {
+                                Text("  ·  ", fontSize = 11.sp, color = metaColor.copy(alpha = .5f))
+                                Text(post.autoPostType.replaceFirstChar { it.uppercase() }, fontSize = 11.sp, color = metaColor)
+                            }
+                            if (post.viewsCount > 0) {
+                                Text("  ·  ", fontSize = 11.sp, color = metaColor.copy(alpha = .5f))
+                                Icon(Icons.Outlined.Visibility, null, tint = metaColor, modifier = Modifier.size(12.dp))
+                                Text(" ${post.viewsCount}", fontSize = 11.sp, color = metaColor)
+                            }
                         }
                     }
                 }
 
                 Box {
-                    IconButton(onClick = { showPostMenu = true }) { Icon(Icons.Default.MoreVert, "Post options") }
+                    IconButton(onClick = { showPostMenu = true }) { Icon(Icons.Default.MoreVert, "Post options", tint = primaryPostText) }
                     DropdownMenu(expanded = showPostMenu, onDismissRequest = { showPostMenu = false }) {
-                        DropdownMenuItem(text = { Text("Send to a chat") }, leadingIcon = { Icon(Icons.Default.Send, null) }, onClick = { showPostMenu = false; showSendPost = true })
-                        if (post.senderId != currentUserId) DropdownMenuItem(text = { Text("Report post") }, leadingIcon = { Icon(Icons.Default.ReportProblem, null) }, onClick = { showPostMenu = false; showReportPost = true })
+                        DropdownMenuItem(text = { Text(tr("Send to a chat")) }, leadingIcon = { Icon(Icons.Default.Send, null) }, onClick = { showPostMenu = false; showSendPost = true })
+                        if (post.senderId != currentUserId) DropdownMenuItem(text = { Text(tr("Report post")) }, leadingIcon = { Icon(Icons.Default.ReportProblem, null) }, onClick = { showPostMenu = false; showReportPost = true })
                         if (post.senderId == currentUserId) {
-                            DropdownMenuItem(text = { Text("Edit post") }, leadingIcon = { Icon(Icons.Default.Edit, null) }, onClick = { showPostMenu = false; showEditPost = true })
-                            DropdownMenuItem(text = { Text("Delete post", color = MaterialTheme.colorScheme.error) }, leadingIcon = { Icon(Icons.Default.DeleteOutline, null, tint = MaterialTheme.colorScheme.error) }, onClick = { showPostMenu = false; viewModel.deletePost(post.id) })
+                            DropdownMenuItem(text = { Text(tr("Edit post")) }, leadingIcon = { Icon(Icons.Default.Edit, null) }, onClick = { showPostMenu = false; showEditPost = true })
+                            DropdownMenuItem(text = { Text(tr("Delete post"), color = MaterialTheme.colorScheme.error) }, leadingIcon = { Icon(Icons.Default.DeleteOutline, null, tint = MaterialTheme.colorScheme.error) }, onClick = { showPostMenu = false; viewModel.deletePost(post.id) })
                         }
+                        if (post.senderId != currentUserId && viewModel.staffCan("posts")) DropdownMenuItem(
+                            text = { Text("Remove post (staff)", color = MaterialTheme.colorScheme.error) },
+                            leadingIcon = { Icon(Icons.Default.Shield, null, tint = MaterialTheme.colorScheme.error) },
+                            onClick = { showPostMenu = false; viewModel.deletePost(post.id); AdminAudit.log("post_removed", "${post.id} by ${post.senderId}") }
+                        )
                     }
                 }
             }
@@ -3569,7 +4465,7 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
                 Spacer(Modifier.height(6.dp))
             }
             if (post.feeling.isNotBlank()) {
-                AssistChip(onClick = {}, label = { Text("Feeling ${post.feeling}") }, leadingIcon = { Text("✨") })
+                AssistChip(onClick = {}, label = { Text("Feeling ${post.feeling}") }, leadingIcon = { Icon(Icons.Default.Mood, null, Modifier.size(16.dp)) })
                 Spacer(Modifier.height(6.dp))
             }
 
@@ -3579,12 +4475,22 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
                     text = post.text,
                     color = primaryPostText,
                     styled = styledPost,
+                    onMentionClick = { handle -> Mentions.findUser(handle, allUsers)?.let(onProfileSelected) },
+                    showLinkPreview = mediaImages.isEmpty() && post.videoUrl.isBlank(),
                     modifier = if (styledPost) Modifier.fillMaxWidth().padding(vertical = 18.dp) else Modifier
                 )
                 Spacer(modifier = Modifier.height(10.dp))
             }
             if (post.tags.isNotEmpty()) {
-                Text(post.tags.joinToString("  ") { "#$it" }, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    post.tags.forEach { tag ->
+                        Text(
+                            "#$tag", fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
+                            color = if (styledPost) Color.White else MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.clip(RoundedCornerShape(50)).background(if (styledPost) Color.White.copy(alpha = .18f) else MaterialTheme.colorScheme.primary.copy(alpha = .10f)).padding(horizontal = 10.dp, vertical = 4.dp)
+                        )
+                    }
+                }
                 Spacer(Modifier.height(8.dp))
             }
 
@@ -3594,6 +4500,7 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
                 val mediaKey = imagePager.currentPage.toString()
                 val imageLikes = post.mediaReactions[mediaKey].orEmpty()
                 val imageLiked = imageLikes.containsKey(currentUserId)
+                var heartBurst by remember(post.id) { mutableIntStateOf(0) }
                 Box(
                     Modifier.fillMaxWidth().then(if (mediaImages.size == 1) Modifier.heightIn(min = 180.dp, max = 540.dp) else Modifier.height(320.dp)).clip(RoundedCornerShape(24.dp))
                         .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(24.dp))
@@ -3601,16 +4508,17 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
                     if (mediaImages.size == 1) {
                         AsyncImage(
                             model = mediaImages.first(), contentDescription = "Post image", contentScale = ContentScale.Fit,
-                            modifier = Modifier.fillMaxWidth().wrapContentHeight().align(Alignment.Center).pointerInput(post.id) { detectTapGestures(onDoubleTap = { viewModel.reactToPostMedia(post.id, "0", "❤️") }) }
+                            modifier = Modifier.fillMaxWidth().wrapContentHeight().align(Alignment.Center).pointerInput(post.id) { detectTapGestures(onDoubleTap = { if (!imageLiked) viewModel.reactToPostMedia(post.id, "0", "❤️"); heartBurst++ }) }
                         )
                     } else HorizontalPager(state = imagePager, modifier = Modifier.fillMaxSize()) { page ->
                         AsyncImage(
                             model = mediaImages[page], contentDescription = "Post image ${page + 1}", contentScale = ContentScale.Fit,
                             modifier = Modifier.fillMaxSize().pointerInput(post.id, page) {
-                                detectTapGestures(onDoubleTap = { viewModel.reactToPostMedia(post.id, page.toString(), "❤️") })
+                                detectTapGestures(onDoubleTap = { if (!imageLiked) viewModel.reactToPostMedia(post.id, page.toString(), "❤️"); heartBurst++ })
                             }
                         )
                     }
+                    HeartBurstOverlay(heartBurst, Modifier.align(Alignment.Center))
                     if (mediaImages.size > 1) {
                         Surface(
                             color = Color.Black.copy(.58f), shape = CircleShape,
@@ -3884,7 +4792,7 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
 
                     // Facebook dense style comment items
                     post.comments.takeLast(commentLimit).forEach { c ->
-                        val commenter = allUsers.find { it.uid == c.senderId }
+                        val commenter = if (c.senderId == currentUserId) currentUserProfile else allUsers.find { it.uid == c.senderId }
                         val avatarUrl = commenter?.profileImageUrl ?: ""
 
                         Row(
@@ -3924,11 +4832,7 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
                                         )
                                         if(c.replyToName.isNotBlank()) Text("Replying to ${c.replyToName}",fontSize=9.sp,color=MaterialTheme.colorScheme.secondary)
                                         Spacer(modifier = Modifier.height(2.dp))
-                                        Text(
-                                            text = c.text,
-                                            fontSize = 13.sp,
-                                            color = MaterialTheme.colorScheme.onSurface
-                                        )
+                                        CommentBody(c.text)
                                     }
                                 }
                                 
@@ -3950,13 +4854,7 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
                                         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
                                     )
                                     Spacer(modifier = Modifier.width(12.dp))
-                                    Text(
-                                        text = if (c.reactions.containsKey(currentUserId)) "♥ ${c.reactions.size}" else "Like ${c.reactions.size.takeIf { it > 0 } ?: ""}",
-                                        fontSize = 10.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = if (c.reactions.containsKey(currentUserId)) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.clickable { viewModel.reactToPostComment(post.id,c.commentId) }
-                                    )
+                                    CommentReactionControl(c.reactions, currentUserId) { emoji -> viewModel.reactToPostComment(post.id, c.commentId, emoji) }
                                     Spacer(modifier = Modifier.width(12.dp))
                                     Text(
                                         text = "Reply",
@@ -3972,6 +4870,11 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
 
                     if(post.comments.size>commentLimit) TextButton(onClick={commentLimit=(commentLimit+12).coerceAtMost(post.comments.size)},modifier=Modifier.fillMaxWidth()){Text("Load older comments (${post.comments.size-commentLimit})")}
                     replyingFeedComment?.let { target -> AssistChip(onClick={replyingFeedComment=null},label={Text("Replying to ${target.senderName} • cancel")},leadingIcon={Icon(Icons.Default.Reply,null)}) }
+                    CommentStickerTray(feedStickersOpen) { token ->
+                        val target = replyingFeedComment
+                        viewModel.commentOnPost(post.id, token, target?.commentId.orEmpty(), target?.senderName.orEmpty())
+                        replyingFeedComment = null; feedStickersOpen = false
+                    }
                     // Add comment text row (Facebook-like style)
                     Row(
                         modifier = Modifier
@@ -3992,7 +4895,7 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
                         OutlinedTextField(
                             value = commentInputText,
                             onValueChange = { commentInputText = it },
-                            placeholder = { Text("Write comment...", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)) },
+                            placeholder = { Text(tr("Write comment..."), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)) },
                             modifier = Modifier.weight(1f),
                             shape = RoundedCornerShape(24.dp),
                             maxLines = 3,
@@ -4005,7 +4908,7 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
                                 unfocusedContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.3f)
                             )
                         )
-                        Spacer(modifier = Modifier.width(6.dp))
+                        CommentStickerToggle(feedStickersOpen) { feedStickersOpen = !feedStickersOpen }
                         IconButton(
                             onClick = {
                                 if (commentInputText.isNotBlank()) {
@@ -4028,11 +4931,46 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
     }
 
     if (showSendPost) {
-        AlertDialog(onDismissRequest={showSendPost=false},title={Text("Send post to chat",fontWeight=FontWeight.ExtraBold)},text={LazyColumn(Modifier.heightIn(max=420.dp)){items(allUsers,key={it.uid}){person->ListItem(headlineContent={Text(person.name,fontWeight=FontWeight.Bold)},supportingContent={Text("@${person.username}")},leadingContent={AsyncImage(person.profileImageUrl.ifBlank{null},person.name,Modifier.size(42.dp).clip(CircleShape))},modifier=Modifier.clickable{viewModel.sendPostToUser(person,post){ok->Toast.makeText(context,if(ok)"Sent to ${person.name}" else "Send failed",Toast.LENGTH_SHORT).show()};showSendPost=false})}}},confirmButton={TextButton(onClick={showSendPost=false}){Text("Cancel")}})
+        val friendIds = remember(liveMe, allUsers) {
+            val me = liveMe
+            if (me == null) emptySet() else (me.friends + allUsers.filter { me.uid in it.friends }.map { it.uid }).toSet()
+        }
+        val recipients = remember(allUsers, friendIds, sendPostQuery) {
+            val query = sendPostQuery.trim().removePrefix("@").lowercase()
+            allUsers.asSequence().filter { it.uid in friendIds && it.uid != currentUserId }
+                .distinctBy { it.uid }
+                .filter { query.isBlank() || it.name.lowercase().contains(query) || it.username.lowercase().contains(query) }
+                .sortedBy { it.name.lowercase() }.toList()
+        }
+        AlertDialog(
+            onDismissRequest = { showSendPost = false; sendPostQuery = "" },
+            title = { Text("Send post to a friend", fontWeight = FontWeight.ExtraBold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(sendPostQuery, { sendPostQuery = it }, modifier = Modifier.fillMaxWidth(), leadingIcon = { Icon(Icons.Default.Search, null) }, placeholder = { Text("Search friends") }, singleLine = true, shape = RoundedCornerShape(16.dp))
+                    if (recipients.isEmpty()) Text(if (friendIds.isEmpty()) "Only friends can receive a shared post. Add friends first." else "No friends match this search.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    LazyColumn(Modifier.heightIn(max = 360.dp)) {
+                        items(recipients, key = { it.uid }) { person ->
+                            ListItem(
+                                headlineContent = { Text(person.name, fontWeight = FontWeight.Bold) },
+                                supportingContent = { Text("@${person.username}") },
+                                leadingContent = { AsyncImage(person.profileImageUrl.ifBlank { null }, person.name, Modifier.size(42.dp).clip(CircleShape)) },
+                                modifier = Modifier.clickable {
+                                    viewModel.sendPostToUser(person, post) { ok -> Toast.makeText(context, if (ok) "Sent to ${person.name}" else "Send failed", Toast.LENGTH_SHORT).show() }
+                                    showSendPost = false
+                                    sendPostQuery = ""
+                                }
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { showSendPost = false; sendPostQuery = "" }) { Text(tr("Cancel")) } }
+        )
     }
     if (showReportPost) {
         var reason by remember { mutableStateOf("") }
-        AlertDialog(onDismissRequest={showReportPost=false},title={Text("Report this post")},text={OutlinedTextField(reason,{reason=it.take(1200)},label={Text("What is wrong with this post?")},minLines=4)},confirmButton={Button(onClick={viewModel.submitUserReport(post.senderId,"post",reason){ok,message->Toast.makeText(context,message,Toast.LENGTH_LONG).show();if(ok)showReportPost=false}},enabled=reason.length>=10){Text("Submit")}},dismissButton={TextButton(onClick={showReportPost=false}){Text("Cancel")}})
+        AlertDialog(onDismissRequest={showReportPost=false},title={Text(tr("Report this post"))},text={OutlinedTextField(reason,{reason=it.take(1200)},label={Text("What is wrong with this post?")},minLines=4)},confirmButton={Button(onClick={viewModel.submitUserReport(post.senderId,"post",reason){ok,message->Toast.makeText(context,message,Toast.LENGTH_LONG).show();if(ok)showReportPost=false}},enabled=reason.length>=10){Text(tr("Submit"))}},dismissButton={TextButton(onClick={showReportPost=false}){Text(tr("Cancel"))}})
     }
     if (showLikers) {
         val likerIds = remember(post.id, post.reactions, post.mediaReactions) {
@@ -4041,10 +4979,10 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
         val likerProfiles = likerIds.mapNotNull { id -> allUsers.find { it.uid == id } }
         AlertDialog(
             onDismissRequest = { showLikers = false },
-            title = { Text("People who reacted", fontWeight = FontWeight.ExtraBold) },
+            title = { Text(tr("People who reacted"), fontWeight = FontWeight.ExtraBold) },
             text = {
                 if (likerIds.isEmpty()) {
-                    Text("No reactions yet.")
+                    Text(tr("No reactions yet."))
                 } else {
                     LazyColumn(Modifier.heightIn(max = 360.dp)) {
                         items(likerIds, key = { it }) { uid ->
@@ -4067,7 +5005,7 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
                     }
                 }
             },
-            confirmButton = { TextButton(onClick = { showLikers = false }) { Text("Close") } }
+            confirmButton = { TextButton(onClick = { showLikers = false }) { Text(tr("Close")) } }
         )
     }
     if (showEditPost) {
@@ -4077,21 +5015,21 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
         var editPrivate by remember { mutableStateOf(post.isPrivate) }
         AlertDialog(
             onDismissRequest = { showEditPost = false },
-            title = { Text("Edit post", fontWeight = FontWeight.Bold) },
+            title = { Text(tr("Edit post"), fontWeight = FontWeight.Bold) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    OutlinedTextField(editTitle, { editTitle = it.take(80) }, label = { Text("Title") }, singleLine = true)
-                    OutlinedTextField(editText, { editText = it.take(1200) }, label = { Text("Description") }, minLines = 4)
-                    OutlinedTextField(editTags, { editTags = it }, label = { Text("Hashtags") }, singleLine = true)
-                    Row(verticalAlignment = Alignment.CenterVertically) { Text("Private post", Modifier.weight(1f)); Switch(editPrivate, { editPrivate = it }) }
+                    OutlinedTextField(editTitle, { editTitle = it.take(80) }, label = { Text(tr("Title")) }, singleLine = true)
+                    OutlinedTextField(editText, { editText = it.take(1200) }, label = { Text(tr("Description")) }, minLines = 4)
+                    OutlinedTextField(editTags, { editTags = it }, label = { Text(tr("Hashtags")) }, singleLine = true)
+                    Row(verticalAlignment = Alignment.CenterVertically) { Text(tr("Private post"), Modifier.weight(1f)); Switch(editPrivate, { editPrivate = it }) }
                 }
             },
             confirmButton = {
                 Button(onClick = {
                     viewModel.editPost(post.id, editText.trim(), editPrivate, editTitle.trim(), editTags.split(",", " ").map { it.trim().removePrefix("#") }.filter { it.isNotBlank() }.distinct()) { showEditPost = false }
-                }) { Text("Save") }
+                }) { Text(tr("Save")) }
             },
-            dismissButton = { TextButton(onClick = { showEditPost = false }) { Text("Cancel") } }
+            dismissButton = { TextButton(onClick = { showEditPost = false }) { Text(tr("Cancel")) } }
         )
     }
 
@@ -4119,7 +5057,7 @@ fun ChatConversationUserItem(
         modifier = Modifier
             .fillMaxWidth()
             .combinedClickable(onClick = onSelect, onLongClick = onLongPress),
-        shape = RoundedCornerShape(28.dp),
+        shape = RoundedCornerShape(22.dp),
         colors = CardDefaults.cardColors(
             containerColor = if (hasUnread) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
                              else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
@@ -4132,19 +5070,19 @@ fun ChatConversationUserItem(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(12.dp),
+                .padding(horizontal = 11.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             // User Avatar bubble with online indicator badge
             Box(contentAlignment = Alignment.BottomEnd) {
                 val storyModifier = if (hasActiveStory) {
                     Modifier
-                        .size(54.dp)
+                        .size(50.dp)
                         .border(3.dp, MaterialTheme.colorScheme.error, CircleShape)
                         .padding(3.dp)
                 } else {
                     Modifier
-                        .size(50.dp)
+                        .size(46.dp)
                         .border(1.5.dp, MaterialTheme.colorScheme.primary, CircleShape)
                 }
 
@@ -4188,7 +5126,7 @@ fun ChatConversationUserItem(
                 }
             }
 
-            Spacer(modifier = Modifier.width(14.dp))
+            Spacer(modifier = Modifier.width(11.dp))
 
             // Display name + LAST MESSAGE (bold highlighted if unread!)
             Column(modifier = Modifier.weight(1f)) {
@@ -4197,9 +5135,17 @@ fun ChatConversationUserItem(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f, fill = false)) {
+                        val convCtx = androidx.compose.ui.platform.LocalContext.current
+                        val convVersion by ConversationPrefs.version.collectAsState()
+                        val convPinned = remember(convVersion, user.uid) { ConversationPrefs.isPinned(convCtx, user.uid) }
+                        val convMuted = remember(convVersion, user.uid) { ConversationPrefs.isMuted(convCtx, user.uid) }
+                        val convNick = remember(convVersion, user.uid) { ConversationPrefs.nickname(convCtx, user.uid) }
+                        if (convPinned) { Icon(Icons.Default.PushPin, "Pinned", tint = Color(0xFFD81B60), modifier = Modifier.size(14.dp)); Spacer(Modifier.width(3.dp)) }
                         Text(
-                            text = user.name,
+                            text = convNick.ifBlank { user.name },
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = if (hasUnread) FontWeight.ExtraBold else FontWeight.Bold,
                             color = if (hasUnread) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground
@@ -4209,8 +5155,17 @@ fun ChatConversationUserItem(
                         } else if (user.isPremium && (user.premiumPlan == "lifetime" || user.premiumUntil > System.currentTimeMillis())) {
                             Spacer(Modifier.width(4.dp)); Icon(Icons.Outlined.Verified, "Premium", tint = Color(0xFFFFA000), modifier = Modifier.size(15.dp))
                         }
+                        if (convMuted && !isMuted) { Spacer(Modifier.width(4.dp)); Icon(Icons.Default.NotificationsOff, "Muted", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(13.dp)) }
                     }
                     
+                    if ((lastMessageState?.timestamp ?: 0L) > 0L) {
+                        Text(
+                            DateUtils.formatDateTime(LocalContext.current, lastMessageState!!.timestamp, DateUtils.FORMAT_SHOW_TIME),
+                            fontSize = 10.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = .75f),
+                            modifier = Modifier.padding(end = 6.dp)
+                        )
+                    }
                     if (hasUnread) {
                         Box(
                             modifier = Modifier
@@ -4230,31 +5185,48 @@ fun ChatConversationUserItem(
                 }
                 
                 // Show last message text instead of username
-                val lastMsgText = if (lastMessageState != null) {
-                    val m = lastMessageState!!
-                    if (!m.imageUrl.isNullOrBlank()) "📷 [Photo Attachment]" 
-                    else if (!m.voiceUrl.isNullOrBlank()) "🎙️ [Voice Note]"
-                    else m.text
-                } else {
-                    "No messages yet. Say Hello!"
+                val lastKind = lastMessageState?.let { m ->
+                    when {
+                        !m.imageUrl.isNullOrBlank() -> "photo"
+                        !m.voiceUrl.isNullOrBlank() -> "voice"
+                        com.example.location.LocationShare.parse(m.text)?.isLive == true -> "live_location"
+                        com.example.location.LocationShare.parse(m.text) != null -> "location"
+                        else -> "text"
+                    }
+                } ?: "none"
+                val lastMsgText = when (lastKind) {
+                    "photo" -> "Photo"
+                    "voice" -> "Voice message"
+                    "live_location" -> "Live location"
+                    "location" -> "Location"
+                    "text" -> convoStickerPreview(lastMessageState!!.text)
+                    else -> "No messages yet. Say Hello!"
                 }
-
-                Text(
-                    text = lastMsgText,
-                    fontSize = 13.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    fontWeight = if (hasUnread) FontWeight.ExtraBold else FontWeight.Normal,
-                    color = if (hasUnread) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                val presenceText = if (user.isOnline) "Active now" else {
+                val previewColor = if (hasUnread) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.onSurfaceVariant
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    when (lastKind) {
+                        "voice" -> { MicGlyph(MaterialTheme.colorScheme.primary, size = 15.dp); Spacer(Modifier.width(4.dp)) }
+                        "photo" -> { PhotoGlyph(MaterialTheme.colorScheme.primary, size = 15.dp); Spacer(Modifier.width(4.dp)) }
+                        "location", "live_location" -> { MapPinGlyph(Color(0xFFE53935), size = 14.dp); Spacer(Modifier.width(4.dp)) }
+                    }
+                    Text(
+                        text = lastMsgText,
+                        fontSize = 13.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        fontWeight = if (hasUnread) FontWeight.ExtraBold else FontWeight.Normal,
+                        color = previewColor
+                    )
+                }
+                val presenceText = if (user.isOnline) tr("Active now") else {
                     val since = user.offlineSince.takeIf { it > 0L } ?: user.lastActive
-                    if (since <= 0L) "Offline" else formatOfflineAge(since)
+                    if (since <= 0L) "Offline" else "Offline · ${formatOfflineAge(since)}"
                 }
                 Text(
                     text = presenceText,
                     fontSize = 10.sp,
-                    color = if (user.isOnline) Color(0xFF35B96A) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = .7f)
+                    color = if (user.isOnline) Color(0xFF35B96A) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = .72f),
+                    maxLines = 1
                 )
             }
 
@@ -4334,7 +5306,7 @@ fun GroupItemCard(group: Group, onClick: () -> Unit) {
                     color = MaterialTheme.colorScheme.onBackground
                 )
                 Text(
-                    text = if (group.lastMessage.isNotBlank()) group.lastMessage else "No messages in group yet",
+                    text = if (group.lastMessage.isNotBlank()) convoStickerPreview(group.lastMessage) else "No messages in group yet",
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
@@ -4350,46 +5322,53 @@ fun GroupItemCard(group: Group, onClick: () -> Unit) {
 }
 
 @Composable
-private fun LinkifiedPostText(text: String, color: Color, styled: Boolean, modifier: Modifier = Modifier) {
+private fun LinkifiedPostText(
+    text: String,
+    color: Color,
+    styled: Boolean,
+    modifier: Modifier = Modifier,
+    onMentionClick: (String) -> Unit = {},
+    showLinkPreview: Boolean = true
+) {
     val uriHandler = LocalUriHandler.current
-    val urlRegex = remember { Regex("https?://[^\\s]+", RegexOption.IGNORE_CASE) }
-    val annotated = remember(text, color) {
-        buildAnnotatedString {
-            var cursor = 0
-            urlRegex.findAll(text).forEach { match ->
-                append(text.substring(cursor, match.range.first))
-                pushStringAnnotation("URL", match.value)
-                pushStyle(SpanStyle(color = if (styled) Color(0xFFBDEBFF) else Color(0xFF3D8BFF), textDecoration = TextDecoration.Underline, fontWeight = FontWeight.SemiBold))
-                append(match.value)
-                pop(); pop()
-                cursor = match.range.last + 1
+    val annotated = remember(text, styled) {
+        Mentions.annotate(
+            text,
+            if (styled) Color(0xFFBDEBFF) else Color(0xFF3D8BFF),
+            if (styled) Color(0xFFFFE08A) else Color(0xFF7C5CFC)
+        )
+    }
+    val firstUrl = remember(text) { LinkPreviewRepository.firstUrl(text) }
+    Column(modifier) {
+        ClickableText(
+            text = annotated,
+            modifier = if (styled) Modifier.fillMaxWidth() else Modifier,
+            style = MaterialTheme.typography.bodyMedium.copy(
+                color = color,
+                lineHeight = if (styled) 26.sp else 20.sp,
+                fontSize = if (styled) 18.sp else 14.sp,
+                textAlign = if (styled) TextAlign.Center else TextAlign.Start
+            ),
+            onClick = { offset ->
+                annotated.getStringAnnotations("URL", offset, offset).firstOrNull()?.let {
+                    runCatching { uriHandler.openUri(it.item) }
+                    return@ClickableText
+                }
+                annotated.getStringAnnotations("MENTION", offset, offset).firstOrNull()?.let { onMentionClick(it.item) }
             }
-            append(text.substring(cursor))
+        )
+        if (showLinkPreview && !styled && !firstUrl.isNullOrBlank()) {
+            Spacer(Modifier.height(8.dp))
+            RichLinkPreviewCard(
+                url = firstUrl,
+                contentColor = MaterialTheme.colorScheme.onSurface,
+                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .55f)
+            )
         }
     }
-    ClickableText(
-        text = annotated,
-        modifier = modifier,
-        style = MaterialTheme.typography.bodyMedium.copy(
-            color = color,
-            lineHeight = if (styled) 26.sp else 20.sp,
-            fontSize = if (styled) 18.sp else 14.sp,
-            textAlign = if (styled) TextAlign.Center else TextAlign.Start
-        ),
-        onClick = { offset -> annotated.getStringAnnotations("URL", offset, offset).firstOrNull()?.let { runCatching { uriHandler.openUri(it.item) } } }
-    )
 }
 
-private fun postBackgroundColors(style: String): List<Color> = when (style) {
-    "sunset" -> listOf(Color(0xFFFF6B6B), Color(0xFFFFB347), Color(0xFF7A3152))
-    "ocean" -> listOf(Color(0xFF005C97), Color(0xFF00A8CC), Color(0xFF002B5B))
-    "aurora" -> listOf(Color(0xFF4A148C), Color(0xFF00BFA5), Color(0xFF311B92))
-    "forest" -> listOf(Color(0xFF0B3D2E), Color(0xFF2E8B57), Color(0xFF102A1E))
-    "rose" -> listOf(Color(0xFF8E2DE2), Color(0xFFFF5F6D), Color(0xFF3A1C71))
-    "midnight" -> listOf(Color(0xFF020024), Color(0xFF090979), Color(0xFF111827))
-    "mono" -> listOf(Color(0xFF111111), Color(0xFF424242), Color(0xFF151515))
-    else -> listOf(Color(0xFF28233F), Color(0xFF6750A4), Color(0xFF15233A))
-}
+private fun postBackgroundColors(style: String): List<Color> = postCanvasColors(style)
 
 @Composable
 private fun PrivacyToggleRow(label: String, checked: Boolean, onCheckedChange: () -> Unit) {
@@ -4400,17 +5379,6 @@ private fun PrivacyToggleRow(label: String, checked: Boolean, onCheckedChange: (
 }
 
 @Composable
-private fun AdminStatusRow(label: String, ready: Boolean, requirement: String) {
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Icon(if (ready) Icons.Default.CheckCircle else Icons.Default.Warning, null, tint = if (ready) Color(0xFF45D483) else MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp))
-        Spacer(Modifier.width(9.dp))
-        Column(Modifier.weight(1f)) { Text(label, fontWeight = FontWeight.SemiBold); Text(requirement, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-        Text(if (ready) "READY" else "SETUP", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = if (ready) Color(0xFF45D483) else MaterialTheme.colorScheme.error)
-    }
-}
-
-
-@Composable
 private fun ActiveContactsStrip(users: List<User>, onSelect: (User) -> Unit) {
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(
@@ -4418,7 +5386,7 @@ private fun ActiveContactsStrip(users: List<User>, onSelect: (User) -> Unit) {
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text("Active now", fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.primary)
+            Text(tr("Active now"), fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.primary)
             Text("${users.size} online", fontSize = 11.sp, color = Color(0xFF35B96A))
         }
         Spacer(Modifier.height(8.dp))
@@ -4454,3 +5422,253 @@ private fun ActiveContactsStrip(users: List<User>, onSelect: (User) -> Unit) {
     }
 }
 
+
+@Composable
+private fun SettingsHubGroup(
+    title: String,
+    content: @Composable ColumnScope.() -> Unit
+) {
+    Column(Modifier.fillMaxWidth()) {
+        Row(Modifier.padding(start = 6.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(width = 14.dp, height = 4.dp).clip(CircleShape).background(Brush.horizontalGradient(listOf(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.tertiary))))
+            Spacer(Modifier.width(7.dp))
+            Text(
+                text = tr(title),
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontWeight = FontWeight.Bold
+            )
+        }
+        Column(Modifier.fillMaxWidth().liquidCard(shape = RoundedCornerShape(25.dp)), content = content)
+    }
+}
+
+@Composable
+private fun SettingsHubRow(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    title: String,
+    subtitle: String,
+    accent: Color,
+    onClick: () -> Unit,
+    trailingValue: String? = null,
+    enabled: Boolean = true
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(20.dp))
+            .background(Brush.horizontalGradient(listOf(accent.copy(alpha = .10f), accent.copy(alpha = .03f), Color.Transparent)))
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 11.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .size(42.dp)
+                .clip(RoundedCornerShape(14.dp))
+                .background(Brush.linearGradient(listOf(lerp(accent, Color.White, .22f), accent, lerp(accent, Color.Black, .12f))))
+                .border(1.dp, Color.White.copy(alpha = .35f), RoundedCornerShape(14.dp)),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(icon, contentDescription = null, tint = Color.White, modifier = Modifier.size(21.dp))
+        }
+        Column(
+            modifier = Modifier.weight(1f).padding(start = 12.dp, end = 7.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp)
+        ) {
+            Text(tr(title), style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(tr(subtitle), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        if (!trailingValue.isNullOrBlank()) {
+            Text(
+                trailingValue,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.widthIn(max = 82.dp).padding(end = 3.dp)
+            )
+        }
+        Box(Modifier.size(26.dp).clip(CircleShape).background(accent.copy(alpha = .16f)), contentAlignment = Alignment.Center) {
+            Icon(Icons.Default.ChevronRight, contentDescription = null, tint = accent, modifier = Modifier.size(18.dp))
+        }
+    }
+}
+
+@Composable
+private fun SettingsHubDivider() {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 68.dp)
+            .height(1.dp)
+            .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = .42f))
+    )
+}
+
+private fun settingsPageTitle(page: String): String = when (page) {
+    "profile" -> "Profile details"
+    "theme" -> "App theme"
+    "call" -> "Call appearance"
+    "chat" -> "Chat settings"
+    "bubbles" -> "Bubbles & spacing"
+    "sounds" -> "Sounds"
+    "backgrounds" -> "Chat backgrounds"
+    "privacy" -> "Privacy controls"
+    "notifications" -> "Notifications & calls"
+    "viewers" -> "Profile viewers"
+    "devices" -> "Account security"
+    "blocked" -> "Blocked accounts"
+    "smart" -> "Smart tools"
+    "language" -> "Language"
+    else -> "Settings"
+}
+
+private fun settingsPageSubtitle(page: String): String = when (page) {
+    "profile" -> "Photo, bio, links and account details"
+    "theme" -> "Light, dark and premium looks for the whole app"
+    "call" -> "Skins and textures for audio and video calls"
+    "chat" -> "How messages look and send"
+    "bubbles" -> "Make chat bubbles yours: style, border, padding and time"
+    "sounds" -> "Custom MP3 sounds saved on this phone"
+    "backgrounds" -> "Themes and photo backgrounds for chats"
+    "privacy" -> "App lock, presence, receipts and AI"
+    "notifications" -> "Alerts, sounds and incoming-call access"
+    "viewers" -> "Stored only on this phone"
+    "devices" -> "2-step verification, devices & alerts"
+    "blocked" -> "People who cannot contact you"
+    "smart" -> "Quiet hours, motion, live location and storage"
+    "language" -> "Choose your app language"
+    else -> ""
+}
+
+private data class AppThemePreview(val name: String, val background: Color, val surface: Color, val accent: Color)
+
+/** Miniature phone preview of an app theme: background, a card and two chat bubbles. */
+@Composable
+private fun AppThemeTile(preview: AppThemePreview, selected: Boolean, locked: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    val isLight = preview.background.luminance() > .5f
+    val textColor = if (isLight) Color(0xFF1B1B24) else Color.White
+    Column(modifier.clip(RoundedCornerShape(18.dp)).clickable(onClick = onClick), horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(
+            Modifier.fillMaxWidth().height(126.dp).clip(RoundedCornerShape(18.dp))
+                .background(Brush.verticalGradient(listOf(preview.background, lerp(preview.background, preview.accent, .16f))))
+                .border(if (selected) 3.dp else 1.dp, if (selected) preview.accent else textColor.copy(alpha = .12f), RoundedCornerShape(18.dp))
+                .padding(8.dp)
+        ) {
+            Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(14.dp).clip(CircleShape).background(preview.accent))
+                    Spacer(Modifier.width(4.dp))
+                    Box(Modifier.height(5.dp).fillMaxWidth(.6f).clip(CircleShape).background(textColor.copy(alpha = .55f)))
+                }
+                Box(Modifier.fillMaxWidth().height(26.dp).clip(RoundedCornerShape(8.dp)).background(preview.surface.copy(alpha = if (isLight) 1f else .9f)).border(1.dp, textColor.copy(alpha = .06f), RoundedCornerShape(8.dp)))
+                Box(Modifier.fillMaxWidth(.7f).height(14.dp).clip(RoundedCornerShape(7.dp)).background(preview.surface))
+                Box(Modifier.align(Alignment.End).fillMaxWidth(.62f).height(14.dp).clip(RoundedCornerShape(7.dp)).background(preview.accent))
+                Spacer(Modifier.weight(1f))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                    repeat(4) { i -> Box(Modifier.size(6.dp).clip(CircleShape).background(if (i == 0) preview.accent else textColor.copy(alpha = .3f))) }
+                }
+            }
+            if (selected) Box(Modifier.align(Alignment.TopEnd).size(20.dp).clip(CircleShape).background(preview.accent), contentAlignment = Alignment.Center) {
+                Icon(Icons.Default.Check, "Active", tint = if (preview.accent.luminance() > .5f) Color.Black else Color.White, modifier = Modifier.size(13.dp))
+            }
+            if (locked) Box(Modifier.align(Alignment.TopEnd).size(22.dp).clip(CircleShape).background(Color.Black.copy(alpha = .55f)), contentAlignment = Alignment.Center) {
+                Icon(Icons.Default.Lock, "Premium", tint = Color(0xFFFFD166), modifier = Modifier.size(13.dp))
+            }
+        }
+        Spacer(Modifier.height(5.dp))
+        Text(preview.name, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 11.sp, fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.Medium)
+    }
+}
+
+
+/** Full-screen maintenance card with a live countdown when the admin set a timer. */
+@Composable
+fun MaintenanceCountdownCard(title: String, message: String, endsAt: Long, startedAt: Long) {
+    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(endsAt) {
+        while (true) { now = System.currentTimeMillis(); kotlinx.coroutines.delay(1000) }
+    }
+    val remaining = (endsAt - now).coerceAtLeast(0L)
+    val total = (endsAt - startedAt).coerceAtLeast(1L)
+    val motion = rememberInfiniteTransition(label = "maintenance")
+    val spin by motion.animateFloat(0f, 360f, infiniteRepeatable(tween(6000, easing = LinearEasing)), label = "gear")
+    val glow by motion.animateFloat(.6f, 1f, infiniteRepeatable(tween(1400), RepeatMode.Reverse), label = "glow")
+    Box(
+        Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF0E0B2A), Color(0xFF2A1458), Color(0xFF0B1E3A)))),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            Modifier.padding(26.dp).clip(RoundedCornerShape(34.dp))
+                .background(Color.White.copy(alpha = .08f))
+                .border(1.dp, Brush.verticalGradient(listOf(Color.White.copy(.35f), Color.White.copy(.05f))), RoundedCornerShape(34.dp))
+                .padding(26.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Box(Modifier.size(110.dp).graphicsLayer { alpha = glow }.clip(CircleShape).background(Brush.radialGradient(listOf(Color(0xFF8B7CFF).copy(.55f), Color.Transparent))))
+                Icon(Icons.Outlined.Settings, null, tint = Color.White, modifier = Modifier.size(58.dp).graphicsLayer { rotationZ = spin })
+            }
+            Spacer(Modifier.height(14.dp))
+            Text(title, color = Color.White, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold, textAlign = TextAlign.Center)
+            Spacer(Modifier.height(8.dp))
+            Text(message, color = Color.White.copy(.78f), textAlign = TextAlign.Center)
+            if (endsAt > 0L) {
+                Spacer(Modifier.height(22.dp))
+                if (remaining > 0L) {
+                    val hours = remaining / 3_600_000L
+                    val minutes = (remaining / 60_000L) % 60
+                    val seconds = (remaining / 1000L) % 60
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        listOf(hours to "HRS", minutes to "MIN", seconds to "SEC").forEach { (value, unit) ->
+                            Column(
+                                Modifier.width(72.dp).clip(RoundedCornerShape(18.dp)).background(Color.White.copy(.12f)).padding(vertical = 10.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Text("%02d".format(value), color = Color.White, fontSize = 30.sp, fontWeight = FontWeight.Black)
+                                Text(unit, color = Color.White.copy(.6f), fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(16.dp))
+                    LinearProgressIndicator(
+                        progress = { (1f - remaining.toFloat() / total).coerceIn(0f, 1f) },
+                        modifier = Modifier.fillMaxWidth().height(6.dp).clip(CircleShape),
+                        color = Color(0xFF8B7CFF), trackColor = Color.White.copy(.15f)
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text("Back at ${java.text.SimpleDateFormat("h:mm a", java.util.Locale.getDefault()).format(java.util.Date(endsAt))}", color = Color.White.copy(.6f), fontSize = 12.sp)
+                } else {
+                    CircularProgressIndicator(color = Color.White)
+                    Spacer(Modifier.height(10.dp))
+                    Text("Almost done — finishing up…", color = Color.White, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+    }
+}
+
+
+/** Instagram-style heart that pops on double-tap. [trigger] increments for every double-tap. */
+@Composable
+fun HeartBurstOverlay(trigger: Int, modifier: Modifier = Modifier) {
+    if (trigger == 0) return
+    val scale = remember { Animatable(0f) }
+    val alpha = remember { Animatable(0f) }
+    LaunchedEffect(trigger) {
+        alpha.snapTo(1f); scale.snapTo(.2f)
+        scale.animateTo(1.15f, spring(dampingRatio = .45f, stiffness = 420f))
+        scale.animateTo(1f, tween(120))
+        kotlinx.coroutines.delay(380)
+        alpha.animateTo(0f, tween(260))
+    }
+    Icon(
+        Icons.Default.Favorite, null,
+        tint = Color.White,
+        modifier = modifier.size(96.dp).graphicsLayer {
+            scaleX = scale.value; scaleY = scale.value; this.alpha = alpha.value
+            shadowElevation = 18f
+        }
+    )
+}

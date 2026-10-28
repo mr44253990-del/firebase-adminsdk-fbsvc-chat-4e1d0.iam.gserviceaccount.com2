@@ -16,6 +16,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.animation.fadeIn
@@ -49,6 +50,7 @@ import com.example.call.CallMiniOverlay
 import com.example.call.GroupCallScreen
 import com.example.call.GroupCallEngine
 import com.example.ui.ChatViewModel
+import com.example.ui.CallHistory
 import com.example.ui.HomeScreen
 import com.example.ui.IncomingShareHub
 import com.example.ui.GroupChatScreen
@@ -76,30 +78,96 @@ import coil.ImageLoader
 import coil.disk.DiskCache
 import coil.memory.MemoryCache
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.launch
+import androidx.lifecycle.lifecycleScope
 
 @androidx.media3.common.util.UnstableApi
 class MainActivity : FragmentActivity() {
 
+    private fun callIsActive(): Boolean =
+        CallEngine.state.value.status !in listOf("idle", "ended", "declined", "missed", "failed")
+
+    /** Locking the phone during a 1:1 call brings the full call screen above the lock screen. */
+    private val screenOffReceiver = object : android.content.BroadcastReceiver() {
+        override fun onReceive(context: android.content.Context, intent: Intent) {
+            if (intent.action == Intent.ACTION_SCREEN_OFF && callIsActive() && !com.example.call.IncomingCallActivity.alive && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+                setShowWhenLocked(true)
+                setTurnScreenOn(true)
+                pendingOpenCall.value = true
+            }
+        }
+    }
+
+    /** Leaving the call screen while the keyguard is up must not expose the app over the lock screen. */
+    private fun leaveCallScreen(navigateBack: () -> Unit) {
+        val keyguard = getSystemService(KEYGUARD_SERVICE) as? android.app.KeyguardManager
+        if (keyguard?.isKeyguardLocked == true && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            keyguard.requestDismissKeyguard(this, object : android.app.KeyguardManager.KeyguardDismissCallback() {
+                override fun onDismissSucceeded() { navigateBack() }
+            })
+        } else navigateBack()
+    }
+
+    override fun onDestroy() {
+        runCatching { unregisterReceiver(screenOffReceiver) }
+        super.onDestroy()
+    }
+
+    /** True only while a 1:1 or group VIDEO call is live: the only case that may use Picture-in-Picture. */
+    private fun liveVideoCall(): Boolean {
+        val p = CallEngine.state.value
+        val privateActive = p.status !in listOf("idle", "ended", "declined", "missed", "failed")
+        if (privateActive) return p.video
+        val g = GroupCallEngine.state.value
+        return g.status !in listOf("idle", "ended", "failed") && g.video
+    }
+
     private fun minimizeActiveCall() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        val privateActive = CallEngine.state.value.status !in listOf("idle", "ended", "declined", "missed", "failed")
+        // Audio calls never use PiP: they keep running with the in-app bubble / ongoing notification.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && liveVideoCall()) {
+            if (privateActive) pendingOpenCall.value = true
             runCatching {
-                enterPictureInPictureMode(
-                    PictureInPictureParams.Builder()
-                        .setAspectRatio(Rational(9, 16))
-                        .build()
-                )
+                enterPictureInPictureMode(PictureInPictureParams.Builder().setAspectRatio(Rational(9, 16)).build())
+                watchCallEndWhileInPip()
             }.onFailure { onBackPressedDispatcher.onBackPressed() }
         } else {
             onBackPressedDispatcher.onBackPressed()
         }
     }
 
+    override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: android.content.res.Configuration) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        com.example.call.CallPipState.set(isInPictureInPictureMode)
+        // Closed / expanded while the call already ended: never leave a frozen frame behind.
+        if (!isInPictureInPictureMode) pipCallWatcher?.cancel()
+    }
+
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
-        val privateCallActive = CallEngine.state.value.status !in listOf("idle", "ended", "declined", "missed", "failed")
-        val groupCallActive = GroupCallEngine.state.value.status !in listOf("idle", "ended", "failed")
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !isInPictureInPictureMode && (privateCallActive || groupCallActive)) {
+        // Only a CONNECTED video call auto-enters PiP. Ringing calls, audio calls and in-app
+        // activity switches (pickers, the incoming-call screen) never do.
+        val connected = CallEngine.state.value.status in listOf("connected", "reconnecting") || GroupCallEngine.state.value.status in listOf("connected", "active", "reconnecting")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !isInPictureInPictureMode && connected && liveVideoCall()) {
             minimizeActiveCall()
+        }
+    }
+
+    private var pipCallWatcher: kotlinx.coroutines.Job? = null
+
+    /** When the call ends (either side hangs up) while in PiP, close the PiP window instead of freezing it. */
+    private fun watchCallEndWhileInPip() {
+        pipCallWatcher?.cancel()
+        pipCallWatcher = lifecycleScope.launch {
+            kotlinx.coroutines.flow.combine(CallEngine.state, GroupCallEngine.state) { p, g ->
+                p.status in listOf("idle", "ended", "declined", "missed", "failed") && g.status in listOf("idle", "ended", "failed")
+            }.collect { over ->
+                if (over && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && isInPictureInPictureMode) {
+                    kotlinx.coroutines.delay(600)
+                    com.example.call.CallPipState.set(false)
+                    moveTaskToBack(true)
+                }
+            }
         }
     }
 
@@ -109,6 +177,7 @@ class MainActivity : FragmentActivity() {
     private val incomingShare = MutableStateFlow<IncomingSharePayload?>(null)
     private val pendingProfileUid = MutableStateFlow<String?>(null)
     private val pendingGroupRoomId = MutableStateFlow<String?>(null)
+    private val pendingOpenCall = MutableStateFlow(false)
     private val pendingGroupId = MutableStateFlow<String?>(null)
     private val pendingGroupName = MutableStateFlow<String?>(null)
     private val pendingGroupMembers = MutableStateFlow<List<String>>(emptyList())
@@ -129,8 +198,8 @@ class MainActivity : FragmentActivity() {
             mapOf(
                 "isOnline" to active,
                 "lastActive" to now,
-                "onlineUntil" to if (active) now + 5 * 60 * 1000L else 0L,
-                "offlineSince" to if (active) null else now,
+                "onlineUntil" to if (active) now + com.example.service.PRESENCE_LEASE_MS else 0L,
+                "offlineSince" to if (active) 0L else now,
                 "foreground" to foreground,
                 "onlineSource" to if (active) "heartbeat" else "background"
             )
@@ -163,6 +232,7 @@ class MainActivity : FragmentActivity() {
     }
 
     private fun captureActiveGroupCall(intent: Intent?) {
+        if (intent?.action == "com.ebchat.OPEN_ACTIVE_CALL") { pendingOpenCall.value = true; return }
         if (intent?.action != "com.ebchat.OPEN_ACTIVE_GROUP_CALL") return
         pendingGroupRoomId.value = intent.getStringExtra("roomId")?.takeIf { it.isNotBlank() }
         pendingGroupId.value = intent.getStringExtra("groupId").orEmpty()
@@ -180,31 +250,40 @@ class MainActivity : FragmentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         pendingChatSenderId.value = intent.getStringExtra("senderId")?.takeIf { it.isNotBlank() }
+        com.example.ui.ProTools.handleAction(intent.getStringExtra("convoAction"))
         captureDeepLink(intent); captureActiveGroupCall(intent); captureSharedContent(intent)
     }
 
     override fun onStart() {
         super.onStart()
+        com.example.service.ActiveChatState.appVisible = true
         startPresenceHeartbeat()
     }
 
     override fun onStop() {
+        com.example.service.ActiveChatState.appVisible = false
         stopPresenceHeartbeat()
         // Keep the uninstall-surviving encrypted text mirror current whenever the
         // activity leaves the foreground. Media payloads are excluded by the manager.
         viewModel.exportTextBackup()
         VideoPlayerManager.pause()
         AppLockManager.lock(this)
+        com.example.ui.ChatLockSession.relockAll()
         super.onStop()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        com.example.ui.CrashGuard.install(this)
         installSplashScreen()
         super.onCreate(savedInstanceState)
         pendingChatSenderId.value = intent?.getStringExtra("senderId")?.takeIf { it.isNotBlank() }
+        com.example.ui.ProTools.handleAction(intent?.getStringExtra("convoAction"))
+        com.example.ui.CallHistory.ensureStarted(this)
+        com.example.ui.ProShortcuts.publish(this)
         captureDeepLink(intent); captureActiveGroupCall(intent); captureSharedContent(intent)
         AppLockManager.initialize(this)
         PrivacyPreferences.initialize(this)
+        androidx.core.content.ContextCompat.registerReceiver(this, screenOffReceiver, android.content.IntentFilter(Intent.ACTION_SCREEN_OFF), androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED)
         enableEdgeToEdge()
 
         // Configure standard Coil cache so images (like profile pics) are cached aggressively offline
@@ -229,15 +308,6 @@ class MainActivity : FragmentActivity() {
 
         setContent {
             val currentTheme by viewModel.themeState.collectAsState()
-            val privacySettings by PrivacyPreferences.settings.collectAsState()
-
-            LaunchedEffect(privacySettings.preventScreenshotOnSensitiveScreens) {
-                if (privacySettings.preventScreenshotOnSensitiveScreens) {
-                    window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
-                } else {
-                    window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
-                }
-            }
 
             MyApplicationTheme(themeType = currentTheme) {
                 val appLocked by AppLockManager.locked.collectAsState()
@@ -245,6 +315,7 @@ class MainActivity : FragmentActivity() {
                     AppLockScreen(this@MainActivity)
                 } else {
                 val navController = rememberNavController()
+                val openCallRequest by pendingOpenCall.collectAsState()
                 val pendingSenderId by pendingChatSenderId.collectAsState()
                 val linkedPostId by pendingPostId.collectAsState()
                 val sharedContent by incomingShare.collectAsState()
@@ -266,7 +337,11 @@ class MainActivity : FragmentActivity() {
                 val callState by CallEngine.state.collectAsState()
                 val groupCallState by GroupCallEngine.state.collectAsState()
                 val context = LocalContext.current
+                LaunchedEffect(currentUser?.uid) {
+                    if (!currentUser?.uid.isNullOrBlank()) CallHistory.ensureStarted(context)
+                }
                 var splashFinished by remember { mutableStateOf(false) }
+                var pendingMfaStatus by remember { mutableStateOf<com.example.ui.MfaStatus?>(null) }
                 var showOverlayPermissionPrompt by remember { mutableStateOf(false) }
                 var overlayPromptShownThisSession by remember { mutableStateOf(false) }
                 LaunchedEffect(splashFinished, currentUser?.uid, callState.status, groupCallState.status) {
@@ -281,10 +356,13 @@ class MainActivity : FragmentActivity() {
                 // Check starting destination depending on whether onboarding has been completed and if a user is already signed in
                 val destinationAfterSplash = remember {
                     try {
-                        if (!isOnboardingCompleted(context)) {
+                        com.example.ui.AppLanguage.load(context)
+                        if (!com.example.ui.AppLanguage.hasChosen(context)) {
+                            "language"
+                        } else if (!isOnboardingCompleted(context)) {
                             "onboarding"
                         } else if (FirebaseAuth.getInstance().currentUser != null) {
-                            "home"
+                            "session_gate"
                         } else {
                             "auth"
                         }
@@ -341,6 +419,14 @@ class MainActivity : FragmentActivity() {
 
                 PremiumBackground {
                     val currentRoute = navController.currentBackStackEntryAsState().value?.destination?.route
+                    // Screenshots/recording are blocked only while a chat or call is on screen.
+                    LaunchedEffect(currentRoute) {
+                        if (currentRoute?.substringBefore('/')?.substringBefore('?') in setOf("chat", "group_chat", "call", "group_call")) {
+                            window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+                        } else {
+                            window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+                        }
+                    }
                     Box(Modifier.fillMaxSize()) {
                     NavHost(
                         navController = navController,
@@ -356,11 +442,21 @@ class MainActivity : FragmentActivity() {
                             }
                         }
 
+                        composable("language") {
+                            com.example.ui.LanguagePickerScreen(onDone = {
+                                val dest = try {
+                                    if (!isOnboardingCompleted(context)) "onboarding"
+                                    else if (FirebaseAuth.getInstance().currentUser != null) "session_gate" else "auth"
+                                } catch (e: Exception) { "auth" }
+                                navController.navigate(dest) { popUpTo("language") { inclusive = true } }
+                            })
+                        }
+
                         composable("onboarding") {
                             OnboardingScreen(
                                 onFinished = {
                                     val dest = try {
-                                        if (FirebaseAuth.getInstance().currentUser != null) "home" else "auth"
+                                        if (FirebaseAuth.getInstance().currentUser != null) "session_gate" else "auth"
                                     } catch (e: Exception) {
                                         "auth"
                                     }
@@ -375,9 +471,36 @@ class MainActivity : FragmentActivity() {
                             AuthScreen(
                                 viewModel = viewModel,
                                 onAuthSuccess = {
-                                    navController.navigate("home") {
+                                    navController.navigate("session_gate") {
                                         popUpTo("auth") { inclusive = true }
                                     }
+                                }
+                            )
+                        }
+
+                        // Decides before Home is shown whether two-step verification is needed,
+                        // so Home never flashes and is then covered by the 2FA screen.
+                        composable("session_gate") {
+                            com.example.ui.SessionGateScreen(
+                                onHome = { navController.navigate("home") { popUpTo("session_gate") { inclusive = true } } },
+                                onMfa = { status ->
+                                    pendingMfaStatus = status
+                                    navController.navigate("mfa") { popUpTo("session_gate") { inclusive = true } }
+                                }
+                            )
+                        }
+
+                        composable("mfa") {
+                            val st = pendingMfaStatus
+                            com.example.ui.MfaGateScreen(
+                                method = st?.method.orEmpty().ifBlank { "email" },
+                                maskedEmail = st?.email.orEmpty().ifBlank { "your e-mail" },
+                                onVerified = {
+                                    viewModel.mfaVerified()
+                                    navController.navigate("home") { popUpTo("mfa") { inclusive = true } }
+                                },
+                                onSignOut = {
+                                    viewModel.logout { navController.navigate("auth") { popUpTo("mfa") { inclusive = true } } }
                                 }
                             )
                         }
@@ -392,6 +515,10 @@ class MainActivity : FragmentActivity() {
                                 onProfileSelected = { user ->
                                     viewModel.selectProfile(user)
                                     navController.navigate("profile")
+                                },
+                                onPostSelected = { post ->
+                                    linkedPost = post
+                                    pendingPostId.value = post.id
                                 },
                                 onCreatePost = { navController.navigate("compose_post") },
                                 onGroupSelected = { group ->
@@ -447,6 +574,11 @@ class MainActivity : FragmentActivity() {
                             AssistantScreen(
                                 viewModel = viewModel,
                                 onBack = { navController.popBackStack() },
+                                onOpenAiSettings = {
+                                    viewModel.requestSettingsPage("privacy-ai")
+                                    viewModel.setCurrentTab(4)
+                                    navController.popBackStack("home", false)
+                                },
                                 onOpenUser = { user ->
                                     viewModel.selectRecipient(user)
                                     navController.navigate("chat")
@@ -498,7 +630,9 @@ class MainActivity : FragmentActivity() {
                                 onEndCall = {
                                     activeRecipient?.let { viewModel.endCall(it, callState.callId) } ?: CallEngine.end()
                                 },
-                                onMinimize = { minimizeActiveCall() },
+                                // Back keeps the user inside Convo Chat: the call keeps running in the
+                                // floating mini bubble. Home/recents still switches to Picture-in-Picture.
+                                onMinimize = { leaveCallScreen { if (!navController.popBackStack()) navController.navigate("home") { launchSingleTop = true } } },
                                 onClose = { navController.popBackStack() },
                                 onAddParticipant = { showCallParticipantPicker = true }
                             )
@@ -521,6 +655,10 @@ class MainActivity : FragmentActivity() {
                                     },
                                     onVideoCall = {
                                         viewModel.startVideoCall(recipient) { navController.navigate("call") }
+                                    },
+                                    onOpenUserProfile = { user ->
+                                        viewModel.selectProfile(user)
+                                        navController.navigate("profile")
                                     }
                                 )
                             }
@@ -530,6 +668,10 @@ class MainActivity : FragmentActivity() {
                                 GroupChatScreen(
                                     viewModel = viewModel,
                                     group = group,
+                                    onOpenUserProfile = { user ->
+                                        viewModel.selectProfile(user)
+                                        navController.navigate("profile")
+                                    },
                                     pendingCallRoomId = activeGroupRoomId,
                                     pendingCallVideo = activeGroupVideo,
                                     onBack = { navController.popBackStack() },
@@ -568,7 +710,7 @@ class MainActivity : FragmentActivity() {
                                     group = group,
                                     video = requestedGroupCallVideo,
                                     onClose = { GroupCallEngine.end(); navController.popBackStack() },
-                                    onMinimize = { minimizeActiveCall() },
+                                    onMinimize = { if (liveVideoCall()) minimizeActiveCall() else navController.popBackStack() },
                                     joinRoomId = activeGroupRoomId,
                                     // A room ID means this is an explicit Join action. Start
                                     // immediately; only the group-chat banner remains passive.
@@ -579,6 +721,49 @@ class MainActivity : FragmentActivity() {
                                     }
                                 )
                             }
+                        }
+                    }
+                    val pendingProRoute by com.example.ui.ProTools.pendingRoute.collectAsState()
+                    LaunchedEffect(pendingProRoute) {
+                        if (pendingProRoute == "assistant") {
+                            if (FirebaseAuth.getInstance().currentUser != null) navController.navigate("assistant") { launchSingleTop = true }
+                            com.example.ui.ProTools.consumeRoute()
+                        }
+                    }
+                    com.example.ui.ProToolsOverlay(
+                        users = knownUsers,
+                        onOpenChat = { peerUid ->
+                            val cachedPeer = knownUsers.firstOrNull { it.uid == peerUid }
+                            if (cachedPeer != null) {
+                                viewModel.selectRecipient(cachedPeer)
+                                navController.navigate("chat") { launchSingleTop = true }
+                            } else {
+                                FirebaseFirestore.getInstance().collection("users").document(peerUid).get()
+                                    .addOnSuccessListener { doc -> doc.toObject(User::class.java)?.let { viewModel.selectRecipient(it); navController.navigate("chat") { launchSingleTop = true } } }
+                            }
+                        },
+                        onStartCall = { peerUid, video ->
+                            val beginCall: (User) -> Unit = { peer ->
+                                viewModel.selectRecipient(peer)
+                                if (video) viewModel.startVideoCall(peer) { navController.navigate("call") { launchSingleTop = true } }
+                                else viewModel.startAudioCall(peer) { navController.navigate("call") { launchSingleTop = true } }
+                            }
+                            knownUsers.firstOrNull { it.uid == peerUid }?.let(beginCall)
+                                ?: FirebaseFirestore.getInstance().collection("users").document(peerUid).get()
+                                    .addOnSuccessListener { doc -> doc.toObject(User::class.java)?.let(beginCall) }
+                        }
+                    )
+                    if (splashFinished) com.example.ui.CrashReportDialog()
+                    // Two-step verification also guards screens opened from notifications/deep links.
+                    val globalMfaGate by viewModel.mfaGate.collectAsState()
+                    globalMfaGate?.let { gate ->
+                        if (currentRoute !in listOf("home", "mfa", "session_gate", "auth", "splash", "language", "onboarding")) {
+                            com.example.ui.MfaGateDialog(
+                                method = gate.method.ifBlank { "email" },
+                                maskedEmail = gate.email.ifBlank { "your e-mail" },
+                                onVerified = { viewModel.mfaVerified() },
+                                onSignOut = { viewModel.logout { navController.navigate("auth") { popUpTo(0) } } }
+                            )
                         }
                     }
                     if (showCallParticipantPicker && currentRoute == "call") {
@@ -608,7 +793,26 @@ class MainActivity : FragmentActivity() {
                         )
                     }
                     if(FirebaseAuth.getInstance().currentUser!=null) sharedContent?.let { payload -> IncomingShareHub(payload,viewModel,onCreatePost={navController.navigate("compose_post")},onDismiss={incomingShare.value=null}) }
-                    if (currentRoute != "call" && callState.status !in listOf("idle", "ended", "declined", "missed", "failed")) {
+                    LaunchedEffect(openCallRequest, callState.status) {
+                        if (openCallRequest && callState.status !in listOf("idle", "ended", "declined", "missed", "failed")) {
+                            pendingOpenCall.value = false
+                            navController.navigate("call") { launchSingleTop = true }
+                        } else if (openCallRequest && callState.status in listOf("ended", "declined", "missed", "failed")) pendingOpenCall.value = false
+                    }
+                    val inCallPip by com.example.call.CallPipState.inPip.collectAsState()
+                    if (inCallPip) {
+                        // PiP while not on a call screen: cover the app with a compact call card.
+                        val privateLive = callState.status !in listOf("idle", "ended", "declined", "missed", "failed")
+                        val groupLive = groupCallState.status !in listOf("idle", "ended", "failed")
+                        if (privateLive && currentRoute != "call") Box(Modifier.fillMaxSize().clickable(enabled = false) {}) { com.example.call.PrivateCallPipContent(callState.copy(video = false)) }
+                        else if (!privateLive && groupLive && currentRoute != "group_call") Box(Modifier.fillMaxSize().clickable(enabled = false) {}) { com.example.call.GroupCallPipContent(groupCallState) }
+                    }
+                    if (!inCallPip && currentRoute != "group_call" && groupCallState.status !in listOf("idle", "ended", "failed") && activeGroup?.id == groupCallState.groupId && callState.status in listOf("idle", "ended", "declined", "missed", "failed")) {
+                        Box(Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(12.dp)) {
+                            com.example.call.GroupCallReturnPill(groupCallState, onExpand = { navController.navigate("group_call") { launchSingleTop = true } })
+                        }
+                    }
+                    if (!inCallPip && currentRoute != "call" && callState.status !in listOf("idle", "ended", "declined", "missed", "failed")) {
                         Box(Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(12.dp)) {
                             CallMiniOverlay(
                                 state = callState,
@@ -617,6 +821,9 @@ class MainActivity : FragmentActivity() {
                             )
                         }
                     }
+                    com.example.ui.CallReadinessDialog(
+                        enabled = splashFinished && currentUser != null && currentRoute !in listOf("call", "auth", "onboarding", "splash") && !showOverlayPermissionPrompt
+                    )
                     if (showOverlayPermissionPrompt) {
                         AlertDialog(
                             onDismissRequest = { showOverlayPermissionPrompt = false },
@@ -640,7 +847,8 @@ class MainActivity : FragmentActivity() {
                 LaunchedEffect(intent) {
                     val notificationType = intent?.getStringExtra("notificationType") ?: "message"
                     val senderId = intent?.getStringExtra("senderId")
-                    if (notificationType != "message") {
+                    // "online_alert" (someone you messaged is online now) opens that chat directly.
+                    if (notificationType != "message" && notificationType != "online_alert") {
                         viewModel.requestOpenActivityCenter()
                         navController.navigate("home") { launchSingleTop = true }
                     } else if (!senderId.isNullOrBlank()) {

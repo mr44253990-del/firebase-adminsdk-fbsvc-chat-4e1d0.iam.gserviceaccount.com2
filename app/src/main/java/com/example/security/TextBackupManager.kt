@@ -31,10 +31,9 @@ import javax.crypto.spec.SecretKeySpec
 /**
  * Encrypted, text-only offline backup.
  *
- * The public copy is intentionally ciphertext only, so another app/user cannot
- * read the content. The app-private copy is additionally stored under filesDir
- * and is not exposed through Android's document picker. Images, videos, audio,
- * and file payloads are never included.
+ * Exactly one encrypted backup file is kept in Documents/Convo Chat Backups and overwritten in place.
+ * A private-file reader remains only as a one-time migration path for older app versions; it is
+ * removed after the public backup has been written successfully. Media payloads are not included.
  */
 object TextBackupManager {
     private const val MAGIC = "CONVO_TEXT_BACKUP_V1"
@@ -48,24 +47,46 @@ object TextBackupManager {
 
     data class Result(val restored: Boolean, val itemCount: Int = 0, val reason: String = "")
 
+    /**
+     * Updates the ONE backup file of this account in place. The current local cache is merged
+     * with what the file already holds (by message / user / group / post id), so a fresh
+     * install that has not restored yet can never shrink the backup, and no extra files are made.
+     */
     suspend fun export(context: Context, uid: String): Result = runCatching {
         val dao = AppDatabase.getDatabase(context).cacheDao()
+        val previous = readLatest(context, uid)?.let { bytes ->
+            runCatching { JSONObject(String(decrypt(bytes, uid), StandardCharsets.UTF_8)) }.getOrNull()
+        }?.takeIf { it.optString("magic") == MAGIC && it.optString("uid") == uid }
+        fun merged(key: String, idField: String, fresh: List<JSONObject>): JSONArray {
+            val byId = LinkedHashMap<String, JSONObject>()
+            previous?.optJSONArray(key)?.let { old -> for (i in 0 until old.length()) old.optJSONObject(i)?.let { o -> byId[o.optString(idField)] = o } }
+            fresh.forEach { o -> byId[o.optString(idField)] = o }
+            byId.remove("")
+            return JSONArray(byId.values.toList())
+        }
         val root = JSONObject().apply {
             put("magic", MAGIC)
             put("uid", uid)
-            put("createdAt", System.currentTimeMillis())
-            put("users", JSONArray(dao.getAllUsers().first().map(::userJson)))
-            put("messages", JSONArray(buildMessages(dao)))
-            put("groups", JSONArray(dao.getAllGroups().first().map(::groupJson)))
-            put("groupMessages", JSONArray(buildGroupMessages(dao)))
-            put("stories", JSONArray(dao.getAllStories().first().map(::storyJson)))
-            put("posts", JSONArray(dao.getAllPosts().first().map(::postJson)))
+            put("createdAt", previous?.optLong("createdAt")?.takeIf { it > 0 } ?: System.currentTimeMillis())
+            put("updatedAt", System.currentTimeMillis())
+            put("users", merged("users", "uid", dao.getAllUsers().first().map(::userJson)))
+            put("messages", merged("messages", "messageId", buildMessages(dao)))
+            put("groups", merged("groups", "id", dao.getAllGroups().first().map(::groupJson)))
+            put("groupMessages", merged("groupMessages", "messageId", buildGroupMessages(dao)))
+            put("stories", merged("stories", "id", dao.getAllStories().first().map(::storyJson)))
+            put("posts", merged("posts", "id", dao.getAllPosts().first().map(::postJson)))
         }
         val bytes = encrypt(root.toString().toByteArray(StandardCharsets.UTF_8), uid)
-        writePrivate(context, uid, bytes)
+        // The public encrypted file is the single source of truth. Never silently report
+        // success if storage failed, and remove the legacy app-private duplicate only after
+        // the in-place public write succeeds.
         writePublic(context, uid, bytes)
-        Result(restored = false, itemCount = root.length())
+        deleteLegacyPrivate(context, uid)
+        Result(restored = false, itemCount = root.optJSONArray("messages")?.length() ?: 0)
     }.getOrElse { Result(false, reason = it.message ?: "backup failed") }
+
+    /** Where the single backup file lives, for the Settings screen. */
+    fun publicLocation(uid: String): String = "Documents/Convo Chat Backups/$FILE_PREFIX$uid$FILE_SUFFIX"
 
     suspend fun restoreLatest(context: Context, uid: String): Result = runCatching {
         val bytes = readLatest(context, uid) ?: return@runCatching Result(false, reason = "no backup found")
@@ -73,6 +94,8 @@ object TextBackupManager {
         if (root.optString("magic") != MAGIC || root.optString("uid") != uid) {
             return@runCatching Result(false, reason = "backup does not belong to this account")
         }
+        // Migrate/clean the old two-copy layout after a valid file has been authenticated.
+        runCatching { writePublic(context, uid, bytes); deleteLegacyPrivate(context, uid) }
         val dao = AppDatabase.getDatabase(context).cacheDao()
         var count = 0
 
@@ -144,6 +167,11 @@ object TextBackupManager {
         put("edited", x.edited); put("replyToId", x.replyToId); put("replyToText", x.replyToText)
         put("replyToSenderName", x.replyToSenderName); put("seenByRecipient", x.seenByRecipient)
         put("deliveredToRecipient", x.deliveredToRecipient); put("expiresAt", x.expiresAt); put("chatId", x.chatId)
+        // Online media links only (never local file paths), so photos / voice / files come back after restore.
+        fun web(v: String?) = v?.takeIf { it.startsWith("https://") || it.startsWith("http://") }
+        web(x.imageUrl)?.let { put("imageUrl", it) }
+        (web(x.remoteVoiceUrl) ?: web(x.voiceUrl))?.let { put("remoteVoiceUrl", it); x.voiceDurationSec?.let { d -> put("voiceDurationSec", d) } }
+        (web(x.remoteFileUrl) ?: web(x.fileUrl))?.let { put("remoteFileUrl", it); put("fileName", x.fileName ?: ""); put("fileMimeType", x.fileMimeType ?: ""); x.fileSize?.let { z -> put("fileSize", z) } }
     }
 
     private fun messageFromJson(x: JSONObject) = CachedMessage(
@@ -151,8 +179,11 @@ object TextBackupManager {
         senderUsername = x.optString("senderUsername"), text = x.optString("text"), timestamp = x.optLong("timestamp"),
         edited = x.optBoolean("edited"), replyToId = x.optNullableString("replyToId"),
         replyToText = x.optNullableString("replyToText"), replyToSenderName = x.optNullableString("replyToSenderName"),
-        imageUrl = null, voiceUrl = null, voiceDurationSec = null, remoteVoiceUrl = null, fileUrl = null,
-        remoteFileUrl = null, fileName = null, fileMimeType = null, fileSize = null,
+        imageUrl = x.optNullableString("imageUrl"), voiceUrl = x.optNullableString("remoteVoiceUrl"),
+        voiceDurationSec = if (x.has("voiceDurationSec")) x.optInt("voiceDurationSec") else null,
+        remoteVoiceUrl = x.optNullableString("remoteVoiceUrl"), fileUrl = x.optNullableString("remoteFileUrl"),
+        remoteFileUrl = x.optNullableString("remoteFileUrl"), fileName = x.optNullableString("fileName"),
+        fileMimeType = x.optNullableString("fileMimeType"), fileSize = if (x.has("fileSize")) x.optLong("fileSize") else null,
         seenByRecipient = x.optBoolean("seenByRecipient"), deliveredToRecipient = x.optBoolean("deliveredToRecipient"),
         expiresAt = x.optLong("expiresAt"), chatId = x.optString("chatId")
     )
@@ -246,52 +277,114 @@ object TextBackupManager {
         return SecretKeySpec(raw, "AES")
     }
 
-    private fun writePrivate(context: Context, uid: String, bytes: ByteArray) {
-        val dir = File(context.filesDir, "secret_backups").apply { mkdirs() }
-        File(dir, "$FILE_PREFIX$uid$FILE_SUFFIX").writeBytes(bytes)
+    private fun legacyPrivateFile(context: Context, uid: String) =
+        File(context.filesDir, "secret_backups/$FILE_PREFIX$uid$FILE_SUFFIX")
+
+    private fun deleteLegacyPrivate(context: Context, uid: String) {
+        val file = legacyPrivateFile(context, uid)
+        runCatching { file.delete() }
+        runCatching { file.parentFile?.takeIf { it.list()?.isEmpty() == true }?.delete() }
+    }
+
+    private const val PUBLIC_DIR = "Convo Chat Backups"
+
+    /** Finds this account's single public backup file (and any legacy timestamped copies we own). */
+    private fun queryPublic(context: Context, uid: String): List<Pair<Uri, String>> {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return emptyList()
+        val collection = MediaStore.Files.getContentUri("external")
+        val projection = arrayOf(MediaStore.Files.FileColumns._ID, MediaStore.Files.FileColumns.DISPLAY_NAME)
+        val selection = "${MediaStore.Files.FileColumns.DISPLAY_NAME} LIKE ?"
+        val out = mutableListOf<Pair<Uri, String>>()
+        runCatching {
+            context.contentResolver.query(collection, projection, selection, arrayOf("$FILE_PREFIX$uid%$FILE_SUFFIX"), "${MediaStore.Files.FileColumns.DATE_MODIFIED} DESC")?.use { c ->
+                while (c.moveToNext()) out += Uri.withAppendedPath(collection, c.getLong(0).toString()) to c.getString(1)
+            }
+        }
+        return out
     }
 
     private fun writePublic(context: Context, uid: String, bytes: ByteArray) {
-        val name = "$FILE_PREFIX$uid-${System.currentTimeMillis()}$FILE_SUFFIX"
+        val name = "$FILE_PREFIX$uid$FILE_SUFFIX"
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            val values = ContentValues().apply {
-                put(MediaStore.Files.FileColumns.DISPLAY_NAME, name)
-                put(MediaStore.Files.FileColumns.MIME_TYPE, "application/octet-stream")
-                put(MediaStore.Files.FileColumns.RELATIVE_PATH, Environment.DIRECTORY_DOCUMENTS + "/Convo Chat Backups")
-                put(MediaStore.Files.FileColumns.IS_PENDING, 1)
+            val found = queryPublic(context, uid)
+            val existing = found.firstOrNull { it.second == name }
+            var keepUri: Uri? = null
+            val wroteExisting = existing != null && runCatching {
+                val stream = context.contentResolver.openOutputStream(existing.first, "wt") ?: error("Could not open backup file")
+                stream.use { it.write(bytes); it.flush() }
+                true
+            }.getOrDefault(false)
+            if (wroteExisting) {
+                keepUri = existing!!.first
+            } else {
+                val values = ContentValues().apply {
+                    put(MediaStore.Files.FileColumns.DISPLAY_NAME, name)
+                    put(MediaStore.Files.FileColumns.MIME_TYPE, "application/octet-stream")
+                    put(MediaStore.Files.FileColumns.RELATIVE_PATH, Environment.DIRECTORY_DOCUMENTS + "/" + PUBLIC_DIR)
+                    put(MediaStore.Files.FileColumns.IS_PENDING, 1)
+                }
+                val uri = context.contentResolver.insert(MediaStore.Files.getContentUri("external"), values)
+                    ?: error("Could not create the backup file")
+                try {
+                    val stream = context.contentResolver.openOutputStream(uri) ?: error("Could not open the backup file")
+                    stream.use { it.write(bytes); it.flush() }
+                    val published = context.contentResolver.update(
+                        uri, ContentValues().apply { put(MediaStore.Files.FileColumns.IS_PENDING, 0) }, null, null
+                    )
+                    if (published <= 0) error("Could not finish writing the backup file")
+                    keepUri = uri
+                } catch (error: Exception) {
+                    context.contentResolver.delete(uri, null, null)
+                    throw error
+                }
             }
-            val uri = context.contentResolver.insert(MediaStore.Files.getContentUri("external"), values) ?: return
-            try {
-                context.contentResolver.openOutputStream(uri)?.use { it.write(bytes) }
-                context.contentResolver.update(uri, ContentValues().apply { put(MediaStore.Files.FileColumns.IS_PENDING, 0) }, null, null)
-            } catch (error: Exception) { context.contentResolver.delete(uri, null, null); throw error }
+            // Remove duplicate same-name files and timestamped backups made by older versions,
+            // keeping only the URI that was just updated or created.
+            val keep = keepUri ?: error("Backup file was not saved")
+            queryPublic(context, uid).filter { it.first != keep }.forEach {
+                runCatching { context.contentResolver.delete(it.first, null, null) }
+            }
         } else {
-            val dir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS), "Convo Chat Backups").apply { mkdirs() }
-            File(dir, name).writeBytes(bytes)
+            val dir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS), PUBLIC_DIR).apply {
+                if (!exists() && !mkdirs()) error("Could not create backup folder")
+            }
+            val target = File(dir, name)
+            val tmp = File(dir, "$name.tmp")
+            tmp.writeBytes(bytes)
+            if (!tmp.renameTo(target)) {
+                target.writeBytes(bytes)
+                tmp.delete()
+            }
+            dir.listFiles { file -> file.name.startsWith("$FILE_PREFIX$uid-") && file.name.endsWith(FILE_SUFFIX) }
+                ?.filter { it != target }?.forEach { it.delete() }
         }
     }
 
     private fun readLatest(context: Context, uid: String): ByteArray? {
-        val privateFile = File(context.filesDir, "secret_backups/$FILE_PREFIX$uid$FILE_SUFFIX")
-        if (privateFile.exists()) return privateFile.readBytes()
+        // The older exporter wrote the private copy before attempting the public copy. Prefer a
+        // valid legacy private copy during the one-time migration so a failed older public write
+        // cannot make the restored history older than it needs to be.
+        val legacy = legacyPrivateFile(context, uid).takeIf { it.exists() && it.length() > 0 }?.let { runCatching { it.readBytes() }.getOrNull() }
+        if (legacy != null && runCatching {
+                val root = JSONObject(String(decrypt(legacy, uid), StandardCharsets.UTF_8))
+                root.optString("magic") == MAGIC && root.optString("uid") == uid
+            }.getOrDefault(false)
+        ) return legacy
+        val name = "$FILE_PREFIX$uid$FILE_SUFFIX"
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            val collection = MediaStore.Files.getContentUri("external")
-            val projection = arrayOf(MediaStore.Files.FileColumns._ID, MediaStore.Files.FileColumns.DISPLAY_NAME)
-            val selection = "${MediaStore.Files.FileColumns.DISPLAY_NAME} LIKE ?"
-            val args = arrayOf("$FILE_PREFIX$uid-%$FILE_SUFFIX")
-            context.contentResolver.query(collection, projection, selection, args, "${MediaStore.Files.FileColumns.DATE_MODIFIED} DESC")?.use { cursor ->
-                if (cursor.moveToFirst()) {
-                    val id = cursor.getLong(0)
-                    val uri = Uri.withAppendedPath(collection, id.toString())
-                    return context.contentResolver.openInputStream(uri)?.use(InputStream::readBytes)
-                }
+            val found = queryPublic(context, uid)
+            val pick = found.firstOrNull { it.second == name } ?: found.firstOrNull()
+            pick?.let { p ->
+                runCatching { context.contentResolver.openInputStream(p.first)?.use(InputStream::readBytes) }
+                    .getOrNull()?.takeIf { it.isNotEmpty() }?.let { return it }
             }
         } else {
-            val dir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS), "Convo Chat Backups")
-            return dir.listFiles { file -> file.name.startsWith("$FILE_PREFIX$uid-") && file.name.endsWith(FILE_SUFFIX) }
-                ?.maxByOrNull { it.lastModified() }?.readBytes()
+            val dir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS), PUBLIC_DIR)
+            File(dir, name).takeIf { it.exists() && it.length() > 0 }?.let { return it.readBytes() }
+            dir.listFiles { file -> file.name.startsWith("$FILE_PREFIX$uid") && file.name.endsWith(FILE_SUFFIX) }
+                ?.maxByOrNull { it.lastModified() }?.takeIf { it.length() > 0 }?.let { return it.readBytes() }
         }
-        return null
+        return legacy
     }
 }
 

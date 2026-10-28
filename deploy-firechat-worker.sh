@@ -5,7 +5,7 @@ set -euo pipefail
 CLOUDFLARE_ACCOUNT_ID="${CLOUDFLARE_ACCOUNT_ID:-54ff9e3c4c5908b14f410044be85b698}"
 WORKER_NAME="${WORKER_NAME:-solitary-hill-dcdc}"
 SERVICE_ACCOUNT_FILE="${FIREBASE_SERVICE_ACCOUNT_FILE:-chat-4e1d0-service-account.json}"
-WORKER_FILE="${WORKER_FILE:-firechat-fcm-worker.js}"
+WORKER_FILE="${WORKER_FILE:-cloudflare-worker.js}"
 WORKER_URL="https://${WORKER_NAME}.mr44253990.workers.dev/"
 R2_BUCKET_NAME="${R2_BUCKET_NAME:-firechat-media}"
 : "${R2_PUBLIC_BASE_URL:?Set R2_PUBLIC_BASE_URL to your bucket's https://pub-....r2.dev URL}"
@@ -28,6 +28,7 @@ METADATA=$(R2_BUCKET_NAME="$R2_BUCKET_NAME" R2_PUBLIC_BASE_URL="$R2_PUBLIC_BASE_
 import json,os
 print(json.dumps({
   "main_module":"firechat-fcm-worker.js",
+  "keep_bindings":["secret_text","secret_key","json","kv_namespace","d1","service","queue"],
   "bindings":[
     {"type":"r2_bucket","name":"MEDIA_BUCKET","bucket_name":os.environ["R2_BUCKET_NAME"]},
     {"type":"plain_text","name":"R2_PUBLIC_BASE_URL","text":os.environ["R2_PUBLIC_BASE_URL"]}

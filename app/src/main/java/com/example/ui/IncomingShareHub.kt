@@ -38,7 +38,13 @@ fun IncomingShareHub(payload: IncomingSharePayload,viewModel:ChatViewModel,onCre
     ShareChoice(Icons.Default.DynamicFeed,"Post","Open Post Studio with this content") { viewModel.prepareExternalShare(payload);onDismiss();onCreatePost() }
    }else{
     TextButton(onClick={mode="home"}){Icon(Icons.Default.ArrowBack,null);Spacer(Modifier.width(5.dp));Text("Share options")}
-    LazyColumn(Modifier.heightIn(max=430.dp)){items(users,key={it.uid}){person->ListItem(headlineContent={Text(person.name,fontWeight=FontWeight.Bold)},supportingContent={Text("@${person.username}")},leadingContent={AsyncImage(person.profileImageUrl.ifBlank{null},person.name,Modifier.size(44.dp).clip(CircleShape))},modifier=Modifier.clip(RoundedCornerShape(18.dp)).clickable{viewModel.sendExternalShareToUser(person,payload){_,msg->Toast.makeText(context,msg,Toast.LENGTH_LONG).show()};onDismiss()})}}
+    var shareQuery by remember{mutableStateOf("")}
+    val me by viewModel.currentUserState.collectAsState()
+    val friendIds=me?.friends?.toSet().orEmpty()
+    val friends=remember(users,friendIds,shareQuery){users.filter{it.uid in friendIds&&(shareQuery.isBlank()||it.name.contains(shareQuery.trim(),true)||it.username.contains(shareQuery.trim().removePrefix("@"),true))}.distinctBy{it.uid}.sortedBy{it.name.lowercase()}}
+    OutlinedTextField(shareQuery,{shareQuery=it},placeholder={Text("Search friends")},leadingIcon={Icon(Icons.Default.Search,null)},singleLine=true,shape=RoundedCornerShape(18.dp),modifier=Modifier.fillMaxWidth())
+    if(friends.isEmpty())Text(if(friendIds.isEmpty())"You can share only with friends. Add friends first." else "No friend matches \"$shareQuery\"",color=MaterialTheme.colorScheme.onSurfaceVariant)
+    LazyColumn(Modifier.heightIn(max=430.dp)){items(friends,key={it.uid}){person->ListItem(headlineContent={Text(person.name,fontWeight=FontWeight.Bold)},supportingContent={Text("@${person.username}")},leadingContent={AsyncImage(person.profileImageUrl.ifBlank{null},person.name,Modifier.size(44.dp).clip(CircleShape))},modifier=Modifier.clip(RoundedCornerShape(18.dp)).clickable{viewModel.sendExternalShareToUser(person,payload){_,msg->Toast.makeText(context,msg,Toast.LENGTH_LONG).show()};onDismiss()})}}
    }
   }
  }

@@ -67,7 +67,14 @@ fun UserProfileScreen(
     var showFeatureSuggestion by remember { mutableStateOf(false) }
     var showProfileMenu by remember { mutableStateOf(false) }
     val profileLink = remember(liveUser.uid) { "https://solitary-hill-dcdc.mr44253990.workers.dev/profile?uid=${Uri.encode(liveUser.uid)}" }
-    val profileQr = remember(profileLink) { runCatching { createQrBitmap(profileLink, 640) }.getOrNull() }
+    // The QR is created only after the owner taps "Generate QR".
+    var qrRequested by remember(liveUser.uid) { mutableStateOf(false) }
+    val profileQr = remember(profileLink, qrRequested) { if (qrRequested) runCatching { createQrBitmap(profileLink, 640) }.getOrNull() else null }
+    val profileViewers by ProfileViewerStore.viewers.collectAsState()
+    LaunchedEffect(liveUser.uid, currentUser?.uid) {
+        val me = currentUser?.uid
+        if (me != null && liveUser.uid != me) viewModel.recordProfileView(liveUser)
+    }
     val profileMotion = rememberInfiniteTransition(label = "profile_preview_motion")
     val previewFloat by profileMotion.animateFloat(
         initialValue = -3f,
@@ -83,7 +90,8 @@ fun UserProfileScreen(
     )
 
     Scaffold(
-        containerColor = MaterialTheme.colorScheme.background,
+        modifier = Modifier.modernBackdrop(),
+        containerColor = Color.Transparent,
         topBar = {
             TopAppBar(
                 title = {
@@ -103,7 +111,7 @@ fun UserProfileScreen(
                             onDismissRequest = { showProfileMenu = false }
                         ) {
                             DropdownMenuItem(
-                                text = { Text("Copy profile link") },
+                                text = { Text(tr("Copy profile link")) },
                                 leadingIcon = { Icon(Icons.Outlined.ContentCopy, null) },
                                 onClick = {
                                     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
@@ -113,7 +121,7 @@ fun UserProfileScreen(
                                 }
                             )
                             DropdownMenuItem(
-                                text = { Text("Share profile") },
+                                text = { Text(tr("Share profile")) },
                                 leadingIcon = { Icon(Icons.Outlined.Share, null) },
                                 onClick = {
                                     showProfileMenu = false
@@ -137,41 +145,31 @@ fun UserProfileScreen(
         ) {
             item(key = "hero") {
                 Column {
-                    Box(Modifier.fillMaxWidth().height(250.dp)) {
-                        if (liveUser.coverImageUrl.isNotBlank()) {
-                            AsyncImage(liveUser.coverImageUrl, "Cover photo", contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize().graphicsLayer { scaleX = liveUser.coverScale.coerceIn(1f, 2f); scaleY = liveUser.coverScale.coerceIn(1f, 2f); translationY = liveUser.coverOffsetY.coerceIn(-1f, 1f) * 90f })
-                        } else {
-                            Box(
-                                Modifier.fillMaxSize().background(
-                                    Brush.linearGradient(
-                                        listOf(
-                                            MaterialTheme.colorScheme.primary.copy(alpha = .96f),
-                                            MaterialTheme.colorScheme.secondary.copy(alpha = .82f),
-                                            MaterialTheme.colorScheme.tertiary.copy(alpha = .78f)
-                                        )
-                                    )
-                                )
-                            )
-                        }
+                    if (liveUser.isConvoAdmin()) AdminProfileHero(liveUser)
+                    else Box(Modifier.fillMaxWidth().height(210.dp)) {
+                        ProfileCoverArt(liveUser.coverImageUrl, liveUser.uid, Modifier.fillMaxSize(), liveUser.coverScale, liveUser.coverOffsetY)
                         Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, MaterialTheme.colorScheme.background.copy(alpha = .18f), MaterialTheme.colorScheme.background.copy(alpha = .88f)))))
                         Box(
-                            modifier = Modifier.align(Alignment.BottomStart).padding(start = 20.dp).offset(y = 50.dp),
+                            modifier = Modifier.align(Alignment.BottomCenter).offset(y = 56.dp),
                             contentAlignment = Alignment.BottomEnd
                         ) {
                             AsyncImage(
                                 model = liveUser.profileImageUrl.ifBlank { null }, contentDescription = liveUser.name,
                                 error = painterResource(R.drawable.img_app_logo), contentScale = ContentScale.Crop,
-                                modifier = Modifier.size(122.dp).clip(CircleShape).border(5.dp, MaterialTheme.colorScheme.background, CircleShape)
+                                modifier = Modifier.size(118.dp).clip(CircleShape).border(5.dp, MaterialTheme.colorScheme.background, CircleShape)
                             )
                             Box(Modifier.size(24.dp).clip(CircleShape).background(MaterialTheme.colorScheme.background).padding(4.dp).clip(CircleShape).background(if (liveUser.isOnline) Color(0xFF45D483) else MaterialTheme.colorScheme.outline))
                         }
                     }
-                    Spacer(Modifier.height(58.dp))
-                    Column(Modifier.padding(horizontal = 20.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(liveUser.name, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold, modifier = Modifier.weight(1f))
+                    Spacer(Modifier.height(if (liveUser.isConvoAdmin()) 74.dp else 66.dp))
+                    Column(
+                        Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text(liveUser.name, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold, maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center, modifier = Modifier.weight(1f, fill = false))
                             if (liveUser.activeProfileType.equals("Creator", ignoreCase = true)) {
-                                Spacer(Modifier.width(6.dp))
                                 Surface(color = Color(0xFF6C4BFF), shape = CircleShape) {
                                     Row(Modifier.padding(horizontal = 8.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
                                         Icon(Icons.Outlined.AutoAwesome, null, Modifier.size(14.dp), tint = Color.White)
@@ -179,7 +177,9 @@ fun UserProfileScreen(
                                     }
                                 }
                             }
-                            if (liveUser.role == "moderator") {
+                            if (liveUser.isConvoAdmin()) {
+                                AdminNameBadge()
+                            } else if (liveUser.role == "moderator") {
                                 Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = CircleShape) {
                                     Row(Modifier.padding(horizontal = 10.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                                         Icon(Icons.Outlined.Verified, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)
@@ -196,22 +196,23 @@ fun UserProfileScreen(
                                 }
                             }
                         }
-                        Text("@${liveUser.username}  •  ${if (liveUser.isOnline) "Active now" else "Offline"}", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("@${liveUser.username}  •  ${if (liveUser.isOnline) "Active now" else "Offline"}", color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
+                        if (!isMe) MutualFriendsLine(liveUser, currentUser?.friends?.toSet().orEmpty(), allUsers)
+                        if (liveUser.staffRole == "sub_admin") StaffBadge(liveUser.staffTitle.ifBlank { "Sub-admin" } + " • Convo staff")
                         Surface(color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = .7f), shape = CircleShape) {
                             Text(liveUser.activeProfileType.ifBlank { "Personal" }, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold, fontSize = 11.sp, modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp))
                         }
                         if (liveUser.professionalTitle.isNotBlank() || liveUser.pronouns.isNotBlank()) {
-                            Spacer(Modifier.height(6.dp))
                             Text(
                                 listOf(liveUser.professionalTitle, liveUser.pronouns).filter { it.isNotBlank() }.joinToString(" • "),
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 fontSize = 13.sp,
-                                fontWeight = FontWeight.Medium
+                                fontWeight = FontWeight.Medium,
+                                textAlign = TextAlign.Center
                             )
                         }
                         if (liveUser.bio.isNotBlank()) {
-                            Spacer(Modifier.height(10.dp))
-                            Text(liveUser.bio, style = MaterialTheme.typography.bodyLarge, lineHeight = 23.sp, color = MaterialTheme.colorScheme.onSurface)
+                            Text(liveUser.bio, style = MaterialTheme.typography.bodyLarge, lineHeight = 23.sp, color = MaterialTheme.colorScheme.onSurface, textAlign = TextAlign.Center)
                         }
                     }
                 }
@@ -242,7 +243,7 @@ fun UserProfileScreen(
                 }
             }
 
-            item(key = "profile_qr") {
+            if (isMe) item(key = "profile_qr") {
                 Card(Modifier.fillMaxWidth().padding(horizontal = 16.dp), shape = RoundedCornerShape(26.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .52f))) {
                     Column(Modifier.fillMaxWidth().padding(18.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -250,15 +251,30 @@ fun UserProfileScreen(
                             Spacer(Modifier.width(8.dp))
                             Column(Modifier.weight(1f)) {
                                 Text("Profile QR", fontWeight = FontWeight.ExtraBold)
-                                Text("Scan or share this profile", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(if (qrRequested) "Scan or share this profile" else "Hidden until you generate it", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
+                            if (qrRequested) TextButton(onClick = { qrRequested = false }) { Text(tr("Hide")) }
+                            else FilledTonalButton(onClick = { qrRequested = true }) { Text("Generate QR") }
                         }
-                        if (isMe) {
+                        if (qrRequested) {
                             profileQr?.let { bitmap ->
                                 Image(bitmap.asImageBitmap(), "${liveUser.name} profile QR code", Modifier.size(190.dp).clip(RoundedCornerShape(18.dp)).background(Color.White).padding(10.dp))
                             } ?: Text("QR preview unavailable", color = MaterialTheme.colorScheme.error)
-                        } else {
-                            Text("QR codes are available only for your own profile.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
+                        }
+                    }
+                }
+            }
+
+            if (isMe) item(key = "profile_viewers_summary") {
+                val weekAgo = remember { System.currentTimeMillis() - 7L * 24 * 60 * 60 * 1000 }
+                val weekCount = profileViewers.count { it.lastViewedAt >= weekAgo }
+                Card(Modifier.fillMaxWidth().padding(horizontal = 16.dp), shape = RoundedCornerShape(26.dp)) {
+                    Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Outlined.Visibility, null, tint = Color(0xFFD18B12))
+                        Spacer(Modifier.width(10.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("$weekCount profile ${if (weekCount == 1) "view" else "views"} this week", fontWeight = FontWeight.ExtraBold)
+                            Text("See who visited in Settings, Profile viewers (Premium)", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                 }
@@ -345,23 +361,23 @@ fun UserProfileScreen(
                         }
                         if (isFriend) {
                             OutlinedButton(onClick = onMessage, modifier = Modifier.weight(1f), shape = RoundedCornerShape(18.dp)) {
-                                Icon(Icons.Outlined.ChatBubbleOutline, null); Spacer(Modifier.width(6.dp)); Text("Message")
+                                Icon(Icons.Outlined.ChatBubbleOutline, null); Spacer(Modifier.width(6.dp)); Text(tr("Message"))
                             }
                         } else if (isRequested) {
                             OutlinedButton(
                                 onClick = { viewModel.cancelFriendRequest(liveUser.uid) { Toast.makeText(context, if (it) "Request cancelled" else "Could not cancel", Toast.LENGTH_SHORT).show() } },
                                 modifier = Modifier.weight(1f), shape = RoundedCornerShape(18.dp)
-                            ) { Text("Requested") }
+                            ) { Text(tr("Requested")) }
                         } else {
                             OutlinedButton(
                                 onClick = { viewModel.sendFriendRequest(liveUser) { _, message -> Toast.makeText(context, message, Toast.LENGTH_SHORT).show() } },
                                 modifier = Modifier.weight(1f), shape = RoundedCornerShape(18.dp)
-                            ) { Icon(Icons.Outlined.PersonAdd, null); Spacer(Modifier.width(5.dp)); Text("Add friend") }
+                            ) { Icon(Icons.Outlined.PersonAdd, null); Spacer(Modifier.width(5.dp)); Text(tr("Add friend")) }
                         }
                     }
                     if (!isFriend) {
                         OutlinedButton(onClick = onMessage, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp)) {
-                            Icon(Icons.Outlined.MarkUnreadChatAlt, null); Spacer(Modifier.width(7.dp)); Text("Send message request")
+                            Icon(Icons.Outlined.MarkUnreadChatAlt, null); Spacer(Modifier.width(7.dp)); Text(tr("Send message request"))
                         }
                     }
                     if (liveUser.role == "moderator") {
@@ -375,7 +391,7 @@ fun UserProfileScreen(
             item(key = "about") {
                 Card(Modifier.fillMaxWidth().padding(horizontal = 16.dp), shape = RoundedCornerShape(26.dp)) {
                     Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(13.dp)) {
-                        Text("About", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.ExtraBold)
+                        Text(tr("About"), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.ExtraBold)
                         ProfileInfoRow(Icons.Outlined.Cake, if (liveUser.dob.isBlank()) "Birthday not shared" else "Born ${liveUser.dob}")
                         ProfileInfoRow(Icons.Outlined.CalendarMonth, "Joined ${SimpleDateFormat("MMMM yyyy", Locale.getDefault()).format(Date(liveUser.createdAt))}")
                         ProfileInfoRow(Icons.Outlined.People, "${liveUser.followers.size} followers • ${liveUser.following.size} following")
@@ -385,7 +401,7 @@ fun UserProfileScreen(
 
             item(key = "post_title") {
                 Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text("Posts", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold, modifier = Modifier.weight(1f))
+                    Text(tr("Posts"), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold, modifier = Modifier.weight(1f))
                     Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = CircleShape) { Text(userPosts.size.toString(), color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp), fontWeight = FontWeight.Bold) }
                 }
             }
@@ -394,8 +410,8 @@ fun UserProfileScreen(
                     Card(Modifier.fillMaxWidth().padding(horizontal = 16.dp), shape = RoundedCornerShape(26.dp)) {
                         Column(Modifier.fillMaxWidth().height(180.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
                             Icon(Icons.Outlined.Article, null, Modifier.size(48.dp), tint = MaterialTheme.colorScheme.primary.copy(alpha = .55f))
-                            Spacer(Modifier.height(8.dp)); Text("No posts yet", fontWeight = FontWeight.Bold)
-                            Text("Shared moments will appear here", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Spacer(Modifier.height(8.dp)); Text(tr("No posts yet"), fontWeight = FontWeight.Bold)
+                            Text(tr("Shared moments will appear here"), color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                 }
@@ -425,7 +441,7 @@ fun UserProfileScreen(
                     enabled = title.isNotBlank() && description.isNotBlank()
                 ) { Text("Send request") }
             },
-            dismissButton = { TextButton(onClick = { showFeatureSuggestion = false }) { Text("Cancel") } }
+            dismissButton = { TextButton(onClick = { showFeatureSuggestion = false }) { Text(tr("Cancel")) } }
         )
     }
 }
