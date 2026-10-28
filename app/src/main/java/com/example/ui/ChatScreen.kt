@@ -1272,6 +1272,7 @@ fun ChatScreen(
                                 else Toast.makeText(context, "Original message is no longer loaded", Toast.LENGTH_SHORT).show()
                             },
                             bubbleAccent = bubbleAccent,
+                            autoSaveAllowed = flagshipConfig.autoSaveReceivedFilesEnabled,
                             textScale = chatTextScale,
                             onMentionClick = openMention,
                             appearance = chatAppearance,
@@ -2078,7 +2079,8 @@ fun MessageBubbleItem(
     textScale: Float = 1f,
     onMentionClick: (String) -> Unit = {},
     appearance: ChatAppearance = ChatAppearance(),
-    themeSpec: ChatThemeSpec? = null
+    themeSpec: ChatThemeSpec? = null,
+    autoSaveAllowed: Boolean = true
 ) {
     var showMenu by remember { mutableStateOf(false) }
     var showImageViewer by remember { mutableStateOf(false) }
@@ -2098,9 +2100,9 @@ fun MessageBubbleItem(
     val isStickerOnly = ConvoStickers.isSticker(message.text) && message.imageUrl.isNullOrBlank() && message.voiceUrl.isNullOrBlank() && message.fileUrl.isNullOrBlank()
 
     val timeString = remember(message.timestamp, appearance.use24h) { appearance.formatTime(message.timestamp) }
-    LaunchedEffect(message.messageId, message.imageUrl) {
+    LaunchedEffect(message.messageId, message.imageUrl, autoSaveAllowed) {
         val img = message.imageUrl
-        if (!isSentByMe && img != null && img.startsWith("http")) {
+        if (autoSaveAllowed && !isSentByMe && img != null && img.startsWith("http")) {
             ReceivedFiles.autoSave(context, message.messageId + "_img", img, "IMG_${java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US).format(java.util.Date(message.timestamp.takeIf { it > 0 } ?: System.currentTimeMillis()))}_${message.messageId.takeLast(4)}.jpg", "image/jpeg")
         }
     }
@@ -2236,7 +2238,7 @@ fun MessageBubbleItem(
                     }
 
                     if (!message.fileUrl.isNullOrBlank()) {
-                        GenericFileBubble(message, onFileConsumed, palette.accent, palette.text, flagshipConfig.autoSaveReceivedFilesEnabled)
+                        GenericFileBubble(message, onFileConsumed, palette.accent, palette.text, autoSaveAllowed)
                         Spacer(Modifier.height(5.dp))
                     }
 

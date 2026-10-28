@@ -14,13 +14,12 @@ A minimal browser companion for **accepted one-to-one text chats**. The browser 
 
 ## Cloudflare Pages setup
 
-1. Create a Pages project named `convo-chat-companion` with this directory (`web-companion/`) as the static output directory; there is no build command.
-2. The resulting default origin is expected to be `https://convo-chat-companion.pages.dev`. If Cloudflare assigns a different/custom domain, use that exact origin in the Worker environment and Android pairing UI will display it.
-3. In the existing Worker environment, set the non-secret variable `WEB_COMPANION_ORIGIN` to the exact Pages origin, for example `https://convo-chat-companion.pages.dev` (no path or trailing slash). The Worker intentionally refuses to create codes until this is configured.
-4. Ensure the existing Worker has `FIREBASE_SERVICE_ACCOUNT` and `FIREBASE_DATABASE_URL` configured. Service-account JSON stays in Worker secrets. The Worker API source is now **48**; deploy the exact same source to `cloudflare-worker.js` and `firechat-fcm-worker.js`'s configured Worker deployment.
-5. If the Worker hostname changes, update `web-companion/config.js` and the `connect-src` entry in `_headers` to the exact HTTPS Worker origin.
-6. In Firestore, enable TTL deletion on the `expiresAt` field for `web_pair_codes`, `web_pair_sessions`, and `web_pair_rate`. This only cleans expired records; access checks enforce expiry regardless of TTL timing.
-7. Deploy the Android version that requires Worker API 48 only after the new Worker is live. The current released app still targets the older baseline; this working-tree change is not released.
+1. Create/use the Pages project named `convo-chat-companion` with this directory (`web-companion/`) as the static output directory; there is no build command. The web client is in its `web/` subdirectory, so the app is served at `https://convo-chat-companion.pages.dev/web/` (and `/web` redirects there). The root copy remains for compatibility.
+2. In the existing Worker environment, set the non-secret variable `WEB_COMPANION_ORIGIN` to the exact Pages **origin only**, for example `https://convo-chat-companion.pages.dev` (no `/web` path or trailing slash). CORS checks the origin, while Android receives the full `/web/` URL.
+3. Ensure the existing Worker has `FIREBASE_SERVICE_ACCOUNT` and `FIREBASE_DATABASE_URL` configured. Service-account JSON stays in Worker secrets. The Worker API source is now **48**; deploy the exact same source to `cloudflare-worker.js` and `firechat-fcm-worker.js`'s configured Worker deployment.
+4. If the Worker hostname changes, update both copies of `config.js` and the `connect-src` entry in `_headers` to the exact HTTPS Worker origin.
+5. In Firestore, enable TTL deletion on the `expiresAt` field for `web_pair_codes`, `web_pair_sessions`, and `web_pair_rate`. This only cleans expired records; access checks enforce expiry regardless of TTL timing.
+6. Deploy the Android version that requires Worker API 48 only after the new Worker is live. The current released app still targets the older baseline; this working-tree change is not released.
 
 ## Manual smoke test before release
 

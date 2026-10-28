@@ -80,7 +80,7 @@ export default {
           usedAt: 0,
           sessionVersion
         });
-        return webPairJson(request, env, { success: true, code, expiresAt: now + 90_000, companionUrl: origin }, 200);
+        return webPairJson(request, env, { success: true, code, expiresAt: now + 90_000, companionUrl: `${origin}/web/` }, 200);
       } catch (error) {
         return webPairJson(request, env, { error: "Could not create companion pairing", detail: String(error?.message || "").slice(0, 180) }, 500);
       }
