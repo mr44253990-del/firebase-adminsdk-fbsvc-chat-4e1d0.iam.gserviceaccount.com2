@@ -285,10 +285,63 @@ async function webResults(projectId: string, token: string, query: string): Prom
   } catch (_) { return []; }
 }
 
-/** Free AI picture for a post (Pollinations, no key). The prompt comes from the AI itself. */
-function aiImageUrl(prompt: string): string {
-  const clean = prompt.replace(/[\r\n]+/g, " ").slice(0, 400);
-  return `https://image.pollinations.ai/prompt/${encodeURIComponent(clean)}?width=1024&height=1024&nologo=true&seed=${Math.floor(Math.random() * 1_000_000)}`;
+/**
+ * Generate an auto-post image before publishing, then store it in Supabase Storage so clients
+ * fetch a stable, cacheable file instead of waiting on a third-party image-generation URL.
+ * If the admin has not configured OVH image generation or a public posts bucket, use the
+ * post's styled background instead of publishing a slow/broken external image link.
+ */
+async function generateCachedPostImage(projectId: string, token: string, prompt: string): Promise<string> {
+  const cleanPrompt = prompt.replace(/[\r\n]+/g, " ").trim().slice(0, 900);
+  if (!cleanPrompt) return "";
+  const ai: Json = (await firestoreGet(projectId, "admin_secrets/ai", token).catch(() => null)) ?? {};
+  const imageProvider: Json = ai.imageProvider && typeof ai.imageProvider === "object" ? ai.imageProvider : {};
+  const ovhToken = String(imageProvider.apiKey || "");
+  if (imageProvider.enabled !== true || ovhToken.length < 8) return "";
+
+  const storage: Json = (await firestoreGet(projectId, "app_config/storage", token).catch(() => null)) ?? {};
+  const supabaseUrl = String(env("SUPABASE_URL") || storage.supabaseUrl || "").replace(/\/+$/, "");
+  const serviceKey = env("SUPABASE_SERVICE_ROLE_KEY");
+  const bucket = String(storage.bucketPosts || "posts").trim();
+  if (!/^https:\/\//i.test(supabaseUrl) || serviceKey.length < 20 || !/^[A-Za-z0-9_-]{1,100}$/.test(bucket)) return "";
+
+  try {
+    const upstream = await fetch("https://stable-diffusion-xl.endpoints.kepler.ai.cloud.ovh.net/api/text2image", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${ovhToken}`, "Content-Type": "application/json", Accept: "image/*, application/octet-stream" },
+      body: JSON.stringify({ prompt: cleanPrompt, negative_prompt: "text, letters, watermark, logo, blurry, low quality" }),
+      signal: AbortSignal.timeout(50_000),
+    });
+    if (!upstream.ok) {
+      console.warn(`Auto-post image generation failed with HTTP ${upstream.status}`);
+      return "";
+    }
+    const mime = String(upstream.headers.get("Content-Type") || "image/png").split(";")[0].toLowerCase();
+    if (!mime.startsWith("image/")) return "";
+    const bytes = await upstream.arrayBuffer();
+    if (!bytes.byteLength || bytes.byteLength > 12 * 1024 * 1024) return "";
+    const extension = mime.includes("jpeg") || mime.includes("jpg") ? "jpg" : mime.includes("webp") ? "webp" : "png";
+    const objectPath = `auto-ai-posts/${new Date().toISOString().slice(0, 10)}/${crypto.randomUUID()}.${extension}`;
+    const upload = await fetch(`${supabaseUrl}/storage/v1/object/${encodeURIComponent(bucket)}/${objectPath.split("/").map(encodeURIComponent).join("/")}`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${serviceKey}`,
+        apikey: serviceKey,
+        "Content-Type": mime,
+        "Cache-Control": "max-age=31536000, immutable",
+      },
+      body: bytes,
+      signal: AbortSignal.timeout(25_000),
+    });
+    if (!upload.ok) {
+      console.warn(`Auto-post image storage failed with HTTP ${upload.status}`);
+      return "";
+    }
+    return `${supabaseUrl}/storage/v1/object/public/${encodeURIComponent(bucket)}/${objectPath.split("/").map(encodeURIComponent).join("/")}`;
+  } catch (error) {
+    console.warn(`Auto-post image generation/storage skipped: ${safeError(error)}`);
+    return "";
+  }
 }
 
 /** Admin-managed provider from Firestore `admin_secrets/ai` (OpenAI-compatible), or null. */
@@ -413,7 +466,7 @@ export async function runAutoPost(force = false): Promise<Json> {
     const localTime = `${String(hour).padStart(2, "0")}:${String(new Date(now + tz * 60_000).getUTCMinutes()).padStart(2, "0")}`;
     const provider = await activeProvider(projectId, token);
     const generated = await generatePost(config, type, localTime, provider, { web, part, seriesTopic: String(config.seriesTopic || ""), seriesSummary });
-    const imageUrl = config.withImage === true && generated.imagePrompt ? aiImageUrl(generated.imagePrompt) : "";
+    const imageUrl = config.withImage === true && generated.imagePrompt ? await generateCachedPostImage(projectId, token, String(generated.imagePrompt)) : "";
     const postText = generated.link && web.length ? `${generated.text}\n\n${generated.link}` : generated.text;
     const postTitle = type === "story" ? `${String(config.seriesTopic || generated.title).slice(0, 50)} - Part ${part}` : generated.title;
     const id = crypto.randomUUID();

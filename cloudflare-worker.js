@@ -12,7 +12,7 @@
 
 // Bump WORKER_API_VERSION whenever routes change; the Android app compares it with
 // the version it expects and tells the admin to redeploy when the Worker is older.
-const WORKER_API_VERSION = 47;
+const WORKER_API_VERSION = 48;
 
 // Optional extra data forwarded to the device (rich image notifications, group calls, …).
 const PUSH_EXTRA_KEYS = ["imageUrl", "roomId", "groupId", "groupName", "memberIds", "videoCall", "probeId", "chatId", "previewKind"];
@@ -27,7 +27,7 @@ function pushExtras(payload) {
   }
   return out;
 }
-const WORKER_ROUTES = ["push", "sessions", "mfa", "admin", "clouddb", "ai", "ai-search", "media", "presence", "link-preview", "profile", "post", "turn", "sfu", "auto-reply", "gmail-oauth", "public-auth-config"];
+const WORKER_ROUTES = ["web-pair", "push", "sessions", "mfa", "admin", "clouddb", "ai", "ai-search", "media", "presence", "link-preview", "profile", "post", "turn", "sfu", "auto-reply", "gmail-oauth", "public-auth-config"];
 
 export default {
   async scheduled(controller, env, ctx) {
@@ -46,6 +46,195 @@ export default {
           "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Media-Tags, X-Media-Title",
         },
       });
+    }
+
+    // Web companion pairing is explicit, short-lived and proxy-only: no Firebase ID/refresh
+    // token is ever issued to the browser. Android must authenticate and send optIn=true.
+    if (request.method === "POST" && path === "/web-pair/create") {
+      const auth = await authenticateCaller(request, env);
+      if (!auth.ok) return auth.response;
+      const body = await request.json().catch(() => ({}));
+      if (body.optIn !== true) return webPairJson(request, env, { error: "Explicit opt-in is required" }, 400);
+      const origin = normalizeWebCompanionOrigin(env.WEB_COMPANION_ORIGIN);
+      if (!origin) return webPairJson(request, env, { error: "Web companion origin is not configured" }, 503);
+      if (!env.FIREBASE_DATABASE_URL) return webPairJson(request, env, { error: "Realtime Database is not configured for the companion" }, 503);
+      try {
+        const profile = await firestoreGet(env, `users/${auth.caller.sub}`);
+        if (!profile || profile.banned === true || profile.disabled === true) return webPairJson(request, env, { error: "Account is not eligible for companion pairing" }, 403);
+        const now = Date.now();
+        const sessionVersion = Number(profile.webCompanionVersion || 0);
+        let code = "";
+        let codeHash = "";
+        for (let attempt = 0; attempt < 4; attempt++) {
+          code = randomDigitCode(10);
+          codeHash = await sha256Hex(`convo-web-pair:${code}`);
+          const existing = await firestoreGet(env, `web_pair_codes/${codeHash}`).catch(() => null);
+          if (!existing || Number(existing.expiresAt || 0) <= now || Number(existing.usedAt || 0) > 0) break;
+          code = "";
+        }
+        if (!code) return webPairJson(request, env, { error: "Could not create a pairing code. Try again." }, 503);
+        await fsPatch(env, `web_pair_codes/${codeHash}`, {
+          uid: auth.caller.sub,
+          createdAt: now,
+          expiresAt: now + 90_000,
+          usedAt: 0,
+          sessionVersion
+        });
+        return webPairJson(request, env, { success: true, code, expiresAt: now + 90_000, companionUrl: origin }, 200);
+      } catch (error) {
+        return webPairJson(request, env, { error: "Could not create companion pairing", detail: String(error?.message || "").slice(0, 180) }, 500);
+      }
+    }
+
+    // Android can revoke every companion session without retaining browser credentials.
+    if (request.method === "POST" && path === "/web-pair/revoke-all") {
+      const auth = await authenticateCaller(request, env);
+      if (!auth.ok) return auth.response;
+      try {
+        const profile = await firestoreGet(env, `users/${auth.caller.sub}`) || {};
+        const nextVersion = Number(profile.webCompanionVersion || 0) + 1;
+        await fsPatch(env, `users/${auth.caller.sub}`, { webCompanionVersion: nextVersion, webCompanionRevokedAt: Date.now() });
+        return webPairJson(request, env, { success: true, revoked: "all", webCompanionVersion: nextVersion }, 200);
+      } catch (error) {
+        return webPairJson(request, env, { error: "Could not revoke companion sessions" }, 500);
+      }
+    }
+
+    // The only unauthenticated companion route redeems a 10-digit one-use code.
+    if (request.method === "POST" && path === "/web-pair/redeem") {
+      if (!webCompanionOriginMatches(request, env)) return webPairJson(request, env, { error: "Unapproved companion origin" }, 403);
+      const body = await request.json().catch(() => ({}));
+      const code = String(body.code || "").replace(/\D/g, "").slice(0, 10);
+      if (code.length !== 10) return webPairJson(request, env, { error: "Enter the 10-digit code shown in the Android app" }, 400);
+      try {
+        const now = Date.now();
+        const ip = request.headers.get("CF-Connecting-IP") || "unknown";
+        const rateId = await sha256Hex(`web-pair-ip:${ip}`);
+        const ratePath = `web_pair_rate/${rateId}`;
+        const rate = await firestoreGet(env, ratePath).catch(() => null) || {};
+        const windowAt = Number(rate.windowAt || 0);
+        const attempts = windowAt > now - 60_000 ? Number(rate.attempts || 0) : 0;
+        if (attempts >= 5) return webPairJson(request, env, { error: "Too many attempts. Wait one minute and try again." }, 429);
+        await fsPatch(env, ratePath, { windowAt: attempts ? windowAt : now, attempts: attempts + 1, expiresAt: now + 120_000 });
+
+        const codeHash = await sha256Hex(`convo-web-pair:${code}`);
+        const pair = await consumeWebPairCode(env, codeHash, now);
+        if (!pair || Number(pair.expiresAt || 0) <= now || Number(pair.usedAt || 0) !== now) {
+          return webPairJson(request, env, { error: "Pairing code is invalid, expired or already used" }, 403);
+        }
+        const uid = String(pair.uid || "");
+        const profile = await firestoreGet(env, `users/${uid}`);
+        if (!uid || !profile || profile.banned === true || Number(profile.webCompanionVersion || 0) !== Number(pair.sessionVersion || 0)) {
+          return webPairJson(request, env, { error: "Pairing expired. Create a new code in the Android app." }, 403);
+        }
+        const sessionToken = randomHex(32);
+        const sessionHash = await sha256Hex(`convo-web-session:${sessionToken}`);
+        const expiresAt = now + 12 * 60 * 60 * 1000;
+        await fsPatch(env, `web_pair_sessions/${sessionHash}`, {
+          uid,
+          createdAt: now,
+          expiresAt,
+          revokedAt: 0,
+          sessionVersion: Number(pair.sessionVersion || 0)
+        });
+        return webPairJson(request, env, { success: true, sessionToken, expiresAt }, 200);
+      } catch (error) {
+        return webPairJson(request, env, { error: "Pairing could not be completed" }, 500);
+      }
+    }
+
+    if (path.startsWith("/web-pair/") && request.method === "POST") {
+      if (!webCompanionOriginMatches(request, env)) return webPairJson(request, env, { error: "Unapproved companion origin" }, 403);
+      const session = await authenticateWebCompanionSession(request, env);
+      if (!session.ok) return webPairJson(request, env, { error: session.error }, 401);
+      const route = path.slice("/web-pair/".length);
+      if (route === "logout") {
+        await fsPatch(env, `web_pair_sessions/${session.sessionHash}`, { revokedAt: Date.now() }).catch(() => {});
+        return webPairJson(request, env, { success: true }, 200);
+      }
+      if (route === "chats") {
+        try {
+          const friendIds = [...new Set((Array.isArray(session.profile.friends) ? session.profile.friends : []).map(String).filter(id => id && id !== session.uid))].slice(0, 100);
+          const people = await Promise.all(friendIds.map(async uid => {
+            const profile = await firestoreGet(env, `users/${uid}`).catch(() => null);
+            if (!profile || profile.banned === true || (Array.isArray(session.profile.blockedUsers) && session.profile.blockedUsers.includes(uid)) || (Array.isArray(profile.blockedUsers) && profile.blockedUsers.includes(session.uid))) return null;
+            return { uid, name: String(profile.name || "Convo user").slice(0, 80), username: String(profile.username || "").slice(0, 50), profileImageUrl: String(profile.profileImageUrl || "").slice(0, 800) };
+          }));
+          return webPairJson(request, env, { success: true, friends: people.filter(Boolean) }, 200);
+        } catch (error) {
+          return webPairJson(request, env, { error: "Could not load the friend list" }, 502);
+        }
+      }
+      if (route === "messages" || route === "send") {
+        const body = await request.json().catch(() => ({}));
+        const peerUid = String(body.peerUid || "").slice(0, 128);
+        if (!peerUid || peerUid === session.uid) return webPairJson(request, env, { error: "Choose a valid friend" }, 400);
+        const own = session.profile;
+        const peer = await firestoreGet(env, `users/${peerUid}`).catch(() => null);
+        const ownFriends = Array.isArray(own.friends) ? own.friends : [];
+        const blocked = (Array.isArray(own.blockedUsers) && own.blockedUsers.includes(peerUid)) || (Array.isArray(peer?.blockedUsers) && peer.blockedUsers.includes(session.uid));
+        if (!peer || peer.banned === true || !ownFriends.includes(peerUid) || blocked) return webPairJson(request, env, { error: "This companion can only open an accepted, unblocked friend chat" }, 403);
+        const chatId = [session.uid, peerUid].sort().join("_");
+        const dbUrl = String(env.FIREBASE_DATABASE_URL || "").replace(/\/+$/, "");
+        if (!/^https:\/\/[a-z0-9-]+(\.[a-z0-9-]+)*\.(firebaseio\.com|firebasedatabase\.app)$/i.test(dbUrl)) return webPairJson(request, env, { error: "Realtime Database URL is not configured" }, 503);
+        const account = JSON.parse(env.FIREBASE_SERVICE_ACCOUNT || "{}");
+        const dbToken = await getGoogleAccessToken(account.client_email, account.private_key, "https://www.googleapis.com/auth/firebase.database https://www.googleapis.com/auth/userinfo.email");
+        const messagesUrl = `${dbUrl}/chats/${encodeURIComponent(chatId)}/messages.json`;
+        if (route === "messages") {
+          const read = await fetch(`${messagesUrl}?orderBy=%22%24key%22&limitToLast=60`, { headers: { Authorization: `Bearer ${dbToken}` } });
+          if (!read.ok) return webPairJson(request, env, { error: `Message read failed (${read.status})` }, 502);
+          const raw = await read.json().catch(() => ({})) || {};
+          const messages = Object.entries(raw).map(([key, value]) => ({ ...(value && typeof value === "object" ? value : {}), messageId: key }))
+            .filter(message => message.senderId === session.uid || message.senderId === peerUid)
+            .map(message => ({ messageId: String(message.messageId || ""), senderId: String(message.senderId || ""), senderName: String(message.senderName || "").slice(0, 80), text: message.cloudText === true ? "[Message body stored separately]" : String(message.text || "").slice(0, 5000), timestamp: Number(message.timestamp || 0), edited: message.edited === true }))
+            .sort((a, b) => a.timestamp - b.timestamp);
+          return webPairJson(request, env, { success: true, messages }, 200);
+        }
+        const text = String(body.text || "").trim();
+        if (!text || text.length > 5000) return webPairJson(request, env, { error: "Text must be between 1 and 5000 characters" }, 400);
+        const sendRatePath = `web_pair_send_rate/${session.uid}`;
+        const previousSend = await firestoreGet(env, sendRatePath).catch(() => null) || {};
+        const now = Date.now();
+        if (now - Number(previousSend.lastAt || 0) < 750) return webPairJson(request, env, { error: "Please wait before sending another message" }, 429);
+        await fsPatch(env, sendRatePath, { lastAt: now }).catch(() => {});
+        const message = {
+          senderId: session.uid,
+          senderName: String(own.name || "Convo user").slice(0, 80),
+          senderUsername: String(own.username || "").slice(0, 50),
+          text,
+          timestamp: now,
+          edited: false,
+          deliveredToRecipient: false,
+          seenByRecipient: false,
+          expiresAt: 0
+        };
+        const write = await fetch(messagesUrl, { method: "POST", headers: { Authorization: `Bearer ${dbToken}`, "Content-Type": "application/json" }, body: JSON.stringify(message) });
+        if (!write.ok) return webPairJson(request, env, { error: `Message send failed (${write.status})` }, 502);
+        const pushed = await write.json().catch(() => ({}));
+        const messageId = String(pushed.name || "");
+        if (!messageId) return webPairJson(request, env, { error: "Realtime Database did not return a message ID" }, 502);
+        await fetch(`${dbUrl}/chats/${encodeURIComponent(chatId)}/messages/${encodeURIComponent(messageId)}.json`, {
+          method: "PATCH", headers: { Authorization: `Bearer ${dbToken}`, "Content-Type": "application/json" }, body: JSON.stringify({ messageId })
+        });
+        await Promise.all([session.uid, peerUid].map(uid => fetch(`${dbUrl}/chats/${encodeURIComponent(chatId)}/members/${encodeURIComponent(uid)}.json`, {
+          method: "PUT", headers: { Authorization: `Bearer ${dbToken}`, "Content-Type": "application/json" }, body: "true"
+        }).catch(() => null)));
+        const unreadUrl = `${dbUrl}/unread_counts/${encodeURIComponent(peerUid)}/${encodeURIComponent(session.uid)}.json`;
+        const unreadRead = await fetch(unreadUrl, { headers: { Authorization: `Bearer ${dbToken}` } }).catch(() => null);
+        if (unreadRead?.ok) {
+          const count = Number(await unreadRead.json().catch(() => 0)) || 0;
+          await fetch(unreadUrl, { method: "PUT", headers: { Authorization: `Bearer ${dbToken}`, "Content-Type": "application/json" }, body: JSON.stringify(count + 1) }).catch(() => null);
+        }
+        if (peer.fcmToken) {
+          const fcmToken = await getGoogleAccessToken(account.client_email, account.private_key);
+          await fetch(`https://fcm.googleapis.com/v1/projects/${account.project_id}/messages:send`, {
+            method: "POST", headers: { Authorization: `Bearer ${fcmToken}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ message: { token: String(peer.fcmToken), data: { title: `Convo Chat • ${message.senderName}`, body: text.slice(0, 180), senderId: session.uid, senderName: message.senderName, senderProfileUrl: String(own.profileImageUrl || ""), notificationType: "message", targetId: messageId, sentAt: String(now) }, android: { priority: "high" } } })
+          }).catch(() => {});
+        }
+        return webPairJson(request, env, { success: true, message: { ...message, messageId } }, 200);
+      }
+      return webPairJson(request, env, { error: "Unknown companion route" }, 404);
     }
 
     if ((request.method === "POST" || request.method === "PUT") && path === "/media/upload") {
@@ -1043,6 +1232,70 @@ function mimeExtension(contentType) {
   if (contentType.includes("gif")) return "gif";
   if (contentType.includes("jpeg") || contentType.includes("jpg")) return "jpg";
   return "bin";
+}
+
+function normalizeWebCompanionOrigin(value) {
+  try {
+    const url = new URL(String(value || "").trim());
+    if (url.protocol !== "https:" || url.origin !== String(value || "").trim().replace(/\/+$/, "") || url.pathname !== "/" || url.search || url.hash) return "";
+    return url.origin;
+  } catch (_) { return ""; }
+}
+function webCompanionOriginMatches(request, env) {
+  const allowed = normalizeWebCompanionOrigin(env.WEB_COMPANION_ORIGIN);
+  return Boolean(allowed && request.headers.get("Origin") === allowed);
+}
+function webPairJson(request, env, value, status = 200) {
+  const origin = request.headers.get("Origin") || "";
+  const allowed = normalizeWebCompanionOrigin(env.WEB_COMPANION_ORIGIN);
+  const headers = { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store", "Vary": "Origin" };
+  if (!origin) headers["Access-Control-Allow-Origin"] = "*";
+  else if (allowed && origin === allowed) {
+    headers["Access-Control-Allow-Origin"] = allowed;
+    headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization";
+    headers["Access-Control-Allow-Methods"] = "POST, OPTIONS";
+  }
+  return new Response(JSON.stringify(value), { status, headers });
+}
+function randomHex(bytes = 32) {
+  return Array.from(crypto.getRandomValues(new Uint8Array(bytes)), value => value.toString(16).padStart(2, "0")).join("");
+}
+function randomDigitCode(length) {
+  return Array.from(crypto.getRandomValues(new Uint8Array(length)), value => String(value % 10)).join("");
+}
+async function consumeWebPairCode(env, hash, now) {
+  const { a, t } = await fsAuth(env);
+  const path = `web_pair_codes/${hash}`;
+  const encodedPath = path.split("/").map(encodeURIComponent).join("/");
+  const url = `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(a.project_id)}/databases/(default)/documents/${encodedPath}`;
+  const read = await fetch(url, { headers: { Authorization: `Bearer ${t}` } });
+  if (!read.ok) return null;
+  const document = await read.json().catch(() => null);
+  if (!document?.updateTime) return null;
+  const values = Object.fromEntries(Object.entries(document.fields || {}).map(([key, field]) => [key, fromFV(field)]));
+  if (!values.uid || Number(values.expiresAt || 0) <= now || Number(values.usedAt || 0) > 0) return null;
+  const patchUrl = new URL(url);
+  patchUrl.searchParams.set("updateMask.fieldPaths", "usedAt");
+  patchUrl.searchParams.set("currentDocument.updateTime", document.updateTime);
+  const patch = await fetch(patchUrl, {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${t}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ fields: { usedAt: toFV(now) } })
+  });
+  return patch.ok ? { ...values, usedAt: now } : null;
+}
+async function authenticateWebCompanionSession(request, env) {
+  const bearer = request.headers.get("Authorization") || "";
+  const token = bearer.startsWith("Bearer ") ? bearer.slice(7).trim() : "";
+  if (!/^[a-f0-9]{64}$/i.test(token)) return { ok: false, error: "Invalid companion session" };
+  const sessionHash = await sha256Hex(`convo-web-session:${token}`);
+  const session = await firestoreGet(env, `web_pair_sessions/${sessionHash}`).catch(() => null);
+  const now = Date.now();
+  if (!session || Number(session.expiresAt || 0) <= now || Number(session.revokedAt || 0) > 0) return { ok: false, error: "Companion session expired or revoked" };
+  const uid = String(session.uid || "");
+  const profile = uid ? await firestoreGet(env, `users/${uid}`).catch(() => null) : null;
+  if (!profile || profile.banned === true || Number(profile.webCompanionVersion || 0) !== Number(session.sessionVersion || 0)) return { ok: false, error: "Companion access was revoked" };
+  return { ok: true, uid, profile, session, sessionHash };
 }
 
 async function authenticateCaller(request, env) {

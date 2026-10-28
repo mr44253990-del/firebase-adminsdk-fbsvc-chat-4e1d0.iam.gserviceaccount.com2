@@ -70,6 +70,9 @@ fun AdminControlCenterScreen(
     val scope = rememberCoroutineScope()
     val flagshipConfig by viewModel.flagshipConfig.collectAsState()
     val users by viewModel.usersState.collectAsState()
+    val adminDirectoryUsers by viewModel.adminDirectoryUsers.collectAsState()
+    val adminDirectoryLoading by viewModel.adminDirectoryLoading.collectAsState()
+    val adminDirectoryHasMore by viewModel.adminDirectoryHasMore.collectAsState()
     val storageConfig by viewModel.storageRoutingConfig.collectAsState()
     val storageHealth by viewModel.storageSetupHealth.collectAsState()
     val webhookUrl by viewModel.webhookUrl.collectAsState()
@@ -87,6 +90,7 @@ fun AdminControlCenterScreen(
     // Hoisted so returning from a sub-page restores the dashboard position instead of jumping to the top.
     val dashboardScroll = rememberSaveable(saver = androidx.compose.foundation.ScrollState.Saver) { androidx.compose.foundation.ScrollState(0) }
     BackHandler(enabled = selectedPage != "dashboard") { selectedPage = "dashboard" }
+    LaunchedEffect(selectedPage) { if (selectedPage == "users") viewModel.loadAdminUsersPage(reset = true) }
 
     LaunchedEffect(webhookUrl) {
         viewModel.testFcmGateway(webhookUrl)
@@ -111,6 +115,7 @@ fun AdminControlCenterScreen(
     var reelsEnabled by remember(flagshipConfig) { mutableStateOf(flagshipConfig.reelsEnabled) }
     var assistantEnabled by remember(flagshipConfig) { mutableStateOf(flagshipConfig.assistantEnabled) }
     var locationSharingEnabled by remember(flagshipConfig) { mutableStateOf(flagshipConfig.locationSharingEnabled) }
+    var autoSaveReceivedFilesEnabled by remember(flagshipConfig) { mutableStateOf(flagshipConfig.autoSaveReceivedFilesEnabled) }
     val aiPublic by AiPublicInfo.info.collectAsState()
     val cloudDbOn by CloudMessageStore.enabled.collectAsState()
     var aiName by remember(flagshipConfig) { mutableStateOf(flagshipConfig.aiDisplayName) }
@@ -230,6 +235,7 @@ fun AdminControlCenterScreen(
         AdminMenuEntry("premium_access", "Gifts & access", "Grant Premium or revoke access", Icons.Outlined.CardGiftcard, Color(0xFFCB5C90)),
         AdminMenuEntry("presence", "Presence / 5-min probe", "Supabase Edge Function + Cron", Icons.Outlined.Groups, Color(0xFF358B9A)),
         AdminMenuEntry("chat_media", "Chat backgrounds & sounds", "Photo backgrounds and default app sounds", Icons.Outlined.Wallpaper, Color(0xFF8B62D9), chatBackgroundImages.size.takeIf { it > 0 }?.toString().orEmpty()),
+        AdminMenuEntry("media_saving", "Media auto-save", "Global control for automatic received-file downloads", Icons.Outlined.Download, Color(0xFF168A79), if (flagshipConfig.autoSaveReceivedFilesEnabled) "ON" else "OFF"),
         AdminMenuEntry("polls", "Polls & votes", "Timed polls with live results and voters", Icons.Outlined.HowToVote, Color(0xFF7C4DFF)),
         AdminMenuEntry("auto_post", "Auto AI posts", "Scheduled AI posts from the admin account", Icons.Outlined.AutoAwesome, Color(0xFFE0457B)),
         AdminMenuEntry("reels", "Reels & TikTok", "Choose the Reels experience", Icons.Outlined.SmartDisplay, Color(0xFF1B9A8B)),
@@ -412,7 +418,7 @@ fun AdminControlCenterScreen(
                     "users" -> {
                         val now = System.currentTimeMillis()
                         val query = adminUserSearch.trim()
-                        val visibleAdminUsers = users.filter { person ->
+                        val visibleAdminUsers = adminDirectoryUsers.filter { person ->
                             val isOnlineNow = person.isOnline && (person.onlineUntil <= 0L || person.onlineUntil > now)
                             val hasPremium = person.isPremium && (person.premiumPlan.equals("lifetime", true) || person.premiumUntil > now)
                             val matchesQuery = query.isBlank() || person.name.contains(query, true) ||
@@ -428,8 +434,8 @@ fun AdminControlCenterScreen(
                             compareByDescending<User> { it.isOnline && (it.onlineUntil <= 0L || it.onlineUntil > now) }
                                 .thenBy { it.name.lowercase(Locale.getDefault()) }
                         )
-                        val onlineCount = users.count { it.isOnline && (it.onlineUntil <= 0L || it.onlineUntil > now) }
-                        val premiumCount = users.count { it.isPremium && (it.premiumPlan.equals("lifetime", true) || it.premiumUntil > now) }
+                        val onlineCount = adminDirectoryUsers.count { it.isOnline && (it.onlineUntil <= 0L || it.onlineUntil > now) }
+                        val premiumCount = adminDirectoryUsers.count { it.isPremium && (it.premiumPlan.equals("lifetime", true) || it.premiumUntil > now) }
 
                         AdminPanelCard("User directory", "Search profiles, filter online status and open quick profile actions", Icons.Outlined.Groups) {
                             OutlinedTextField(
@@ -450,9 +456,9 @@ fun AdminControlCenterScreen(
                                 horizontalArrangement = Arrangement.spacedBy(7.dp)
                             ) {
                                 listOf(
-                                    "all" to "All (${users.size})",
+                                    "all" to "Loaded (${adminDirectoryUsers.size})",
                                     "online" to "Online ($onlineCount)",
-                                    "offline" to "Offline (${users.size - onlineCount})",
+                                    "offline" to "Offline (${adminDirectoryUsers.size - onlineCount})",
                                     "premium" to "Premium ($premiumCount)"
                                 ).forEach { (filter, label) ->
                                     FilterChip(
@@ -462,11 +468,12 @@ fun AdminControlCenterScreen(
                                     )
                                 }
                             }
-                            Text("${visibleAdminUsers.size} shown • profiles update from Firestore", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text("${visibleAdminUsers.size} shown • profiles loaded from Firestore pages", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             when {
-                                users.isEmpty() -> Text("No user profiles are loaded yet.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                adminDirectoryUsers.isEmpty() && adminDirectoryLoading -> { CircularProgressIndicator(Modifier.size(24.dp)) }
+                                adminDirectoryUsers.isEmpty() -> Text("No user profiles are loaded yet.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 visibleAdminUsers.isEmpty() -> Text("No users match this search and filter.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                else -> visibleAdminUsers.take(150).forEach { person ->
+                                else -> visibleAdminUsers.forEach { person ->
                                     AdminUserManagementRow(
                                         user = person,
                                         now = now,
@@ -475,8 +482,17 @@ fun AdminControlCenterScreen(
                                     )
                                 }
                             }
-                            if (visibleAdminUsers.size > 150) {
-                                Text("Showing 150 of ${visibleAdminUsers.size}; narrow the search to find a specific profile.", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            if (adminDirectoryHasMore || adminDirectoryLoading) {
+                                Button(
+                                    onClick = { viewModel.loadAdminUsersPage() },
+                                    enabled = !adminDirectoryLoading,
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    if (adminDirectoryLoading) CircularProgressIndicator(Modifier.size(17.dp), strokeWidth = 2.dp)
+                                    else Text("Load next 50 profiles")
+                                }
+                            } else if (adminDirectoryUsers.isNotEmpty()) {
+                                Text("All matching directory pages have been loaded.", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
                     }
@@ -580,6 +596,22 @@ fun AdminControlCenterScreen(
                     }
                     "email_security" -> {
                         AdminPanelCard("Email & 2FA", "Sender for login codes, new-device alerts and recovery", Icons.Outlined.MarkEmailRead) { AdminEmailSecurityPanel() }
+                    }
+                    "media_saving" -> {
+                        AdminPanelCard("Received-file auto-save", "A global switch for automatic downloads; users retain their own local preference and file-type rules.", Icons.Outlined.Download) {
+                            AdminSwitchRow(
+                                "Allow automatic received-file downloads",
+                                "When off, the app will not automatically save incoming attachments. Users can still open or manually download files. Chat messages remain stored normally; this does not change message history or AI-history privacy.",
+                                autoSaveReceivedFilesEnabled,
+                                { enabled ->
+                                    autoSaveReceivedFilesEnabled = enabled
+                                    viewModel.updateFlagshipFields(mapOf("autoSaveReceivedFilesEnabled" to enabled)) { ok ->
+                                        if (!ok) autoSaveReceivedFilesEnabled = flagshipConfig.autoSaveReceivedFilesEnabled
+                                        Toast.makeText(context, if (ok) "Automatic file saving ${if (enabled) "enabled" else "disabled"}" else "Could not save setting", Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                            )
+                        }
                     }
                     "power" -> {
                         AdminPanelCard("Power tools", "Act on every user at once and flip live switches", Icons.Outlined.Bolt) { AdminPowerToolsPanel(viewModel) }

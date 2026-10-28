@@ -69,22 +69,26 @@ object CoachTour {
     fun consumeReplay(): Boolean { val pending = _replay.value; _replay.value = false; return pending }
 
     fun isDone(context: Context): Boolean =
-        context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean("done_v1", false)
+        context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean("done_v2", false)
 
     fun markDone(context: Context) {
-        context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean("done_v1", true).apply()
+        context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean("done_v2", true).apply()
     }
 
     fun requestReplay() { _replay.value = true }
 
     val homeSteps = listOf(
-        CoachStep(null, Icons.Default.AutoAwesome, "Welcome to Convo", "A quick tour of the main buttons. It takes 20 seconds."),
+        CoachStep(null, Icons.Default.AutoAwesome, "Welcome to Convo", "A quick tour of the main buttons and useful controls. It takes about a minute."),
         CoachStep("nav_home", Icons.Default.Home, "Home feed", "Posts, stories and updates from your friends."),
         CoachStep("nav_chats", Icons.Default.Forum, "Chats", "All your conversations. In a chat, type / for quick replies."),
         CoachStep("nav_create", Icons.Default.AddCircle, "Create", "Post, story, reel or poll — everything starts here."),
         CoachStep("nav_slot4", Icons.Default.SmartDisplay, "Reels & groups", "Watch reels or open your groups from here."),
         CoachStep("nav_friends", Icons.Default.PeopleAlt, "Friends", "Friend requests and people you may know."),
-        CoachStep(null, Icons.Default.Verified, "You're all set!", "Change the language or replay this tour any time in Settings.")
+        CoachStep("account_menu", Icons.Default.ManageAccounts, "Profile and settings", "Open your profile picture menu, then choose Profile & settings for language, privacy, notifications, security and app controls."),
+        CoachStep(null, Icons.Default.LocationOn, "Location sharing", "Location sharing is optional. Review Settings → Privacy before enabling it; live sharing stays visible and can be stopped at any time."),
+        CoachStep(null, Icons.Default.Download, "Media auto-save", "Choose whether received files save automatically, and set Wi-Fi and file-type rules. Manual downloads remain available."),
+        CoachStep(null, Icons.Default.AutoAwesome, "AI assistant", "Open the assistant from Home when available. Assistant history stays on this phone; prompts may be processed by the configured AI provider."),
+        CoachStep(null, Icons.Default.Verified, "You're all set!", "Change the language, read the offline guide, or replay this tour any time in Settings.")
     )
 }
 

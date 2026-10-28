@@ -212,6 +212,7 @@ fun HomeScreen(
     val uiScope = rememberCoroutineScope()
     val isOnlineState by viewModel.isNetworkAvailable.collectAsState()
     val currentUser by viewModel.currentUserState.collectAsState()
+    val appLanguage by AppLanguage.code.collectAsState()
     val users by viewModel.filteredUsersState.collectAsState()
     val groups by viewModel.groupsState.collectAsState()
     val stories by viewModel.storiesState.collectAsState()
@@ -223,6 +224,8 @@ fun HomeScreen(
         ).flatMap { group -> group.sortedBy { it.timestamp } }
     }
     val posts by viewModel.postsState.collectAsState()
+    val hasMorePosts by viewModel.hasMorePosts.collectAsState()
+    val loadingMorePosts by viewModel.loadingMorePosts.collectAsState()
     val webhookUrl by viewModel.webhookUrl.collectAsState()
     val gatewayHealth by viewModel.gatewayHealth.collectAsState()
     val presenceWorkerUrl by viewModel.presenceWorkerUrl.collectAsState()
@@ -268,6 +271,15 @@ fun HomeScreen(
     var showLockSetup by remember { mutableStateOf(false) }
     var showLockDisableConfirm by remember { mutableStateOf(false) }
     var showReportDialog by remember { mutableStateOf(false) }
+    var showAppGuide by remember { mutableStateOf(false) }
+    var showVersionWelcome by remember { mutableStateOf(false) }
+    var showWebPairDialog by remember { mutableStateOf(false) }
+    var showRevokeWebDialog by remember { mutableStateOf(false) }
+    var webPairCode by remember { mutableStateOf("") }
+    var webPairUrl by remember { mutableStateOf("") }
+    var webPairExpiresAt by remember { mutableLongStateOf(0L) }
+    var webPairLoading by remember { mutableStateOf(false) }
+    var webRevokeLoading by remember { mutableStateOf(false) }
     var showAllDeviceSessions by rememberSaveable { mutableStateOf(false) }
     var deviceSessionPendingDelete by remember { mutableStateOf<DeviceSession?>(null) }
     var showClearDeviceHistoryDialog by rememberSaveable { mutableStateOf(false) }
@@ -344,9 +356,17 @@ fun HomeScreen(
     // First-launch guided tour (spotlight + blurred surroundings). Replayable from Settings.
     var coachTourActive by remember { mutableStateOf(false) }
     val coachReplay by CoachTour.replay.collectAsState()
-    LaunchedEffect(Unit) {
+    LaunchedEffect(currentUser?.uid) {
+        if (currentUser != null) {
+            AppLanguage.load(context)
+            val previouslySeen = context.getSharedPreferences("convo_update_welcome", Context.MODE_PRIVATE)
+                .getInt("seen_version_code", 51)
+            if (com.example.BuildConfig.VERSION_CODE > previouslySeen) showVersionWelcome = true
+        }
+    }
+    LaunchedEffect(currentUser?.uid, showVersionWelcome) {
         kotlinx.coroutines.delay(1400)
-        if (!CoachTour.isDone(context)) coachTourActive = true
+        if (currentUser != null && !showVersionWelcome && !CoachTour.isDone(context)) coachTourActive = true
     }
     LaunchedEffect(coachReplay) { if (coachReplay && CoachTour.consumeReplay()) { kotlinx.coroutines.delay(350); coachTourActive = true } }
 
@@ -441,7 +461,7 @@ fun HomeScreen(
                             }
                         }
                         Box {
-                            IconButton(onClick = { showAccountMenu = true }) {
+                            IconButton(onClick = { showAccountMenu = true }, modifier = Modifier.coachTarget("account_menu")) {
                                 AsyncImage(
                                     model = currentUser?.profileImageUrl?.ifBlank { null },
                                     contentDescription = "Account",
@@ -780,6 +800,17 @@ fun HomeScreen(
                             items(visibleFeedPosts, key = { it.id }) { post ->
                                 Box(Modifier.padding(horizontal = 14.dp)) {
                                     SocialPostItem(post = post, viewModel = viewModel, onProfileSelected = onProfileSelected, autoPlayVideo = post.id == activeFeedPostId && selectedStoryIndex == null)
+                                }
+                            }
+                        }
+                        if (hasMorePosts || loadingMorePosts) item(key = "feed_page_footer") {
+                            Row(Modifier.fillMaxWidth().padding(vertical = 14.dp), horizontalArrangement = Arrangement.Center) {
+                                Button(onClick = viewModel::loadMorePosts, enabled = !loadingMorePosts) {
+                                    if (loadingMorePosts) {
+                                        CircularProgressIndicator(Modifier.size(17.dp), strokeWidth = 2.dp)
+                                        Spacer(Modifier.width(8.dp))
+                                        Text(tr("Loading more posts…"))
+                                    } else Text(tr("Load more posts"))
                                 }
                             }
                         }
@@ -1304,7 +1335,7 @@ fun HomeScreen(
                                 icon = Icons.Default.Translate,
                                 title = "Language",
                                 subtitle = "English or বাংলা",
-                                trailingValue = AppLanguage.options.firstOrNull { it.code == AppLanguage.code.collectAsState().value }?.nativeName,
+                                trailingValue = AppLanguage.options.firstOrNull { it.code == appLanguage }?.nativeName,
                                 accent = Color(0xFF6C4DF5),
                                 onClick = { settingsPage = "language" }
                             )
@@ -1315,6 +1346,14 @@ fun HomeScreen(
                                 subtitle = "Show the guided tour of the main buttons again",
                                 accent = Color(0xFFFF6FB5),
                                 onClick = { viewModel.setCurrentTab(0); CoachTour.requestReplay() }
+                            )
+                            SettingsHubDivider()
+                            SettingsHubRow(
+                                icon = Icons.Outlined.MenuBook,
+                                title = "Offline app guide",
+                                subtitle = "Read the bundled English or Bengali feature guide",
+                                accent = Color(0xFF168A79),
+                                onClick = { showAppGuide = true }
                             )
                             SettingsHubDivider()
                             SettingsHubRow(
@@ -1649,17 +1688,21 @@ fun HomeScreen(
                             Switch(likeSoundOn, { likeSoundOn = it; LikeSound.setEnabled(context, it) })
                         }
                         var autoSaveOn by remember { mutableStateOf(ReceivedFiles.autoDownloadEnabled(context)) }
+                        val autoSaveAllowed = flagshipConfig.autoSaveReceivedFilesEnabled
                         Row(
-                            Modifier.fillMaxWidth().liquidCard(shape = RoundedCornerShape(22.dp)).clickable { autoSaveOn = !autoSaveOn; ReceivedFiles.setAutoDownload(context, autoSaveOn) }.padding(14.dp),
+                            Modifier.fillMaxWidth().liquidCard(shape = RoundedCornerShape(22.dp)).clickable(enabled = autoSaveAllowed) { autoSaveOn = !autoSaveOn; ReceivedFiles.setAutoDownload(context, autoSaveOn) }.padding(14.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(Icons.Default.Download, null, tint = MaterialTheme.colorScheme.primary)
+                            Icon(Icons.Default.Download, null, tint = if (autoSaveAllowed) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
                             Spacer(Modifier.width(12.dp))
                             Column(Modifier.weight(1f)) {
                                 Text(tr("Auto-save received media"), fontWeight = FontWeight.Bold)
-                                Text(tr("Photos, PDFs and files you receive are saved to Downloads/Convo Chat, sorted by type"), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(
+                                    if (autoSaveAllowed) tr("Photos, PDFs and files you receive are saved to Downloads/Convo Chat, sorted by type") else tr("Automatic saving is currently disabled by the administrator; manual downloads still work"),
+                                    fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
                             }
-                            Switch(autoSaveOn, { autoSaveOn = it; ReceivedFiles.setAutoDownload(context, it) })
+                            Switch(checked = autoSaveOn && autoSaveAllowed, onCheckedChange = { autoSaveOn = it; ReceivedFiles.setAutoDownload(context, it) }, enabled = autoSaveAllowed)
                         }
                         listOf(
                             Triple(AppSoundStore.NOTIFICATION, "Message notification", Icons.Outlined.NotificationsActive),
@@ -2314,6 +2357,46 @@ fun HomeScreen(
 
                         if (settingsPage == "devices") {
                         TwoFactorCard()
+                        Card(shape = RoundedCornerShape(26.dp), modifier = Modifier.fillMaxWidth()) {
+                            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Icons.Outlined.LaptopChromebook, null, tint = MaterialTheme.colorScheme.primary)
+                                    Spacer(Modifier.width(9.dp))
+                                    Text(if (appLanguage == "bn") "ওয়েব কম্প্যানিয়ন" else "Web companion", fontWeight = FontWeight.Bold)
+                                }
+                                Text(
+                                    if (appLanguage == "bn") "আপনার স্পষ্ট অনুমতিতে ৯০ সেকেন্ডের একবার-ব্যবহারযোগ্য কোড তৈরি হবে। ব্রাউজার সেশন ১২ ঘণ্টা থাকে; এই ফোন থেকে সব সেশন বাতিল করা যাবে।" else "Create a one-time 90-second code only when you choose. Browser sessions last 12 hours and can be revoked from this phone.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Button(
+                                    onClick = {
+                                        webPairLoading = true
+                                        viewModel.createWebCompanionPairing { pairing, error ->
+                                            webPairLoading = false
+                                            if (pairing != null) {
+                                                webPairCode = pairing.code
+                                                webPairUrl = pairing.companionUrl
+                                                webPairExpiresAt = pairing.expiresAt
+                                                showWebPairDialog = true
+                                            } else Toast.makeText(context, error.ifBlank { "Pairing failed" }, Toast.LENGTH_LONG).show()
+                                        }
+                                    },
+                                    enabled = !webPairLoading,
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    if (webPairLoading) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                                    else Icon(Icons.Outlined.LaptopChromebook, null)
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(if (appLanguage == "bn") "ব্রাউজার সংযোগ করুন" else "Link my browser")
+                                }
+                                OutlinedButton(onClick = { showRevokeWebDialog = true }, modifier = Modifier.fillMaxWidth()) {
+                                    Icon(Icons.Outlined.LinkOff, null)
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(if (appLanguage == "bn") "সব ওয়েব সেশন বাতিল করুন" else "Revoke all web sessions")
+                                }
+                            }
+                        }
                         Card(shape = RoundedCornerShape(28.dp), modifier = Modifier.fillMaxWidth().bringIntoViewRequester(devicesSectionRequester)) {
                             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                                 Row(verticalAlignment = Alignment.CenterVertically) { Icon(Icons.Default.Devices, null, tint = MaterialTheme.colorScheme.primary); Spacer(Modifier.width(9.dp)); Text(tr("Devices & sessions"), fontWeight = FontWeight.ExtraBold, modifier = Modifier.weight(1f)); IconButton(onClick = viewModel::refreshDeviceSessions) { Icon(Icons.Default.Refresh, "Refresh") } }
@@ -2341,6 +2424,49 @@ fun HomeScreen(
                         }
                         }
 
+                        if (showWebPairDialog) {
+                            AlertDialog(
+                                onDismissRequest = { showWebPairDialog = false; webPairCode = "" },
+                                title = { Text(if (appLanguage == "bn") "ব্রাউজার পেয়ার করুন" else "Pair your browser") },
+                                text = {
+                                    Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                                        Text(if (appLanguage == "bn") "শুধু নিজের বিশ্বস্ত ব্রাউজারে এই কোডটি লিখুন। ৯০ সেকেন্ড পর কোডটি মেয়াদোত্তীর্ণ হবে।" else "Enter this code only in your own trusted browser. It expires in 90 seconds.")
+                                        Text(webPairCode, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.primary)
+                                        Text(webPairUrl, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text(
+                                            if (appLanguage == "bn") "মেয়াদ শেষ: ${SimpleDateFormat("h:mm:ss a", Locale.getDefault()).format(Date(webPairExpiresAt))}" else "Expires at ${SimpleDateFormat("h:mm:ss a", Locale.getDefault()).format(Date(webPairExpiresAt))}",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.tertiary
+                                        )
+                                        Text(if (appLanguage == "bn") "সেশন ১২ ঘণ্টা পর নিজে থেকে শেষ হবে। Account security থেকে সব ওয়েব সেশন বাতিল করতে পারবেন।" else "The browser session expires after 12 hours. Revoke every web session here at any time.", style = MaterialTheme.typography.bodySmall)
+                                        TextButton(onClick = {
+                                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                            clipboard.setPrimaryClip(ClipData.newPlainText("Convo Chat pairing code", webPairCode))
+                                            Toast.makeText(context, if (appLanguage == "bn") "কোড কপি হয়েছে" else "Pairing code copied", Toast.LENGTH_SHORT).show()
+                                        }) { Icon(Icons.Default.ContentCopy, null); Spacer(Modifier.width(6.dp)); Text(if (appLanguage == "bn") "কোড কপি করুন" else "Copy code") }
+                                    }
+                                },
+                                confirmButton = { TextButton(onClick = { showWebPairDialog = false; webPairCode = "" }) { Text(if (appLanguage == "bn") "সম্পন্ন" else "Done") } }
+                            )
+                        }
+                        if (showRevokeWebDialog) {
+                            AlertDialog(
+                                onDismissRequest = { if (!webRevokeLoading) showRevokeWebDialog = false },
+                                title = { Text(if (appLanguage == "bn") "সব ব্রাউজার সেশন বাতিল করবেন?" else "Revoke all web sessions?") },
+                                text = { Text(if (appLanguage == "bn") "সব পেয়ার করা ব্রাউজার সেশন সঙ্গে সঙ্গে বাতিল হবে।" else "Every paired browser session will be invalidated. You can link a browser again later.") },
+                                confirmButton = {
+                                    TextButton(enabled = !webRevokeLoading, onClick = {
+                                        webRevokeLoading = true
+                                        viewModel.revokeWebCompanionSessions { ok, message ->
+                                            webRevokeLoading = false
+                                            showRevokeWebDialog = false
+                                            Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+                                        }
+                                    }) { Text(if (appLanguage == "bn") "বাতিল করুন" else "Revoke all", color = MaterialTheme.colorScheme.error) }
+                                },
+                                dismissButton = { TextButton(enabled = !webRevokeLoading, onClick = { showRevokeWebDialog = false }) { Text(if (appLanguage == "bn") "ফিরে যান" else "Cancel") } }
+                            )
+                        }
                         if (showAllDeviceSessions) {
                             AlertDialog(
                                 onDismissRequest = { showAllDeviceSessions = false },
@@ -2584,10 +2710,6 @@ fun HomeScreen(
         }
     }
 
-    if (coachTourActive && currentTab != 6) {
-        CoachMarkOverlay(CoachTour.homeSteps, onFinish = { coachTourActive = false })
-    }
-
     // A valid published update has the highest priority. The dialog is truly
     // blocking for every non-admin user until PackageManager confirms install.
     // A maintenance timer ends maintenance automatically for users when it reaches zero.
@@ -2600,6 +2722,36 @@ fun HomeScreen(
             maintenanceExpired = true
         }
     }
+
+    if (coachTourActive && currentTab != 6) {
+        CoachMarkOverlay(CoachTour.homeSteps, onFinish = { coachTourActive = false })
+    }
+    if (showAppGuide) OfflineAppGuideDialog(onDismiss = { showAppGuide = false })
+    if (showVersionWelcome && !updateRequired && (!flagshipConfig.maintenanceMode || maintenanceExpired)) {
+        val welcomePrefs = remember(context) { context.getSharedPreferences("convo_update_welcome", Context.MODE_PRIVATE) }
+        val markWelcomeSeen = {
+            welcomePrefs.edit().putInt("seen_version_code", com.example.BuildConfig.VERSION_CODE).apply()
+            showVersionWelcome = false
+        }
+        AppVersionWelcomeDialog(
+            versionName = com.example.BuildConfig.VERSION_NAME,
+            onStartTour = {
+                markWelcomeSeen()
+                viewModel.setCurrentTab(0)
+                CoachTour.requestReplay()
+            },
+            onReadGuide = {
+                markWelcomeSeen()
+                CoachTour.markDone(context)
+                showAppGuide = true
+            },
+            onDismiss = {
+                markWelcomeSeen()
+                CoachTour.markDone(context)
+            }
+        )
+    }
+
     if (updateRequired) {
         FlagshipUpdateDialog(flagshipConfig, mandatory = true, onLater = {})
     } else if (!isAdmin && flagshipConfig.maintenanceMode && !maintenanceExpired) {

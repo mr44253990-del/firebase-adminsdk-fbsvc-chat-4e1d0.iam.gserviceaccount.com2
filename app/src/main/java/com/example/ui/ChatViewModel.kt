@@ -31,6 +31,7 @@ import com.google.firebase.database.ServerValue
 import com.google.firebase.database.ValueEventListener
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.ListenerRegistration
 import com.google.firebase.firestore.Query
 import com.google.firebase.firestore.SetOptions
@@ -86,6 +87,8 @@ data class PresenceMonitorUser(
     val lastProbeReceivedAt: Long = 0L,
     val hasFcmToken: Boolean = false
 )
+
+data class WebCompanionPairing(val code: String, val expiresAt: Long, val companionUrl: String)
 
 data class PresenceDashboard(
     val checking: Boolean = false,
@@ -323,6 +326,15 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     // Social Feed Posts state
     private val _postsState = MutableStateFlow<List<Post>>(emptyList())
     val postsState: StateFlow<List<Post>> = _postsState.asStateFlow()
+    private val _loadingMorePosts = MutableStateFlow(false)
+    val loadingMorePosts: StateFlow<Boolean> = _loadingMorePosts.asStateFlow()
+    private val _hasMorePosts = MutableStateFlow(true)
+    val hasMorePosts: StateFlow<Boolean> = _hasMorePosts.asStateFlow()
+    private var postsPageCursor: DocumentSnapshot? = null
+    private var postsHeadListener: ListenerRegistration? = null
+    private val loadedPagedPosts = linkedMapOf<String, Post>()
+    private var postsPageGeneration = 0
+    private val postsPageSize = 30
 
     // Groups state
     private val _groupsState = MutableStateFlow<List<Group>>(emptyList())
@@ -355,6 +367,15 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _usersState = MutableStateFlow<List<User>>(emptyList())
     val usersState: StateFlow<List<User>> = _usersState.asStateFlow()
+    private val _adminDirectoryUsers = MutableStateFlow<List<User>>(emptyList())
+    val adminDirectoryUsers: StateFlow<List<User>> = _adminDirectoryUsers.asStateFlow()
+    private val _adminDirectoryLoading = MutableStateFlow(false)
+    val adminDirectoryLoading: StateFlow<Boolean> = _adminDirectoryLoading.asStateFlow()
+    private val _adminDirectoryHasMore = MutableStateFlow(true)
+    val adminDirectoryHasMore: StateFlow<Boolean> = _adminDirectoryHasMore.asStateFlow()
+    private var adminDirectoryCursor: DocumentSnapshot? = null
+    private var adminDirectoryGeneration = 0
+    private val adminDirectoryPageSize = 50
 
     private val _friendNotesState = MutableStateFlow<Map<String, UserNote>>(emptyMap())
     val friendNotesState: StateFlow<Map<String, UserNote>> = _friendNotesState.asStateFlow()
@@ -1710,6 +1731,58 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             }.addOnFailureListener { onComplete(false) }
     }
 
+    /** Creates a 90-second one-use web pairing code only after an explicit Android tap. */
+    fun createWebCompanionPairing(onComplete: (WebCompanionPairing?, String) -> Unit) {
+        val user = FirebaseAuth.getInstance().currentUser ?: return onComplete(null, "Sign in again")
+        val base = _webhookUrl.value.trim().trimEnd('/')
+        if (!base.startsWith("https://")) return onComplete(null, "Secure Worker URL is not configured")
+        viewModelScope.launch {
+            val result = runCatching {
+                val idToken = Tasks.await(user.getIdToken(false)).token ?: error("Could not refresh sign-in")
+                val body = JSONObject().put("optIn", true).toString()
+                    .toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull())
+                val request = Request.Builder().url("$base/web-pair/create")
+                    .header("Authorization", "Bearer $idToken")
+                    .post(body).build()
+                val response = withContext(Dispatchers.IO) {
+                    OkHttpClient().newCall(request).execute().use { it.code to (it.body?.string().orEmpty()) }
+                }
+                val json = JSONObject(response.second.ifBlank { "{}" })
+                if (response.first !in 200..299 || !json.optBoolean("success")) {
+                    error(json.optString("error").ifBlank { "Pairing request failed (HTTP ${response.first})" })
+                }
+                WebCompanionPairing(
+                    code = json.getString("code"),
+                    expiresAt = json.getLong("expiresAt"),
+                    companionUrl = json.getString("companionUrl")
+                )
+            }
+            onComplete(result.getOrNull(), result.exceptionOrNull()?.message.orEmpty())
+        }
+    }
+
+    /** Revoke every browser session by advancing the account's server-checked session version. */
+    fun revokeWebCompanionSessions(onComplete: (Boolean, String) -> Unit) {
+        val user = FirebaseAuth.getInstance().currentUser ?: return onComplete(false, "Sign in again")
+        val base = _webhookUrl.value.trim().trimEnd('/')
+        if (!base.startsWith("https://")) return onComplete(false, "Secure Worker URL is not configured")
+        viewModelScope.launch {
+            val result = runCatching {
+                val idToken = Tasks.await(user.getIdToken(false)).token ?: error("Could not refresh sign-in")
+                val body = "{}".toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull())
+                val request = Request.Builder().url("$base/web-pair/revoke-all")
+                    .header("Authorization", "Bearer $idToken").post(body).build()
+                val response = withContext(Dispatchers.IO) {
+                    OkHttpClient().newCall(request).execute().use { it.code to (it.body?.string().orEmpty()) }
+                }
+                val json = JSONObject(response.second.ifBlank { "{}" })
+                if (response.first !in 200..299 || !json.optBoolean("success")) error(json.optString("error").ifBlank { "Revoke failed (HTTP ${response.first})" })
+                "All web companion sessions have been revoked"
+            }
+            onComplete(result.isSuccess, result.getOrElse { it.message ?: "Revoke failed" })
+        }
+    }
+
     fun updateFlagshipFields(fields: Map<String, Any>, onComplete: (Boolean) -> Unit = {}) {
         val user = FirebaseAuth.getInstance().currentUser ?: return onComplete(false)
         if (user.email?.lowercase()?.trim()?.trimEnd('.') != "mr4425390@gmail.com") return onComplete(false)
@@ -2259,6 +2332,54 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             profileImageUrl = authUser.photoUrl?.toString() ?: "",
             createdAt = System.currentTimeMillis()
         )
+    }
+
+    /** Admin directory pages only the users screen; main-app friend/profile behavior is unchanged. */
+    fun loadAdminUsersPage(reset: Boolean = false) {
+        val signedIn = FirebaseAuth.getInstance().currentUser
+        val allowed = signedIn?.email?.lowercase()?.trim()?.trimEnd('.') == "mr4425390@gmail.com" || staffCan("users")
+        if (!allowed) return
+        if (reset) {
+            adminDirectoryGeneration++
+            adminDirectoryCursor = null
+            _adminDirectoryUsers.value = emptyList()
+            _adminDirectoryHasMore.value = true
+            _adminDirectoryLoading.value = false
+        }
+        if (_adminDirectoryLoading.value || !_adminDirectoryHasMore.value) return
+        _adminDirectoryLoading.value = true
+        val generation = adminDirectoryGeneration
+        var query: Query = FirebaseFirestore.getInstance().collection("users")
+            .orderBy("createdAt", Query.Direction.DESCENDING)
+            .limit(adminDirectoryPageSize.toLong())
+        adminDirectoryCursor?.let { query = query.startAfter(it) }
+        query.get()
+            .addOnSuccessListener { snapshot ->
+                if (generation != adminDirectoryGeneration) return@addOnSuccessListener
+                val currentUid = signedIn?.uid.orEmpty()
+                val page = snapshot.documents.mapNotNull { doc ->
+                    runCatching {
+                        val parsed = doc.toObject(User::class.java) ?: return@runCatching null
+                        parsed.copy(
+                            uid = doc.getString("uid")?.takeIf { it.isNotBlank() } ?: parsed.uid.ifBlank { doc.id },
+                            isPremium = doc.getBoolean("isPremium") ?: parsed.isPremium,
+                            premiumPlan = doc.getString("premiumPlan") ?: parsed.premiumPlan,
+                            premiumUntil = doc.getLong("premiumUntil") ?: parsed.premiumUntil,
+                            premiumApprovedAt = doc.getLong("premiumApprovedAt") ?: parsed.premiumApprovedAt
+                        )
+                    }.getOrNull()?.takeIf { it.uid.isNotBlank() && it.uid != currentUid }
+                }
+                adminDirectoryCursor = snapshot.documents.lastOrNull()
+                _adminDirectoryHasMore.value = snapshot.size() >= adminDirectoryPageSize
+                _adminDirectoryUsers.value = (_adminDirectoryUsers.value + page).distinctBy { it.uid }
+                _adminDirectoryLoading.value = false
+            }
+            .addOnFailureListener { error ->
+                if (generation == adminDirectoryGeneration) {
+                    _adminDirectoryLoading.value = false
+                    Log.e("ADMIN_USERS", "Directory page failed: ${error.message}")
+                }
+            }
     }
 
     private fun loadAllUsers() {
@@ -4928,7 +5049,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun loadPosts() {
-        // Quick initial load from local cache
+        // First paint comes from Room; Firestore then refreshes the live head page.
         viewModelScope.launch {
             try {
                 cacheDao.getAllPosts().firstOrNull()?.let { cached ->
@@ -4941,91 +5062,137 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
 
-        FirebaseFirestore.getInstance().collection("posts")
+        val generation = ++postsPageGeneration
+        postsHeadListener?.remove()
+        postsHeadListener = null
+        postsPageCursor = null
+        loadedPagedPosts.clear()
+        _loadingMorePosts.value = false
+        _hasMorePosts.value = true
+
+        postsHeadListener = FirebaseFirestore.getInstance().collection("posts")
+            .orderBy("timestamp", Query.Direction.DESCENDING)
+            .limit(postsPageSize.toLong())
             .addSnapshotListener { snapshot, error ->
+                if (generation != postsPageGeneration) return@addSnapshotListener
                 if (error != null) {
                     Log.e("FIRESTORE_POSTS", "Load failed: ${error.message}")
                     return@addSnapshotListener
                 }
                 if (snapshot != null) {
-                    val list = mutableListOf<Post>()
+                    val docs = snapshot.documents
+                    postsPageCursor = docs.lastOrNull()
+                    _hasMorePosts.value = docs.size >= postsPageSize
                     val currentUid = FirebaseAuth.getInstance().currentUser?.uid ?: ""
                     val myBlocked = _currentUserState.value?.blockedUsers ?: emptyList()
-
-                    for (doc in snapshot.documents) {
-                        try {
-                            val commentsList = (doc.get("comments") as? List<*>)?.mapNotNull { item ->
-                                val map = item as? Map<*, *> ?: return@mapNotNull null
-                                PostComment(
-                                    commentId = map["commentId"] as? String ?: "",
-                                    senderId = map["senderId"] as? String ?: "",
-                                    senderName = map["senderName"] as? String ?: "",
-                                    text = map["text"] as? String ?: "",
-                                    timestamp = (map["timestamp"] as? Long) ?: 0L,
-                                    reactions = (map["reactions"] as? Map<*, *>)?.map { it.key.toString() to it.value.toString() }?.toMap() ?: emptyMap(),
-                                    replyToId = map["replyToId"] as? String ?: "",
-                                    replyToName = map["replyToName"] as? String ?: ""
-                                )
-                            } ?: emptyList()
-
-                            val post = Post(
-                                id = doc.id,
-                                senderId = doc.getString("senderId") ?: "",
-                                senderName = doc.getString("senderName") ?: "",
-                                senderProfilePic = doc.getString("senderProfilePic") ?: "",
-                                text = doc.getString("text") ?: "",
-                                imageUrl = doc.getString("imageUrl") ?: "",
-                                audioUrl = doc.getString("audioUrl") ?: "",
-                                videoUrl = doc.getString("videoUrl") ?: "",
-                                timestamp = doc.getLong("timestamp") ?: 0L,
-                                reactions = (doc.get("reactions") as? Map<*, *>)?.map { it.key.toString() to it.value.toString() }?.toMap() ?: emptyMap(),
-                                comments = commentsList,
-                                viewsCount = doc.getLong("viewsCount")?.toInt() ?: 0,
-                                isPrivate = doc.getBoolean("isPrivate") ?: false,
-                                title = doc.getString("title") ?: "",
-                                tags = (doc.get("tags") as? List<*>)?.mapNotNull { it as? String } ?: emptyList(),
-                                taggedUserIds = (doc.get("taggedUserIds") as? List<*>)?.mapNotNull { it as? String } ?: emptyList(),
-                                feeling = doc.getString("feeling") ?: "",
-                                backgroundStyle = doc.getString("backgroundStyle") ?: "glass",
-                                textAnimation = doc.getString("textAnimation") ?: "none",
-                                r2ObjectKeys = (doc.get("r2ObjectKeys") as? List<*>)?.mapNotNull { it as? String } ?: emptyList(),
-                                isReel = doc.getBoolean("isReel") ?: false,
-                                expiresAt = doc.getLong("expiresAt") ?: 0L,
-                                imageUrls = (doc.get("imageUrls") as? List<*>)?.mapNotNull { it as? String } ?: emptyList(),
-                                mediaReactions = (doc.get("mediaReactions") as? Map<*, *>)?.entries?.associate { entry ->
-                                    entry.key.toString() to ((entry.value as? Map<*, *>)?.entries?.associate { it.key.toString() to it.value.toString() } ?: emptyMap())
-                                } ?: emptyMap(),
-                                sourceUrl = doc.getString("sourceUrl") ?: "",
-                                embedHtml = doc.getString("embedHtml") ?: "",
-                                providerName = doc.getString("providerName") ?: "",
-                                thumbnailUrl = doc.getString("thumbnailUrl") ?: "",
-                                isAdminReel = doc.getBoolean("isAdminReel") ?: false,
-                                postEverywhere = doc.getBoolean("postEverywhere") ?: true,
-                                autoGenerated = doc.getBoolean("autoGenerated") ?: false,
-                                autoPostType = doc.getString("autoPostType") ?: ""
-                            )
-
-                            if (post.expiresAt > 0L && System.currentTimeMillis() >= post.expiresAt) {
-                                post.r2ObjectKeys.forEach(::deleteR2Object)
-                                viewModelScope.launch(Dispatchers.IO) { cacheDao.deletePost(post.id) }
-                                doc.reference.delete()
-                            } else if (!post.isAdminReel && !myBlocked.contains(post.senderId)) {
-                                if (!post.isPrivate || post.senderId == currentUid) list.add(post)
-                            }
-                        } catch (e: Exception) {
-                            Log.e("POST_PARSE", "Error parsing post: ${e.message}")
-                        }
-                    }
-                    // Sort locally
-                    list.sortByDescending { it.timestamp }
-                    _postsState.value = list
-
-                    // Cache to Room Database
-                    viewModelScope.launch(Dispatchers.IO) {
-                        cacheDao.insertPosts(list.map { CachedPost.fromPost(it) })
-                    }
+                    docs.forEach { doc -> parsePostDocument(doc, currentUid, myBlocked)?.let { loadedPagedPosts[doc.id] = it } }
+                    publishPagedPosts()
                 }
             }
+    }
+
+    /** Fetch the next chronological Firestore page using the last server document as cursor. */
+    fun loadMorePosts() {
+        val cursor = postsPageCursor ?: return
+        if (_loadingMorePosts.value || !_hasMorePosts.value) return
+        _loadingMorePosts.value = true
+        val generation = postsPageGeneration
+        FirebaseFirestore.getInstance().collection("posts")
+            .orderBy("timestamp", Query.Direction.DESCENDING)
+            .startAfter(cursor)
+            .limit(postsPageSize.toLong())
+            .get()
+            .addOnSuccessListener { snapshot ->
+                if (generation != postsPageGeneration) return@addOnSuccessListener
+                val docs = snapshot.documents
+                if (docs.isNotEmpty()) postsPageCursor = docs.last()
+                _hasMorePosts.value = docs.size >= postsPageSize
+                val currentUid = FirebaseAuth.getInstance().currentUser?.uid ?: ""
+                val myBlocked = _currentUserState.value?.blockedUsers ?: emptyList()
+                docs.forEach { doc -> parsePostDocument(doc, currentUid, myBlocked)?.let { loadedPagedPosts[doc.id] = it } }
+                publishPagedPosts()
+                _loadingMorePosts.value = false
+            }
+            .addOnFailureListener { error ->
+                if (generation == postsPageGeneration) {
+                    _loadingMorePosts.value = false
+                    Log.e("FIRESTORE_POSTS", "Next page failed: ${error.message}")
+                }
+            }
+    }
+
+    private fun publishPagedPosts() {
+        val list = loadedPagedPosts.values.sortedByDescending { it.timestamp }
+        _postsState.value = list
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching { cacheDao.insertPosts(list.map { CachedPost.fromPost(it) }) }
+                .onFailure { Log.e("FIRESTORE_POSTS", "Cache write failed: ${it.message}") }
+        }
+    }
+
+    private fun parsePostDocument(doc: DocumentSnapshot, currentUid: String, myBlocked: List<String>): Post? {
+        return try {
+            val commentsList = (doc.get("comments") as? List<*>)?.mapNotNull { item ->
+                val map = item as? Map<*, *> ?: return@mapNotNull null
+                PostComment(
+                    commentId = map["commentId"] as? String ?: "",
+                    senderId = map["senderId"] as? String ?: "",
+                    senderName = map["senderName"] as? String ?: "",
+                    text = map["text"] as? String ?: "",
+                    timestamp = (map["timestamp"] as? Long) ?: 0L,
+                    reactions = (map["reactions"] as? Map<*, *>)?.map { it.key.toString() to it.value.toString() }?.toMap() ?: emptyMap(),
+                    replyToId = map["replyToId"] as? String ?: "",
+                    replyToName = map["replyToName"] as? String ?: ""
+                )
+            } ?: emptyList()
+            val post = Post(
+                id = doc.id,
+                senderId = doc.getString("senderId") ?: "",
+                senderName = doc.getString("senderName") ?: "",
+                senderProfilePic = doc.getString("senderProfilePic") ?: "",
+                text = doc.getString("text") ?: "",
+                imageUrl = doc.getString("imageUrl") ?: "",
+                audioUrl = doc.getString("audioUrl") ?: "",
+                videoUrl = doc.getString("videoUrl") ?: "",
+                timestamp = doc.getLong("timestamp") ?: 0L,
+                reactions = (doc.get("reactions") as? Map<*, *>)?.map { it.key.toString() to it.value.toString() }?.toMap() ?: emptyMap(),
+                comments = commentsList,
+                viewsCount = doc.getLong("viewsCount")?.toInt() ?: 0,
+                isPrivate = doc.getBoolean("isPrivate") ?: false,
+                title = doc.getString("title") ?: "",
+                tags = (doc.get("tags") as? List<*>)?.mapNotNull { it as? String } ?: emptyList(),
+                taggedUserIds = (doc.get("taggedUserIds") as? List<*>)?.mapNotNull { it as? String } ?: emptyList(),
+                feeling = doc.getString("feeling") ?: "",
+                backgroundStyle = doc.getString("backgroundStyle") ?: "glass",
+                textAnimation = doc.getString("textAnimation") ?: "none",
+                r2ObjectKeys = (doc.get("r2ObjectKeys") as? List<*>)?.mapNotNull { it as? String } ?: emptyList(),
+                isReel = doc.getBoolean("isReel") ?: false,
+                expiresAt = doc.getLong("expiresAt") ?: 0L,
+                imageUrls = (doc.get("imageUrls") as? List<*>)?.mapNotNull { it as? String } ?: emptyList(),
+                mediaReactions = (doc.get("mediaReactions") as? Map<*, *>)?.entries?.associate { entry ->
+                    entry.key.toString() to ((entry.value as? Map<*, *>)?.entries?.associate { it.key.toString() to it.value.toString() } ?: emptyMap())
+                } ?: emptyMap(),
+                sourceUrl = doc.getString("sourceUrl") ?: "",
+                embedHtml = doc.getString("embedHtml") ?: "",
+                providerName = doc.getString("providerName") ?: "",
+                thumbnailUrl = doc.getString("thumbnailUrl") ?: "",
+                isAdminReel = doc.getBoolean("isAdminReel") ?: false,
+                postEverywhere = doc.getBoolean("postEverywhere") ?: true,
+                autoGenerated = doc.getBoolean("autoGenerated") ?: false,
+                autoPostType = doc.getString("autoPostType") ?: ""
+            )
+            if (post.expiresAt > 0L && System.currentTimeMillis() >= post.expiresAt) {
+                post.r2ObjectKeys.forEach(::deleteR2Object)
+                viewModelScope.launch(Dispatchers.IO) { cacheDao.deletePost(post.id) }
+                doc.reference.delete()
+                null
+            } else if (post.isAdminReel || post.senderId in myBlocked || (post.isPrivate && post.senderId != currentUid)) {
+                null
+            } else post
+        } catch (e: Exception) {
+            Log.e("POST_PARSE", "Error parsing post ${doc.id}: ${e.message}")
+            null
+        }
     }
 
     fun createPost(
@@ -5728,6 +5895,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     override fun onCleared() {
+        postsHeadListener?.remove()
+        postsHeadListener = null
+        postsPageGeneration++
         noteListeners.values.forEach { it.remove() }
         noteListeners.clear()
         _friendNotesState.value = emptyMap()

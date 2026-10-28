@@ -72,6 +72,8 @@ data class FlagshipConfig(
     val reelsEnabled: Boolean = true,
     /** Admin switch for current/live location sharing in chats. */
     val locationSharingEnabled: Boolean = true,
+    /** Admin kill switch for automatic received-file downloads; manual saves and message history are unaffected. */
+    val autoSaveReceivedFilesEnabled: Boolean = true,
     val assistantEnabled: Boolean = true,
     /** Legacy, ignored since 4.3.3: the model comes from the admin "AI providers" page only. */
     val aiModel: String = "",

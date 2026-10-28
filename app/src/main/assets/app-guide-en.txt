@@ -1,0 +1,28 @@
+CONVO CHAT — OFFLINE APP GUIDE
+This guide is bundled with the app and can be read without an internet connection.
+
+GETTING AROUND
+• Home: browse posts, stories, polls and community updates. Use the feed filters to narrow what you see.
+• Chats: open conversations, send text, photos, files, voice notes and locations, and start audio or video calls.
+• Create: publish a post, story, reel or poll.
+• Groups and Friends: find your accepted friends, manage requests and open group conversations.
+• Profile & settings: open the account menu and choose Profile & settings to manage language, themes, notifications, privacy, security and device sessions.
+
+MESSAGES AND MEDIA
+• Long-press a message for actions such as reply, react, forward, save or delete (available actions depend on the message).
+• Received files can be opened or manually downloaded. Automatic saving can be disabled in your settings and may also be controlled by the app administrator. Saved files are organized under Downloads/Convo Chat by type.
+• Use conversation settings to choose chat appearance, quick reactions, text size, typing sounds and per-file-type download preferences.
+
+LOCATION AND PRIVACY
+• Location sharing is optional. Review the location permission prompt carefully; live sharing displays an ongoing notification and can be stopped from the chat or notification.
+• Use Settings → Privacy and account-security controls to review visibility, app lock, blocked accounts, devices and verification options.
+• Only share a location with people you trust. A recipient may see a location message after it has been sent.
+
+AI ASSISTANT
+• Open the assistant from its button on the Home screen when the feature is available.
+• Assistant conversation history is stored on this device and is not synchronized as chat history to the cloud. When you send a prompt, the prompt may be processed by the configured AI service to generate a reply; do not include passwords, verification codes or other secrets.
+
+BACKUPS AND HELP
+• Use the in-app backup controls to create or restore an encrypted text backup. Keep the backup file private and retain any password or recovery material securely.
+• Choose Settings → Language to switch between English and বাংলা. Choose Settings → Replay app tour to see the guided tour again.
+• App features may vary by release, account permissions, network availability and administrator settings. Check the in-app update notes for changes in your installed version.

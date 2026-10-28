@@ -100,7 +100,8 @@ fun ConversationSettingsPage(
     onBlockToggle: () -> Unit,
     onReport: () -> Unit,
     onOpenImage: (String) -> Unit,
-    onChatLockToggle: (Boolean) -> Unit = {}
+    onChatLockToggle: (Boolean) -> Unit = {},
+    autoSaveGloballyEnabled: Boolean = true
 ) {
     val context = LocalContext.current
     val prefsVersion by ConversationPrefs.version.collectAsState()
@@ -184,8 +185,14 @@ fun ConversationSettingsPage(
                             onClick = { dialog = "mute" })
                         SettingRow(Icons.Default.Keyboard, Color(0xFF1E88E5), "Typing sounds", "Soft sound while you type", switch = typingSounds, onSwitch = onTypingSounds)
                         SettingRow(Icons.Default.KeyboardReturn, Color(0xFF43A047), "Enter to send", "Enter key sends instead of new line", switch = enterToSend, onSwitch = { ChatPreferences.setEnterToSend(context, it) })
-                        SettingRow(Icons.Default.Download, Color(0xFF00897B), "Auto-save received media", "Saved to Downloads/${ReceivedFiles.APP_FOLDER} by type (all chats)", switch = autoSave, onSwitch = { autoSave = it; ReceivedFiles.setAutoDownload(context, it) })
-                        if (autoSave) {
+                        SettingRow(
+                            Icons.Default.Download, Color(0xFF00897B), "Auto-save received media",
+                            if (autoSaveGloballyEnabled) "Saved to Downloads/${ReceivedFiles.APP_FOLDER} by type (all chats)" else "Automatic downloads are disabled by the administrator",
+                            switch = autoSave && autoSaveGloballyEnabled,
+                            enabled = autoSaveGloballyEnabled,
+                            onSwitch = { autoSave = it; ReceivedFiles.setAutoDownload(context, it) }
+                        )
+                        if (autoSave && autoSaveGloballyEnabled) {
                             SettingRow(Icons.Default.Wifi, Color(0xFF1976D2), "Wi-Fi only", "Pause automatic downloads on mobile data", switch = wifiOnly, onSwitch = { wifiOnly = it; ReceivedFiles.setWifiOnly(context, it) })
                             listOf("Images", "Videos", "Audio", "PDF", "Documents", "Archives", "Apps", "Files").forEach { kind ->
                                 val enabled = allowedDownloadTypes[kind] ?: true
@@ -379,11 +386,11 @@ private fun SettingsGroup(title: String, content: @Composable ColumnScope.() -> 
 private fun SettingRow(
     icon: ImageVector, color: Color, title: String, subtitle: String,
     trailingText: String? = null, switch: Boolean? = null, onSwitch: (Boolean) -> Unit = {},
-    danger: Boolean = false, onClick: (() -> Unit)? = null
+    danger: Boolean = false, onClick: (() -> Unit)? = null, enabled: Boolean = true
 ) {
     Row(
         Modifier.fillMaxWidth()
-            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else if (switch != null) Modifier.clickable { onSwitch(!switch) } else Modifier)
+            .then(if (!enabled) Modifier else if (onClick != null) Modifier.clickable(onClick = onClick) else if (switch != null) Modifier.clickable { onSwitch(!switch) } else Modifier)
             .padding(horizontal = 14.dp, vertical = 11.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -396,7 +403,7 @@ private fun SettingRow(
             Text(subtitle, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
         }
         if (trailingText != null) Text(trailingText, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.padding(start = 6.dp))
-        if (switch != null) Switch(checked = switch, onCheckedChange = onSwitch)
+        if (switch != null) Switch(checked = switch, onCheckedChange = onSwitch, enabled = enabled)
         else if (onClick != null) Icon(Icons.Default.ChevronRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }

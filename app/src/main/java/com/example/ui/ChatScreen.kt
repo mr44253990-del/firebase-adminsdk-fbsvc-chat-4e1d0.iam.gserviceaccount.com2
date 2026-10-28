@@ -122,6 +122,7 @@ fun ChatScreen(
     val recipientUploadState by viewModel.recipientUploadState.collectAsState()
     val chatTheme by viewModel.chatTheme.collectAsState()
     val currentUser by viewModel.currentUserState.collectAsState()
+    val flagshipConfig by viewModel.flagshipConfig.collectAsState()
     val pendingRequestRecipients by viewModel.pendingMessageRequestRecipients.collectAsState()
     val requestPending = recipient.uid in pendingRequestRecipients
     val typingSounds by viewModel.typingSoundsEnabled.collectAsState()
@@ -864,6 +865,7 @@ fun ChatScreen(
             },
             onReport = { showReportDialog = true },
             onOpenImage = { settingsImageUrl = it },
+            autoSaveGloballyEnabled = flagshipConfig.autoSaveReceivedFilesEnabled,
             onChatLockToggle = { enabled ->
                 if (enabled && !ChatLockAuth.canLock(context)) {
                     Toast.makeText(context, "Set a screen lock or biometric in Android settings first", Toast.LENGTH_LONG).show()
@@ -2234,7 +2236,7 @@ fun MessageBubbleItem(
                     }
 
                     if (!message.fileUrl.isNullOrBlank()) {
-                        GenericFileBubble(message, onFileConsumed, palette.accent, palette.text)
+                        GenericFileBubble(message, onFileConsumed, palette.accent, palette.text, flagshipConfig.autoSaveReceivedFilesEnabled)
                         Spacer(Modifier.height(5.dp))
                     }
 
@@ -2508,7 +2510,7 @@ private fun InlineChatVideo(url: String, name: String) {
 }
 
 @Composable
-private fun GenericFileBubble(message: Message, onConsumed: () -> Unit, accent: Color = MaterialTheme.colorScheme.primary, contentColor: Color = MaterialTheme.colorScheme.onSurface) {
+private fun GenericFileBubble(message: Message, onConsumed: () -> Unit, accent: Color = MaterialTheme.colorScheme.primary, contentColor: Color = MaterialTheme.colorScheme.onSurface, autoSaveAllowed: Boolean = true) {
     val context = LocalContext.current
     val mime = message.fileMimeType ?: "application/octet-stream"
     val name = message.fileName ?: "Attachment"
@@ -2527,8 +2529,8 @@ private fun GenericFileBubble(message: Message, onConsumed: () -> Unit, accent: 
     var showText by remember(message.messageId) { mutableStateOf(false) }
     val receivedByMe = remember(message.senderId) { message.senderId != com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid }
     // WhatsApp-style: received files save themselves into Downloads/Convo Chat/<type>.
-    LaunchedEffect(message.messageId) {
-        if (receivedByMe && downloadId <= 0L) {
+    LaunchedEffect(message.messageId, autoSaveAllowed) {
+        if (autoSaveAllowed && receivedByMe && downloadId <= 0L) {
             val source = message.remoteFileUrl ?: message.fileUrl
             val id = ReceivedFiles.autoSave(context, message.messageId, source, name, mime)
             if (id > 0) downloadId = id
