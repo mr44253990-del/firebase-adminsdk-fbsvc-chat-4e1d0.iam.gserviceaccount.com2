@@ -31,9 +31,10 @@ import androidx.compose.ui.unit.dp
 fun ChatCallPill(onVideo: () -> Unit, onAudio: () -> Unit, modifier: Modifier = Modifier) {
     Row(
         modifier
-            .height(36.dp)
-            .clip(RoundedCornerShape(18.dp))
-            .border(1.dp, Color.White.copy(alpha = .18f), RoundedCornerShape(18.dp)),
+            .height(40.dp)
+            .clip(RoundedCornerShape(20.dp))
+            .background(Brush.linearGradient(listOf(Color.White.copy(alpha = .24f), Color.White.copy(alpha = .06f))))
+            .border(1.dp, Brush.linearGradient(listOf(Color.White.copy(alpha = .92f), Color(0xFF73C9FF).copy(alpha = .72f), Color.White.copy(alpha = .30f))), RoundedCornerShape(20.dp)),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(

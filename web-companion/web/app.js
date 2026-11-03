@@ -21,10 +21,39 @@
   let refreshTimer = null;
   let lastRendered = "";
 
-  const getSession = () => sessionStorage.getItem("convo_web_pair_session") || "";
+  // Persistent opt-in login: the opaque token survives browser restarts until explicit logout
+  // or Android revoke-all. Firebase ID/refresh tokens are never stored here.
+  const getSession = () => {
+    let persistent = "";
+    try { persistent = localStorage.getItem("convo_web_pair_session") || ""; } catch (_) { /* Storage may be disabled. */ }
+    if (persistent) {
+      try {
+        sessionStorage.removeItem("convo_web_pair_session");
+        sessionStorage.removeItem("convo_web_pair_expiry");
+      } catch (_) { /* The persistent token remains usable if legacy storage is unavailable. */ }
+      return persistent;
+    }
+    try {
+      // One-time migration for an unexpired 12-hour session from the first companion build.
+      const oldToken = sessionStorage.getItem("convo_web_pair_session") || "";
+      const oldExpiry = Number(sessionStorage.getItem("convo_web_pair_expiry") || 0);
+      if (oldToken && oldExpiry > Date.now()) {
+        localStorage.setItem("convo_web_pair_session", oldToken);
+        sessionStorage.removeItem("convo_web_pair_session");
+        sessionStorage.removeItem("convo_web_pair_expiry");
+        return oldToken;
+      }
+      sessionStorage.removeItem("convo_web_pair_session");
+      sessionStorage.removeItem("convo_web_pair_expiry");
+    } catch (_) { /* Storage may be disabled; pairing can still show an actionable error. */ }
+    return "";
+  };
   const clearSession = () => {
-    sessionStorage.removeItem("convo_web_pair_session");
-    sessionStorage.removeItem("convo_web_pair_expiry");
+    try { localStorage.removeItem("convo_web_pair_session"); } catch (_) { /* Storage may be disabled. */ }
+    try {
+      sessionStorage.removeItem("convo_web_pair_session"); // clear tokens from older builds
+      sessionStorage.removeItem("convo_web_pair_expiry");
+    } catch (_) { /* Storage may be disabled. */ }
   };
   const showPair = (message = "") => {
     pairPanel.classList.remove("hidden");
@@ -56,7 +85,7 @@
     if (!response.ok || payload.success === false) {
       if (response.status === 401 || response.status === 403) {
         clearSession();
-        showPair("Your browser session expired or was revoked. Pair again from Android.");
+        showPair("This browser is no longer paired. Pair again from the Android app.");
       }
       throw new Error(String(payload.error || `Request failed (${response.status})`));
     }
@@ -209,9 +238,8 @@
     pairSubmit.textContent = "Pairing…";
     try {
       const result = await api("redeem", { code }, "");
-      if (!result.sessionToken || !Number(result.expiresAt)) throw new Error("The server returned an incomplete session.");
-      sessionStorage.setItem("convo_web_pair_session", result.sessionToken);
-      sessionStorage.setItem("convo_web_pair_expiry", String(result.expiresAt));
+      if (!result.sessionToken) throw new Error("The server returned an incomplete session.");
+      localStorage.setItem("convo_web_pair_session", result.sessionToken);
       pairCode.value = "";
       await enterCompanion();
     } catch (error) {
@@ -273,10 +301,19 @@
   });
 
   const token = getSession();
-  const expiresAt = Number(sessionStorage.getItem("convo_web_pair_expiry") || 0);
-  if (token && expiresAt > Date.now()) enterCompanion();
-  else {
-    if (token) clearSession();
+  if (token) {
+    enterCompanion();
+  } else {
     showPair("");
+    // Android can hand off a short-lived pairing code in the URL fragment for seamless
+    // first login. Fragments are not sent to the Worker; erase it before redeeming.
+    const pairFromAndroid = new URLSearchParams(location.hash.replace(/^#/, "")).get("pair") || "";
+    if (/^\d{10}$/.test(pairFromAndroid)) {
+      history.replaceState(null, "", `${location.pathname}${location.search}`);
+      pairCode.value = pairFromAndroid;
+      queueMicrotask(() => $("pair-form").requestSubmit());
+    } else if (location.hash) {
+      history.replaceState(null, "", `${location.pathname}${location.search}`);
+    }
   }
 })();

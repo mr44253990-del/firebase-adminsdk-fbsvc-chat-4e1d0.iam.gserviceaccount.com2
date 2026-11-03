@@ -21,13 +21,13 @@
     <section id="pair-panel" class="glass panel pair-panel">
       <div class="eyebrow">PRIVATE · OPT-IN PAIRING</div>
       <h2>Link your browser</h2>
-      <p>In the Android app, open <strong>Profile &amp; settings → Account security</strong>, choose <strong>Link my browser</strong>, then enter the temporary code below.</p>
+      <p>For automatic sign-in, tap <strong>Open web version</strong> from your Android profile menu. Or create a one-time code in <strong>Profile &amp; settings → Account security</strong> and enter it below.</p>
       <form id="pair-form" autocomplete="off">
         <label for="pair-code">10-digit one-time code</label>
         <input id="pair-code" inputmode="numeric" autocomplete="one-time-code" maxlength="10" pattern="[0-9]{10}" placeholder="0000000000" required>
         <button id="pair-submit" class="primary" type="submit">Pair this browser</button>
       </form>
-      <p class="fineprint">The code expires in 90 seconds and can be used once. The browser session expires after 12 hours. Keep the code private; you can revoke all web sessions from Android.</p>
+      <p class="fineprint">The code expires in 90 seconds and can be used once. This browser stores an opaque sign-in token until logout or Android revocation. Use a private device; a compromised browser can expose its local session.</p>
       <p id="pair-error" class="error" role="alert" aria-live="polite"></p>
     </section>
 

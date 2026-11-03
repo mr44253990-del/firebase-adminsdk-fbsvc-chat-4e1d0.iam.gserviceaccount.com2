@@ -18,6 +18,12 @@ LOCATION AND PRIVACY
 • Use Settings → Privacy and account-security controls to review visibility, app lock, blocked accounts, devices and verification options.
 • Only share a location with people you trust. A recipient may see a location message after it has been sent.
 
+WEB COMPANION AND SCREENSHOT SETTING
+• To open chats in your own browser, choose Profile menu → Open web version. Android explicitly starts a one-use pairing code that expires after 90 seconds.
+• After pairing, browser login does not expire automatically. Use only your trusted private device; log out in the browser when finished, or revoke all web sessions from Profile & settings → Account security. Do not use a shared or public computer.
+• Choose whether screenshot protection is enabled for chats in Privacy or Conversation settings. Call screens remain protected. This cannot stop someone taking a photo with another camera.
+• Some recent profile, story, feed and open-chat images are kept in a bounded app-private cache; older items may be evicted. Not every image is guaranteed to remain available offline.
+
 AI ASSISTANT
 • Open the assistant from its button on the Home screen when the feature is available.
 • Assistant conversation history is stored on this device and is not synchronized as chat history to the cloud. When you send a prompt, the prompt may be processed by the configured AI service to generate a reply; do not include passwords, verification codes or other secrets.

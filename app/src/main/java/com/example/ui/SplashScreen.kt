@@ -2,6 +2,7 @@ package com.example.ui
 
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
@@ -19,7 +20,10 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import com.example.R
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.material.icons.Icons
@@ -79,6 +83,13 @@ fun SplashScreen(onFinished: () -> Unit) {
         Modifier.fillMaxSize().background(Brush.linearGradient(listOf(Color(0xFF070816), Color(0xFF15123A), Color(0xFF071622)))),
         contentAlignment = Alignment.Center
     ) {
+        Image(
+            painter = painterResource(R.drawable.app_liquid_glass_backdrop),
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier.fillMaxSize().alpha(.56f)
+        )
+        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF070816).copy(.38f), Color.Transparent, Color(0xFF070816).copy(.42f)))))
         Box(Modifier.align(Alignment.TopStart).offset(x = (-55).dp, y = (90 + drift).dp).size(230.dp).blur(54.dp).background(Color(0xFF755CFF).copy(alpha = .55f), CircleShape))
         Box(Modifier.align(Alignment.BottomEnd).offset(x = 70.dp, y = (-90 - drift).dp).size(260.dp).blur(64.dp).background(Color(0xFF1DD6C0).copy(alpha = .38f), CircleShape))
         Box(Modifier.align(Alignment.Center).offset(x = 120.dp, y = (-170).dp).size(150.dp).blur(48.dp).background(Color(0xFFFF68B2).copy(alpha = .34f), CircleShape))

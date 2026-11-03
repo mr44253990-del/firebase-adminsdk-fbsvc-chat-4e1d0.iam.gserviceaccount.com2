@@ -260,6 +260,37 @@ fun HomeScreen(
     val conversationUserIds by viewModel.conversationUserIds.collectAsState()
     val unreadCounts by viewModel.unreadCountsState.collectAsState()
 
+    // Warm the durable image cache in the background while online, prioritizing the current
+    // account, friends/recent conversations, recent feed media and stories for offline entry.
+    LaunchedEffect(isOnlineState, currentUser?.uid, allUsers, posts, storyPlaybackQueue, conversationUserIds) {
+        if (isOnlineState) {
+            val priorityIds = currentUser?.friends.orEmpty().toSet() + conversationUserIds
+            val recentPeople = allUsers.sortedBy { if (it.uid in priorityIds) 0 else 1 }.take(180)
+            val urls = buildList {
+                add(currentUser?.profileImageUrl.orEmpty())
+                add(currentUser?.coverImageUrl.orEmpty())
+                recentPeople.forEach { add(it.profileImageUrl) }
+                posts.sortedByDescending { it.timestamp }.take(60).forEach { post ->
+                    add(post.senderProfilePic)
+                    add(post.imageUrl)
+                    add(post.thumbnailUrl)
+                    addAll(post.imageUrls.take(8))
+                }
+                storyPlaybackQueue.take(40).forEach { story ->
+                    add(story.senderProfilePic)
+                    add(story.imageUrl)
+                }
+            }
+            OfflineImageWarmer.prefetch(context, urls)
+            // The warmer enforces a per-URL cooldown; this low-frequency pass lets popular
+            // stable URLs pick up refreshed images without continuously re-downloading them.
+            while (isOnlineState) {
+                kotlinx.coroutines.delay(6L * 60L * 60L * 1000L)
+                OfflineImageWarmer.prefetch(context, urls)
+            }
+        }
+    }
+
     var searchQuery by remember { mutableStateOf("") }
     var chatFilter by rememberSaveable { mutableStateOf("all") }
     var showChatTools by rememberSaveable { mutableStateOf(false) }
@@ -280,6 +311,7 @@ fun HomeScreen(
     var webPairExpiresAt by remember { mutableLongStateOf(0L) }
     var webPairLoading by remember { mutableStateOf(false) }
     var webRevokeLoading by remember { mutableStateOf(false) }
+    var webLaunchLoading by remember { mutableStateOf(false) }
     var showAllDeviceSessions by rememberSaveable { mutableStateOf(false) }
     var deviceSessionPendingDelete by remember { mutableStateOf<DeviceSession?>(null) }
     var showClearDeviceHistoryDialog by rememberSaveable { mutableStateOf(false) }
@@ -298,6 +330,21 @@ fun HomeScreen(
     val isAdmin = FirebaseAuth.getInstance().currentUser?.email?.lowercase()?.trim()?.trimEnd('.') == "mr4425390@gmail.com"
     val staffPermissions: Set<String>? = currentUser?.takeIf { !isAdmin && it.staffRole == "sub_admin" && it.staffPermissions.isNotEmpty() }?.staffPermissions?.toSet()
     val isStaff = staffPermissions != null
+    val openWebVersion: () -> Unit = {
+        if (!webLaunchLoading) {
+            webLaunchLoading = true
+            viewModel.createWebCompanionPairing { pairing, error ->
+                webLaunchLoading = false
+                if (pairing == null) {
+                    Toast.makeText(context, error.ifBlank { "Could not open the web version" }, Toast.LENGTH_LONG).show()
+                } else {
+                    val handoff = "${pairing.companionUrl}#pair=${pairing.code}"
+                    runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(handoff))) }
+                        .onFailure { Toast.makeText(context, "No browser is available to open the web version", Toast.LENGTH_LONG).show() }
+                }
+            }
+        }
+    }
     var dismissNotice by remember(flagshipConfig.updatedAt) { mutableStateOf(false) }
     val validUpdate = flagshipConfig.updateEnabled && flagshipConfig.apkUrl.startsWith("https://")
     // Version code is the single source of truth. A republished campaign must
@@ -371,7 +418,7 @@ fun HomeScreen(
     LaunchedEffect(coachReplay) { if (coachReplay && CoachTour.consumeReplay()) { kotlinx.coroutines.delay(350); coachTourActive = true } }
 
     Scaffold(
-        modifier = Modifier.fillMaxSize().coachBlurHost(coachTourActive && currentTab != 6, CoachTour.activeKey.value?.let { CoachTour.targets[it] }),
+        modifier = Modifier.fillMaxSize().appLiquidBackground().coachBlurHost(coachTourActive && currentTab != 6, CoachTour.activeKey.value?.let { CoachTour.targets[it] }),
         containerColor = Color.Transparent,
         contentWindowInsets = androidx.compose.foundation.layout.WindowInsets(0, 0, 0, 0),
         topBar = {
@@ -490,6 +537,12 @@ fun HomeScreen(
                                     onClick = { showAccountMenu = false; viewModel.setCurrentTab(1) }
                                 )
                                 DropdownMenuItem(
+                                    text = { Text(tr(if (webLaunchLoading) "Opening web version…" else "Open web version")) },
+                                    leadingIcon = { Icon(Icons.Outlined.Language, null, tint = MaterialTheme.colorScheme.primary) },
+                                    enabled = !webLaunchLoading,
+                                    onClick = { showAccountMenu = false; openWebVersion() }
+                                )
+                                DropdownMenuItem(
                                     text = { Text(tr("Groups")) },
                                     leadingIcon = { Icon(Icons.Outlined.Groups, null) },
                                     onClick = { showAccountMenu = false; viewModel.setCurrentTab(2) }
@@ -549,25 +602,40 @@ fun HomeScreen(
         },
         bottomBar = {
             if (currentTab != 6) NavigationBar(
-                containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.82f),
+                containerColor = Color.Transparent,
                 tonalElevation = 0.dp,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(topStart = 30.dp, topEnd = 30.dp))
+                    .padding(horizontal = 10.dp, vertical = 6.dp)
+                    .clip(RoundedCornerShape(30.dp))
+                    .background(Brush.linearGradient(listOf(
+                        MaterialTheme.colorScheme.surface.copy(alpha = .91f),
+                        MaterialTheme.colorScheme.primaryContainer.copy(alpha = .78f),
+                        MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = .75f)
+                    )))
+                    .border(1.dp, Brush.linearGradient(listOf(Color.White.copy(.95f), MaterialTheme.colorScheme.primary.copy(.36f), Color.White.copy(.40f))), RoundedCornerShape(30.dp))
             ) {
                 NavigationBarItem(
                     selected = currentTab == 0,
                     onClick = { viewModel.setCurrentTab(0) },
                     modifier = Modifier.coachTarget("nav_home"),
                     icon = { Icon(Icons.Default.Home, contentDescription = "Home") },
-                    label = { Text(tr("Home"), fontSize = 10.sp) }
+                    label = { Text(tr("Home"), fontSize = 10.sp) },
+                    colors = NavigationBarItemDefaults.colors(
+                        selectedIconColor = Color.White, selectedTextColor = Color.White,
+                        indicatorColor = MaterialTheme.colorScheme.primary
+                    )
                 )
                 NavigationBarItem(
                     selected = currentTab == 1,
                     onClick = { viewModel.setCurrentTab(1) },
                     modifier = Modifier.coachTarget("nav_chats"),
                     icon = { Icon(Icons.Default.Chat, contentDescription = "Chats") },
-                    label = { Text(tr("Chats"), fontSize = 10.sp) }
+                    label = { Text(tr("Chats"), fontSize = 10.sp) },
+                    colors = NavigationBarItemDefaults.colors(
+                        selectedIconColor = Color.White, selectedTextColor = Color.White,
+                        indicatorColor = MaterialTheme.colorScheme.primary
+                    )
                 )
                 NavigationBarItem(
                     selected = false,
@@ -587,20 +655,32 @@ fun HomeScreen(
                     onClick = { viewModel.openReel() },
                     modifier = Modifier.coachTarget("nav_slot4"),
                     icon = { Icon(Icons.Default.SmartDisplay, contentDescription = "Reels") },
-                    label = { Text(tr("Reels"), fontSize = 10.sp) }
+                    label = { Text(tr("Reels"), fontSize = 10.sp) },
+                    colors = NavigationBarItemDefaults.colors(
+                        selectedIconColor = Color.White, selectedTextColor = Color.White,
+                        indicatorColor = MaterialTheme.colorScheme.primary
+                    )
                 ) else NavigationBarItem(
                     selected = currentTab == 2,
                     onClick = { viewModel.setCurrentTab(2) },
                     modifier = Modifier.coachTarget("nav_slot4"),
                     icon = { Icon(Icons.Default.Groups, contentDescription = "Groups") },
-                    label = { Text(tr("Groups"), fontSize = 10.sp) }
+                    label = { Text(tr("Groups"), fontSize = 10.sp) },
+                    colors = NavigationBarItemDefaults.colors(
+                        selectedIconColor = Color.White, selectedTextColor = Color.White,
+                        indicatorColor = MaterialTheme.colorScheme.primary
+                    )
                 )
                 NavigationBarItem(
                     selected = currentTab == 5,
                     onClick = { viewModel.setCurrentTab(5) },
                     modifier = Modifier.coachTarget("nav_friends"),
                     icon = { Icon(Icons.Default.PeopleAlt, contentDescription = "Friends") },
-                    label = { Text(tr("Friends"), fontSize = 10.sp) }
+                    label = { Text(tr("Friends"), fontSize = 10.sp) },
+                    colors = NavigationBarItemDefaults.colors(
+                        selectedIconColor = Color.White, selectedTextColor = Color.White,
+                        indicatorColor = MaterialTheme.colorScheme.primary
+                    )
                 )
             }
         },
@@ -832,9 +912,10 @@ fun HomeScreen(
                     // People you actually chat with stay on top: unread first, then the most
                     // recent conversations, then friends you have not messaged yet.
                     val conversationPrefsVersion by ConversationPrefs.version.collectAsState()
-                    val chatUsers = remember(filteredChatUsers, recencyRank, unreadCounts) {
+                    val chatUsers = remember(filteredChatUsers, recencyRank, unreadCounts, conversationPrefsVersion) {
                         filteredChatUsers.distinctBy { it.uid }.sortedWith(
-                            compareByDescending<User> { (unreadCounts[it.uid] ?: 0) > 0 }
+                            compareByDescending<User> { ConversationPrefs.isPinned(context, it.uid) }
+                                .thenByDescending { (unreadCounts[it.uid] ?: 0) > 0 }
                                 .thenBy { recencyRank[it.uid] ?: Int.MAX_VALUE }
                                 .thenBy { it.name.lowercase() }
                         )
@@ -879,7 +960,16 @@ fun HomeScreen(
                             trailingIcon = { if (searchQuery.isNotBlank()) IconButton(onClick = { searchQuery = ""; viewModel.searchUsers("") }) { Icon(Icons.Default.Close, "Clear search") } },
                             modifier = Modifier.fillMaxWidth(),
                             singleLine = true,
-                            shape = RoundedCornerShape(22.dp)
+                            shape = RoundedCornerShape(24.dp),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = .82f),
+                                unfocusedContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = .72f),
+                                focusedBorderColor = MaterialTheme.colorScheme.primary,
+                                unfocusedBorderColor = Color.White.copy(alpha = .84f),
+                                focusedLeadingIconColor = MaterialTheme.colorScheme.primary,
+                                unfocusedLeadingIconColor = MaterialTheme.colorScheme.primary,
+                                unfocusedPlaceholderColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = .85f)
+                            )
                         )
 
                         if (searchQuery.isBlank()) {
@@ -894,8 +984,8 @@ fun HomeScreen(
                                         onClick = { showChatTools = !showChatTools },
                                         modifier = Modifier.fillMaxWidth().animateContentSize(),
                                         shape = RoundedCornerShape(18.dp),
-                                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .48f)),
-                                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = .55f))
+                                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = .72f)),
+                                        border = BorderStroke(1.dp, Brush.linearGradient(listOf(Color.White.copy(.94f), MaterialTheme.colorScheme.primary.copy(.30f), MaterialTheme.colorScheme.tertiary.copy(.20f))))
                                     ) {
                                         Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                                             Box(Modifier.size(34.dp).clip(RoundedCornerShape(11.dp)).background(MaterialTheme.colorScheme.primary.copy(alpha = .12f)), contentAlignment = Alignment.Center) {
@@ -966,7 +1056,7 @@ fun HomeScreen(
                                         hasActiveStory = hasActiveStory,
                                         isMuted = user.uid in mutedUsers,
                                         onSelect = { onUserSelected(user) },
-                                        onLongPress = {
+                                        onMute = {
                                             viewModel.toggleMuteUser(user.uid)
                                             Toast.makeText(context, if (user.uid in mutedUsers) "${user.name} unmuted" else "${user.name} muted", Toast.LENGTH_SHORT).show()
                                         }
@@ -2246,9 +2336,19 @@ fun HomeScreen(
                                     Icon(Icons.Outlined.Shield, null, tint = MaterialTheme.colorScheme.primary)
                                     Column(Modifier.weight(1f).padding(start = 12.dp)) {
                                         Text(tr("Screenshot protection"), fontWeight = FontWeight.SemiBold)
-                                        Text("Always on inside chats and calls. Screenshots are allowed everywhere else.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text(
+                                            if (appLanguage == "bn") {
+                                                if (privacySettings.preventScreenshotOnSensitiveScreens) "সব চ্যাট স্ক্রিনে স্ক্রিনশট বন্ধ; কল সুরক্ষিত থাকবে" else "চ্যাটে স্ক্রিনশট নেওয়া যাবে; কল সুরক্ষিত থাকবে"
+                                            } else {
+                                                if (privacySettings.preventScreenshotOnSensitiveScreens) "Screenshots blocked in all chat screens; calls remain protected" else "Screenshots allowed in chats; calls remain protected"
+                                            },
+                                            fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
                                     }
-                                    Icon(Icons.Default.Lock, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+                                    Switch(
+                                        checked = privacySettings.preventScreenshotOnSensitiveScreens,
+                                        onCheckedChange = { enabled -> PrivacyPreferences.update(context) { it.copy(preventScreenshotOnSensitiveScreens = enabled) } }
+                                    )
                                 }
                                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                                     Icon(Icons.Outlined.Timer, null, tint = MaterialTheme.colorScheme.primary)
@@ -2365,7 +2465,7 @@ fun HomeScreen(
                                     Text(if (appLanguage == "bn") "ওয়েব কম্প্যানিয়ন" else "Web companion", fontWeight = FontWeight.Bold)
                                 }
                                 Text(
-                                    if (appLanguage == "bn") "আপনার স্পষ্ট অনুমতিতে ৯০ সেকেন্ডের একবার-ব্যবহারযোগ্য কোড তৈরি হবে। ব্রাউজার সেশন ১২ ঘণ্টা থাকে; এই ফোন থেকে সব সেশন বাতিল করা যাবে।" else "Create a one-time 90-second code only when you choose. Browser sessions last 12 hours and can be revoked from this phone.",
+                                    if (appLanguage == "bn") "আপনার স্পষ্ট অনুমতিতে ৯০ সেকেন্ডের একবার-ব্যবহারযোগ্য কোড তৈরি হবে। ব্রাউজারে লগইন থাকবে যতক্ষণ না আপনি লগআউট করেন বা এই ফোন থেকে সেশন বাতিল করেন।" else "Create a one-time 90-second code only when you choose. This browser stays signed in until you log out or revoke sessions from this phone.",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -2438,7 +2538,7 @@ fun HomeScreen(
                                             style = MaterialTheme.typography.labelSmall,
                                             color = MaterialTheme.colorScheme.tertiary
                                         )
-                                        Text(if (appLanguage == "bn") "সেশন ১২ ঘণ্টা পর নিজে থেকে শেষ হবে। Account security থেকে সব ওয়েব সেশন বাতিল করতে পারবেন।" else "The browser session expires after 12 hours. Revoke every web session here at any time.", style = MaterialTheme.typography.bodySmall)
+                                        Text(if (appLanguage == "bn") "এই ব্রাউজার লগইন নিজে থেকে মেয়াদ শেষ হবে না। Account security থেকে বাতিল করুন বা ব্রাউজার থেকে লগআউট করুন।" else "This browser session does not expire automatically. Revoke it here or log out from the browser.", style = MaterialTheme.typography.bodySmall)
                                         TextButton(onClick = {
                                             val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                                             clipboard.setPrimaryClip(ClipData.newPlainText("Convo Chat pairing code", webPairCode))
@@ -5043,8 +5143,14 @@ fun ChatConversationUserItem(
     hasActiveStory: Boolean,
     isMuted: Boolean,
     onSelect: () -> Unit,
-    onLongPress: () -> Unit
+    onMute: () -> Unit
 ) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var showActions by remember(user.uid) { mutableStateOf(false) }
+    val prefsVersion by ConversationPrefs.version.collectAsState()
+    val pinned = remember(prefsVersion, user.uid) { ConversationPrefs.isPinned(context, user.uid) }
+    val archived = remember(prefsVersion, user.uid) { ConversationPrefs.isArchived(context, user.uid) }
+    val chatLocked = remember(prefsVersion, user.uid) { ConversationPrefs.isLocked(context, user.uid) }
     // Collect the dynamic last message between currentUser and otherUser
     val lastMessageState by viewModel.getLastMessageFlow(user.uid).collectAsState(initial = null)
     
@@ -5056,15 +5162,15 @@ fun ChatConversationUserItem(
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .combinedClickable(onClick = onSelect, onLongClick = onLongPress),
+            .combinedClickable(onClick = onSelect, onLongClick = { showActions = true }),
         shape = RoundedCornerShape(22.dp),
         colors = CardDefaults.cardColors(
-            containerColor = if (hasUnread) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
-                             else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+            containerColor = if (hasUnread) MaterialTheme.colorScheme.primaryContainer.copy(alpha = .70f)
+                             else MaterialTheme.colorScheme.surface.copy(alpha = .68f)
         ),
         border = BorderStroke(
-            width = if (hasUnread) 2.dp else 1.dp,
-            color = if (hasUnread) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
+            width = if (hasUnread) 1.5.dp else 1.dp,
+            brush = Brush.linearGradient(listOf(Color.White.copy(.92f), MaterialTheme.colorScheme.primary.copy(alpha = .38f), MaterialTheme.colorScheme.tertiary.copy(alpha = .24f)))
         )
     ) {
         Row(
@@ -5255,6 +5361,42 @@ fun ChatConversationUserItem(
                     )
                 }
             }
+        }
+        DropdownMenu(expanded = showActions, onDismissRequest = { showActions = false }) {
+            DropdownMenuItem(
+                text = { Text(tr(if (pinned) "Unpin chat" else "Pin chat")) },
+                leadingIcon = { Icon(Icons.Default.PushPin, null) },
+                onClick = { ConversationPrefs.setPinned(context, user.uid, !pinned); showActions = false }
+            )
+            DropdownMenuItem(
+                text = { Text(tr(if (isMuted) "Unmute" else "Mute")) },
+                leadingIcon = { Icon(if (isMuted) Icons.Default.Notifications else Icons.Default.NotificationsOff, null) },
+                onClick = { onMute(); showActions = false }
+            )
+            DropdownMenuItem(
+                text = { Text(tr(if (archived) "Unarchive" else "Archive")) },
+                leadingIcon = { Icon(Icons.Default.Archive, null) },
+                onClick = { ConversationPrefs.setArchived(context, user.uid, !archived); showActions = false }
+            )
+            DropdownMenuItem(
+                text = { Text(tr(if (chatLocked) "Unlock chat" else "Lock chat")) },
+                leadingIcon = { Icon(if (chatLocked) Icons.Default.LockOpen else Icons.Default.Lock, null) },
+                onClick = {
+                    if (chatLocked) {
+                        ChatLockAuth.prompt(
+                            context,
+                            "Unlock chat",
+                            onSuccess = { ConversationPrefs.setLocked(context, user.uid, false) },
+                            onError = { Toast.makeText(context, it, Toast.LENGTH_LONG).show() }
+                        )
+                    } else if (!ChatLockAuth.canLock(context)) {
+                        Toast.makeText(context, "Set a screen lock or biometric in Android settings first", Toast.LENGTH_LONG).show()
+                    } else {
+                        ConversationPrefs.setLocked(context, user.uid, true)
+                    }
+                    showActions = false
+                }
+            )
         }
     }
 }

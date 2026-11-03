@@ -123,6 +123,7 @@ fun ChatScreen(
     val chatTheme by viewModel.chatTheme.collectAsState()
     val currentUser by viewModel.currentUserState.collectAsState()
     val flagshipConfig by viewModel.flagshipConfig.collectAsState()
+    val networkAvailable by viewModel.isNetworkAvailable.collectAsState()
     val pendingRequestRecipients by viewModel.pendingMessageRequestRecipients.collectAsState()
     val requestPending = recipient.uid in pendingRequestRecipients
     val typingSounds by viewModel.typingSoundsEnabled.collectAsState()
@@ -141,9 +142,6 @@ fun ChatScreen(
     var showChatSettings by remember { mutableStateOf(false) }
     var showMessageSearch by remember { mutableStateOf(false) }
     var messageSearchQuery by remember { mutableStateOf("") }
-    var showCatchUpDialog by remember { mutableStateOf(false) }
-    var catchUpLoading by remember { mutableStateOf(false) }
-    var catchUpText by remember { mutableStateOf("") }
     val chatLockUnlocked by ChatLockSession.unlocked.collectAsState()
     val convPrefsVersion by ConversationPrefs.version.collectAsState()
     val chatLocked = remember(convPrefsVersion, recipient.uid) { ConversationPrefs.isLocked(context, recipient.uid) }
@@ -192,6 +190,18 @@ fun ChatScreen(
     LaunchedEffect(visibleMessages) {
         val currentIds = visibleMessages.mapTo(mutableSetOf()) { it.messageId }
         selectedMessageIds = selectedMessageIds.intersect(currentIds)
+    }
+    LaunchedEffect(networkAvailable, recipient.uid, messages) {
+        if (networkAvailable) {
+            OfflineImageWarmer.prefetch(
+                context,
+                listOf(updatedRecipient.profileImageUrl) + messages.takeLast(100).flatMap { message ->
+                    listOfNotNull(message.imageUrl) + if (message.fileMimeType?.startsWith("image/", ignoreCase = true) == true) {
+                        listOfNotNull(message.remoteFileUrl, message.fileUrl)
+                    } else emptyList()
+                }
+            )
+        }
     }
 
     LaunchedEffect(recipient.uid, messageText, editingMessage) {
@@ -896,19 +906,6 @@ fun ChatScreen(
         }
     }
     settingsImageUrl?.let { url -> FullScreenChatImage(url, onDismiss = { settingsImageUrl = null }) }
-    if (showCatchUpDialog) {
-        AlertDialog(
-            onDismissRequest = { showCatchUpDialog = false },
-            icon = { Icon(Icons.Default.AutoAwesome, null) },
-            title = { Text("Catch me up") },
-            text = {
-                Box(Modifier.fillMaxWidth().heightIn(min = 60.dp, max = 380.dp), contentAlignment = Alignment.Center) {
-                    if (catchUpLoading) CircularProgressIndicator() else Text(catchUpText.ifBlank { "No summary available." }, modifier = Modifier.verticalScroll(rememberScrollState()))
-                }
-            },
-            confirmButton = { TextButton(onClick = { showCatchUpDialog = false }) { Text("Done") } }
-        )
-    }
     if (showReportDialog) {
         val categories = listOf("Spam", "Harassment", "Fake account", "Inappropriate content", "Other")
         var category by remember { mutableStateOf(categories.first()) }
@@ -1025,13 +1022,6 @@ fun ChatScreen(
                     }) {
                         Icon(Icons.Default.Search, contentDescription = "Search messages", tint = MaterialTheme.colorScheme.primary)
                     }
-                    IconButton(enabled = messages.isNotEmpty() && !catchUpLoading, onClick = {
-                        catchUpText = ""
-                        showCatchUpDialog = true
-                        catchUpLoading = true
-                        val transcript = messages.takeLast(80).joinToString("\n") { "${it.senderName.ifBlank { if (it.senderId == currentUserId) "Me" else recipient.name }}: ${ProTools.messagePreview(it)}" }.take(12000)
-                        viewModel.askAssistant("Summarize this recent conversation for someone catching up. Use concise bullet points, mention open questions/action items, and do not invent facts. Transcript:\n\n$transcript", emptyList()) { result -> catchUpText = result; catchUpLoading = false }
-                    }) { Icon(Icons.Default.AutoAwesome, contentDescription = "Summarize recent messages", tint = MaterialTheme.colorScheme.primary) }
                     ChatCallPill(
                         onVideo = {
                             val cameraGranted = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
@@ -1043,7 +1033,6 @@ fun ChatScreen(
                             else { pendingCall = true; permissionLauncher.launch(Manifest.permission.RECORD_AUDIO) }
                         }
                     )
-                    ChatThemeOrb(onClick = { showThemePicker = true }, accent = MaterialTheme.colorScheme.primary)
                     IconButton(onClick = { showChatSettings = true }) {
                         Icon(Icons.Default.MoreVert, contentDescription = "Chat settings")
                     }

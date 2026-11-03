@@ -68,6 +68,13 @@ jobs:
           fi
           chmod +x gradlew
 
+      - name: Check the web companion Worker and Pages packaging
+        run: |
+          node --check cloudflare-worker.js
+          node --check firechat-fcm-worker.js
+          node --check web-companion/app.js
+          node test-web-companion-worker.mjs
+
       - name: Bundle the latest Worker code into the app
         run: |
           node --check cloudflare-worker.js

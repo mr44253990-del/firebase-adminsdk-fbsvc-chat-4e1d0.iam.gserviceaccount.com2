@@ -211,6 +211,12 @@ private val BENGALI: Map<String, String> = mapOf(
     "Quick reaction, text size, Enter to send, link previews" to "দ্রুত রিঅ্যাকশন, লেখার সাইজ, Enter-এ পাঠান, লিংক প্রিভিউ",
     "Reading & typing" to "পড়া ও টাইপিং", "Share your profile or connect with friends" to "প্রোফাইল শেয়ার বা বন্ধু যোগ করুন",
     "Manage account" to "অ্যাকাউন্ট ম্যানেজ",
+    "Pin chat" to "চ্যাট পিন করুন", "Unpin chat" to "চ্যাট আনপিন করুন",
+    "Mute" to "মিউট", "Unmute" to "আনমিউট", "Archive" to "আর্কাইভ", "Unarchive" to "আনআর্কাইভ",
+    "Lock chat" to "চ্যাট লক করুন", "Unlock chat" to "চ্যাট আনলক করুন", "Open web version" to "ওয়েব ভার্সন খুলুন",
+    "Opening web version…" to "ওয়েব ভার্সন খোলা হচ্ছে…",
+    "Screenshots blocked in all chat screens; calls remain protected" to "সব চ্যাট স্ক্রিনে স্ক্রিনশট বন্ধ; কল সুরক্ষিত থাকবে",
+    "Screenshots are allowed in chats; calls remain protected" to "চ্যাটে স্ক্রিনশট নেওয়া যাবে; কল সুরক্ষিত থাকবে",
     // Onboarding
     "Get started" to "শুরু করুন",
     "Make every conversation feel alive" to "প্রতিটি কথোপকথন হোক প্রাণবন্ত",

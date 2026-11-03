@@ -205,7 +205,12 @@ fun ConversationSettingsPage(
                         SettingRow(Icons.Default.Timer, Color(0xFF6D4C41), "Disappearing messages",
                             DISAPPEAR_OPTIONS.firstOrNull { it.first == privacy.disappearingMessageSeconds }?.second ?: "${privacy.disappearingMessageSeconds / 3600} h",
                             onClick = { dialog = "disappear" })
-                        SettingRow(Icons.Default.Lock, Color(0xFF546E7A), "Screenshot protection", "Chat and call screens are protected", trailingText = "On")
+                        SettingRow(
+                            Icons.Default.Security, Color(0xFF3287D5), "Screenshot protection",
+                            tr(if (privacy.preventScreenshotOnSensitiveScreens) "Screenshots blocked in all chat screens; calls remain protected" else "Screenshots are allowed in chats; calls remain protected"),
+                            switch = privacy.preventScreenshotOnSensitiveScreens,
+                            onSwitch = { enabled -> PrivacyPreferences.update(context) { it.copy(preventScreenshotOnSensitiveScreens = enabled) } }
+                        )
                     }
                     // ---------- Media / files / links / places ----------
                     SettingsGroup("Media, files & links") {

@@ -286,22 +286,21 @@ class MainActivity : FragmentActivity() {
         androidx.core.content.ContextCompat.registerReceiver(this, screenOffReceiver, android.content.IntentFilter(Intent.ACTION_SCREEN_OFF), androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED)
         enableEdgeToEdge()
 
-        // Configure standard Coil cache so images (like profile pics) are cached aggressively offline
+        // Persist recent avatars/post/chat images in app-private filesDir so Android's cache
+        // cleaner does not discard them. Coil evicts least-recently-used entries at the cap.
         val imageLoader = ImageLoader.Builder(this)
             .memoryCache {
                 MemoryCache.Builder(this)
-                    // Avoid letting image cache consume a quarter of RAM on
-                    // entry-level devices while keeping recent avatars warm.
                     .maxSizePercent(0.15)
                     .build()
             }
             .diskCache {
                 DiskCache.Builder()
-                    .directory(this.cacheDir.resolve("image_cache"))
-                    .maxSizePercent(0.10) // Use up to 10% of disk space for images
+                    .directory(this.filesDir.resolve("offline_image_cache"))
+                    .maxSizeBytes(384L * 1024L * 1024L)
                     .build()
             }
-            .respectCacheHeaders(false) // Force caching regardless of server headers so offline mode works perfectly
+            .respectCacheHeaders(false)
             .crossfade(true)
             .build()
         Coil.setImageLoader(imageLoader)
@@ -310,6 +309,7 @@ class MainActivity : FragmentActivity() {
             val currentTheme by viewModel.themeState.collectAsState()
 
             MyApplicationTheme(themeType = currentTheme) {
+                val privacySettings by PrivacyPreferences.settings.collectAsState()
                 val appLocked by AppLockManager.locked.collectAsState()
                 if (appLocked) {
                     AppLockScreen(this@MainActivity)
@@ -419,13 +419,14 @@ class MainActivity : FragmentActivity() {
 
                 PremiumBackground {
                     val currentRoute = navController.currentBackStackEntryAsState().value?.destination?.route
-                    // Screenshots/recording are blocked only while a chat or call is on screen.
-                    LaunchedEffect(currentRoute) {
-                        if (currentRoute?.substringBefore('/')?.substringBefore('?') in setOf("chat", "group_chat", "call", "group_call")) {
-                            window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
-                        } else {
-                            window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
-                        }
+                    // Calls remain protected. Chat screenshot protection follows the user's
+                    // device-local privacy toggle and updates immediately from chat settings.
+                    val routeBase = currentRoute?.substringBefore('/')?.substringBefore('?')
+                    val secureRoute = routeBase in setOf("call", "group_call") ||
+                        (routeBase in setOf("chat", "group_chat") && privacySettings.preventScreenshotOnSensitiveScreens)
+                    LaunchedEffect(routeBase, privacySettings.preventScreenshotOnSensitiveScreens) {
+                        if (secureRoute) window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+                        else window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
                     }
                     Box(Modifier.fillMaxSize()) {
                     NavHost(

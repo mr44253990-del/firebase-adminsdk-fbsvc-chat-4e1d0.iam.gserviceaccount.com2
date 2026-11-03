@@ -129,15 +129,16 @@ export default {
         }
         const sessionToken = randomHex(32);
         const sessionHash = await sha256Hex(`convo-web-session:${sessionToken}`);
-        const expiresAt = now + 12 * 60 * 60 * 1000;
+        // Browser sessions intentionally persist until explicit logout or Android revoke-all.
+        // Pairing itself remains one-use and 90-second, and this token is random, opaque,
+        // stored only as a hash in Firestore, and never exposes Firebase credentials.
         await fsPatch(env, `web_pair_sessions/${sessionHash}`, {
           uid,
           createdAt: now,
-          expiresAt,
           revokedAt: 0,
           sessionVersion: Number(pair.sessionVersion || 0)
         });
-        return webPairJson(request, env, { success: true, sessionToken, expiresAt }, 200);
+        return webPairJson(request, env, { success: true, sessionToken }, 200);
       } catch (error) {
         return webPairJson(request, env, { error: "Pairing could not be completed" }, 500);
       }
@@ -1290,8 +1291,7 @@ async function authenticateWebCompanionSession(request, env) {
   if (!/^[a-f0-9]{64}$/i.test(token)) return { ok: false, error: "Invalid companion session" };
   const sessionHash = await sha256Hex(`convo-web-session:${token}`);
   const session = await firestoreGet(env, `web_pair_sessions/${sessionHash}`).catch(() => null);
-  const now = Date.now();
-  if (!session || Number(session.expiresAt || 0) <= now || Number(session.revokedAt || 0) > 0) return { ok: false, error: "Companion session expired or revoked" };
+  if (!session || Number(session.revokedAt || 0) > 0) return { ok: false, error: "Companion session is not active" };
   const uid = String(session.uid || "");
   const profile = uid ? await firestoreGet(env, `users/${uid}`).catch(() => null) : null;
   if (!profile || profile.banned === true || Number(profile.webCompanionVersion || 0) !== Number(session.sessionVersion || 0)) return { ok: false, error: "Companion access was revoked" };
