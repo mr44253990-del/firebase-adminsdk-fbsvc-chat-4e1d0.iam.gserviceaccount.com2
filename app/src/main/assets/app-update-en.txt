@@ -1,4 +1,3 @@
-• A blue-violet liquid-glass backdrop, translucent navigation, and refined chat and sharing UI.
 • Long-press any chat to Pin, Mute, Archive, or Lock it; find archived and locked chats in their separate filters.
 • Choose whether screenshot protection is enabled in sensitive chats. Voice and video call screens remain protected.
 • Start secure browser pairing from Profile → Open web version. One-use codes expire after 90 seconds; browser login persists until logout or Android revocation. Use only a trusted private device.

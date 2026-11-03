@@ -1,4 +1,3 @@
-• নীল-বেগুনি liquid-glass backdrop, স্বচ্ছ navigation এবং পরিমার্জিত chat ও sharing UI।
 • যেকোনো chat চেপে ধরে Pin, Mute, Archive বা Lock বেছে নিন; Archived ও Locked chat আলাদা filter-এ দেখুন।
 • Screenshot protection নিজের মতো চালু/বন্ধ করুন—সংবেদনশীল chat-এ; voice ও video call screen সুরক্ষিত থাকে।
 • Profile menu থেকে Open web version চাপলে নিজের browser-এর secure pairing শুরু হয়। একবার-ব্যবহারযোগ্য code ৯০ সেকেন্ডে মেয়াদোত্তীর্ণ; browser login logout বা Android থেকে revoke না করা পর্যন্ত থাকে। শুধু বিশ্বস্ত ব্যক্তিগত device-এ ব্যবহার করুন।

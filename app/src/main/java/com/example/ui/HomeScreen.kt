@@ -418,7 +418,7 @@ fun HomeScreen(
     LaunchedEffect(coachReplay) { if (coachReplay && CoachTour.consumeReplay()) { kotlinx.coroutines.delay(350); coachTourActive = true } }
 
     Scaffold(
-        modifier = Modifier.fillMaxSize().appLiquidBackground().coachBlurHost(coachTourActive && currentTab != 6, CoachTour.activeKey.value?.let { CoachTour.targets[it] }),
+        modifier = Modifier.fillMaxSize().coachBlurHost(coachTourActive && currentTab != 6, CoachTour.activeKey.value?.let { CoachTour.targets[it] }),
         containerColor = Color.Transparent,
         contentWindowInsets = androidx.compose.foundation.layout.WindowInsets(0, 0, 0, 0),
         topBar = {
@@ -602,40 +602,25 @@ fun HomeScreen(
         },
         bottomBar = {
             if (currentTab != 6) NavigationBar(
-                containerColor = Color.Transparent,
+                containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.82f),
                 tonalElevation = 0.dp,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 10.dp, vertical = 6.dp)
-                    .clip(RoundedCornerShape(30.dp))
-                    .background(Brush.linearGradient(listOf(
-                        MaterialTheme.colorScheme.surface.copy(alpha = .91f),
-                        MaterialTheme.colorScheme.primaryContainer.copy(alpha = .78f),
-                        MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = .75f)
-                    )))
-                    .border(1.dp, Brush.linearGradient(listOf(Color.White.copy(.95f), MaterialTheme.colorScheme.primary.copy(.36f), Color.White.copy(.40f))), RoundedCornerShape(30.dp))
+                    .clip(RoundedCornerShape(topStart = 30.dp, topEnd = 30.dp))
             ) {
                 NavigationBarItem(
                     selected = currentTab == 0,
                     onClick = { viewModel.setCurrentTab(0) },
                     modifier = Modifier.coachTarget("nav_home"),
                     icon = { Icon(Icons.Default.Home, contentDescription = "Home") },
-                    label = { Text(tr("Home"), fontSize = 10.sp) },
-                    colors = NavigationBarItemDefaults.colors(
-                        selectedIconColor = Color.White, selectedTextColor = Color.White,
-                        indicatorColor = MaterialTheme.colorScheme.primary
-                    )
+                    label = { Text(tr("Home"), fontSize = 10.sp) }
                 )
                 NavigationBarItem(
                     selected = currentTab == 1,
                     onClick = { viewModel.setCurrentTab(1) },
                     modifier = Modifier.coachTarget("nav_chats"),
                     icon = { Icon(Icons.Default.Chat, contentDescription = "Chats") },
-                    label = { Text(tr("Chats"), fontSize = 10.sp) },
-                    colors = NavigationBarItemDefaults.colors(
-                        selectedIconColor = Color.White, selectedTextColor = Color.White,
-                        indicatorColor = MaterialTheme.colorScheme.primary
-                    )
+                    label = { Text(tr("Chats"), fontSize = 10.sp) }
                 )
                 NavigationBarItem(
                     selected = false,
@@ -655,32 +640,20 @@ fun HomeScreen(
                     onClick = { viewModel.openReel() },
                     modifier = Modifier.coachTarget("nav_slot4"),
                     icon = { Icon(Icons.Default.SmartDisplay, contentDescription = "Reels") },
-                    label = { Text(tr("Reels"), fontSize = 10.sp) },
-                    colors = NavigationBarItemDefaults.colors(
-                        selectedIconColor = Color.White, selectedTextColor = Color.White,
-                        indicatorColor = MaterialTheme.colorScheme.primary
-                    )
+                    label = { Text(tr("Reels"), fontSize = 10.sp) }
                 ) else NavigationBarItem(
                     selected = currentTab == 2,
                     onClick = { viewModel.setCurrentTab(2) },
                     modifier = Modifier.coachTarget("nav_slot4"),
                     icon = { Icon(Icons.Default.Groups, contentDescription = "Groups") },
-                    label = { Text(tr("Groups"), fontSize = 10.sp) },
-                    colors = NavigationBarItemDefaults.colors(
-                        selectedIconColor = Color.White, selectedTextColor = Color.White,
-                        indicatorColor = MaterialTheme.colorScheme.primary
-                    )
+                    label = { Text(tr("Groups"), fontSize = 10.sp) }
                 )
                 NavigationBarItem(
                     selected = currentTab == 5,
                     onClick = { viewModel.setCurrentTab(5) },
                     modifier = Modifier.coachTarget("nav_friends"),
                     icon = { Icon(Icons.Default.PeopleAlt, contentDescription = "Friends") },
-                    label = { Text(tr("Friends"), fontSize = 10.sp) },
-                    colors = NavigationBarItemDefaults.colors(
-                        selectedIconColor = Color.White, selectedTextColor = Color.White,
-                        indicatorColor = MaterialTheme.colorScheme.primary
-                    )
+                    label = { Text(tr("Friends"), fontSize = 10.sp) }
                 )
             }
         },
@@ -960,16 +933,7 @@ fun HomeScreen(
                             trailingIcon = { if (searchQuery.isNotBlank()) IconButton(onClick = { searchQuery = ""; viewModel.searchUsers("") }) { Icon(Icons.Default.Close, "Clear search") } },
                             modifier = Modifier.fillMaxWidth(),
                             singleLine = true,
-                            shape = RoundedCornerShape(24.dp),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = .82f),
-                                unfocusedContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = .72f),
-                                focusedBorderColor = MaterialTheme.colorScheme.primary,
-                                unfocusedBorderColor = Color.White.copy(alpha = .84f),
-                                focusedLeadingIconColor = MaterialTheme.colorScheme.primary,
-                                unfocusedLeadingIconColor = MaterialTheme.colorScheme.primary,
-                                unfocusedPlaceholderColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = .85f)
-                            )
+                            shape = RoundedCornerShape(22.dp)
                         )
 
                         if (searchQuery.isBlank()) {
@@ -984,8 +948,8 @@ fun HomeScreen(
                                         onClick = { showChatTools = !showChatTools },
                                         modifier = Modifier.fillMaxWidth().animateContentSize(),
                                         shape = RoundedCornerShape(18.dp),
-                                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = .72f)),
-                                        border = BorderStroke(1.dp, Brush.linearGradient(listOf(Color.White.copy(.94f), MaterialTheme.colorScheme.primary.copy(.30f), MaterialTheme.colorScheme.tertiary.copy(.20f))))
+                                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .48f)),
+                                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = .55f))
                                     ) {
                                         Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                                             Box(Modifier.size(34.dp).clip(RoundedCornerShape(11.dp)).background(MaterialTheme.colorScheme.primary.copy(alpha = .12f)), contentAlignment = Alignment.Center) {
@@ -5165,12 +5129,12 @@ fun ChatConversationUserItem(
             .combinedClickable(onClick = onSelect, onLongClick = { showActions = true }),
         shape = RoundedCornerShape(22.dp),
         colors = CardDefaults.cardColors(
-            containerColor = if (hasUnread) MaterialTheme.colorScheme.primaryContainer.copy(alpha = .70f)
-                             else MaterialTheme.colorScheme.surface.copy(alpha = .68f)
+            containerColor = if (hasUnread) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
+                             else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
         ),
         border = BorderStroke(
-            width = if (hasUnread) 1.5.dp else 1.dp,
-            brush = Brush.linearGradient(listOf(Color.White.copy(.92f), MaterialTheme.colorScheme.primary.copy(alpha = .38f), MaterialTheme.colorScheme.tertiary.copy(alpha = .24f)))
+            width = if (hasUnread) 2.dp else 1.dp,
+            color = if (hasUnread) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
         )
     ) {
         Row(

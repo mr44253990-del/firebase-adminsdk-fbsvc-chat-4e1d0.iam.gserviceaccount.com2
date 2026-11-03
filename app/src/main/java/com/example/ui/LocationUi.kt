@@ -390,20 +390,12 @@ fun LocationShareSheet(
     val context = LocalContext.current
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 28.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Row(
-                Modifier.fillMaxWidth().clip(RoundedCornerShape(22.dp))
-                    .background(Brush.linearGradient(listOf(Color(0xFF0B7AFF), Color(0xFF6450F5), Color(0xFFB33CEB))))
-                    .border(1.dp, Color.White.copy(alpha = .82f), RoundedCornerShape(22.dp))
-                    .padding(15.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Box(Modifier.size(46.dp).clip(CircleShape).background(Color.White.copy(alpha = .20f)), contentAlignment = Alignment.Center) {
-                    MapPinGlyph(Color.White, size = 26.dp)
-                }
-                Spacer(Modifier.width(12.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                MapPinGlyph(Color(0xFFE53935), size = 26.dp)
+                Spacer(Modifier.width(8.dp))
                 Column {
-                    Text("Share location", fontWeight = FontWeight.ExtraBold, fontSize = 20.sp, color = Color.White)
-                    Text("with ${recipientName.ifBlank { "this chat" }}", fontSize = 12.sp, color = Color.White.copy(alpha = .88f))
+                    Text("Share location", fontWeight = FontWeight.ExtraBold, fontSize = 20.sp)
+                    Text("with ${recipientName.ifBlank { "this chat" }}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
             activeShare?.let { share ->
@@ -421,12 +413,7 @@ fun LocationShareSheet(
                 title = "Send current location", subtitle = "One-time pin with coordinates and a map link",
                 loading = loading, onClick = onShareCurrent
             )
-            Card(
-                shape = RoundedCornerShape(24.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = .86f)),
-                modifier = Modifier.border(1.dp, Brush.linearGradient(listOf(Color.White, Color(0xFF377DFF).copy(alpha = .52f), Color(0xFFB23CED).copy(alpha = .38f))), RoundedCornerShape(24.dp)),
-                elevation = CardDefaults.cardElevation(defaultElevation = 5.dp)
-            ) {
+            Card(shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = Color(0xFF1E88E5).copy(alpha = .1f))) {
                 Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Box(Modifier.size(42.dp).clip(CircleShape).background(Color(0xFF1E88E5)), contentAlignment = Alignment.Center) {
@@ -461,14 +448,7 @@ fun LocationShareSheet(
 
 @Composable
 private fun LocationOptionCard(icon: ImageVector, color: Color, title: String, subtitle: String, loading: Boolean, onClick: () -> Unit) {
-    Card(
-        shape = RoundedCornerShape(22.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = .88f)),
-        modifier = Modifier.fillMaxWidth()
-            .border(1.dp, Brush.linearGradient(listOf(Color.White, color.copy(alpha = .48f), Color(0xFF8A4DFF).copy(alpha = .28f))), RoundedCornerShape(22.dp))
-            .clickable(enabled = !loading, onClick = onClick),
-        elevation = CardDefaults.cardElevation(defaultElevation = 3.dp)
-    ) {
+    Card(shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = color.copy(alpha = .1f)), modifier = Modifier.fillMaxWidth().clickable(enabled = !loading, onClick = onClick)) {
         Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(42.dp).clip(CircleShape).background(color), contentAlignment = Alignment.Center) {
                 if (loading) CircularProgressIndicator(Modifier.size(20.dp), color = Color.White, strokeWidth = 2.dp) else Icon(icon, null, tint = Color.White)
@@ -492,43 +472,26 @@ data class AttachAction(val key: String, val label: String, val icon: ImageVecto
 fun SmartAttachSheet(actions: List<AttachAction>, onDismiss: () -> Unit, onPick: (String) -> Unit) {
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp).padding(bottom = 26.dp)) {
-            Row(
-                Modifier.fillMaxWidth().clip(RoundedCornerShape(22.dp))
-                    .background(Brush.linearGradient(listOf(Color(0xFF087BFF), Color(0xFF6749F5), Color(0xFFB640E9))))
-                    .border(1.dp, Color.White.copy(alpha = .85f), RoundedCornerShape(22.dp))
-                    .padding(15.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Box(Modifier.size(46.dp).clip(RoundedCornerShape(16.dp)).background(Color.White.copy(alpha = .20f)), contentAlignment = Alignment.Center) {
-                    Icon(Icons.Default.IosShare, null, tint = Color.White, modifier = Modifier.size(24.dp))
-                }
-                Spacer(Modifier.width(12.dp))
-                Column {
-                    Text("Share", fontWeight = FontWeight.ExtraBold, fontSize = 20.sp, color = Color.White)
-                    Text("Pick what you want to send", fontSize = 12.sp, color = Color.White.copy(alpha = .88f))
-                }
-            }
+            Text("Share", fontWeight = FontWeight.ExtraBold, fontSize = 20.sp)
+            Text("Pick what you want to send", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.height(14.dp))
             actions.chunked(4).forEach { row ->
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     row.forEach { a ->
                         Column(
-                            Modifier.weight(1f).clip(RoundedCornerShape(18.dp))
-                                .background(MaterialTheme.colorScheme.surface.copy(alpha = .62f))
-                                .border(1.dp, Brush.linearGradient(listOf(Color.White.copy(.92f), MaterialTheme.colorScheme.primary.copy(.24f))), RoundedCornerShape(18.dp))
-                                .clickable { onPick(a.key) }.padding(vertical = 8.dp),
+                            Modifier.width(76.dp).clip(RoundedCornerShape(16.dp)).clickable { onPick(a.key) }.padding(vertical = 8.dp),
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
                             Box(
-                                Modifier.padding(top = 7.dp).size(54.dp).clip(RoundedCornerShape(18.dp)).background(Brush.linearGradient(a.colors))
-                                    .border(1.dp, Color.White.copy(alpha = .8f), RoundedCornerShape(18.dp)),
+                                Modifier.size(56.dp).clip(RoundedCornerShape(18.dp)).background(Brush.linearGradient(a.colors))
+                                    .border(1.dp, Color.White.copy(alpha = .25f), RoundedCornerShape(18.dp)),
                                 contentAlignment = Alignment.Center
                             ) { Icon(a.icon, null, tint = Color.White, modifier = Modifier.size(26.dp)) }
                             Spacer(Modifier.height(6.dp))
                             Text(a.label, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center, maxLines = 1)
                         }
                     }
-                    repeat(4 - row.size) { Spacer(Modifier.weight(1f)) }
+                    repeat(4 - row.size) { Spacer(Modifier.width(76.dp)) }
                 }
                 Spacer(Modifier.height(6.dp))
             }

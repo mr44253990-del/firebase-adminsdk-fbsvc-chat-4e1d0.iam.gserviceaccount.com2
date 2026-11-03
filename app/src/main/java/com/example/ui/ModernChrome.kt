@@ -9,14 +9,9 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.draw.paint
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.luminance
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.res.painterResource
-import com.example.R
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.sp
@@ -42,20 +37,6 @@ fun Modifier.modernBackdrop(): Modifier {
             Brush.radialGradient(listOf(tertiary.copy(alpha = .14f), Color.Transparent), center = Offset(size.width * .05f, size.height * .55f), radius = size.width * .6f),
             radius = size.width * .6f, center = Offset(size.width * .05f, size.height * .55f)
         )
-    }
-}
-
-/** App-wide offline liquid-glass texture used behind translucent chrome and cards. */
-@Composable
-fun Modifier.appLiquidBackground(): Modifier {
-    val dark = MaterialTheme.colorScheme.background.luminance() < .5f
-    val veil = if (dark) Color.Black.copy(alpha = .22f) else Color.White.copy(alpha = .20f)
-    return paint(
-        painter = painterResource(R.drawable.app_liquid_glass_backdrop),
-        sizeToIntrinsics = false,
-        contentScale = ContentScale.Crop
-    ).drawBehind {
-        drawRect(Brush.verticalGradient(listOf(veil.copy(alpha = veil.alpha * .7f), Color.Transparent, veil)))
     }
 }
 

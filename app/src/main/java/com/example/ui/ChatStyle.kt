@@ -38,7 +38,6 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
-import com.example.R
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -270,10 +269,6 @@ fun BoxScope.ChatBackdrop(spec: ChatThemeSpec?, imageUrl: String?, fallback: Bru
             Box(Modifier.matchParentSize().background(Brush.verticalGradient(listOf(veil.copy(alpha = .30f), Color.Transparent, veil.copy(alpha = .22f), veil.copy(alpha = .40f)))))
         }
         spec != null -> ThemeTextureLayer(spec.texture, spec.textureTint)
-        else -> {
-            Image(painterResource(R.drawable.app_liquid_glass_backdrop), null, contentScale = ContentScale.Crop, modifier = Modifier.matchParentSize())
-            Box(Modifier.matchParentSize().background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = .08f), Color.Transparent, Color.Black.copy(alpha = .20f)))))
-        }
     }
     if (dim > 0f) Box(Modifier.matchParentSize().background(Color.Black.copy(alpha = dim)))
 }
