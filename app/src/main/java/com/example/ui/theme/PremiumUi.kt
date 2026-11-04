@@ -8,6 +8,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
@@ -26,7 +28,19 @@ fun PremiumBackground(modifier: Modifier = Modifier, content: @Composable BoxSco
             MaterialTheme.colorScheme.tertiary.copy(alpha = if (dark) .10f else .07f)
         )
     )
-    Box(modifier.fillMaxSize().background(gradient), content = content)
+    val orbA = MaterialTheme.colorScheme.primary.copy(alpha = if (dark) .16f else .14f)
+    val orbB = MaterialTheme.colorScheme.tertiary.copy(alpha = if (dark) .10f else .12f)
+    val orbC = MaterialTheme.colorScheme.secondary.copy(alpha = if (dark) .10f else .10f)
+    Box(
+        modifier.fillMaxSize().background(gradient).drawBehind {
+            // Soft liquid-glass light pools; static so they cost nothing per frame.
+            val r = size.minDimension
+            drawCircle(Brush.radialGradient(listOf(orbA, Color.Transparent), center = Offset(size.width * .05f, size.height * .12f), radius = r * .75f), radius = r * .75f, center = Offset(size.width * .05f, size.height * .12f))
+            drawCircle(Brush.radialGradient(listOf(orbB, Color.Transparent), center = Offset(size.width * 1.0f, size.height * .45f), radius = r * .7f), radius = r * .7f, center = Offset(size.width * 1.0f, size.height * .45f))
+            drawCircle(Brush.radialGradient(listOf(orbC, Color.Transparent), center = Offset(size.width * .3f, size.height * .95f), radius = r * .8f), radius = r * .8f, center = Offset(size.width * .3f, size.height * .95f))
+        },
+        content = content
+    )
 }
 
 fun premiumScreenBrush(

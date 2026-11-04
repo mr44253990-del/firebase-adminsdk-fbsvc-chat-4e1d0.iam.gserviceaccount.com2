@@ -1,0 +1,8 @@
+• Long-press any chat to Pin, Mute, Archive, or Lock it; find archived and locked chats in their separate filters.
+• Choose whether screenshot protection is enabled in sensitive chats. Voice and video call screens remain protected.
+• Start secure browser pairing from Profile → Open web version. One-use codes expire after 90 seconds; browser login persists until logout or Android revocation. Use only a trusted private device.
+• Recent profile, story, feed, and open-chat images can be kept in a private, bounded cache and refreshed while online; not every image is guaranteed to be available offline.
+• The social feed now loads older posts in cursor-based pages instead of fetching the entire history at once.
+• The admin user directory loads 50 profiles at a time and can continue to the next Firestore page.
+• Administrators can globally pause automatic saving of received files; manual downloads and normal message storage remain available.
+• A new offline English/Bengali guide and a refreshed tour explain settings, privacy, location sharing, media saving and the AI assistant.

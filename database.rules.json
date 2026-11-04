@@ -4,8 +4,17 @@
     ".write": false,
     "config": {
       ".read": "auth != null",
-      "app_settings": { ".write": "auth != null" },
+      "app_settings": { ".write": "auth != null && auth.token.email === 'mr4425390@gmail.com'" },
       "flagship": { ".write": "auth != null && auth.token.email === 'mr4425390@gmail.com'" }
+    },
+    "profileViews": {
+      "$ownerUid": {
+        ".read": "auth != null && auth.uid === $ownerUid",
+        "$viewerUid": {
+          ".write": "auth != null && ((auth.uid === $viewerUid && $viewerUid !== $ownerUid && newData.exists()) || (auth.uid === $ownerUid && !newData.exists()))",
+          ".validate": "!newData.exists() || (newData.hasChildren(['viewerId', 'timestamp']) && newData.child('viewerId').val() === $viewerUid && newData.child('timestamp').isNumber() && newData.child('timestamp').val() <= now + 60000 && (!newData.child('viewerName').exists() || (newData.child('viewerName').isString() && newData.child('viewerName').val().length <= 80)) && (!newData.child('viewerImage').exists() || (newData.child('viewerImage').isString() && newData.child('viewerImage').val().length <= 600)) && (!newData.child('viewerUsername').exists() || (newData.child('viewerUsername').isString() && newData.child('viewerUsername').val().length <= 40)))"
+        }
+      }
     },
     "status": {
       ".read": "auth != null",
@@ -56,11 +65,23 @@
         }
       }
     },
+    "online_watch": {
+      "$target": {
+        ".read": "auth != null && auth.uid === $target",
+        ".write": "auth != null && auth.uid === $target",
+        "$watcher": {
+          ".write": "auth != null && auth.uid === $watcher"
+        }
+      }
+    },
     "chat_settings": {
       "$chatId": {
         ".read": "auth != null && $chatId.contains(auth.uid)",
         ".write": "auth != null && $chatId.contains(auth.uid)",
         "theme": {
+          ".validate": "newData.isString() && newData.val().length <= 32"
+        },
+        "quickReaction": {
           ".validate": "newData.isString() && newData.val().length <= 32"
         }
       }

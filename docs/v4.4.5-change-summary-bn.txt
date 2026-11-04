@@ -1,0 +1,74 @@
+CONVO CHAT — v4.4.5 আপডেটের পরিবর্তন, সেটআপ ও বাকি কাজ
+তারিখ: ২৬ অক্টোবর ২০২৬
+সংস্করণ: 4.4.5 | versionCode: 51
+
+এই নথি কোন কাজ সম্পন্ন, কোনটি প্রস্তুত কিন্তু সার্ভারে সেটআপ বাকি, আর কোনটি এখনো ভবিষ্যৎ কাজ—তা আলাদা করে জানায়। সবকিছু সম্পন্ন হয়েছে এমন দাবি নয়।
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+১) এই আপডেটে কোডে করা পরিবর্তন
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+• সার্চে কোনো পোস্ট, ছবি বা ভিডিওর ফল ট্যাপ করলে এখন শুধু ভিডিও প্লেয়ার নয়—সেই নির্দিষ্ট পোস্টের পূর্ণ পোস্ট পেজ খোলে।
+
+• পোস্ট শেয়ার, কন্টাক্ট শেয়ার এবং নতুন গ্রুপে সদস্য বাছাইয়ের তালিকা এখন বন্ধুদের মধ্যেই সীমিত। প্রতিটি তালিকায় নাম/ইউজারনেম দিয়ে খোঁজার সুবিধা আছে। আগের Forward ও বাইরের অ্যাপ থেকে আসা Share flow-ও friend-only নিয়ম বজায় রাখে।
+
+• এনক্রিপ্ট করা লোকাল ব্যাকআপে একই অ্যাকাউন্টের জন্য একটি মাত্র ফাইল রাখা হয়: Documents/Convo Chat Backups/convo-text-backup-<uid>.cbackup। নতুন ব্যাকআপ একই ফাইলের ওপর লেখা হয়; সফল লেখার পর পুরোনো app-private duplicate ও timestamp-ভিত্তিক duplicate পরিষ্কার হয়। Restore-ও ওই ফাইলকে অগ্রাধিকার দেয়। পুরোনো ইনস্টল থেকে private-only ব্যাকআপ থাকলে নিরাপদ migration fallback রাখা হয়েছে। ব্যাকআপে ছবি/ভিডিওর payload যোগ হয় না।
+
+• Update dialog-এ release notes এখন সংস্করণসহ একটি আলাদা, পড়তে সুবিধাজনক “What changed” summary card-এ দেখায়। Admin-এর App updates প্যানেলে থাকা release-notes field-ই ব্যবহার হয়; নোটের প্রতিটি লাইন আলাদা পরিবর্তন হিসেবে সাজানো হয়।
+
+• ব্যবহারকারী AI-কে “কী নতুন/কী বদলেছে?” জিজ্ঞাসা করলে assistant বর্তমান প্রকাশিত version-এর release notes-কে উৎস হিসেবে পায় এবং সেগুলোর বাইরে নতুন পরিবর্তন বানিয়ে বলতে নিষেধ করা হয়।
+
+• AI বন্ধ, provider অকার্যকর বা provider অনুপস্থিত হলে “AI setup guide” খোলা যায়। গাইড Privacy controls-এর “Allow AI processing” toggle-এ নিয়ে যায়, সেটি সাময়িকভাবে highlight করে, toggle-এর অর্থ বোঝায় এবং “Return to AI assistant” বোতাম দেখায়। গাইডে স্পষ্ট করা হয় যে admin-এর global AI switch ও server provider কেবল admin-ই ঠিক করতে পারবেন।
+
+• AI-এর সঙ্গে নিজে ছবি বানানোর জন্য OVHcloud Stable Diffusion XL provider যোগ হয়েছে। Android অ্যাপ Worker-কে authenticated request পাঠায়; OVH token APK/source code-এ রাখা হয় না। Worker প্রতি account-এ অনুরোধের ব্যবধান, prompt length এবং image-size limit প্রয়োগ করে। AI-কে friend request নিজে পাঠানো বা পাঠিয়েছে বলে দাবি করতে নিষেধ করা হয়েছে; ব্যবহারকারীকে profile দেখে নিজে Add action নিতে হবে।
+
+• পূর্বের v4.4.4 Chats তালিকার scroll-collapse/restore আচরণ এই সংস্করণেও রাখা হয়েছে।
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+২) Admin-এর সেটআপ — যা এখনো করতে হবে
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+OVHcloud image generation:
+1. OVHcloud AI Endpoints-এ Stable Diffusion XL access token তৈরি করুন.
+2. Admin → AI providers & API keys → “Image generation · OVHcloud SDXL” খুলুন.
+3. “OVH AI Endpoints access token” ঘরে token দিন, provider switch চালু করুন, তারপর “Save to server” চাপুন.
+4. Firestore-এর admin_secrets/ai ডকুমেন্টে এই imageProvider সেটিং admin-only rules দিয়ে সুরক্ষিত থাকতে হবে। Worker Firebase service-account secret দিয়ে ওই config server-side পড়ে। Token Git, Android source, APK বা public config-এ দেবেন না।
+5. cloudflare-worker.js / firechat-fcm-worker.js-এর নতুন /ai/image route (API version 47) AI Worker-এ deploy করে authenticated request দিয়ে বাস্তবে পরীক্ষা করতে হবে। এই কাজের সময় OVH token দেওয়া হয়নি; তাই live provider request সফল হয়েছে বলে দাবি করা হচ্ছে না।
+
+App update-এর release notes:
+1. Admin → App updates-এ সঠিক versionCode, versionName এবং signed APK নির্বাচন করুন.
+2. “What’s new / release notes” ঘরে প্রতিটি পরিবর্তন আলাদা লাইনে লিখুন.
+3. Signed update campaign publish করুন; ব্যবহারকারী update screen-এ একই summary card দেখবেন.
+
+লোকাল ব্যাকআপ:
+• অ্যাপ lifecycle-এ ব্যাকআপ স্বয়ংক্রিয়ভাবে হালনাগাদ হয়। Android Files থেকে Documents/Convo Chat Backups ফোল্ডারের convo-text-backup-<uid>.cbackup ফাইলটি দেখা বা অন্যত্র কপি করা যায়। ফাইলটি এনক্রিপ্ট করা; অন্য Account UID দিয়ে Restore করা যাবে না।
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+৩) বাকি সমস্যা ও পরবর্তী কাজ
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+A. প্রকৃত Firestore pagination এখনো করা হয়নি। Friend/post লিস্টে LazyColumn UI rendering কমায়, কিন্তু বর্তমান ChatViewModel এখনও users/posts collection সম্পূর্ণ snapshot-এ আনে। ১০,০০০+ account/post-এর জন্য cursor-based query, scroll-end paging, loading/error/retry state এবং search pagination আলাদা করে করতে হবে। এই পর্যায়ে full-collection listener না বদলানোর কারণ: user lookup, chat, admin, mention ও post-detail flow-গুলো একই shared dataset-এর ওপর নির্ভর করে; সবগুলোকে একসঙ্গে যাচাই ছাড়া বদলালে existing feature ভাঙার ঝুঁকি আছে।
+
+B. Browser/web chat companion এই repository-তে নেই। Login, friend-only messaging এবং Android থেকে web-এ opt-in login করতে Firebase Web app configuration, secure one-time pairing/session backend, token expiry/revocation, web hosting ও Firebase security-rule review দরকার। শুধু static page বানিয়ে secure login হয়েছে বলা যাবে না।
+
+C. Splash, compact chat bubble, tool/S+ screens, Notes ও অন্যান্য rough screen-এর পূর্ণাঙ্গ redesign এই প্যাচে করা হয়নি। v4.4.4 Chats header-এর collapse ছাড়া app-wide screen-by-screen visual audit/implementation এখনও বাকি।
+
+D. “Admin add . convo ai new history page side slad ...” বাক্যটির নির্দিষ্ট workflow বোঝা যায়নি। Assistant-এর বর্তমান on-device chat history এবং Admin audit log আলাদা আছে; কোন history, sidebar ও access level বোঝানো হয়েছে তা নিশ্চিত না হয়ে নতুন admin page যোগ করা হয়নি।
+
+E. AI-provider সেটআপে admin-এর OVH token এখনও অনুপস্থিত এবং নতুন Worker route live environment-এ deploy/test করা হয়নি। Firebase service-account JSON/key কেবল server-side secret-এই থাকবে।
+
+F. AI friend-request action এখন app-এ autonomous ভাবে পাঠানো হয় না। Worker instruction-এ assistant-কে user-এর স্পষ্ট Add action ছাড়া request পাঠানো/পাঠানোর দাবি করা নিষেধ করা হয়েছে। ভবিষ্যতে AI থেকে request পাঠানোর UI যোগ হলে recipient, request preview ও final confirmation dialog বাধ্যতামূলক হবে।
+
+G. এই source পরিবর্তনের পর release CI, emulator smoke এবং Worker deployment/test ফল আলাদাভাবে যাচাই করতে হবে। Live worker-এর পুরোনো health-check-এ API version 46 দেখা গেছে; version 47 route deploy না হওয়া পর্যন্ত OVH feature live নয়।
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+৪) নিরাপত্তা ও গোপনীয়তা
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+• অন্য কারও টাইপ করা message draft/keystroke দেখানোর গোপন premium feature যোগ করা হয়নি; বিদ্যমান সাধারণ typing indicator-ই থাকবে.
+• Chat ও Call screen-এর বাইরে FLAG_SECURE ছড়ানো হয়নি.
+• Friend request নিজে থেকে পাঠানোর AI behavior যোগ করা হয়নি.
+• OVH API key কোনো public client config-এ রাখা হয়নি; server-side admin config-এ রাখতে হবে.
+• FCM/API acceptance-কে device-এ পৌঁছানোর প্রমাণ ধরা হয় না.
+
+— Convo Chat v4.4.5 update notes
