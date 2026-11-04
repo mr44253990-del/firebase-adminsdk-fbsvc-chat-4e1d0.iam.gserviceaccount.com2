@@ -974,20 +974,21 @@ fun ChatScreen(
                                     modifier = Modifier
                                         .size(40.dp)
                                         .clip(CircleShape)
-                                        .border(1.5.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f), CircleShape)
+                                        .border(1.5.dp, barColors?.content?.copy(alpha = .72f) ?: Color(0xFF4DE4EF), CircleShape)
                                 )
                             } else {
                                 Box(
                                     modifier = Modifier
                                         .size(40.dp)
                                         .clip(CircleShape)
-                                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
+                                        .background(Color(0xFF172633))
+                                        .border(1.5.dp, Color(0xFF4DE4EF), CircleShape),
                                     contentAlignment = Alignment.Center
                                 ) {
                                     Text(
                                         text = updatedRecipient.name.take(1).uppercase(),
                                         style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Bold),
-                                        color = MaterialTheme.colorScheme.primary
+                                        color = Color(0xFF4DE4EF)
                                     )
                                 }
                             }
@@ -996,14 +997,14 @@ fun ChatScreen(
                                 modifier = Modifier
                                     .size(12.dp)
                                     .clip(CircleShape)
-                                    .background(MaterialTheme.colorScheme.surface)
+                                    .background(barColors?.container ?: Color(0xFF0D131C))
                                     .padding(2.dp)
                             ) {
                                 Box(
                                     modifier = Modifier
                                         .fillMaxSize()
                                         .clip(CircleShape)
-                                        .background(if (updatedRecipient.isOnline) Color(0xFF4CAF50) else Color(0xFF9E9E9E))
+                                        .background(if (updatedRecipient.isOnline) Color(0xFF65E9A7) else Color(0xFF738396))
                                 )
                             }
                         }
@@ -1014,61 +1015,36 @@ fun ChatScreen(
                             Text(
                                 text = ConversationPrefs.version.collectAsState().value.let { ConversationPrefs.nickname(context, recipient.uid) }.ifBlank { updatedRecipient.name },
                                 style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                                color = barColors?.content ?: MaterialTheme.colorScheme.onSurface,
+                                color = barColors?.content ?: Color(0xFFE4EEF7),
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
                             Text(
                                 text = if (updatedRecipient.isOnline) "Active now" else formatLastSeen(updatedRecipient.lastActive),
                                 style = MaterialTheme.typography.bodySmall,
-                                color = if (updatedRecipient.isOnline) Color(0xFF4CDB6A) else (barColors?.content?.copy(alpha = .72f) ?: MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f))
+                                color = if (updatedRecipient.isOnline) Color(0xFF65E9A7) else (barColors?.content?.copy(alpha = .72f) ?: Color(0xFF8CA1B4))
                             )
                         }
                     }
                 },
                 navigationIcon = {
                     IconButton(onClick = onBack, modifier = Modifier.testTag("chat_back_button")) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = MaterialTheme.colorScheme.primary)
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = barColors?.content ?: Color(0xFF4DE4EF))
                     }
                 },
                 actions = {
-                    IconButton(onClick = {
-                        showMessageSearch = !showMessageSearch
-                        if (!showMessageSearch) messageSearchQuery = ""
-                    }) {
-                        Icon(Icons.Default.Search, contentDescription = "Search messages", tint = MaterialTheme.colorScheme.primary)
-                    }
-                    IconButton(enabled = messages.isNotEmpty() && !catchUpLoading, onClick = {
-                        catchUpText = ""
-                        showCatchUpDialog = true
-                        catchUpLoading = true
-                        val transcript = messages.takeLast(80).joinToString("\n") { "${it.senderName.ifBlank { if (it.senderId == currentUserId) "Me" else recipient.name }}: ${ProTools.messagePreview(it)}" }.take(12000)
-                        viewModel.askAssistant("Summarize this recent conversation for someone catching up. Use concise bullet points, mention open questions/action items, and do not invent facts. Transcript:\n\n$transcript", emptyList()) { result -> catchUpText = result; catchUpLoading = false }
-                    }) { Icon(Icons.Default.AutoAwesome, contentDescription = "Summarize recent messages", tint = MaterialTheme.colorScheme.primary) }
-                    ChatCallPill(
-                        onVideo = {
-                            val cameraGranted = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
-                            if (audioPermissionGranted && cameraGranted) onVideoCall()
-                            else videoPermissionLauncher.launch(arrayOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.CAMERA))
-                        },
-                        onAudio = {
-                            if (audioPermissionGranted) onCall()
-                            else { pendingCall = true; permissionLauncher.launch(Manifest.permission.RECORD_AUDIO) }
-                        }
-                    )
-                    ChatThemeOrb(onClick = { showThemePicker = true }, accent = MaterialTheme.colorScheme.primary)
                     IconButton(onClick = { showChatSettings = true }) {
                         Icon(Icons.Default.MoreVert, contentDescription = "Chat settings")
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = barColors?.container ?: MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
-                    navigationIconContentColor = barColors?.content ?: MaterialTheme.colorScheme.onSurface,
-                    actionIconContentColor = barColors?.content ?: MaterialTheme.colorScheme.onSurfaceVariant
+                    containerColor = barColors?.container ?: Color(0xFF0D131C),
+                    navigationIconContentColor = barColors?.content ?: Color(0xFFE4EEF7),
+                    actionIconContentColor = barColors?.content ?: Color(0xFFE4EEF7)
                 ),
-                modifier = if (barColors != null) Modifier.drawBehind {
-                    drawLine(barColors.border, Offset(0f, size.height), Offset(size.width, size.height), strokeWidth = 1.dp.toPx())
-                } else Modifier
+                modifier = Modifier.drawBehind {
+                    drawLine(barColors?.border ?: Color(0xFF2B4054), Offset(0f, size.height), Offset(size.width, size.height), strokeWidth = 1.dp.toPx())
+                }
             )
         },
         modifier = Modifier.fillMaxSize()
@@ -1079,6 +1055,35 @@ fun ChatScreen(
                 .fillMaxSize()
                 .padding(innerPadding)
         ) {
+            ChatFutureToolDock(
+                isOnline = updatedRecipient.isOnline,
+                isTyping = isTyping,
+                isVoiceRecording = isVoiceRecording,
+                messageCount = messages.size,
+                catchUpLoading = catchUpLoading,
+                searchActive = showMessageSearch,
+                onSearch = {
+                    showMessageSearch = !showMessageSearch
+                    if (!showMessageSearch) messageSearchQuery = ""
+                },
+                onCatchUp = {
+                    catchUpText = ""
+                    showCatchUpDialog = true
+                    catchUpLoading = true
+                    val transcript = messages.takeLast(80).joinToString("\n") { "${it.senderName.ifBlank { if (it.senderId == currentUserId) "Me" else recipient.name }}: ${ProTools.messagePreview(it)}" }.take(12000)
+                    viewModel.askAssistant("Summarize this recent conversation for someone catching up. Use concise bullet points, mention open questions/action items, and do not invent facts. Transcript:\n\n$transcript", emptyList()) { result -> catchUpText = result; catchUpLoading = false }
+                },
+                onAudioCall = {
+                    if (audioPermissionGranted) onCall() else { pendingCall = true; permissionLauncher.launch(Manifest.permission.RECORD_AUDIO) }
+                },
+                onVideoCall = {
+                    val cameraGranted = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+                    if (audioPermissionGranted && cameraGranted) onVideoCall()
+                    else videoPermissionLauncher.launch(arrayOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.CAMERA))
+                },
+                onTheme = { showThemePicker = true },
+                onSchedule = { showScheduleDialog = true }
+            )
             AnimatedVisibility(
                 visible = showMessageSearch,
                 enter = expandVertically() + fadeIn(),
@@ -1949,6 +1954,102 @@ fun ChatScreen(
         )
     }
 
+}
+
+@Composable
+private fun ChatFutureToolDock(
+    isOnline: Boolean,
+    isTyping: Boolean,
+    isVoiceRecording: Boolean,
+    messageCount: Int,
+    catchUpLoading: Boolean,
+    searchActive: Boolean,
+    onSearch: () -> Unit,
+    onCatchUp: () -> Unit,
+    onAudioCall: () -> Unit,
+    onVideoCall: () -> Unit,
+    onTheme: () -> Unit,
+    onSchedule: () -> Unit
+) {
+    val transition = rememberInfiniteTransition(label = "chat_signal")
+    val pulseAlpha by transition.animateFloat(
+        initialValue = 0.55f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(850), repeatMode = RepeatMode.Reverse),
+        label = "signal_pulse"
+    )
+    val statusColor = when {
+        isTyping || isVoiceRecording -> Color(0xFFFFC857)
+        isOnline -> Color(0xFF65E9A7)
+        else -> Color(0xFF738396)
+    }
+    val statusLabel = when {
+        isVoiceRecording -> tr("VOICE SIGNAL")
+        isTyping -> tr("LIVE TYPING")
+        isOnline -> tr("ONLINE")
+        else -> tr("OFFLINE")
+    }
+    Surface(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 5.dp),
+        shape = RoundedCornerShape(16.dp),
+        color = Color(0xFF0D131C),
+        border = BorderStroke(1.dp, Color(0xFF33485D)),
+        tonalElevation = 0.dp
+    ) {
+        Column(Modifier.padding(horizontal = 10.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(8.dp).clip(CircleShape).background(statusColor.copy(alpha = if (isOnline || isTyping || isVoiceRecording) pulseAlpha else 1f)))
+                Spacer(Modifier.width(7.dp))
+                Text(statusLabel, color = statusColor, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, letterSpacing = 1.1.sp)
+                Spacer(Modifier.weight(1f))
+                Text("${messageCount} ${tr("MESSAGES")}", color = Color(0xFF91A4B6), style = MaterialTheme.typography.labelSmall, letterSpacing = .6.sp)
+                Spacer(Modifier.width(7.dp))
+                Icon(Icons.Default.GraphicEq, null, tint = Color(0xFF4DDCE8), modifier = Modifier.size(16.dp))
+            }
+            Row(
+                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(7.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                ChatFutureActionChip(tr("Find"), Icons.Default.Search, Color(0xFF58E6F0), selected = searchActive, onClick = onSearch)
+                ChatFutureActionChip(if (catchUpLoading) tr("Generating…") else "${tr("Catch up")} · ${if (messageCount > 99) "99+" else messageCount}", Icons.Default.AutoAwesome, Color(0xFFB69CFF), enabled = messageCount > 0 && !catchUpLoading, onClick = onCatchUp)
+                ChatFutureActionChip(tr("Voice"), Icons.Default.Call, Color(0xFF67E6A5), onClick = onAudioCall)
+                ChatFutureActionChip(tr("Video"), Icons.Default.Videocam, Color(0xFF65BFFF), onClick = onVideoCall)
+                ChatFutureActionChip(tr("Schedule"), Icons.Default.Schedule, Color(0xFFFFC857), onClick = onSchedule)
+                ChatFutureActionChip(tr("Theme"), Icons.Default.Palette, Color(0xFFFF7EAD), onClick = onTheme)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ChatFutureActionChip(
+    label: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    accent: Color,
+    enabled: Boolean = true,
+    selected: Boolean = false,
+    onClick: () -> Unit
+) {
+    Surface(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = Modifier.height(34.dp),
+        shape = RoundedCornerShape(11.dp),
+        color = when {
+            !enabled -> Color(0xFF151A22)
+            selected -> accent.copy(alpha = .17f)
+            else -> Color(0xFF151E29)
+        },
+        contentColor = if (enabled) accent else Color(0xFF66717D),
+        border = BorderStroke(1.dp, if (enabled) accent.copy(alpha = if (selected) .9f else .52f) else Color(0xFF303A45)),
+        tonalElevation = 0.dp
+    ) {
+        Row(Modifier.padding(horizontal = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Icon(icon, contentDescription = null, modifier = Modifier.size(15.dp))
+            Text(label.uppercase(), color = if (enabled) Color(0xFFE1EAF3) else Color(0xFF66717D), fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = .45.sp, maxLines = 1)
+        }
+    }
 }
 
 @Composable

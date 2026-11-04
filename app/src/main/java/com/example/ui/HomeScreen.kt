@@ -293,6 +293,8 @@ fun HomeScreen(
 
     var searchQuery by remember { mutableStateOf("") }
     var chatFilter by rememberSaveable { mutableStateOf("all") }
+    var chatSort by rememberSaveable { mutableStateOf("recent") }
+    var showChatSortMenu by rememberSaveable { mutableStateOf(false) }
     var showChatTools by rememberSaveable { mutableStateOf(false) }
     var feedFilter by rememberSaveable { mutableStateOf("All Posts") }
     var showAnalytics by remember { mutableStateOf(false) }
@@ -893,12 +895,58 @@ fun HomeScreen(
                                 .thenBy { it.name.lowercase() }
                         )
                     }
+                    val activeChatFilters = remember(chatFilter) {
+                        chatFilter.split("|").filter { it.isNotBlank() && it != "all" }.toSet()
+                    }
+                    fun toggleChatFilter(key: String) {
+                        val selected = chatFilter.split("|").filter { it.isNotBlank() && it != "all" }.toMutableSet()
+                        if (key == "all") {
+                            selected.clear()
+                        } else if (key == "archived" || key == "locked") {
+                            if (selected.size == 1 && key in selected) selected.clear() else {
+                                selected.clear()
+                                selected.add(key)
+                            }
+                        } else {
+                            if (!selected.add(key)) selected.remove(key)
+                            selected.remove("archived")
+                            selected.remove("locked")
+                        }
+                        chatFilter = selected.sorted().joinToString("|").ifBlank { "all" }
+                    }
                     val displayedChatUsers = remember(chatUsers, chatFilter, unreadCounts, conversationPrefsVersion) {
-                        when (chatFilter) {
-                            "unread" -> chatUsers.filter { (unreadCounts[it.uid] ?: 0) > 0 && !ConversationPrefs.isArchived(context, it.uid) }
-                            "archived" -> chatUsers.filter { ConversationPrefs.isArchived(context, it.uid) }
-                            "locked" -> chatUsers.filter { ConversationPrefs.isLocked(context, it.uid) }
-                            else -> chatUsers.filter { !ConversationPrefs.isArchived(context, it.uid) && !ConversationPrefs.isLocked(context, it.uid) }
+                        val archiveMode = "archived" in activeChatFilters
+                        val lockedMode = "locked" in activeChatFilters
+                        chatUsers.filter { user ->
+                            val archived = ConversationPrefs.isArchived(context, user.uid)
+                            val locked = ConversationPrefs.isLocked(context, user.uid)
+                            val baseMatch = when {
+                                archiveMode -> archived
+                                lockedMode -> locked
+                                else -> !archived && !locked
+                            }
+                            baseMatch &&
+                                ("unread" !in activeChatFilters || (unreadCounts[user.uid] ?: 0) > 0) &&
+                                ("pinned" !in activeChatFilters || ConversationPrefs.isPinned(context, user.uid)) &&
+                                ("online" !in activeChatFilters || user.isOnline)
+                        }
+                    }
+                    val sortedDisplayedChatUsers = remember(displayedChatUsers, chatSort, recencyRank, unreadCounts, conversationPrefsVersion) {
+                        when (chatSort) {
+                            "name" -> displayedChatUsers.sortedWith(
+                                compareByDescending<User> { ConversationPrefs.isPinned(context, it.uid) }
+                                    .thenBy { it.name.lowercase() }
+                            )
+                            "unread" -> displayedChatUsers.sortedWith(
+                                compareByDescending<User> { ConversationPrefs.isPinned(context, it.uid) }
+                                    .thenByDescending { unreadCounts[it.uid] ?: 0 }
+                                    .thenBy { recencyRank[it.uid] ?: Int.MAX_VALUE }
+                            )
+                            else -> displayedChatUsers.sortedWith(
+                                compareByDescending<User> { ConversationPrefs.isPinned(context, it.uid) }
+                                    .thenBy { recencyRank[it.uid] ?: Int.MAX_VALUE }
+                                    .thenBy { it.name.lowercase() }
+                            )
                         }
                     }
                     val chatListState = rememberLazyListState()
@@ -911,7 +959,10 @@ fun HomeScreen(
                     }
                     LaunchedEffect(chatHeaderCollapsed) {
                         chatChromeCollapsed = chatHeaderCollapsed
-                        if (chatHeaderCollapsed) showChatTools = false
+                        if (chatHeaderCollapsed) {
+                            showChatTools = false
+                            showChatSortMenu = false
+                        }
                     }
                     // Only friends, requests and real conversations appear until the user searches.
                     Column(
@@ -933,7 +984,20 @@ fun HomeScreen(
                             trailingIcon = { if (searchQuery.isNotBlank()) IconButton(onClick = { searchQuery = ""; viewModel.searchUsers("") }) { Icon(Icons.Default.Close, "Clear search") } },
                             modifier = Modifier.fillMaxWidth(),
                             singleLine = true,
-                            shape = RoundedCornerShape(22.dp)
+                            shape = RoundedCornerShape(14.dp),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = Color(0xFFE8EFF7),
+                                unfocusedTextColor = Color(0xFFE8EFF7),
+                                focusedBorderColor = Color(0xFF49DCE9),
+                                unfocusedBorderColor = Color(0xFF35495D),
+                                focusedContainerColor = Color(0xFF101722),
+                                unfocusedContainerColor = Color(0xFF101722),
+                                focusedLeadingIconColor = Color(0xFF59E3EE),
+                                unfocusedLeadingIconColor = Color(0xFF8AA0B4),
+                                focusedPlaceholderColor = Color(0xFF9AABBA),
+                                unfocusedPlaceholderColor = Color(0xFF8091A2),
+                                cursorColor = Color(0xFF49DCE9)
+                            )
                         )
 
                         if (searchQuery.isBlank()) {
@@ -944,36 +1008,94 @@ fun HomeScreen(
                             ) {
                                 Column(Modifier.fillMaxWidth()) {
                                     Spacer(Modifier.height(8.dp))
+                                    val unreadFilterCount = chatUsers.count { (unreadCounts[it.uid] ?: 0) > 0 && !ConversationPrefs.isArchived(context, it.uid) && !ConversationPrefs.isLocked(context, it.uid) }
+                                    val pinnedFilterCount = chatUsers.count { ConversationPrefs.isPinned(context, it.uid) && !ConversationPrefs.isArchived(context, it.uid) && !ConversationPrefs.isLocked(context, it.uid) }
+                                    val onlineFilterCount = chatUsers.count { it.isOnline && !ConversationPrefs.isArchived(context, it.uid) && !ConversationPrefs.isLocked(context, it.uid) }
+                                    val archivedFilterCount = chatUsers.count { ConversationPrefs.isArchived(context, it.uid) }
+                                    val lockedFilterCount = chatUsers.count { ConversationPrefs.isLocked(context, it.uid) }
+                                    val activeFilterLabel = when {
+                                        activeChatFilters.isEmpty() -> tr("All active conversations")
+                                        activeChatFilters.contains("archived") -> tr("Archived view")
+                                        activeChatFilters.contains("locked") -> tr("Locked view")
+                                        else -> activeChatFilters.sorted().joinToString(" + ") { tr(it.replaceFirstChar { it.uppercase() }) }
+                                    }
                                     Card(
                                         onClick = { showChatTools = !showChatTools },
                                         modifier = Modifier.fillMaxWidth().animateContentSize(),
-                                        shape = RoundedCornerShape(18.dp),
-                                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .48f)),
-                                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = .55f))
+                                        shape = RoundedCornerShape(16.dp),
+                                        colors = CardDefaults.cardColors(containerColor = Color(0xFF101722)),
+                                        border = BorderStroke(1.dp, Color(0xFF385064))
                                     ) {
-                                        Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                                            Box(Modifier.size(34.dp).clip(RoundedCornerShape(11.dp)).background(MaterialTheme.colorScheme.primary.copy(alpha = .12f)), contentAlignment = Alignment.Center) {
-                                                Icon(Icons.Default.Tune, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(19.dp))
+                                        Row(Modifier.fillMaxWidth().padding(horizontal = 13.dp, vertical = 11.dp), verticalAlignment = Alignment.CenterVertically) {
+                                            Box(Modifier.size(36.dp).clip(RoundedCornerShape(11.dp)).background(Color(0xFF182837)).border(1.dp, Color(0xFF48E7F2).copy(alpha = .55f), RoundedCornerShape(11.dp)), contentAlignment = Alignment.Center) {
+                                                Icon(Icons.Default.Tune, null, tint = Color(0xFF48E7F2), modifier = Modifier.size(19.dp))
                                             }
-                                            Spacer(Modifier.width(10.dp))
+                                            Spacer(Modifier.width(11.dp))
                                             Column(Modifier.weight(1f)) {
-                                                Text(tr("Tools & filters"), fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleSmall)
-                                                Text(if (chatFilter == "all") tr("Saved, calls, discovery and chat filters") else "${tr(chatFilter.replaceFirstChar { it.uppercase() })} ${tr("chats")}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                                Text("CHAT CONTROL / 01", color = Color(0xFF55E6F0), fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelSmall, letterSpacing = 1.1.sp)
+                                                Text(activeFilterLabel, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleSmall, color = Color(0xFFE8EEF6), maxLines = 1, overflow = TextOverflow.Ellipsis)
                                             }
-                                            Icon(if (showChatTools) Icons.Default.ExpandLess else Icons.Default.ExpandMore, if (showChatTools) "Collapse tools" else "Expand tools", tint = MaterialTheme.colorScheme.primary)
+                                            Surface(shape = RoundedCornerShape(8.dp), color = Color(0xFF182534), border = BorderStroke(1.dp, Color(0xFF33495C))) {
+                                                Text("${displayedChatUsers.size} / ${chatUsers.size}", modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp), color = Color(0xFF9EB4C5), style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                                            }
+                                            Spacer(Modifier.width(6.dp))
+                                            Icon(if (showChatTools) Icons.Default.ExpandLess else Icons.Default.ExpandMore, if (showChatTools) "Collapse tools" else "Expand tools", tint = Color(0xFF55E6F0))
                                         }
                                     }
                                     AnimatedVisibility(visible = showChatTools, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
                                         Column(Modifier.fillMaxWidth().padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                             AnnouncementBanner(Modifier.fillMaxWidth())
                                             Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                                AssistChip(onClick = { ProTools.open("saved") }, label = { Text(tr("Saved")) }, leadingIcon = { Icon(Icons.Default.Star, null, modifier = Modifier.size(16.dp)) })
-                                                AssistChip(onClick = { ProTools.open("calls") }, label = { Text(tr("Call history")) }, leadingIcon = { Icon(Icons.Default.Call, null, modifier = Modifier.size(16.dp)) })
-                                                AssistChip(onClick = { ProTools.open("search") }, label = { Text(tr("Search chats")) }, leadingIcon = { Icon(Icons.Default.ManageSearch, null, modifier = Modifier.size(16.dp)) })
+                                                AssistChip(onClick = { ProTools.open("saved") }, label = { Text(tr("Saved")) }, leadingIcon = { Icon(Icons.Default.Star, null, modifier = Modifier.size(16.dp)) }, colors = AssistChipDefaults.assistChipColors(containerColor = Color(0xFF17212D), labelColor = Color(0xFFDCE7F0), leadingIconContentColor = Color(0xFFFFD166)), border = BorderStroke(1.dp, Color(0xFF34495B)))
+                                                AssistChip(onClick = { ProTools.open("calls") }, label = { Text(tr("Call history")) }, leadingIcon = { Icon(Icons.Default.Call, null, modifier = Modifier.size(16.dp)) }, colors = AssistChipDefaults.assistChipColors(containerColor = Color(0xFF17212D), labelColor = Color(0xFFDCE7F0), leadingIconContentColor = Color(0xFF77E7AF)), border = BorderStroke(1.dp, Color(0xFF34495B)))
+                                                AssistChip(onClick = { ProTools.open("search") }, label = { Text(tr("Search chats")) }, leadingIcon = { Icon(Icons.Default.ManageSearch, null, modifier = Modifier.size(16.dp)) }, colors = AssistChipDefaults.assistChipColors(containerColor = Color(0xFF17212D), labelColor = Color(0xFFDCE7F0), leadingIconContentColor = Color(0xFF69C9FF)), border = BorderStroke(1.dp, Color(0xFF34495B)))
                                             }
-                                            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                                listOf("all" to "All", "unread" to "Unread", "archived" to "Archived", "locked" to "Locked").forEach { (key, label) ->
-                                                    FilterChip(selected = chatFilter == key, onClick = { chatFilter = key }, label = { Text(tr(label)) })
+                                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                                Text("SMART FILTERS / MULTI-SELECT", color = Color(0xFF55DDE8), fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = .9.sp)
+                                                Spacer(Modifier.weight(1f))
+                                                Text(tr("Tap several to combine"), color = Color(0xFF8095A7), fontSize = 10.sp)
+                                            }
+                                            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                                                listOf(
+                                                    Triple("all", "All", chatUsers.size),
+                                                    Triple("unread", "Unread", unreadFilterCount),
+                                                    Triple("pinned", "Pinned", pinnedFilterCount),
+                                                    Triple("online", "Online", onlineFilterCount),
+                                                    Triple("archived", "Archived", archivedFilterCount),
+                                                    Triple("locked", "Locked", lockedFilterCount)
+                                                ).forEach { (key, label, count) ->
+                                                    val selected = if (key == "all") activeChatFilters.isEmpty() else key in activeChatFilters
+                                                    FilterChip(
+                                                        selected = selected,
+                                                        onClick = { toggleChatFilter(key) },
+                                                        label = { Text("${tr(label)} · $count", fontSize = 11.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium) },
+                                                        shape = RoundedCornerShape(11.dp),
+                                                        colors = FilterChipDefaults.filterChipColors(
+                                                            containerColor = Color(0xFF151D28),
+                                                            labelColor = Color(0xFFAFBDCA),
+                                                            selectedContainerColor = Color(0xFF16313A),
+                                                            selectedLabelColor = Color(0xFF86F3FA)
+                                                        ),
+                                                        border = BorderStroke(1.dp, if (selected) Color(0xFF49DCE9) else Color(0xFF35485A))
+                                                    )
+                                                }
+                                                Box {
+                                                    AssistChip(
+                                                        onClick = { showChatSortMenu = true },
+                                                        label = { Text("${tr("Sort")}: ${tr(chatSort.replaceFirstChar { it.uppercase() })}", fontSize = 11.sp) },
+                                                        leadingIcon = { Icon(Icons.Default.Sort, null, modifier = Modifier.size(16.dp)) },
+                                                        colors = AssistChipDefaults.assistChipColors(containerColor = Color(0xFF1A2230), labelColor = Color(0xFFB7C9D7), leadingIconContentColor = Color(0xFF72DBE8)),
+                                                        border = BorderStroke(1.dp, Color(0xFF42566A))
+                                                    )
+                                                    DropdownMenu(expanded = showChatSortMenu, onDismissRequest = { showChatSortMenu = false }) {
+                                                        listOf("recent" to "Recent", "unread" to "Unread first", "name" to "Name A–Z").forEach { (key, label) ->
+                                                            DropdownMenuItem(
+                                                                text = { Text(tr(label)) },
+                                                                leadingIcon = { Icon(if (chatSort == key) Icons.Default.RadioButtonChecked else Icons.Default.RadioButtonUnchecked, null) },
+                                                                onClick = { chatSort = key; showChatSortMenu = false }
+                                                            )
+                                                        }
+                                                    }
                                                 }
                                             }
                                             ContactsDiscoveryCard(viewModel, users, onUserSelected)
@@ -989,7 +1111,7 @@ fun HomeScreen(
                             }
                         }
 
-                        val activeContacts = chatUsers.filter { it.isOnline }.distinctBy { it.uid }
+                        val activeContacts = sortedDisplayedChatUsers.filter { it.isOnline }.distinctBy { it.uid }
                         AnimatedVisibility(
                             visible = searchQuery.isBlank() && activeContacts.isNotEmpty() && !chatHeaderCollapsed,
                             enter = expandVertically(expandFrom = Alignment.Top) + fadeIn(),
@@ -1012,7 +1134,7 @@ fun HomeScreen(
                                 verticalArrangement = Arrangement.spacedBy(10.dp),
                                 contentPadding = PaddingValues(bottom = 16.dp)
                             ) {
-                                items(displayedChatUsers.sortedByDescending { ConversationPrefs.isPinned(context, it.uid) }, key = { it.uid }) { user ->
+                                items(sortedDisplayedChatUsers, key = { it.uid }) { user ->
                                     val hasActiveStory = stories.any { it.senderId == user.uid }
                                     ChatConversationUserItem(
                                         user = user,
