@@ -41,7 +41,7 @@ import org.json.JSONObject
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 
-private const val DEFAULT_WORKER = "https://solitary-hill-dcdc.mr44253990.workers.dev"
+private const val DEFAULT_WORKER = "https://convo-chat-companion.mr4425390.workers.dev"
 private val workerHttp by lazy { OkHttpClient.Builder().callTimeout(25, TimeUnit.SECONDS).build() }
 
 /** Authenticated POST to the worker that owns [service]. Returns (HTTP code, JSON body). */

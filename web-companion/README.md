@@ -1,33 +1,113 @@
-# Convo Chat Web Companion (Cloudflare Pages)
+# Convo Chat Web
 
-A minimal browser companion for **accepted one-to-one text chats**. The browser does not sign in to Firebase and never receives a Firebase ID token or refresh token. Every browser API request goes through the existing Cloudflare Worker using an opaque, short-lived session token. Group chats, attachments, voice/video calls and account changes are intentionally out of scope.
+The real web app for Convo Chat — same account, same chats, same settings, in a browser.
+It is **not** a demo or a companion stub: it signs you in through a one-time pairing code,
+then behaves like the Android app (chat list, messenger, media, settings, profile, sessions).
 
-## Security flow
+Everything in this folder is a plain static site. There is no build step, no bundler and no
+npm dependency, so Cloudflare Pages can serve it exactly as committed.
 
-1. The user explicitly taps **Link my browser** inside Android → Profile & settings → Account security.
-2. The Android app sends its Firebase ID token to the Worker and requests a pairing code with `optIn: true`.
-3. The Worker stores only a hash-keyed pairing record, valid for 90 seconds. The 10-digit code is one-use and rate-limited at redemption (five attempts per IP-hash per minute).
-4. The Pages UI redeems the code from the one configured HTTPS origin. The Worker atomically marks the code consumed with a Firestore `updateTime` precondition, and returns a random opaque bearer token only once.
-5. The browser keeps that token in `sessionStorage` only (not localStorage, cookies, or IndexedDB). It expires after 12 hours. Each request re-checks the stored hash, account status and account-wide session version.
-6. Android **Revoke all web sessions** increments the account session version, immediately invalidating every paired browser token. Browser **Log out** revokes that one session record.
-7. The Worker enforces accepted-friend status in both directions and block lists on every chat read/write. It proxies only text messages and returns a limited recent window.
+```
+web-companion/
+├── site/                 <- the deployable output directory (upload this)
+│   ├── index.html        shell + PWA hooks
+│   ├── boot.js           startup, splash → app
+│   ├── api.js            Worker client (session token, retries, typing)
+│   ├── store.js          app state, persistence, settings
+│   ├── ui.js             toasts, sheets, menus, popovers, helpers
+│   ├── screens.js        login / home / messenger / settings / profile views
+│   ├── chat.js           conversation rendering + composer
+│   ├── app.js            controller: routing, polls, actions
+│   ├── styles.css        design system, mobile + desktop layouts
+│   ├── manifest.webmanifest
+│   └── icons/            app icons
+├── _headers              CSP, no-store, security headers
+├── _redirects            /web, /app → /
+└── deploy-web-companion.sh  (repo root) one-command deploy
+```
 
-## Cloudflare Pages setup
+## Deploying
 
-1. Create/use the Pages project named `convo-chat-companion` with this directory (`web-companion/`) as the static output directory; there is no build command. The web client is in its `web/` subdirectory, so the app is served at `https://convo-chat-companion.pages.dev/web/` (and `/web` redirects there). The root copy remains for compatibility.
-2. In the existing Worker environment, set the non-secret variable `WEB_COMPANION_ORIGIN` to the exact Pages **origin only**, for example `https://convo-chat-companion.pages.dev` (no `/web` path or trailing slash). CORS checks the origin, while Android receives the full `/web/` URL.
-3. Ensure the existing Worker has `FIREBASE_SERVICE_ACCOUNT` and `FIREBASE_DATABASE_URL` configured. Service-account JSON stays in Worker secrets. The Worker API source is now **48**; deploy the exact same source to `cloudflare-worker.js` and `firechat-fcm-worker.js`'s configured Worker deployment.
-4. If the Worker hostname changes, update both copies of `config.js` and the `connect-src` entry in `_headers` to the exact HTTPS Worker origin.
-5. In Firestore, enable TTL deletion on the `expiresAt` field for `web_pair_codes`, `web_pair_sessions`, and `web_pair_rate`. This only cleans expired records; access checks enforce expiry regardless of TTL timing.
-6. Deploy the Android version that requires Worker API 48 only after the new Worker is live. The current released app still targets the older baseline; this working-tree change is not released.
+### Option A — one tap inside the app (recommended)
 
-## Manual smoke test before release
+Android → **Admin settings → Web Deploy**:
 
-- Pair from an authenticated Android account and confirm the code is visible only after the user taps the opt-in button.
-- Confirm an incorrect/expired code fails; redeem a valid code twice and verify the second attempt fails.
-- Confirm requests from an unapproved `Origin` fail and that the configured Pages origin can exchange a code.
-- Open one accepted friend's chat, send plain text, and confirm it appears in Android. Try a non-friend and a blocked account; both must be rejected.
-- Sign out from the browser, then check that the same token fails. Pair again, use Android's revoke-all button, and verify the browser is rejected on its next API call.
-- Check 12-hour expiry, HTTPS-only Pages hosting, no localStorage use, browser CSP, Firestore TTL settings, and Worker API health version 48.
+1. Paste a Cloudflare **API token** (template: *Edit Cloudflare Pages* — needs
+   `Account → Pages: Edit` and `User → User Details: Read`).
+2. Paste the **Account ID** (Cloudflare dashboard → any domain → right sidebar).
+3. Tap **Publish**. The Worker stages `site/`, creates the Pages project if needed, uploads
+   only changed assets, triggers a production deployment and returns the live URL.
 
-Do not put a Firebase web API key, Firebase service account, OVH token, session token, or pairing code into source control or public Pages files. The static `config.js` contains only the public Worker base URL.
+The URL is written back to Firestore (`admin_secrets/web_pages`) and the Worker starts
+accepting pairing requests from that origin automatically — no extra secret to configure.
+
+### Option B — from a shell
+
+```bash
+ADMIN_TOKEN="<your Convo admin token>" \
+WORKER_URL="https://convo-chat-companion.mr4425390.workers.dev" \
+./deploy-web-companion.sh
+```
+
+The script base64-encodes every file in `site/`, POSTs it to `/admin/web-deploy/upload-site`,
+then to `/admin/web-deploy/deploy`, and prints the resulting URL.
+
+## Worker configuration
+
+| Variable | Required | Notes |
+| --- | --- | --- |
+| `FIREBASE_SERVICE_ACCOUNT` | yes | Service-account JSON, Worker secret. |
+| `FIREBASE_DATABASE_URL` | yes | `https://chat-4e1d0-default-rtdb.asia-southeast1.firebasedatabase.app` |
+| `WEB_COMPANION_ORIGIN` | no | Only for a custom domain. The deployed Pages URL is picked up automatically. |
+| `MEDIA_BUCKET` (R2) | for Web Deploy | Staging area for `site/` uploads. |
+
+Worker base URL: `https://convo-chat-companion.mr4425390.workers.dev` (compiled into `site/api.js`, every Android caller and the CSP in `_headers` — change it in one `sed` across the repo, not per file).
+
+Worker API version is **49**. Deploy the same source to both `cloudflare-worker.js` and
+`firechat-fcm-worker.js` targets before shipping an app build that requires 49.
+
+## How sign-in works
+
+1. Android (or the web app, when already paired) requests a 10-digit single-use code.
+2. The browser redeems it once; the Worker atomically burns the code and returns an opaque
+   bearer token.
+3. The token lives in `localStorage['convo.web.session']`, expires after
+   `WEB_SESSION_HOURS`, and is re-validated (hash + account status + session version) on
+   every call.
+4. Android → **Settings → Web version** lists every active browser session
+   (`/web-pair/sessions`) and can revoke one or all of them.
+
+## Profile on the web
+
+The web profile is a real page, not a read-only card:
+
+* cover art, avatar, badges (moderator / premium / profile type), bio, title and pronouns
+* friend, follower and following counters
+* **Edit profile** writes straight to the account (`/web-pair/profile/save`, name, bio,
+  title, pronouns)
+* **photo change** crops to a 512 px square in the browser and uploads through the Worker
+  (`/web-pair/profile/avatar` → R2 → `users/{uid}.profileImageUrl`)
+* a copyable public link (`/web-pair/profile/link`) that resolves to the Worker's
+  `/profile?uid=…` page, which now offers **Open in Convo Web** first and the Android app second
+
+The Android profile shows the same link in a "Your web profile" card and in the profile menu.
+
+The browser never holds a Firebase ID token, refresh token or service account.
+
+## Firestore indexes / TTL
+
+Enable TTL deletion on `expiresAt` for `web_pair_codes`, `web_pair_sessions` and
+`web_pair_rate`. Expiry is enforced in code regardless of TTL timing.
+
+## Smoke test before release
+
+- Pair from Android, confirm the code appears only after the opt-in tap.
+- Redeem twice — the second attempt must fail.
+- Pair from the deployed Pages URL and confirm it is accepted (origin auto-registered).
+- Settings → Web version lists the session; revoke it and confirm the browser's next call fails.
+- Send text, react, mark read, upload an attachment, and confirm Android sees all of it.
+- Resize from phone width to desktop width; both layouts must stay usable and premium.
+- Confirm `_headers` CSP blocks framing and third-party scripts.
+
+Do not commit a Firebase web API key, service-account JSON, Cloudflare token, or a live
+session token to this folder. The static site contains only the public Worker base URL.

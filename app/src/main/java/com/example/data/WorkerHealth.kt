@@ -23,8 +23,8 @@ import java.util.concurrent.TimeUnit
  */
 object WorkerHealth {
     /** Must match WORKER_API_VERSION in cloudflare-worker.js. */
-    const val REQUIRED_API_VERSION = 48
-    const val DEFAULT_PRIMARY = "https://solitary-hill-dcdc.mr44253990.workers.dev"
+    const val REQUIRED_API_VERSION = 49
+    const val DEFAULT_PRIMARY = "https://convo-chat-companion.mr4425390.workers.dev"
     const val OUTDATED_MESSAGE =
         "Server update needed — the Cloudflare Worker is an older version and doesn't know this feature yet. " +
             "Admin → Server health → \"Update Worker\" fixes it in one tap (or paste the latest cloudflare-worker.js in the Cloudflare dashboard)."

@@ -90,7 +90,10 @@ fun AdminControlCenterScreen(
     // Hoisted so returning from a sub-page restores the dashboard position instead of jumping to the top.
     val dashboardScroll = rememberSaveable(saver = androidx.compose.foundation.ScrollState.Saver) { androidx.compose.foundation.ScrollState(0) }
     BackHandler(enabled = selectedPage != "dashboard") { selectedPage = "dashboard" }
-    LaunchedEffect(selectedPage) { if (selectedPage == "users") viewModel.loadAdminUsersPage(reset = true) }
+    LaunchedEffect(selectedPage) {
+        if (selectedPage == "users") viewModel.loadAdminUsersPage(reset = true)
+        if (selectedPage == "web_deploy") viewModel.refreshWebDeployStatus()
+    }
 
     LaunchedEffect(webhookUrl) {
         viewModel.testFcmGateway(webhookUrl)
@@ -221,6 +224,7 @@ fun AdminControlCenterScreen(
         AdminMenuEntry("audit", "Audit log", "Every admin change with time and account", Icons.Outlined.History, Color(0xFF546E7A)),
         AdminMenuEntry("power", "Power tools", "Broadcast push, live switches, reminders, typing sound", Icons.Outlined.Bolt, Color(0xFFFF6D00)),
         AdminMenuEntry("cloud_db", "Cloud backup", "Text messages in Cloudflare D1 · on/off · test", Icons.Outlined.Cloud, Color(0xFFF38020), if (cloudDbOn) "ON" else ""),
+        AdminMenuEntry("web_deploy", "Web app deploy", "Publish the browser app with one Cloudflare token", Icons.Outlined.Language, Color(0xFF0B84F3), viewModel.webDeployState.collectAsState().value.siteUrl.takeIf { it.isNotBlank() }?.let { "LIVE" } ?: ""),
         AdminMenuEntry("ai_autoreply", "AI auto-reply (admin)", "AI answers messages sent to you — server side", Icons.Outlined.SmartToy, Color(0xFF7C4DFF)),
         AdminMenuEntry("ai_providers", "AI providers & keys", "Update keys, test models, custom providers, hide AI", Icons.Outlined.Key, Color(0xFF7A4FE0)),
         AdminMenuEntry("workers", "Smart worker pool", "3-4 workers all active: weighted random + automatic failover", Icons.Outlined.Hub, Color(0xFF2B7FD9)),
@@ -618,6 +622,11 @@ fun AdminControlCenterScreen(
                     }
                     "cloud_db" -> {
                         AdminPanelCard("Cloud backup", "Store text & emoji message bodies in your Cloudflare D1 database", Icons.Outlined.Cloud) { AdminCloudStorePanel() }
+                    }
+                    "web_deploy" -> {
+                        AdminPanelCard("Web app deploy", "One Cloudflare token publishes the whole browser app", Icons.Outlined.Language) {
+                            AdminWebDeployPanel(viewModel)
+                        }
                     }
                     "insights" -> {
                         AdminPanelCard("Smart insights", "Live numbers from loaded profiles - no extra database reads", Icons.Outlined.Insights) { AdminInsightsPanel(users) }
@@ -1312,6 +1321,154 @@ private fun AdminPageIntro(entry: AdminMenuEntry) {
             Icon(entry.icon, null, tint = entry.accent, modifier = Modifier.size(23.dp))
             Spacer(Modifier.width(10.dp))
             Text(entry.description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+/**
+ * Admin → Web app deploy.
+ *
+ * The whole browser app is already staged on the Worker (web-companion/site). Publishing it
+ * therefore needs exactly two things from the admin: a Cloudflare API token and the account
+ * ID. Everything else — project creation, asset diffing, deployment, and registering the
+ * resulting origin for pairing — happens server-side, so there is no other secret to paste.
+ */
+@Composable
+private fun AdminWebDeployPanel(viewModel: ChatViewModel) {
+    val context = LocalContext.current
+    val state by viewModel.webDeployState.collectAsState()
+    // Convenience only: the token is cached locally so the admin does not retype it. It is
+    // never logged, never sent anywhere except the worker's own deploy route.
+    val prefs = remember { context.getSharedPreferences("convo_web_deploy", android.content.Context.MODE_PRIVATE) }
+    var apiToken by rememberSaveable { mutableStateOf(prefs.getString("api_token", "").orEmpty()) }
+    var accountId by rememberSaveable { mutableStateOf(prefs.getString("account_id", "").orEmpty()) }
+    var project by rememberSaveable { mutableStateOf(prefs.getString("project", "convo-chat-web").orEmpty()) }
+    var showToken by rememberSaveable { mutableStateOf(false) }
+    var resultUrl by rememberSaveable { mutableStateOf("") }
+
+    val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(11.dp)) {
+        // Live status card.
+        Surface(
+            shape = RoundedCornerShape(20.dp),
+            color = if (state.siteUrl.isNotBlank()) Color(0xFF0B84F3).copy(alpha = .10f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .55f)
+        ) {
+            Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        if (state.siteUrl.isNotBlank()) Icons.Default.CheckCircle else Icons.Outlined.Language,
+                        null, tint = if (state.siteUrl.isNotBlank()) Color(0xFF0B84F3) else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        if (state.siteUrl.isNotBlank()) "Web app is live" else "Publish the browser app",
+                        fontWeight = FontWeight.ExtraBold, fontSize = 14.sp
+                    )
+                    Spacer(Modifier.weight(1f))
+                    if (state.checking) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                }
+                Text(
+                    when {
+                        state.checking -> "Checking status…"
+                        state.siteUrl.isNotBlank() -> state.siteUrl
+                        state.buildReady -> "Build ready · ${state.buildFiles} files staged. Enter a token to publish."
+                        else -> "No build staged yet. Run deploy-web-companion.sh upload once, then publish from here."
+                    },
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                if (state.lastDeployAt > 0) {
+                    Text(
+                        "Last deploy " + SimpleDateFormat("d MMM, HH:mm", Locale.getDefault()).format(Date(state.lastDeployAt)),
+                        fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(onClick = { viewModel.refreshWebDeployStatus() }) { Icon(Icons.Default.Refresh, null, Modifier.size(16.dp)); Spacer(Modifier.width(5.dp)); Text("Refresh status", fontSize = 11.sp) }
+                    if (state.siteUrl.isNotBlank()) {
+                        TextButton(onClick = {
+                            clipboard.setPrimaryClip(android.content.ClipData.newPlainText("Convo Chat Web", state.siteUrl))
+                            Toast.makeText(context, "Link copied", Toast.LENGTH_SHORT).show()
+                        }) { Icon(Icons.Default.ContentCopy, null, Modifier.size(16.dp)); Spacer(Modifier.width(5.dp)); Text("Copy link", fontSize = 11.sp) }
+                    }
+                }
+            }
+        }
+
+        OutlinedTextField(
+            value = apiToken,
+            onValueChange = { apiToken = it.trim(); prefs.edit().putString("api_token", it.trim()).apply() },
+            label = { Text("Cloudflare API token") },
+            placeholder = { Text("Paste your Cloudflare API token") },
+            visualTransformation = if (showToken) androidx.compose.ui.text.input.VisualTransformation.None else androidx.compose.ui.text.input.PasswordVisualTransformation(),
+            trailingIcon = {
+                IconButton(onClick = { showToken = !showToken }) {
+                    Icon(if (showToken) Icons.Default.VisibilityOff else Icons.Default.Visibility, if (showToken) "Hide token" else "Show token")
+                }
+            },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth()
+        )
+        OutlinedTextField(
+            value = accountId,
+            onValueChange = { accountId = it.trim(); prefs.edit().putString("account_id", it.trim()).apply() },
+            label = { Text("Cloudflare Account ID") },
+            placeholder = { Text("32-character hex ID from the dashboard") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth()
+        )
+        OutlinedTextField(
+            value = project,
+            onValueChange = { project = it.trim().lowercase(); prefs.edit().putString("project", it.trim().lowercase()).apply() },
+            label = { Text("Pages project name") },
+            supportingText = { Text("Creates the project if it does not exist. URL: https://$project.pages.dev", fontSize = 10.sp) },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        Button(
+            onClick = {
+                resultUrl = ""
+                viewModel.deployWebVersion(apiToken, accountId, project) { ok, message, url ->
+                    resultUrl = if (ok) url else ""
+                    Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+                }
+            },
+            enabled = !state.checking && apiToken.isNotBlank() && accountId.isNotBlank(),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            if (state.checking) CircularProgressIndicator(Modifier.size(17.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
+            else Icon(Icons.Outlined.RocketLaunch, null)
+            Spacer(Modifier.width(8.dp))
+            Text(if (resultUrl.isBlank()) "Publish web app" else "Publish again")
+        }
+
+        if (resultUrl.isNotBlank()) {
+            Surface(onClick = {
+                clipboard.setPrimaryClip(android.content.ClipData.newPlainText("Convo Chat Web", resultUrl))
+                Toast.makeText(context, "Link copied — share it anywhere", Toast.LENGTH_SHORT).show()
+            }, shape = RoundedCornerShape(16.dp), color = Color(0xFF0B84F3).copy(alpha = .12f), modifier = Modifier.fillMaxWidth()) {
+                Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Link, null, tint = Color(0xFF0B84F3))
+                    Spacer(Modifier.width(9.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text("Live now", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        Text(resultUrl, fontSize = 11.sp, color = Color(0xFF0B84F3), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                    Icon(Icons.Default.ContentCopy, null, Modifier.size(17.dp), tint = Color(0xFF0B84F3))
+                }
+            }
+            Text("Tap to copy. Users pair this address from Profile → Link my browser.", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+
+        AdminInlineInfo(
+            "Create a token at Cloudflare → My Profile → API Tokens using the \"Edit Cloudflare Pages\" template. " +
+                "The token is sent once to your own Worker, stored server-side, and never shown to users. No other secret is needed."
+        )
+        if (state.message.isNotBlank() && !state.checking) {
+            Text(state.message, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }

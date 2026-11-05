@@ -525,7 +525,7 @@ fun PostComposerScreen(viewModel: ChatViewModel, onBack: () -> Unit, onPublished
             title = { Text("Share on Facebook?",fontWeight=FontWeight.ExtraBold) },
             text = { Text("Your post is published. Share its Convo preview link on Facebook? People can open the full post in the app or download Convo Chat.") },
             confirmButton = { Button(onClick = {
-                val link="https://solitary-hill-dcdc.mr44253990.workers.dev/post/$postId";val shareText="${title.ifBlank{"New post on Convo Chat"}}\n${text.take(180)}\n$link"
+                val link="https://convo-chat-companion.mr4425390.workers.dev/post/$postId";val shareText="${title.ifBlank{"New post on Convo Chat"}}\n${text.take(180)}\n$link"
                 val facebook=android.content.Intent(android.content.Intent.ACTION_SEND).apply{type="text/plain";putExtra(android.content.Intent.EXTRA_TEXT,shareText);setPackage("com.facebook.katana")}
                 runCatching{context.startActivity(facebook)}.onFailure{context.startActivity(android.content.Intent.createChooser(android.content.Intent(android.content.Intent.ACTION_SEND).apply{type="text/plain";putExtra(android.content.Intent.EXTRA_TEXT,shareText)},"Share post"))}
                 publishedPostId=null;onPublished()

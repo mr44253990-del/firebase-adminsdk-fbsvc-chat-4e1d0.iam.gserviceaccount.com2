@@ -240,7 +240,7 @@ object AiProviderStore {
     suspend fun completeViaWorker(system: String, user: String): String = withContext(Dispatchers.IO) {
         val token = FirebaseAuth.getInstance().currentUser?.getIdToken(false)?.awaitTask()?.token ?: error("Not signed in")
         val payload = JSONObject().put("message", user.take(4000)).put("systemPrompt", system.take(1200)).put("memory", JSONArray())
-        WorkerRouter.execute("ai", http, WorkerRouter.primary.value.ifBlank { "https://solitary-hill-dcdc.mr44253990.workers.dev" }) { base ->
+        WorkerRouter.execute("ai", http, WorkerRouter.primary.value.ifBlank { "https://convo-chat-companion.mr4425390.workers.dev" }) { base ->
             Request.Builder().url("$base/ai/chat").header("Authorization", "Bearer $token")
                 .post(payload.toString().toRequestBody("application/json".toMediaTypeOrNull())).build()
         }.use { r ->

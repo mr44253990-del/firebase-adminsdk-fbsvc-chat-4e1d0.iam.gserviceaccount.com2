@@ -418,10 +418,18 @@ class MainActivity : FragmentActivity() {
                 }
 
                 PremiumBackground {
+                    val privacySettings by com.example.security.PrivacyPreferences.settings.collectAsState()
                     val currentRoute = navController.currentBackStackEntryAsState().value?.destination?.route
                     // Screenshots/recording are blocked only while a chat or call is on screen.
-                    LaunchedEffect(currentRoute) {
-                        if (currentRoute?.substringBefore('/')?.substringBefore('?') in setOf("chat", "group_chat", "call", "group_call")) {
+                    // Screenshot blocking is user-controlled: Privacy → Screenshot protection.
+                    // OFF (default) = screenshots and screen recording always work, exactly like
+                    // every other messenger. ON = sensitive screens are protected. Either way the
+                    // phone never gets stuck in a blocked state when leaving a chat or call.
+                    val sensitiveRoutes = setOf("chat", "group_chat", "call", "group_call")
+                    LaunchedEffect(currentRoute, privacySettings.preventScreenshotOnSensitiveScreens) {
+                        val needsProtection = privacySettings.preventScreenshotOnSensitiveScreens &&
+                            currentRoute?.substringBefore('/')?.substringBefore('?') in sensitiveRoutes
+                        if (needsProtection) {
                             window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
                         } else {
                             window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)

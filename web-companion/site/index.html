@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en" data-theme="midnight">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,maximum-scale=5">
+  <meta name="referrer" content="no-referrer">
+  <meta name="color-scheme" content="dark light">
+  <meta name="theme-color" content="#07070f">
+  <meta name="description" content="Convo Chat Web — your private messenger in the browser. Pair once with the Convo Chat app, then chat from any desktop.">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <title>Convo Chat Web</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css">
+  <script src="boot.js"></script>
+</head>
+<body>
+  <!-- ───────────────────────── Launch / loading screen ───────────────────────── -->
+  <div id="launch" class="launch" role="status" aria-live="polite" aria-label="Starting Convo Chat Web">
+    <div class="launch-glow g1"></div>
+    <div class="launch-glow g2"></div>
+    <div class="launch-glow g3"></div>
+    <canvas id="launch-particles" class="launch-particles" aria-hidden="true"></canvas>
+    <div class="launch-core">
+      <div class="launch-orb">
+        <svg class="ring ring-a" viewBox="0 0 120 120" aria-hidden="true"><circle cx="60" cy="60" r="56"></circle></svg>
+        <svg class="ring ring-b" viewBox="0 0 120 120" aria-hidden="true"><circle cx="60" cy="60" r="46"></circle></svg>
+        <div class="launch-mark" aria-hidden="true">
+          <svg viewBox="0 0 64 64"><defs>
+            <linearGradient id="lgA" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stop-color="#8b7bff"/><stop offset="55%" stop-color="#5ac8fa"/><stop offset="100%" stop-color="#ff6fb5"/>
+            </linearGradient>
+          </defs>
+            <path fill="url(#lgA)" d="M32 4C16.5 4 4 15.6 4 29.9c0 7.9 4 14.9 10.3 19.7-.5 4-2 8-4.6 11.4-.6.8.2 1.9 1.2 1.6 5.6-1.7 10-4.3 13.1-6.6 2.6.5 5.3.8 8 .8C47.5 56.8 60 45.2 60 30.9S47.5 4 32 4z"/>
+            <circle cx="21" cy="30" r="3.4" fill="#0b0b17"/><circle cx="32" cy="30" r="3.4" fill="#0b0b17"/><circle cx="43" cy="30" r="3.4" fill="#0b0b17"/>
+          </svg>
+        </div>
+      </div>
+      <h1 class="launch-title" aria-label="Convo Chat"><span>C</span><span>o</span><span>n</span><span>v</span><span>o</span><span class="gap">&nbsp;</span><span>C</span><span>h</span><span>a</span><span>t</span></h1>
+      <p class="launch-sub" id="launch-sub">Preparing your secure workspace…</p>
+      <div class="launch-track"><div class="launch-fill" id="launch-fill"></div></div>
+      <p class="launch-note">End-to-end private · No tracking · Works offline-ready</p>
+    </div>
+  </div>
+
+  <!-- ─────────────────────────────── App shell ─────────────────────────────── -->
+  <div id="app" class="app" hidden>
+    <aside class="rail" aria-label="Primary">
+      <div class="rail-brand" title="Convo Chat Web">
+        <svg viewBox="0 0 64 64" aria-hidden="true"><use href="#convo-mark"/></svg>
+      </div>
+      <nav class="rail-nav" id="rail-nav"></nav>
+      <div class="rail-foot" id="rail-foot"></div>
+    </aside>
+
+    <div class="workspace" id="workspace">
+      <section class="pane" id="pane" aria-live="polite"></section>
+    </div>
+
+    <nav class="tabbar" id="tabbar" aria-label="Primary"></nav>
+  </div>
+
+  <!-- Toast host -->
+  <div id="toasts" class="toasts" role="status" aria-live="polite"></div>
+  <!-- Modal host -->
+  <div id="modal-host" class="modal-host" hidden></div>
+  <!-- Sheet host -->
+  <div id="sheet-host" class="sheet-host" hidden></div>
+  <div id="file-inputs"></div>
+
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <symbol id="convo-mark" viewBox="0 0 64 64">
+      <defs>
+        <linearGradient id="convoGrad" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stop-color="#8b7bff"/><stop offset="55%" stop-color="#5ac8fa"/><stop offset="100%" stop-color="#ff6fb5"/>
+        </linearGradient>
+      </defs>
+      <path fill="url(#convoGrad)" d="M32 4C16.5 4 4 15.6 4 29.9c0 7.9 4 14.9 10.3 19.7-.5 4-2 8-4.6 11.4-.6.8.2 1.9 1.2 1.6 5.6-1.7 10-4.3 13.1-6.6 2.6.5 5.3.8 8 .8C47.5 56.8 60 45.2 60 30.9S47.5 4 32 4z"/>
+      <circle cx="21" cy="30" r="3.4" fill="#0b0b17"/><circle cx="32" cy="30" r="3.4" fill="#0b0b17"/><circle cx="43" cy="30" r="3.4" fill="#0b0b17"/>
+    </symbol>
+  </svg>
+
+  <noscript><div class="noscript">Convo Chat Web needs JavaScript enabled to run.</div></noscript>
+  <script src="api.js"></script>
+  <script src="store.js"></script>
+  <script src="ui.js"></script>
+  <script src="screens.js"></script>
+  <script src="chat.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

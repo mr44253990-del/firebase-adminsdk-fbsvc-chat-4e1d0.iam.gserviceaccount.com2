@@ -238,6 +238,13 @@ fun AuthScreen(
         focusedContainerColor = lp.text.copy(alpha = .035f),
         unfocusedContainerColor = lp.text.copy(alpha = .025f)
     )
+    // One coordinated entrance instead of elements popping in one by one: the whole form
+    // fades and glides up ~460 ms after the screen appears.
+    var entered by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { entered = true }
+    val enterAlpha by animateFloatAsState(if (entered) 1f else 0f, tween(420), label = "auth_enter")
+    val enterSlide by animateDpAsState(if (entered) 0.dp else 20.dp, tween(460, easing = FastOutSlowInEasing), label = "auth_slide")
+
     val orbTransition = rememberInfiniteTransition(label = "auth_orbs")
     val orbDrift by orbTransition.animateFloat(
         initialValue = -18f,
@@ -278,7 +285,9 @@ fun AuthScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 18.dp, vertical = 14.dp),
+                .padding(horizontal = 18.dp, vertical = 14.dp)
+                .alpha(enterAlpha)
+                .offset(y = enterSlide),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -320,7 +329,34 @@ fun AuthScreen(
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
             )
 
-            Spacer(modifier = Modifier.height(20.dp))
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Three quiet promise chips: they answer "why this app" before the user types anything.
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                listOf(
+                    Icons.Default.Lock to tr("Encrypted"),
+                    Icons.Default.Speed to tr("Fast"),
+                    Icons.Default.Block to tr("No ads")
+                ).forEach { (icon, label) ->
+                    Row(
+                        Modifier
+                            .clip(RoundedCornerShape(50))
+                            .background(lp.text.copy(alpha = .055f))
+                            .border(1.dp, lp.text.copy(alpha = .09f), RoundedCornerShape(50))
+                            .padding(horizontal = 9.dp, vertical = 5.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(icon, null, tint = lp.textSoft, modifier = Modifier.size(11.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text(label, color = lp.textSoft, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(18.dp))
 
             // Firebase Configuration Warning banner
             if (!isFirebaseConfigured) {
@@ -439,9 +475,9 @@ fun AuthScreen(
                     modifier = Modifier.fillMaxWidth().border(
                         1.2.dp,
                         Brush.linearGradient(if (lp.milk) lp.cardBorder else listOf(ConvoBrand.Cyan.copy(alpha = .7f), Color.White.copy(alpha = .12f), ConvoBrand.Pink.copy(alpha = .7f))),
-                        RoundedCornerShape(24.dp)
+                        RoundedCornerShape(30.dp)
                     ),
-                    shape = RoundedCornerShape(24.dp),
+                    shape = RoundedCornerShape(30.dp),
                     colors = CardDefaults.elevatedCardColors(containerColor = lp.card),
                     elevation = CardDefaults.elevatedCardElevation(defaultElevation = 8.dp)
                 ) {
@@ -482,9 +518,9 @@ fun AuthScreen(
                         brush = Brush.linearGradient(
                             colors = if (lp.milk) lp.cardBorder else listOf(ConvoBrand.Cyan.copy(alpha = .7f), Color.White.copy(alpha = .12f), ConvoBrand.Pink.copy(alpha = .7f))
                         ),
-                        shape = RoundedCornerShape(24.dp)
+                        shape = RoundedCornerShape(30.dp)
                     ),
-                shape = RoundedCornerShape(24.dp),
+                shape = RoundedCornerShape(30.dp),
                 colors = CardDefaults.elevatedCardColors(
                     containerColor = lp.card
                 ),

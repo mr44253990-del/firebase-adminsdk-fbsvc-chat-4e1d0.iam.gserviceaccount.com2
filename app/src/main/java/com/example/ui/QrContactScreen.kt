@@ -103,7 +103,7 @@ fun QrContactScreen(
     // also accepts the convochat:// equivalent through MainActivity's deep-link filter.
     val effectiveUid = user?.uid?.takeIf { it.isNotBlank() } ?: FirebaseAuth.getInstance().currentUser?.uid.orEmpty()
     val payload = effectiveUid.takeIf { it.isNotBlank() }?.let { uid ->
-        "https://solitary-hill-dcdc.mr44253990.workers.dev/profile?uid=${Uri.encode(uid)}"
+        "https://convo-chat-companion.mr4425390.workers.dev/profile?uid=${Uri.encode(uid)}"
     }.orEmpty()
     val qrBitmap = remember(payload, qrRequested) { if (qrRequested) payload.takeIf { it.isNotBlank() }?.let { createQrBitmap(it, 720) } else null }
     val context = LocalContext.current

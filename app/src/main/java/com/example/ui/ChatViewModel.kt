@@ -90,6 +90,28 @@ data class PresenceMonitorUser(
 
 data class WebCompanionPairing(val code: String, val expiresAt: Long, val companionUrl: String)
 
+/** Cloudflare Pages publish state for the Convo Chat Web client. */
+data class WebDeployState(
+    val checking: Boolean = false,
+    val working: Boolean = false,
+    val buildReady: Boolean = false,
+    val buildFiles: Int = 0,
+    val projectName: String = "convo-chat-web",
+    val siteUrl: String = "",
+    val lastDeployAt: Long = 0L,
+    val lastDeployUrl: String = "",
+    val message: String = ""
+)
+
+/** One row in Settings → Web version: who is signed in on the web right now. */
+data class WebLoginEntry(
+    val label: String,
+    val detail: String,
+    val pairedAt: Long,
+    val expiresAt: Long,
+    val current: Boolean = false
+)
+
 data class PresenceDashboard(
     val checking: Boolean = false,
     val message: String = "No presence API configured",
@@ -614,7 +636,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         _currentTabState.value = 6
     }
 
-    private val defaultWebhookUrl = "https://solitary-hill-dcdc.mr44253990.workers.dev/"
+    private val defaultWebhookUrl = "https://convo-chat-companion.mr4425390.workers.dev/"
 
     private val storedGatewayUrl = sharedPrefs.getString("webhook_url", null).orEmpty()
     private val _webhookUrl = MutableStateFlow(
@@ -1758,6 +1780,173 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 )
             }
             onComplete(result.getOrNull(), result.exceptionOrNull()?.message.orEmpty())
+        }
+    }
+
+    // ---- Web version: publish to Cloudflare Pages + show who is signed in on the web ----
+    private val _webDeployState = MutableStateFlow(WebDeployState())
+    val webDeployState: StateFlow<WebDeployState> = _webDeployState.asStateFlow()
+    private val _webLogins = MutableStateFlow<List<WebLoginEntry>>(emptyList())
+    val webLogins: StateFlow<List<WebLoginEntry>> = _webLogins.asStateFlow()
+    private val _webLoginsLoading = MutableStateFlow(false)
+    val webLoginsLoading: StateFlow<Boolean> = _webLoginsLoading.asStateFlow()
+
+    private fun authedJsonCall(path: String, body: JSONObject = JSONObject()): JSONObject {
+        val user = FirebaseAuth.getInstance().currentUser ?: error("Sign in again")
+        val base = _webhookUrl.value.trim().trimEnd('/')
+        if (!base.startsWith("https://")) error("Secure Worker URL is not configured")
+        val idToken = Tasks.await(user.getIdToken(false)).token ?: error("Could not refresh sign-in")
+        val request = Request.Builder().url(base + path)
+            .header("Authorization", "Bearer $idToken")
+            .post(body.toString().toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull()))
+            .build()
+        val response = OkHttpClient().newCall(request).execute()
+        val text = response.body?.string().orEmpty()
+        response.close()
+        val json = runCatching { JSONObject(text.ifBlank { "{}" }) }.getOrElse { JSONObject() }
+        if (response.code !in 200..299 || !json.optBoolean("success")) {
+            error(json.optString("error").ifBlank { "Request failed (HTTP ${response.code})" })
+        }
+        return json
+    }
+
+    /** Reads the publish status: is a web build staged, and what was deployed last? */
+    fun refreshWebDeployStatus() {
+        if (_webDeployState.value.checking) return
+        _webDeployState.value = _webDeployState.value.copy(checking = true)
+        viewModelScope.launch {
+            val result = runCatching { withContext(Dispatchers.IO) { authedJsonCall("/admin/web-deploy/status") } }
+            _webDeployState.value = result.fold(
+                onSuccess = { json ->
+                    WebDeployState(
+                        checking = false,
+                        working = json.optBoolean("ready"),
+                        buildReady = json.optBoolean("ready"),
+                        buildFiles = json.optInt("files"),
+                        projectName = json.optString("projectName").ifBlank { "convo-chat-web" },
+                        siteUrl = json.optString("siteUrl"),
+                        lastDeployAt = json.optLong("lastDeployAt"),
+                        lastDeployUrl = json.optString("lastDeployUrl"),
+                        message = if (json.optBoolean("ready")) "Web build ready to publish" else "No web build uploaded yet"
+                    )
+                },
+                onFailure = { error ->
+                    _webDeployState.value.copy(checking = false, message = error.message ?: "Status unavailable")
+                }
+            )
+        }
+    }
+
+    /**
+     * Publishes Convo Chat Web to Cloudflare Pages with only an API token.
+     * The Worker hashes the files it already hosts, uploads the missing ones and creates a deployment.
+     */
+    fun deployWebVersion(apiToken: String, accountId: String, projectName: String, onComplete: (Boolean, String, String) -> Unit) {
+        if (apiToken.isBlank()) return onComplete(false, "Paste a Cloudflare API token with Cloudflare Pages: Edit", "")
+        if (accountId.isBlank()) return onComplete(false, "Paste your Cloudflare Account ID", "")
+        _webDeployState.value = _webDeployState.value.copy(checking = true, working = false, message = "Publishing to Cloudflare Pages…")
+        viewModelScope.launch {
+            val result = runCatching {
+                withContext(Dispatchers.IO) {
+                    authedJsonCall("/admin/web-deploy/deploy", JSONObject()
+                        .put("accountId", accountId.trim())
+                        .put("apiToken", apiToken.trim())
+                        .put("projectName", projectName.trim().ifBlank { "convo-chat-web" }))
+                }
+            }
+            result.fold(
+                onSuccess = { json ->
+                    val url = json.optString("url").ifBlank { "https://${json.optString("projectName")}.pages.dev" }
+                    _webDeployState.value = _webDeployState.value.copy(
+                        checking = false, working = true, buildReady = true,
+                        projectName = json.optString("projectName"),
+                        siteUrl = url, lastDeployAt = System.currentTimeMillis(), lastDeployUrl = url,
+                        message = "Live at $url"
+                    )
+                    onComplete(true, "Convo Chat Web is live: $url", url)
+                },
+                onFailure = { error ->
+                    _webDeployState.value = _webDeployState.value.copy(checking = false, message = error.message ?: "Deploy failed")
+                    onComplete(false, error.message ?: "Deploy failed", "")
+                }
+            )
+        }
+    }
+
+    /**
+     * Settings → Web version. Lists the browsers currently paired with this account.
+     * The Worker stores a hash-keyed record per browser session, so this is the real answer
+     * to "who is signed in on the web right now".
+     */
+    fun refreshWebLogins() {
+        if (_webLoginsLoading.value) return
+        _webLoginsLoading.value = true
+        viewModelScope.launch {
+            val result = runCatching { withContext(Dispatchers.IO) { authedJsonCall("/web-pair/sessions") } }
+            _webLogins.value = result.getOrNull()?.optJSONArray("sessions")?.let { array ->
+                (0 until array.length()).mapNotNull { index ->
+                    val item = array.optJSONObject(index) ?: return@mapNotNull null
+                    val pairedAt = item.optLong("createdAt")
+                    val expiresAt = item.optLong("expiresAt")
+                    val agent = item.optString("userAgent")
+                    WebLoginEntry(
+                        label = webLoginLabel(agent),
+                        detail = webLoginDetail(agent) + " · since " +
+                            java.text.SimpleDateFormat("d MMM, HH:mm", java.util.Locale.getDefault())
+                                .format(java.util.Date(pairedAt.takeIf { it > 0 } ?: System.currentTimeMillis())),
+                        pairedAt = pairedAt,
+                        expiresAt = expiresAt,
+                        current = false
+                    )
+                }
+            } ?: emptyList()
+            _webLoginsLoading.value = false
+            if (result.isFailure) onWebLoginsError(result.exceptionOrNull()?.message.orEmpty())
+        }
+    }
+
+    private val _webLoginsMessage = MutableStateFlow("")
+    val webLoginsMessage: StateFlow<String> = _webLoginsMessage.asStateFlow()
+    private fun onWebLoginsError(message: String) { _webLoginsMessage.value = message }
+
+    private fun webLoginLabel(agent: String): String {
+        val ua = agent.lowercase()
+        return when {
+            ua.isBlank() -> "Web browser"
+            "edg" in ua -> "Microsoft Edge"
+            "opr" in ua || "opera" in ua -> "Opera"
+            "chrome" in ua && "android" in ua -> "Chrome (Android)"
+            "chrome" in ua -> "Chrome"
+            "firefox" in ua -> "Firefox"
+            "safari" in ua -> "Safari"
+            else -> "Web browser"
+        }
+    }
+
+    private fun webLoginDetail(agent: String): String {
+        val ua = agent.lowercase()
+        val platform = when {
+            "windows" in ua -> "Windows"
+            "mac os" in ua || "macintosh" in ua -> "macOS"
+            "android" in ua -> "Android"
+            "iphone" in ua || "ipad" in ua -> "iOS"
+            "cros" in ua -> "ChromeOS"
+            "linux" in ua -> "Linux"
+            else -> "Web"
+        }
+        return "Signed in on the web · $platform"
+    }
+
+    /** Ends one specific browser session (not the phone). */
+    fun revokeWebLogin(pairedAt: Long, onComplete: (Boolean, String) -> Unit) {
+        viewModelScope.launch {
+            val result = runCatching {
+                withContext(Dispatchers.IO) {
+                    authedJsonCall("/web-pair/sessions/revoke", JSONObject().put("createdAt", pairedAt))
+                }
+            }
+            if (result.isSuccess) refreshWebLogins()
+            onComplete(result.isSuccess, result.exceptionOrNull()?.message.orEmpty())
         }
     }
 
@@ -3881,7 +4070,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val chatId = listOf(me.uid, target.uid).sorted().joinToString("_")
         val ref = getDatabaseInstance().getReference("chats").child(chatId).child("messages")
         val id = ref.push().key ?: UUID.randomUUID().toString()
-        val link = "https://solitary-hill-dcdc.mr44253990.workers.dev/post/${post.id}"
+        val link = "https://convo-chat-companion.mr4425390.workers.dev/post/${post.id}"
         val message = Message(messageId=id,senderId=me.uid,senderName=me.name,senderUsername=me.username,text="Shared post: ${post.title.ifBlank { "Shared a post" }}\n${post.text.take(220)}\n$link",timestamp=System.currentTimeMillis(),imageUrl=post.imageUrl.takeIf{it.isNotBlank()},deliveredToRecipient=false,expiresAt=outgoingExpiryAt())
         ref.child(id).setValue(message).addOnSuccessListener { withUserFcmToken(target.uid,target.fcmToken){token->triggerFcmGatewayNotification(routed("push"),token,me.name,"Shared a Convo post",me.uid,me.profileImageUrl,"message",id)};onComplete(true) }.addOnFailureListener{onComplete(false)}
     }

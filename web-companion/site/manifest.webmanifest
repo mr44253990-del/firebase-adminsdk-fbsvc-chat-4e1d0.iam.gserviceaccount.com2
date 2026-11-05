@@ -1,0 +1,17 @@
+{
+  "name": "Convo Chat Web",
+  "short_name": "Convo",
+  "description": "Your private Convo Chat messenger in the browser.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#07070f",
+  "theme_color": "#07070f",
+  "categories": ["social", "communication"],
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" },
+    { "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml" }
+  ]
+}

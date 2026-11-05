@@ -1231,9 +1231,17 @@ fun ChatScreen(
                         val flash by animateFloatAsState(if (highlightedMessageId == msg.messageId) .22f else 0f, tween(450), label = "jump_flash")
                         Box(Modifier.fillMaxWidth().messageEntrance(chatAppearance.messageAnimation, entranceAnimate, msg.senderId == currentUserId).background(MaterialTheme.colorScheme.primary.copy(alpha = flash), RoundedCornerShape(16.dp)).padding(bottom = if (msg.messageId == lastSeenOwnId || msg.messageId == newestOwnId) 20.dp else 0.dp)) {
                         val isSentByMe = msg.senderId == currentUserId
+                        // Reverse layout: "first in run" = the older message above came from someone else.
+                        val position = visibleMessages.indexOfFirst { it.messageId == msg.messageId }
+                        val older = visibleMessages.getOrNull(position - 1)
+                        val newer = visibleMessages.getOrNull(position + 1)
+                        val sameSenderAbove = older != null && older.senderId == msg.senderId && (msg.timestamp - older.timestamp) < 120_000L
+                        val sameSenderBelow = newer != null && newer.senderId == msg.senderId && (newer.timestamp - msg.timestamp) < 120_000L
                         MessageBubbleItem(
                             message = msg,
                             isSentByMe = isSentByMe,
+                            isFirstInGroup = !sameSenderAbove,
+                            isLastInGroup = !sameSenderBelow,
                             onReplySelect = { replyingToMessage = msg },
                             onEditSelect = {
                                 if (isSentByMe) {
@@ -1877,7 +1885,7 @@ fun ChatScreen(
                                 supportingContent = { Text("@${person.username}") },
                                 leadingContent = { AsyncImage(person.profileImageUrl.ifBlank { null }, person.name, modifier = Modifier.size(40.dp).clip(CircleShape)) },
                                 modifier = Modifier.clip(RoundedCornerShape(16.dp)).clickable {
-                                    viewModel.sendMessage(recipient, "Contact: ${person.name} (@${person.username})\nhttps://solitary-hill-dcdc.mr44253990.workers.dev/profile?uid=${person.uid}")
+                                    viewModel.sendMessage(recipient, "Contact: ${person.name} (@${person.username})\nhttps://convo-chat-companion.mr4425390.workers.dev/profile?uid=${person.uid}")
                                     showContactPicker = false
                                     contactSearchQuery = ""
                                 }
@@ -2080,7 +2088,9 @@ fun MessageBubbleItem(
     onMentionClick: (String) -> Unit = {},
     appearance: ChatAppearance = ChatAppearance(),
     themeSpec: ChatThemeSpec? = null,
-    autoSaveAllowed: Boolean = true
+    autoSaveAllowed: Boolean = true,
+    isFirstInGroup: Boolean = true,
+    isLastInGroup: Boolean = true
 ) {
     var showMenu by remember { mutableStateOf(false) }
     var showImageViewer by remember { mutableStateOf(false) }
@@ -2113,7 +2123,41 @@ fun MessageBubbleItem(
         SelectableMessageDialog(message.text, "", onDismiss = { showSelectText = false })
     }
 
-    Box(modifier = Modifier.fillMaxWidth(), contentAlignment = if (isSentByMe) Alignment.TopEnd else Alignment.TopStart) {
+    // v5 layout: incoming runs show one small avatar on their final bubble, outgoing runs sit
+    // flush right, and bubbles in the middle of a run lose their tail so a burst of messages
+    // reads as one group instead of a stack of separate cards.
+    val corner = appearance.cornerRadius.dp
+    val groupedShape = when {
+        isSentByMe && !isLastInGroup -> RoundedCornerShape(corner, corner, (appearance.cornerRadius * .40f).dp, corner)
+        isSentByMe -> shape
+        !isLastInGroup -> RoundedCornerShape(corner, corner, corner, (appearance.cornerRadius * .40f).dp)
+        else -> shape
+    }
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(top = if (isFirstInGroup) 5.dp else 0.dp),
+        verticalAlignment = Alignment.Bottom,
+        horizontalArrangement = if (isSentByMe) Arrangement.End else Arrangement.Start
+    ) {
+        if (!isSentByMe) {
+            Box(Modifier.size(26.dp), contentAlignment = Alignment.Center) {
+                if (isLastInGroup) {
+                    Box(
+                        modifier = Modifier.size(24.dp).clip(CircleShape)
+                            .background(palette.accent.copy(alpha = .20f))
+                            .border(1.dp, palette.accent.copy(alpha = .40f), CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = message.senderName.trim().take(1).uppercase().ifBlank { "?" },
+                            color = palette.accent,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.ExtraBold
+                        )
+                    }
+                }
+            }
+            Spacer(Modifier.width(6.dp))
+        }
         Column(
             modifier = Modifier
                 .widthIn(max = maxBubbleWidth)
@@ -2147,25 +2191,35 @@ fun MessageBubbleItem(
         ) {
             // Reply indicator inside bubble
             if (message.replyToId != null) {
-                Box(
+                // Quoted message: slim accent rail + two lines, readable on any bubble colour.
+                Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(bottom = 2.dp)
-                        .clip(RoundedCornerShape(14.dp))
+                        .padding(bottom = 5.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Color.White.copy(alpha = if (isSentByMe) .16f else .06f))
                         .clickable { message.replyToId?.let(onJumpToReply) }
-                        .glassmorphic(isDark = isDark, backgroundColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.4f))
-                        .padding(6.dp)
+                        .padding(vertical = 6.dp, horizontal = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column {
+                    Box(
+                        Modifier.width(2.5.dp).height(26.dp)
+                            .clip(RoundedCornerShape(2.dp))
+                            .background(if (isSentByMe) Color.White.copy(alpha = .8f) else palette.accent)
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Column(Modifier.weight(1f)) {
                         Text(
-                            text = "Replied to ${message.replyToSenderName ?: "User"}",
-                            color = MaterialTheme.colorScheme.primary,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold
+                            text = message.replyToSenderName ?: "Message",
+                            color = if (isSentByMe) Color.White.copy(alpha = .92f) else palette.accent,
+                            fontSize = 10.5.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                         Text(
                             text = message.replyToText ?: "Attachment",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            color = palette.text.copy(alpha = .72f),
                             fontSize = 10.sp,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
@@ -2203,15 +2257,19 @@ fun MessageBubbleItem(
                 }
             } else
             Box(
-                modifier = Modifier.chatBubble(bubbleStyle, shape, palette, appearance)
+                modifier = Modifier.chatBubble(bubbleStyle, groupedShape, palette, appearance)
             ) {
                 Column(modifier = Modifier.padding(horizontal = appearance.innerPadding.dp, vertical = (appearance.innerPadding * .62f).dp)) {
-                    if (!isSentByMe && message.senderName.isNotBlank()) {
+                    if (!isSentByMe && message.senderName.isNotBlank() && isFirstInGroup) {
                         Text(
                             text = message.senderName,
-                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                            color = palette.label,
-                            modifier = Modifier.padding(bottom = 1.dp)
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontWeight = FontWeight.ExtraBold,
+                                fontSize = 11.sp,
+                                letterSpacing = .2.sp
+                            ),
+                            color = if (isDark) palette.accent else palette.label,
+                            modifier = Modifier.padding(bottom = 2.dp)
                         )
                     }
 
@@ -2271,8 +2329,8 @@ fun MessageBubbleItem(
 
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.End,
-                        modifier = Modifier.align(Alignment.End)
+                        horizontalArrangement = Arrangement.spacedBy(3.dp),
+                        modifier = Modifier.align(Alignment.End).padding(top = 3.dp)
                     ) {
                         if (message.edited) {
                             Text(
@@ -2328,13 +2386,13 @@ fun MessageBubbleItem(
             // Show Reactions
             if (message.reactions.isNotEmpty()) {
                 Row(
-                    modifier = Modifier.padding(top = 2.dp, start = 8.dp, end = 8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    modifier = Modifier.padding(top = 1.dp, start = 8.dp, end = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(5.dp)
                 ) {
                     message.reactions.values.groupingBy { it }.eachCount().forEach { (reaction, count) ->
                         Row(
                             modifier = Modifier
-                                .offset(y = (-6).dp)
+                                .offset(y = (-8).dp)
                                 .clip(RoundedCornerShape(18.dp))
                                 .glassmorphic(isDark = isDark, backgroundColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.82f), borderColor = palette.accent.copy(alpha = .35f), shape = RoundedCornerShape(18.dp))
                                 .clickable { onReactSelect(reaction) }
