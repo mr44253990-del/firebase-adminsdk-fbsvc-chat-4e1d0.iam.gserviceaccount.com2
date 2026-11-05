@@ -639,10 +639,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private val defaultWebhookUrl = "https://convo-chat-companion.mr4425390.workers.dev/"
 
     private val storedGatewayUrl = sharedPrefs.getString("webhook_url", null).orEmpty()
-    private val _webhookUrl = MutableStateFlow(
-        storedGatewayUrl.takeIf { it.startsWith("https://") && !it.contains("n8n", ignoreCase = true) }
-            ?: defaultWebhookUrl
-    )
+    // Normalize on startup too, so a cached retired primary never gets used even before RTDB loads.
+    private val _webhookUrl = MutableStateFlow(WorkerRouter.normalizePrimary(storedGatewayUrl))
     val webhookUrl: StateFlow<String> = _webhookUrl.asStateFlow()
 
     /** Base URL for a service, honouring the admin's multi-worker routing (falls back to primary). */
@@ -669,9 +667,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         if (!isCurrentAdmin()) return onDone(false, "Admin only")
         val bad = nodes.firstOrNull { it.url.isNotBlank() && !it.valid }
         if (bad != null) return onDone(false, "Worker URL must start with https:// (${bad.label.ifBlank { bad.id }})")
+        // Never keep a retired worker or a duplicate of the primary in the pool.
+        val usable = WorkerRouter.cleanPool(nodes, _webhookUrl.value)
         getDatabaseInstance().getReference("config").child("app_settings").child("workerPool")
-            .setValue(WorkerRouter.toMap(nodes.filter { it.url.isNotBlank() }))
-            .addOnSuccessListener { WorkerRouter.setNodes(nodes.filter { it.url.isNotBlank() }); AdminAudit.log("worker_pool_save", nodes.filter { it.url.isNotBlank() }.joinToString { "${it.label.ifBlank { it.id }}:${it.services.joinToString("+")}" }); onDone(true, "Worker routing saved") }
+            .setValue(WorkerRouter.toMap(usable))
+            .addOnSuccessListener { WorkerRouter.setNodes(usable); AdminAudit.log("worker_pool_save", usable.joinToString { "${it.label.ifBlank { it.id }}:${it.services.joinToString("+")}" }); onDone(true, "Worker routing saved") }
             .addOnFailureListener { onDone(false, it.localizedMessage ?: "Save failed") }
     }
 
@@ -980,13 +980,14 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun updateWebhookUrl(url: String) {
-        _webhookUrl.value = url
-        sharedPrefs.edit().putString("webhook_url", url).apply()
-        
+        val clean = WorkerRouter.normalizePrimary(url)
+        _webhookUrl.value = clean
+        sharedPrefs.edit().putString("webhook_url", clean).apply()
+
         try {
             getDatabaseInstance().getReference("config")
                 .child("app_settings")
-                .updateChildren(mapOf("webhookUrl" to url, "workerUrl" to url))
+                .updateChildren(mapOf("webhookUrl" to clean, "workerUrl" to clean))
                 .addOnSuccessListener {
                     Log.d("RTDB_CONFIG", "Successfully saved webhook URL to RTDB")
                 }
@@ -996,7 +997,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         } catch (e: Exception) {
             Log.e("RTDB_CONFIG", "Error updating global config in RTDB: ${e.message}")
         }
-        testFcmGateway(url)
+        testFcmGateway(clean)
     }
 
     fun testFcmGateway(url: String = _webhookUrl.value) {
@@ -2000,12 +2001,15 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     if (snapshot.exists()) {
                         val configured = (snapshot.child("workerUrl").value as? String)
                             ?: (snapshot.child("webhookUrl").value as? String)
-                        val url = configured?.takeIf {
-                            it.startsWith("https://") && !it.contains("n8n", ignoreCase = true)
-                        } ?: defaultWebhookUrl
+                        // Self-heal: a retired primary (old script name / typo'd subdomain) is replaced with
+                        // the canonical new Worker, and the pool is pruned of retired / duplicate nodes so
+                        // only the new primary remains.
+                        val url = WorkerRouter.normalizePrimary(configured)
+                        val rawNodes = WorkerRouter.parse(snapshot.child("workerPool").value)
+                        val cleanNodes = WorkerRouter.cleanPool(rawNodes, url)
                         _webhookUrl.value = url
                         WorkerRouter.setPrimary(url)
-                        WorkerRouter.setNodes(WorkerRouter.parse(snapshot.child("workerPool").value))
+                        WorkerRouter.setNodes(cleanNodes)
                         WorkerRouter.setMode(snapshot.child("workerPoolMode").value as? String)
                         sharedPrefs.edit().putString("webhook_url", url).apply()
                         val configuredPresenceUrl = snapshot.child("presenceWorkerUrl").getValue(String::class.java)
@@ -2014,8 +2018,16 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                             ?: _presenceWorkerUrl.value
                         _presenceWorkerUrl.value = presenceUrl
                         if (presenceUrl.isNotBlank()) sharedPrefs.edit().putString("presence_worker_url", presenceUrl).apply()
-                        if (configured != url) {
-                            configRef.updateChildren(mapOf("webhookUrl" to url, "workerUrl" to url))
+                        // Persist the correction once (admin only — RTDB rules require the admin email).
+                        // After this writes, the listener re-fires with clean data and makes no further write.
+                        if (isCurrentAdmin()) {
+                            val fixes = mutableMapOf<String, Any>()
+                            if (configured != url) { fixes["webhookUrl"] = url; fixes["workerUrl"] = url }
+                            if (cleanNodes.size != rawNodes.size) { fixes["workerPool"] = WorkerRouter.toMap(cleanNodes) }
+                            if (fixes.isNotEmpty()) {
+                                configRef.updateChildren(fixes)
+                                Log.d("RTDB_CONFIG", "Auto-migrated worker config: primary=$url pool=${cleanNodes.size}")
+                            }
                         }
                         Log.d("RTDB_CONFIG", "Loaded direct FCM gateway URL")
                     } else if (isCurrentAdmin()) {
