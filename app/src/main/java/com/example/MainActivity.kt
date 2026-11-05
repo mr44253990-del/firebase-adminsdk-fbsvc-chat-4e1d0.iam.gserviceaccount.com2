@@ -419,9 +419,12 @@ class MainActivity : FragmentActivity() {
 
                 PremiumBackground {
                     val currentRoute = navController.currentBackStackEntryAsState().value?.destination?.route
-                    // Screenshots/recording are blocked only while a chat or call is on screen.
-                    LaunchedEffect(currentRoute) {
-                        if (currentRoute?.substringBefore('/')?.substringBefore('?') in setOf("chat", "group_chat", "call", "group_call")) {
+                    val privacySettings by com.example.security.PrivacyPreferences.settings.collectAsState()
+                    // Screenshots/recording can now be turned ON or OFF by user setting
+                    LaunchedEffect(currentRoute, privacySettings.preventScreenshotOnSensitiveScreens) {
+                        if (privacySettings.preventScreenshotOnSensitiveScreens &&
+                            currentRoute?.substringBefore('/')?.substringBefore('?') in setOf("chat", "group_chat", "call", "group_call")
+                        ) {
                             window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
                         } else {
                             window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)

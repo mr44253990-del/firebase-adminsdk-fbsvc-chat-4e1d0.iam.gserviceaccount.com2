@@ -213,6 +213,7 @@ fun AdminControlCenterScreen(
     val workerNeedsUpdate = workerReports.firstOrNull()?.let { !it.reachable || it.outdated || !it.serviceAccount } ?: workerOutdatedSeen
     val allMenuItems = listOf(
         AdminMenuEntry("server_health", "Server health & updater", "Worker version, secrets, one-tap Worker update", Icons.Outlined.Dns, Color(0xFF00897B), if (workerNeedsUpdate) "FIX" else "OK"),
+        AdminMenuEntry("web_deploy", "Web companion & Cloudflare deploy", "Deploy Convo Web to Cloudflare Pages & get live URL", Icons.Outlined.Language, Color(0xFFF38020)),
         AdminMenuEntry("staff", "Sub-admins & roles", "Delegate access: users, posts, reports, Premium…", Icons.Outlined.AdminPanelSettings, Color(0xFF3949AB), users.count { it.staffRole.isNotBlank() }.takeIf { it > 0 }?.toString().orEmpty()),
         AdminMenuEntry("email_security", "Email & 2FA", "Multi-provider OTP mail pool, Gmail API, failover and test", Icons.Outlined.MarkEmailRead, Color(0xFF00897B)),
         AdminMenuEntry("updates", "App updates", "Signed APK, release notes and rollout", Icons.Outlined.Publish, Color(0xFF635BFF), if (flagshipConfig.updateEnabled) "LIVE" else ""),
@@ -1117,6 +1118,11 @@ fun AdminControlCenterScreen(
                             Button(onClick = { viewModel.sendAdminTestNotification() }, enabled = gatewayHealth.configured, modifier = Modifier.fillMaxWidth()) {
                                 Icon(Icons.Default.SendToMobile, null); Spacer(Modifier.width(7.dp)); Text("Send diagnostic push")
                             }
+                        }
+                    }
+                    "web_deploy" -> {
+                        AdminPanelCard("Web companion & Cloudflare deploy", "Deploy Convo Web to Cloudflare Pages with 1 tap and get your live URL", Icons.Outlined.Language) {
+                            AdminWebDeployPanel(viewModel)
                         }
                     }
                 }

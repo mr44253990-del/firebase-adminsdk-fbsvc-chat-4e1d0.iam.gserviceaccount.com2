@@ -194,6 +194,71 @@ private fun DeviceSessionRow(session: DeviceSession, onDelete: (DeviceSession) -
     }
 }
 
+@Composable
+private fun WebSessionRow(
+    session: WebSessionInfo,
+    onRevoke: (WebSessionInfo) -> Unit
+) {
+    Surface(
+        shape = RoundedCornerShape(18.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(38.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.primaryContainer),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.LaptopChromebook,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    text = "${session.browser} • ${session.os}",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 13.sp
+                )
+                Text(
+                    text = if (session.ip.isNotBlank()) "IP: ${session.ip}" else "Cloudflare Edge",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 10.sp
+                )
+                val timeStr = if (session.lastActiveAt > 0L) {
+                    val sdf = java.text.SimpleDateFormat("dd MMM, hh:mm a", java.util.Locale.getDefault())
+                    "Active: " + sdf.format(java.util.Date(session.lastActiveAt))
+                } else if (session.createdAt > 0L) {
+                    val sdf = java.text.SimpleDateFormat("dd MMM, hh:mm a", java.util.Locale.getDefault())
+                    "Connected: " + sdf.format(java.util.Date(session.createdAt))
+                } else "Active now"
+                Text(
+                    text = timeStr,
+                    fontSize = 10.sp,
+                    color = Color(0xFF23864D)
+                )
+            }
+            IconButton(onClick = { onRevoke(session) }) {
+                Icon(
+                    imageVector = Icons.Outlined.Logout,
+                    contentDescription = "Log out web session",
+                    tint = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+        }
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun HomeScreen(
@@ -280,6 +345,9 @@ fun HomeScreen(
     var webPairExpiresAt by remember { mutableLongStateOf(0L) }
     var webPairLoading by remember { mutableStateOf(false) }
     var webRevokeLoading by remember { mutableStateOf(false) }
+    var activeWebSessionsList by remember { mutableStateOf<List<WebSessionInfo>>(emptyList()) }
+    var activeWebSessionsLoading by remember { mutableStateOf(false) }
+    var autoLoginLoading by remember { mutableStateOf(false) }
     var showAllDeviceSessions by rememberSaveable { mutableStateOf(false) }
     var deviceSessionPendingDelete by remember { mutableStateOf<DeviceSession?>(null) }
     var showClearDeviceHistoryDialog by rememberSaveable { mutableStateOf(false) }
@@ -2245,10 +2313,29 @@ fun HomeScreen(
                                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                                     Icon(Icons.Outlined.Shield, null, tint = MaterialTheme.colorScheme.primary)
                                     Column(Modifier.weight(1f).padding(start = 12.dp)) {
-                                        Text(tr("Screenshot protection"), fontWeight = FontWeight.SemiBold)
-                                        Text("Always on inside chats and calls. Screenshots are allowed everywhere else.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text(if (appLanguage == "bn") "স্ক্রিনশট ব্লকার সুরক্ষা" else tr("Screenshot protection"), fontWeight = FontWeight.SemiBold)
+                                        Text(
+                                            if (appLanguage == "bn") {
+                                                if (privacySettings.preventScreenshotOnSensitiveScreens) "চালু: চ্যাট ও কলে স্ক্রিনশট ব্লক থাকবে" else "বন্ধ: স্ক্রিনশট নেওয়া যাবে"
+                                            } else {
+                                                if (privacySettings.preventScreenshotOnSensitiveScreens) "On: Screenshots blocked in chats & calls" else "Off: Screenshots allowed anywhere"
+                                            },
+                                            fontSize = 11.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
                                     }
-                                    Icon(Icons.Default.Lock, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+                                    Switch(
+                                        checked = privacySettings.preventScreenshotOnSensitiveScreens,
+                                        onCheckedChange = { checked ->
+                                            PrivacyPreferences.update(context) { it.copy(preventScreenshotOnSensitiveScreens = checked) }
+                                            Toast.makeText(
+                                                context,
+                                                if (checked) (if (appLanguage == "bn") "স্ক্রিনশট সুরক্ষা চালু হয়েছে" else "Screenshot protection enabled")
+                                                else (if (appLanguage == "bn") "স্ক্রিনশট সুরক্ষা বন্ধ হয়েছে (স্ক্রিনশট নেওয়া যাবে)" else "Screenshot protection disabled (Screenshots allowed)"),
+                                                Toast.LENGTH_SHORT
+                                            ).show()
+                                        }
+                                    )
                                 }
                                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                                     Icon(Icons.Outlined.Timer, null, tint = MaterialTheme.colorScheme.primary)
@@ -2356,44 +2443,133 @@ fun HomeScreen(
                         }
 
                         if (settingsPage == "devices") {
+                        LaunchedEffect(Unit) {
+                            activeWebSessionsLoading = true
+                            viewModel.fetchActiveWebSessions { sessions, _ ->
+                                activeWebSessionsList = sessions
+                                activeWebSessionsLoading = false
+                            }
+                        }
                         TwoFactorCard()
                         Card(shape = RoundedCornerShape(26.dp), modifier = Modifier.fillMaxWidth()) {
-                            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(Icons.Outlined.LaptopChromebook, null, tint = MaterialTheme.colorScheme.primary)
+                                    Icon(Icons.Outlined.Language, null, tint = MaterialTheme.colorScheme.primary)
                                     Spacer(Modifier.width(9.dp))
-                                    Text(if (appLanguage == "bn") "ওয়েব কম্প্যানিয়ন" else "Web companion", fontWeight = FontWeight.Bold)
+                                    Text(if (appLanguage == "bn") "কনভো ওয়েব ও সক্রিয় সেশন" else "Convo Web & Active Sessions", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
                                 }
                                 Text(
-                                    if (appLanguage == "bn") "আপনার স্পষ্ট অনুমতিতে ৯০ সেকেন্ডের একবার-ব্যবহারযোগ্য কোড তৈরি হবে। ব্রাউজার সেশন ১২ ঘণ্টা থাকে; এই ফোন থেকে সব সেশন বাতিল করা যাবে।" else "Create a one-time 90-second code only when you choose. Browser sessions last 12 hours and can be revoked from this phone.",
+                                    if (appLanguage == "bn") "কম্পিউটার বা মোবাইলের যেকোনো ব্রাউজারে সম্পূর্ণ Convo ব্যবহার করুন। অ্যাপ থেকে সরাসরি এক ক্লিকে অটো-লগইন করতে পারেন, অথবা ৯-সংখ্যার লিঙ্ক কোড ব্যবহার করুন।" else "Use full real-time Convo in any web browser. Auto-login in 1-tap from this phone or connect with a 9-digit pairing code.",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                                 Button(
                                     onClick = {
-                                        webPairLoading = true
-                                        viewModel.createWebCompanionPairing { pairing, error ->
-                                            webPairLoading = false
-                                            if (pairing != null) {
-                                                webPairCode = pairing.code
-                                                webPairUrl = pairing.companionUrl
-                                                webPairExpiresAt = pairing.expiresAt
-                                                showWebPairDialog = true
-                                            } else Toast.makeText(context, error.ifBlank { "Pairing failed" }, Toast.LENGTH_LONG).show()
+                                        autoLoginLoading = true
+                                        viewModel.createWebAutoLoginUrl { url, error ->
+                                            autoLoginLoading = false
+                                            if (url != null) {
+                                                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                                                clipboard?.setPrimaryClip(ClipData.newPlainText("Convo Web Login URL", url))
+                                                runCatching { context.startActivity(intent) }
+                                                Toast.makeText(context, if (appLanguage == "bn") "ওয়েব ভার্সন খোলা হয়েছে এবং অটো-লগইন লিংক কপি হয়েছে!" else "Web opened in browser & auto-login link copied!", Toast.LENGTH_SHORT).show()
+                                            } else {
+                                                Toast.makeText(context, error ?: "Failed to generate auto-login link", Toast.LENGTH_LONG).show()
+                                            }
                                         }
                                     },
-                                    enabled = !webPairLoading,
+                                    enabled = !autoLoginLoading,
                                     modifier = Modifier.fillMaxWidth()
                                 ) {
-                                    if (webPairLoading) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                                    else Icon(Icons.Outlined.LaptopChromebook, null)
+                                    if (autoLoginLoading) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
+                                    else Icon(Icons.Outlined.OpenInBrowser, null)
                                     Spacer(Modifier.width(8.dp))
-                                    Text(if (appLanguage == "bn") "ব্রাউজার সংযোগ করুন" else "Link my browser")
+                                    Text(if (appLanguage == "bn") "ওয়েব ভার্সন খুলুন (অটো লগইন)" else "Open Convo Web (Auto-Login)")
                                 }
-                                OutlinedButton(onClick = { showRevokeWebDialog = true }, modifier = Modifier.fillMaxWidth()) {
-                                    Icon(Icons.Outlined.LinkOff, null)
+                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    OutlinedButton(
+                                        onClick = {
+                                            webPairLoading = true
+                                            viewModel.createWebCompanionPairing { pairing, error ->
+                                                webPairLoading = false
+                                                if (pairing != null) {
+                                                    webPairCode = pairing.code
+                                                    webPairUrl = pairing.companionUrl
+                                                    webPairExpiresAt = pairing.expiresAt
+                                                    showWebPairDialog = true
+                                                } else Toast.makeText(context, error.ifBlank { "Pairing failed" }, Toast.LENGTH_LONG).show()
+                                            }
+                                        },
+                                        enabled = !webPairLoading,
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        if (webPairLoading) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                                        else Icon(Icons.Outlined.QrCodeScanner, null, modifier = Modifier.size(18.dp))
+                                        Spacer(Modifier.width(6.dp))
+                                        Text(if (appLanguage == "bn") "লিঙ্ক কোড" else "Pair Code", maxLines = 1)
+                                    }
+                                    OutlinedButton(
+                                        onClick = { showRevokeWebDialog = true },
+                                        modifier = Modifier.weight(1f),
+                                        colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                                    ) {
+                                        Icon(Icons.Outlined.LinkOff, null, modifier = Modifier.size(18.dp))
+                                        Spacer(Modifier.width(6.dp))
+                                        Text(if (appLanguage == "bn") "সব সেশন বন্ধ" else "Revoke All", maxLines = 1)
+                                    }
+                                }
+
+                                HorizontalDivider(Modifier.padding(vertical = 4.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+
+                                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                                    Icon(Icons.Outlined.DevicesOther, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
                                     Spacer(Modifier.width(8.dp))
-                                    Text(if (appLanguage == "bn") "সব ওয়েব সেশন বাতিল করুন" else "Revoke all web sessions")
+                                    Text(
+                                        if (appLanguage == "bn") "ওয়েব ভার্সনে কে কে লগইন আছে (${activeWebSessionsList.size})" else "Active Web Sessions (${activeWebSessionsList.size})",
+                                        fontWeight = FontWeight.Bold,
+                                        style = MaterialTheme.typography.titleSmall,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    IconButton(
+                                        onClick = {
+                                            activeWebSessionsLoading = true
+                                            viewModel.fetchActiveWebSessions { list, _ ->
+                                                activeWebSessionsList = list
+                                                activeWebSessionsLoading = false
+                                            }
+                                        },
+                                        modifier = Modifier.size(32.dp)
+                                    ) {
+                                        Icon(Icons.Default.Refresh, "Refresh web sessions", modifier = Modifier.size(18.dp))
+                                    }
+                                }
+
+                                if (activeWebSessionsLoading) {
+                                    Box(Modifier.fillMaxWidth().padding(12.dp), contentAlignment = Alignment.Center) {
+                                        CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
+                                    }
+                                } else if (activeWebSessionsList.isEmpty()) {
+                                    Text(
+                                        if (appLanguage == "bn") "বর্তমানে কোনো ওয়েব সেশন সক্রিয় নেই।" else "No active web browser sessions currently logged in.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.padding(vertical = 4.dp)
+                                    )
+                                } else {
+                                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        activeWebSessionsList.forEach { webSession ->
+                                            WebSessionRow(
+                                                session = webSession,
+                                                onRevoke = { s ->
+                                                    viewModel.revokeSingleWebSession(s.sessionHash) { ok, msg ->
+                                                        Toast.makeText(context, msg ?: if (ok) "Session revoked" else "Failed", Toast.LENGTH_SHORT).show()
+                                                        viewModel.fetchActiveWebSessions { list, _ -> activeWebSessionsList = list }
+                                                    }
+                                                }
+                                            )
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -2460,6 +2636,7 @@ fun HomeScreen(
                                         viewModel.revokeWebCompanionSessions { ok, message ->
                                             webRevokeLoading = false
                                             showRevokeWebDialog = false
+                                            activeWebSessionsList = emptyList()
                                             Toast.makeText(context, message, Toast.LENGTH_LONG).show()
                                         }
                                     }) { Text(if (appLanguage == "bn") "বাতিল করুন" else "Revoke all", color = MaterialTheme.colorScheme.error) }

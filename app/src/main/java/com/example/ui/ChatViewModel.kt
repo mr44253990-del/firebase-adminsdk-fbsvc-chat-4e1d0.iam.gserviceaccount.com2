@@ -90,6 +90,16 @@ data class PresenceMonitorUser(
 
 data class WebCompanionPairing(val code: String, val expiresAt: Long, val companionUrl: String)
 
+data class WebSessionInfo(
+    val sessionHash: String = "",
+    val browser: String = "Web Browser",
+    val os: String = "Desktop",
+    val summary: String = "",
+    val ip: String = "",
+    val createdAt: Long = 0L,
+    val lastActiveAt: Long = 0L
+)
+
 data class PresenceDashboard(
     val checking: Boolean = false,
     val message: String = "No presence API configured",
@@ -1771,13 +1781,102 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 val idToken = Tasks.await(user.getIdToken(false)).token ?: error("Could not refresh sign-in")
                 val body = "{}".toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull())
                 val request = Request.Builder().url("$base/web-pair/revoke-all")
-                    .header("Authorization", "Bearer $idToken").post(body).build()
+                .header("Authorization", "Bearer $idToken").post(body).build()
                 val response = withContext(Dispatchers.IO) {
                     OkHttpClient().newCall(request).execute().use { it.code to (it.body?.string().orEmpty()) }
                 }
                 val json = JSONObject(response.second.ifBlank { "{}" })
                 if (response.first !in 200..299 || !json.optBoolean("success")) error(json.optString("error").ifBlank { "Revoke failed (HTTP ${response.first})" })
                 "All web companion sessions have been revoked"
+            }
+            onComplete(result.isSuccess, result.getOrElse { it.message ?: "Revoke failed" })
+        }
+    }
+
+    /** Create instant one-time auto-login link for the web companion. */
+    fun createWebAutoLoginUrl(onComplete: (String?, String) -> Unit) {
+        val user = FirebaseAuth.getInstance().currentUser ?: return onComplete(null, "Sign in again")
+        val base = _webhookUrl.value.trim().trimEnd('/')
+        if (!base.startsWith("https://")) return onComplete(null, "Secure Worker URL is not configured")
+        viewModelScope.launch {
+            val result = runCatching {
+                val idToken = Tasks.await(user.getIdToken(false)).token ?: error("Could not refresh sign-in")
+                val body = "{}".toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull())
+                val request = Request.Builder().url("$base/web-pair/create-auto-login-token")
+                    .header("Authorization", "Bearer $idToken").post(body).build()
+                val response = withContext(Dispatchers.IO) {
+                    OkHttpClient().newCall(request).execute().use { it.code to (it.body?.string().orEmpty()) }
+                }
+                val json = JSONObject(response.second.ifBlank { "{}" })
+                if (response.first !in 200..299 || !json.optBoolean("success")) {
+                    error(json.optString("error").ifBlank { "Auto-login request failed (HTTP ${response.first})" })
+                }
+                json.getString("autoLoginUrl")
+            }
+            onComplete(result.getOrNull(), result.exceptionOrNull()?.message.orEmpty())
+        }
+    }
+
+    /** Fetch active web sessions for the current user. */
+    fun fetchActiveWebSessions(onComplete: (List<WebSessionInfo>, String) -> Unit) {
+        val user = FirebaseAuth.getInstance().currentUser ?: return onComplete(emptyList(), "Sign in again")
+        val base = _webhookUrl.value.trim().trimEnd('/')
+        if (!base.startsWith("https://")) return onComplete(emptyList(), "Secure Worker URL is not configured")
+        viewModelScope.launch {
+            val result = runCatching {
+                val idToken = Tasks.await(user.getIdToken(false)).token ?: error("Could not refresh sign-in")
+                val body = "{}".toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull())
+                val request = Request.Builder().url("$base/web-pair/active-sessions")
+                    .header("Authorization", "Bearer $idToken").post(body).build()
+                val response = withContext(Dispatchers.IO) {
+                    OkHttpClient().newCall(request).execute().use { it.code to (it.body?.string().orEmpty()) }
+                }
+                val json = JSONObject(response.second.ifBlank { "{}" })
+                if (response.first !in 200..299 || !json.optBoolean("success")) {
+                    error(json.optString("error").ifBlank { "Session query failed (HTTP ${response.first})" })
+                }
+                val arr = json.optJSONArray("sessions") ?: org.json.JSONArray()
+                val list = mutableListOf<WebSessionInfo>()
+                for (i in 0 until arr.length()) {
+                    val obj = arr.getJSONObject(i)
+                    list.add(
+                        WebSessionInfo(
+                            sessionHash = obj.optString("sessionHash"),
+                            browser = obj.optString("browser", "Web Browser"),
+                            os = obj.optString("os", "Desktop"),
+                            summary = obj.optString("summary"),
+                            ip = obj.optString("ip"),
+                            createdAt = obj.optLong("createdAt"),
+                            lastActiveAt = obj.optLong("lastActiveAt")
+                        )
+                    )
+                }
+                list
+            }
+            onComplete(result.getOrDefault(emptyList()), result.exceptionOrNull()?.message.orEmpty())
+        }
+    }
+
+    /** Revoke a single active web session. */
+    fun revokeSingleWebSession(sessionHash: String, onComplete: (Boolean, String) -> Unit) {
+        val user = FirebaseAuth.getInstance().currentUser ?: return onComplete(false, "Sign in again")
+        val base = _webhookUrl.value.trim().trimEnd('/')
+        if (!base.startsWith("https://")) return onComplete(false, "Secure Worker URL is not configured")
+        viewModelScope.launch {
+            val result = runCatching {
+                val idToken = Tasks.await(user.getIdToken(false)).token ?: error("Could not refresh sign-in")
+                val body = JSONObject().put("sessionHash", sessionHash).toString()
+                    .toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull())
+                val request = Request.Builder().url("$base/web-pair/revoke-session")
+                    .header("Authorization", "Bearer $idToken").post(body).build()
+                val response = withContext(Dispatchers.IO) {
+                    OkHttpClient().newCall(request).execute().use { it.code to (it.body?.string().orEmpty()) }
+                }
+                val json = JSONObject(response.second.ifBlank { "{}" })
+                if (response.first !in 200..299 || !json.optBoolean("success")) {
+                    error(json.optString("error").ifBlank { "Revoke failed (HTTP ${response.first})" })
+                }
+                "Web session revoked"
             }
             onComplete(result.isSuccess, result.getOrElse { it.message ?: "Revoke failed" })
         }

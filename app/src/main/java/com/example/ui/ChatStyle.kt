@@ -133,15 +133,16 @@ fun rememberBubblePalette(isSent: Boolean, spec: ChatThemeSpec?, bubbleAccent: C
             spec != null -> spec.colors.first().copy(alpha = 1f)
             else -> scheme.background
         }
+        // Crisp, modern flagship chat bubbles (vibrant gradient for sent, sleek clean card for received)
         var fill = when {
-            spec?.isScene == true -> (if (isSent) spec.outgoingFill else spec.incomingFill) ?: accent.copy(alpha = .6f)
-            isSent -> bubbleAccent?.copy(alpha = .94f) ?: scheme.primary.copy(alpha = if (isDark) .32f else .86f)
-            else -> scheme.surfaceVariant.copy(alpha = if (isDark) .62f else .92f)
+            spec?.isScene == true -> (if (isSent) spec.outgoingFill else spec.incomingFill) ?: (if (isSent) Color(0xFF2979FF) else Color(0xFF1E2130))
+            isSent -> bubbleAccent ?: if (isDark) Color(0xFF2563EB) else Color(0xFF1D4ED8)
+            else -> if (isDark) Color(0xFF1E2235) else Color(0xFFF1F3F9)
         }
         var border = when {
-            spec?.isScene == true -> accent.copy(alpha = if (isSent) .95f else .55f)
-            isSent -> accent.copy(alpha = .28f)
-            else -> scheme.onSurface.copy(alpha = .10f)
+            spec?.isScene == true -> accent.copy(alpha = if (isSent) .85f else .45f)
+            isSent -> Color.White.copy(alpha = if (isDark) .18f else .12f)
+            else -> if (isDark) Color.White.copy(alpha = .08f) else Color.Black.copy(alpha = .06f)
         }
         when (style) {
             "outline" -> {
@@ -168,16 +169,16 @@ fun rememberBubblePalette(isSent: Boolean, spec: ChatThemeSpec?, bubbleAccent: C
             else -> Unit
         }
         val effective = fill.compositeOver(baseBackground)
-        val text = if (effective.luminance() > .55f) Color(0xFF17142A) else Color.White
+        val text = if (isSent) Color.White else if (isDark) Color(0xFFF0F2F8) else Color(0xFF111827)
         BubblePalette(
             fill = fill,
-            fillTop = lerpColor(fill, Color.White, if (effective.luminance() > .55f) .35f else .14f),
+            fillTop = if (isSent) lerpColor(fill, Color(0xFF60A5FA), .30f) else lerpColor(fill, Color.White, if (isDark) .08f else .45f),
             border = border,
             text = text,
-            meta = text.copy(alpha = .66f),
+            meta = if (isSent) Color.White.copy(alpha = .78f) else (if (isDark) Color(0xFF9CA3AF) else Color(0xFF6B7280)),
             accent = accent,
-            glow = accent,
-            label = if (spec?.isScene == true || spec != null) lerpColor(accent, text, .15f) else scheme.primary
+            glow = if (isSent) Color(0xFF3B82F6) else accent,
+            label = if (spec?.isScene == true || spec != null) lerpColor(accent, text, .15f) else if (isDark) Color(0xFF60A5FA) else Color(0xFF2563EB)
         )
     }
 }
@@ -190,15 +191,15 @@ private fun lerpColor(a: Color, b: Color, t: Float) = Color(
 )
 
 fun chatBubbleShape(appearance: ChatAppearance, isSent: Boolean): Shape {
-    val r = appearance.cornerRadius.dp
-    val tail = if (appearance.tail) (appearance.cornerRadius * .22f).coerceAtLeast(3f).dp else r
-    return if (isSent) RoundedCornerShape(r, r, tail, r) else RoundedCornerShape(r, r, r, tail)
+    val r = 18.dp
+    val tail = 4.dp
+    return if (isSent) RoundedCornerShape(topStart = r, topEnd = r, bottomStart = r, bottomEnd = tail)
+    else RoundedCornerShape(topStart = r, topEnd = r, bottomStart = tail, bottomEnd = r)
 }
 
 /**
- * Paints a bubble: liquid (gradient + specular highlight), neon (accent rim + soft halo),
- * outline, solid or minimal (no border). The halo is drawn by hand so it looks the same on
- * every Android version and never bleeds inside translucent glass.
+ * Paints a bubble: liquid (gradient + subtle specular highlight), neon,
+ * outline, solid or minimal (no border).
  */
 fun Modifier.chatBubble(style: String, shape: Shape, palette: BubblePalette, appearance: ChatAppearance): Modifier {
     val radius = appearance.cornerRadius.dp
@@ -221,35 +222,17 @@ fun Modifier.chatBubble(style: String, shape: Shape, palette: BubblePalette, app
     }
     m = m.clip(shape)
     m = when (style) {
-        "liquid" -> m.background(Brush.verticalGradient(listOf(palette.fillTop, palette.fill)))
-            .drawBehind {
-                drawRoundRect(
-                    brush = Brush.verticalGradient(listOf(Color.White.copy(alpha = .22f), Color.Transparent), endY = size.height * .5f),
-                    topLeft = Offset(size.width * .04f, 1.5.dp.toPx()),
-                    size = Size(size.width * .92f, size.height * .42f),
-                    cornerRadius = CornerRadius(radius.toPx())
-                )
-            }
+        "liquid", "auto" -> m.background(Brush.verticalGradient(listOf(palette.fillTop, palette.fill)))
         "gradient" -> m.background(
             Brush.linearGradient(listOf(lerpColor(palette.fill, palette.accent, .15f), palette.fill, lerpColor(palette.fill, Color(0xFFFF4FA3), .35f)))
         )
         "depth" -> m.background(Brush.verticalGradient(listOf(palette.fillTop, palette.fill, lerpColor(palette.fill, Color.Black, .22f))))
-            .drawBehind {
-                drawRoundRect(
-                    color = Color.White.copy(alpha = .18f),
-                    topLeft = Offset(size.width * .06f, 1.dp.toPx()),
-                    size = Size(size.width * .88f, 2.dp.toPx()),
-                    cornerRadius = CornerRadius(2.dp.toPx())
-                )
-            }
         "frosted" -> m.background(palette.fill)
             .background(Brush.verticalGradient(listOf(Color.White.copy(alpha = .16f), Color.Transparent, Color.White.copy(alpha = .05f))))
         else -> m.background(palette.fill)
     }
     if (borderWidth > 0.dp && palette.border.alpha > 0f) {
-        m = if (style == "liquid") {
-            m.border(borderWidth, Brush.verticalGradient(listOf(Color.White.copy(alpha = .55f), palette.border, Color.White.copy(alpha = .06f))), shape)
-        } else m.border(borderWidth, palette.border, shape)
+        m = m.border(borderWidth, palette.border, shape)
     }
     return m
 }
