@@ -5906,7 +5906,7 @@ private fun AccountMenuRow(
             .clip(RoundedCornerShape(15.dp))
             .background(
                 if (danger) Brush.linearGradient(listOf(Color(0xFFE11D48).copy(alpha = .16f), Color(0xFF9F1239).copy(alpha = .16f)))
-                else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .45f)
+                else Brush.linearGradient(listOf(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .50f), MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .32f)))
             )
             .clickable(onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 11.dp),
