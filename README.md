@@ -42,6 +42,16 @@ export FIREBASE_SERVICE_ACCOUNT_FILE='/absolute/path/to/a-fresh-service-account.
 
 The new `firechat-fcm-worker.js` supports public health diagnostics and authenticated POST delivery. Use `./test-firechat-worker.sh` for cURL-based health/authenticated tests. Never put either credential in these scripts.
 
+### Web-first profile
+
+The companion Worker (`https://convo-chat-companion.mr4425390.workers.dev`) also serves the web app at `web-companion/site/`, and every profile now opens on the web first:
+
+- **Worker public profile page** (`/profile?uid=<uid>`): cover art, floating avatar with an inline camera pick, badges (moderator / premium / profile type), bio, professional title, pronouns, friend/follower/following counters, and a gradient link card. The primary action is **Open in Convo Web**; the Android app deep link is the secondary fallback.
+- **Android profile** (`Settings → Profile details`): a "Your web profile" card that opens the browser version or copies the shareable link in one tap, plus an "Open web profile" entry in the profile menu.
+- **Web profile** (`web-companion/site/`): edit profile (name, bio, title, pronouns), photo change (browser square center-crop → R2 upload → shared `profileImageUrl` across phone, web, and public page), copyable public link (`/profile/link`) with native share, grouped notification and privacy rows, and session management (`/web-pair/sessions` → revoke one or all browser sessions).
+
+New Worker routes: `POST /web-pair/profile/avatar`, `POST /web-pair/profile/link`, and an extended `POST /web-pair/profile/save` (accepts `professionalTitle`, `pronouns`, `profileImageUrl`). `webPairMe` returns cover image, title, pronouns, profile type, role, `createdAt`, and counters.
+
 The Google button first uses `GetSignInWithGoogleOption` and falls back to `GetGoogleIdOption` for OEM Credential Manager compatibility. The repository now uses one stable debug keystore so CI fingerprints no longer change on every build. Add these fingerprints to Firebase Android app `com.ebchat`, enable Authentication → Google, then download a fresh `google-services.json` (it must contain an Android OAuth `client_type: 1` entry):
 
 ```text
