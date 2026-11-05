@@ -1,4 +1,5 @@
-• Fixed: the Smart worker pool no longer keeps the old retired Worker as primary. When an admin opens the app, the primary is automatically switched to https://convo-chat-companion.mr4425390.workers.dev and the old / duplicate worker is removed — only the new one remains.
-• A retired or mistyped Worker URL can no longer be saved as primary or added to the pool.
-• Admin → Server health shows the live Worker version, the Cloudflare data center and extra service checks, and refreshes itself every minute.
-• This release is versionCode 53 / 4.4.7 (Worker API v50).
+• Fixed: "Cloudflare rejected the API token" — the web deploy and worker deploy now accept the new Cloudflare account tokens (cfat_…), so publishing from the app works with your correct token.
+• Fixed: media uploads (R2) — photos, reels and profile pictures now upload and load publicly; public delivery route added and R2 fully configured on the server.
+• Live: the web companion is published at https://convo-chat-companion.pages.dev — open it on any browser and pair from the app.
+• New design: the first-launch / update welcome menu is redesigned — gradient header, version pill and a cleaner, better organized list of what's new.
+• Web deploy screen now knows your Cloudflare account and project by default. This release is versionCode 54 / 4.4.8.

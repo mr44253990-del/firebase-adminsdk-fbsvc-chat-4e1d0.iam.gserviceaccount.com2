@@ -1341,8 +1341,8 @@ private fun AdminWebDeployPanel(viewModel: ChatViewModel) {
     // never logged, never sent anywhere except the worker's own deploy route.
     val prefs = remember { context.getSharedPreferences("convo_web_deploy", android.content.Context.MODE_PRIVATE) }
     var apiToken by rememberSaveable { mutableStateOf(prefs.getString("api_token", "").orEmpty()) }
-    var accountId by rememberSaveable { mutableStateOf(prefs.getString("account_id", "").orEmpty()) }
-    var project by rememberSaveable { mutableStateOf(prefs.getString("project", "convo-chat-web").orEmpty()) }
+    var accountId by rememberSaveable { mutableStateOf(prefs.getString("account_id", "").orEmpty().ifBlank { WorkerDeployer.DEFAULT_ACCOUNT }) }
+    var project by rememberSaveable { mutableStateOf(prefs.getString("project", "").orEmpty().ifBlank { "convo-chat-companion" }) }
     var showToken by rememberSaveable { mutableStateOf(false) }
     var resultUrl by rememberSaveable { mutableStateOf("") }
 

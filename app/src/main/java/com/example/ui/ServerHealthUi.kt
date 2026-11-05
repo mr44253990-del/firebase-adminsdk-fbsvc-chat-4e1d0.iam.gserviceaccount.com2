@@ -88,7 +88,7 @@ import java.util.concurrent.TimeUnit
  * The API token is only kept if the admin asks (encrypted with the Android Keystore).
  */
 object WorkerDeployer {
-    const val DEFAULT_ACCOUNT = "54ff9e3c4c5908b14f410044be85b698"
+    const val DEFAULT_ACCOUNT = "e86734d4b9f828cf4ddc695610c514d0"
     const val DEFAULT_SCRIPT = "convo-chat-companion"
     private const val API = "https://api.cloudflare.com/client/v4"
     private val http by lazy { OkHttpClient.Builder().callTimeout(90, TimeUnit.SECONDS).build() }
@@ -122,13 +122,22 @@ object WorkerDeployer {
                 val j = runCatching { JSONObject(r.body?.string().orEmpty()) }.getOrDefault(JSONObject())
                 if (r.isSuccessful && j.optBoolean("success")) j.optJSONObject("result")?.optString("status").orEmpty() else "error:" + errorText(j, r.code)
             }
-            if (verify.startsWith("error:")) return@runCatching Triple(false, verify.removePrefix("error:"), emptyList<Pair<String, String>>())
             val accounts = http.newCall(Request.Builder().url("$API/accounts?per_page=50").header("Authorization", auth).build()).execute().use { r ->
                 val j = runCatching { JSONObject(r.body?.string().orEmpty()) }.getOrDefault(JSONObject())
                 val arr = j.optJSONArray("result") ?: JSONArray()
                 (0 until arr.length()).mapNotNull { i -> arr.optJSONObject(i)?.let { it.optString("id") to it.optString("name") } }.filter { it.first.isNotBlank() }
             }
-            Triple(verify == "active", if (verify == "active") "Token is active · ${accounts.size} account(s)" else "Token status: $verify", accounts)
+            // Newer account-scoped tokens (cfat_…) fail /user/tokens/verify with "Invalid API
+            // Token" but work fine on account APIs — so a working /accounts call proves the token.
+            val accountScoped = accounts.isNotEmpty()
+            val active = verify == "active" || accountScoped
+            val message = when {
+                verify == "active" -> "Token is active · ${accounts.size} account(s)"
+                accountScoped -> "Token is active (account-scoped) · ${accounts.size} account(s)"
+                verify.startsWith("error:") -> verify.removePrefix("error:")
+                else -> "Token status: $verify"
+            }
+            Triple(active, message, accounts)
         }.getOrElse { Triple(false, it.localizedMessage ?: "Network error", emptyList()) }
     }
 

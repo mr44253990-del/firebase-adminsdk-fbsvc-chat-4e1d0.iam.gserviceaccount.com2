@@ -15,7 +15,7 @@
 const WORKER_API_VERSION = 50;
 // Human-readable Worker release tag, reported by the health endpoint and shown in
 // Admin → Server health so the admin can see exactly which build is live.
-const WORKER_RELEASE = "4.7.0";
+const WORKER_RELEASE = "4.7.1";
 
 // Optional extra data forwarded to the device (rich image notifications, group calls, …).
 const PUSH_EXTRA_KEYS = ["imageUrl", "roomId", "groupId", "groupName", "memberIds", "videoCall", "probeId", "chatId", "previewKind"];
@@ -603,6 +603,26 @@ export default {
       }
 
       return webPairJson(request, env, { error: "Unknown companion route" }, 404);
+    }
+
+    /* Public media delivery. Object keys are unguessable (uid + timestamp + UUID), so GET
+       /media/f/<key> streams them straight from R2 — chat images, reels, avatars and app
+       updates load in browsers and the web companion without auth headers. */
+    if (request.method === "GET" && path.startsWith("/media/f/")) {
+      let key = path.slice("/media/f/".length);
+      try { key = decodeURIComponent(key); } catch (error) { return new Response("Not found", { status: 404 }); }
+      const allowedPrefixes = ["posts/", "reels/", "thumbnails/", "updates/", "avatars/", "web_site/"];
+      if (!key || key.includes("..") || !allowedPrefixes.some(prefix => key.startsWith(prefix))) {
+        return new Response("Not found", { status: 404 });
+      }
+      if (!env.MEDIA_BUCKET || typeof env.MEDIA_BUCKET.get !== "function") return new Response("Media storage is not configured", { status: 503 });
+      const object = await env.MEDIA_BUCKET.get(key);
+      if (!object) return new Response("Not found", { status: 404 });
+      const headers = new Headers();
+      headers.set("Content-Type", (object.httpMetadata && object.httpMetadata.contentType) || "application/octet-stream");
+      headers.set("Cache-Control", (object.httpMetadata && object.httpMetadata.cacheControl) || "public, max-age=3600");
+      headers.set("Access-Control-Allow-Origin", "*");
+      return new Response(object.body, { headers });
     }
 
     if ((request.method === "POST" || request.method === "PUT") && path === "/media/upload") {
@@ -1202,8 +1222,8 @@ export default {
         // Deploy: { accountId, apiToken, projectName, productionUrl? , force? }
         if (path === "/admin/web-deploy/deploy" || path === "/admin/web-deploy/test") {
           const stored = await loadStored();
-          const accountId = String(payload.accountId || stored.accountId || "").trim();
-          const apiToken = String(payload.apiToken || stored.apiToken || "").trim();
+          const accountId = String(payload.accountId || stored.accountId || env.CLOUDFLARE_ACCOUNT_ID || "").trim();
+          const apiToken = String(payload.apiToken || stored.apiToken || env.CLOUDFLARE_API_TOKEN || "").trim();
           if (!/^[a-f0-9]{20,40}$/i.test(accountId)) return jsonResponse({ error: "Cloudflare Account ID looks wrong (it is a 32-character hex id)" }, 400);
           if (apiToken.length < 20) return jsonResponse({ error: "A Cloudflare API token with “Cloudflare Pages: Edit” is required" }, 400);
           const projectName = String(payload.projectName || stored.projectName || "convo-chat-web").toLowerCase()
@@ -1213,11 +1233,16 @@ export default {
             headers: { Authorization: `Bearer ${apiToken}`, "Content-Type": "application/json", ...(init.headers || {}) }
           }).catch(error => ({ ok: false, status: 0, json: async () => ({ errors: [{ message: String(error?.message || "network error") }] }) }));
 
-          // 1 · Verify the token and account.
+          // 1 · Verify the token and account. Newer account-scoped tokens (cfat_…) are
+          // rejected by /user/tokens/verify with "Invalid API Token" even though they work
+          // perfectly on account APIs — so the account endpoint is the authoritative check.
           const verify = await api("/user/tokens/verify");
           const verifyBody = await verify.json().catch(() => ({}));
-          if (!verify.ok || verifyBody.success === false) {
-            return jsonResponse({ error: "Cloudflare rejected the API token", detail: (verifyBody.errors || [])[0]?.message || `HTTP ${verify.status}` }, 403);
+          const accountProbe = await api(`/accounts/${accountId}`);
+          const accountBody = await accountProbe.json().catch(() => ({}));
+          const tokenWorks = (verify.ok && verifyBody.success !== false) || (accountProbe.ok && accountBody.success !== false);
+          if (!tokenWorks) {
+            return jsonResponse({ error: "Cloudflare rejected the API token", detail: (verifyBody.errors || accountBody.errors || [])[0]?.message || `HTTP ${verify.status}` }, 403);
           }
           if (path === "/admin/web-deploy/test") {
             const accounts = await api("/accounts").then(r => r.json()).catch(() => ({}));

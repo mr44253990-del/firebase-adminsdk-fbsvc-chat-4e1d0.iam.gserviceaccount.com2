@@ -34,7 +34,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      CF_ACCOUNT: ${{ vars.CLOUDFLARE_ACCOUNT_ID || '54ff9e3c4c5908b14f410044be85b698' }}
+      CF_ACCOUNT: ${{ vars.CLOUDFLARE_ACCOUNT_ID || 'e86734d4b9f828cf4ddc695610c514d0' }}
       # Must match the app's primary URL: https://convo-chat-companion.mr4425390.workers.dev
       WORKER_NAME: ${{ vars.WORKER_NAME || 'convo-chat-companion' }}
       WORKER_SUBDOMAIN: ${{ vars.WORKER_SUBDOMAIN || 'mr4425390' }}
