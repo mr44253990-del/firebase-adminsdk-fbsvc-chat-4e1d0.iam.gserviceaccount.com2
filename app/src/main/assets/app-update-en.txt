@@ -1,5 +1,5 @@
-• Fixed: "Cloudflare rejected the API token" — the web deploy and worker deploy now accept the new Cloudflare account tokens (cfat_…), so publishing from the app works with your correct token.
-• Fixed: media uploads (R2) — photos, reels and profile pictures now upload and load publicly; public delivery route added and R2 fully configured on the server.
-• Live: the web companion is published at https://convo-chat-companion.pages.dev — open it on any browser and pair from the app.
-• New design: the first-launch / update welcome menu is redesigned — gradient header, version pill and a cleaner, better organized list of what's new.
-• Web deploy screen now knows your Cloudflare account and project by default. This release is versionCode 54 / 4.4.8.
+• Fixed: tapping "Link my browser" crashed with "Must not be called on the main application thread" — pairing and web session controls now run safely in the background.
+• Web companion: sessions now have NO time limit — your browser stays signed in until you sign out or revoke it from the phone.
+• New: sign in on the web with your email and password (same account as the app) — the login is saved in that browser.
+• New design: the account menu is completely redesigned — gold Premium banner, colorful icon rows and a cleaner layout with the version footer.
+• Worker update v4.8.0 (API v51) with email sign-in and unlimited web sessions. This release is versionCode 55 / 4.4.9.

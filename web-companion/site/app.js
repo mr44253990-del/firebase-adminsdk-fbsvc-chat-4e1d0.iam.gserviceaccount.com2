@@ -855,6 +855,31 @@
     }
   }
 
+  /* ------------------------------------------------- email sign-in (saved) */
+  async function emailLogin() {
+    var emailInput = document.getElementById("login-email");
+    var passInput = document.getElementById("login-password");
+    var errorNode = document.getElementById("login-error");
+    if (!emailInput || !passInput) return;
+    var email = emailInput.value.trim();
+    var password = passInput.value;
+    if (!email || !password) { if (errorNode) errorNode.textContent = "Enter your email and password."; (email || !password ? emailInput : passInput).focus(); return; }
+    var button = document.querySelector('[data-action="email-login"]');
+    if (button) { button.disabled = true; button.innerHTML = U.icon("refresh") + "<span>Signing in…</span>"; }
+    try {
+      await Api.login(email, password);
+      if (errorNode) errorNode.textContent = "";
+      state.tab = "chats";
+      await bootAfterSession();
+      toast("Signed in — this browser is saved", "success");
+    } catch (error) {
+      if (errorNode) errorNode.textContent = error.message || "Sign-in failed. Check your email and password.";
+      if (button) { button.disabled = false; button.innerHTML = U.icon("lock") + "<span>Sign in &amp; save this browser</span>"; }
+      passInput.value = "";
+      passInput.focus();
+    }
+  }
+
   /* -------------------------------------------------------------- lock/log */
   function armLockTimer() {
     if (timers.lock) clearTimeout(timers.lock);
@@ -1119,6 +1144,7 @@
     if (action === "share-profile") { shareProfile(); return; }
     if (action === "copy-profile-link") { copyProfileLink(); return; }
     if (action === "pair") { redeemCode(); return; }
+    if (action === "email-login") { emailLogin(); return; }
     if (action === "unlock") { unlock(); return; }
     if (action === "logout") { logout(); return; }
   }

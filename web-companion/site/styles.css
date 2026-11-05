@@ -1259,3 +1259,7 @@ h1, h2, h3, h4 { margin: 0; letter-spacing: -.02em; }
   .pf-actions { padding: 16px 26px 6px; max-width: 520px; }
   .pf-link { margin: 12px 26px 4px; max-width: 620px; }
 }
+
+/* --- email sign-in divider on the connect screen --- */
+.pair-or { display: flex; align-items: center; gap: 10px; margin: 18px 0 12px; color: rgba(255, 255, 255, .55); font-size: 11px; text-transform: uppercase; letter-spacing: .08em; }
+.pair-or::before, .pair-or::after { content: ""; flex: 1; height: 1px; background: rgba(255, 255, 255, .14); }

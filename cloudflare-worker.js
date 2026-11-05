@@ -12,10 +12,10 @@
 
 // Bump WORKER_API_VERSION whenever routes change; the Android app compares it with
 // the version it expects and tells the admin to redeploy when the Worker is older.
-const WORKER_API_VERSION = 50;
+const WORKER_API_VERSION = 51;
 // Human-readable Worker release tag, reported by the health endpoint and shown in
 // Admin → Server health so the admin can see exactly which build is live.
-const WORKER_RELEASE = "4.7.1";
+const WORKER_RELEASE = "4.8.0";
 
 // Optional extra data forwarded to the device (rich image notifications, group calls, …).
 const PUSH_EXTRA_KEYS = ["imageUrl", "roomId", "groupId", "groupName", "memberIds", "videoCall", "probeId", "chatId", "previewKind"];
@@ -182,7 +182,8 @@ export default {
         }
         const sessionToken = randomHex(32);
         const sessionHash = await sha256Hex(`convo-web-session:${sessionToken}`);
-        const expiresAt = now + WEB_SESSION_HOURS * 60 * 60 * 1000;
+        // 0 = no time limit: the browser stays signed in until it signs out or the phone revokes.
+        const expiresAt = 0;
         const userAgent = String(request.headers.get("User-Agent") || "").slice(0, 160);
         await fsPatch(env, `web_pair_sessions/${sessionHash}`, {
           uid,
@@ -204,6 +205,70 @@ export default {
       }
     }
 
+
+    // Email + password sign-in for the browser (the same accounts as the Android app).
+    // Credentials are checked once against Firebase Auth; the browser only ever receives an
+    // opaque web session token (saved in localStorage — "keep me signed in"), never a
+    // Firebase credential. Sessions have no time limit; they end on sign-out or revoke.
+    if (request.method === "POST" && path === "/web-pair/login") {
+      if (!(await webCompanionOriginMatches(request, env))) return webPairJson(request, env, { error: "Unapproved companion origin" }, 403);
+      const body = await request.json().catch(() => ({}));
+      const email = String(body.email || "").trim().toLowerCase();
+      const password = String(body.password || "");
+      if (!email || !password) return webPairJson(request, env, { error: "Enter your email and password" }, 400);
+      if (password.length < 6) return webPairJson(request, env, { error: "Password is too short" }, 400);
+      try {
+        const now = Date.now();
+        const ip = request.headers.get("CF-Connecting-IP") || "unknown";
+        const rateId = await sha256Hex(`web-login-ip:${ip}`);
+        const ratePath = `web_pair_rate/${rateId}`;
+        const rate = await firestoreGet(env, ratePath).catch(() => null) || {};
+        const windowAt = Number(rate.windowAt || 0);
+        const attempts = windowAt > now - 60_000 ? Number(rate.attempts || 0) : 0;
+        if (attempts >= 5) return webPairJson(request, env, { error: "Too many attempts. Wait one minute and try again." }, 429);
+        await fsPatch(env, ratePath, { windowAt: attempts ? windowAt : now, attempts: attempts + 1, expiresAt: now + 120_000 });
+
+        const apiKey = String(env.FIREBASE_WEB_API_KEY || "").trim();
+        if (!apiKey) return webPairJson(request, env, { error: "Email sign-in is not configured on this server" }, 503);
+        const authRes = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${apiKey}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email, password, returnSecureToken: true })
+        }).catch(error => ({ ok: false, status: 0, json: async () => ({ error: { message: String(error?.message || "network error") } }) }));
+        const authBody = await authRes.json().catch(() => ({}));
+        if (!authRes.ok || !authBody.localId) {
+          const reason = String((authBody.error && authBody.error.message) || "");
+          if (reason.includes("TOO_MANY_ATTEMPTS") || authRes.status === 429) {
+            return webPairJson(request, env, { error: "Too many attempts. Try again a bit later." }, 429);
+          }
+          return webPairJson(request, env, { error: "Email or password is wrong" }, 401);
+        }
+        const uid = String(authBody.localId);
+        const profile = await firestoreGet(env, `users/${uid}`);
+        if (!profile || profile.banned === true || profile.disabled === true) {
+          return webPairJson(request, env, { error: "Account is not eligible for the web companion" }, 403);
+        }
+        const sessionToken = randomHex(32);
+        const sessionHash = await sha256Hex(`convo-web-session:${sessionToken}`);
+        const userAgent = String(request.headers.get("User-Agent") || "").slice(0, 160);
+        await fsPatch(env, `web_pair_sessions/${sessionHash}`, {
+          uid,
+          createdAt: now,
+          expiresAt: 0,
+          revokedAt: 0,
+          lastUsedAt: now,
+          userAgent,
+          via: "email",
+          sessionVersion: Number(profile.webCompanionVersion || 0)
+        });
+        await fsPatch(env, `web_sessions/${uid}/items/${sessionHash}`, {
+          createdAt: now, expiresAt: 0, userAgent, revokedAt: 0
+        }).catch(() => null);
+        return webPairJson(request, env, { success: true, sessionToken, expiresAt: 0 }, 200);
+      } catch (error) {
+        return webPairJson(request, env, { error: "Sign-in could not be completed" }, 500);
+      }
+    }
 
     // ---- Web companion v5: full browser client ------------------------------------
     // Every route below is origin-checked, session-authenticated and proxy-only. The browser
@@ -1848,7 +1913,7 @@ function mimeExtension(contentType) {
 }
 
 const WEB_CHAT_LIMIT = 300;
-const WEB_SESSION_HOURS = 12;
+// Web sessions have no time limit (expiresAt === 0); they end only on sign-out/revoke.
 
 /** RTDB REST access for the web companion. Credentials never leave the Worker. */
 async function webPairDb(env) {
@@ -2172,7 +2237,8 @@ async function authenticateWebCompanionSession(request, env) {
   const sessionHash = await sha256Hex(`convo-web-session:${token}`);
   const session = await firestoreGet(env, `web_pair_sessions/${sessionHash}`).catch(() => null);
   const now = Date.now();
-  if (!session || Number(session.expiresAt || 0) <= now || Number(session.revokedAt || 0) > 0) return { ok: false, error: "Companion session expired or revoked" };
+  // expiresAt === 0 means "no time limit" (signed in until sign-out/revoke).
+  if (!session || (Number(session.expiresAt || 0) > 0 && Number(session.expiresAt || 0) <= now) || Number(session.revokedAt || 0) > 0) return { ok: false, error: "Companion session expired or revoked" };
   const uid = String(session.uid || "");
   const profile = uid ? await firestoreGet(env, `users/${uid}`).catch(() => null) : null;
   if (!profile || profile.banned === true || Number(profile.webCompanionVersion || 0) !== Number(session.sessionVersion || 0)) return { ok: false, error: "Companion access was revoked" };

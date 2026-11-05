@@ -39,6 +39,7 @@ import com.google.firebase.messaging.FirebaseMessaging
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
@@ -1761,24 +1762,26 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         if (!base.startsWith("https://")) return onComplete(null, "Secure Worker URL is not configured")
         viewModelScope.launch {
             val result = runCatching {
-                val idToken = Tasks.await(user.getIdToken(false)).token ?: error("Could not refresh sign-in")
-                val body = JSONObject().put("optIn", true).toString()
-                    .toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull())
-                val request = Request.Builder().url("$base/web-pair/create")
-                    .header("Authorization", "Bearer $idToken")
-                    .post(body).build()
-                val response = withContext(Dispatchers.IO) {
-                    OkHttpClient().newCall(request).execute().use { it.code to (it.body?.string().orEmpty()) }
+                // Tasks.await + OkHttp must never run on the main thread ("Must not be called
+                // on the main application thread"), so the whole exchange runs on Dispatchers.IO.
+                withContext(Dispatchers.IO) {
+                    val idToken = Tasks.await(user.getIdToken(false)).token ?: error("Could not refresh sign-in")
+                    val body = JSONObject().put("optIn", true).toString()
+                        .toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull())
+                    val request = Request.Builder().url("$base/web-pair/create")
+                        .header("Authorization", "Bearer $idToken")
+                        .post(body).build()
+                    val response = OkHttpClient().newCall(request).execute().use { it.code to (it.body?.string().orEmpty()) }
+                    val json = JSONObject(response.second.ifBlank { "{}" })
+                    if (response.first !in 200..299 || !json.optBoolean("success")) {
+                        error(json.optString("error").ifBlank { "Pairing request failed (HTTP ${response.first})" })
+                    }
+                    WebCompanionPairing(
+                        code = json.getString("code"),
+                        expiresAt = json.getLong("expiresAt"),
+                        companionUrl = json.getString("companionUrl")
+                    )
                 }
-                val json = JSONObject(response.second.ifBlank { "{}" })
-                if (response.first !in 200..299 || !json.optBoolean("success")) {
-                    error(json.optString("error").ifBlank { "Pairing request failed (HTTP ${response.first})" })
-                }
-                WebCompanionPairing(
-                    code = json.getString("code"),
-                    expiresAt = json.getLong("expiresAt"),
-                    companionUrl = json.getString("companionUrl")
-                )
             }
             onComplete(result.getOrNull(), result.exceptionOrNull()?.message.orEmpty())
         }
@@ -1796,19 +1799,23 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val user = FirebaseAuth.getInstance().currentUser ?: error("Sign in again")
         val base = _webhookUrl.value.trim().trimEnd('/')
         if (!base.startsWith("https://")) error("Secure Worker URL is not configured")
-        val idToken = Tasks.await(user.getIdToken(false)).token ?: error("Could not refresh sign-in")
-        val request = Request.Builder().url(base + path)
-            .header("Authorization", "Bearer $idToken")
-            .post(body.toString().toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull()))
-            .build()
-        val response = OkHttpClient().newCall(request).execute()
-        val text = response.body?.string().orEmpty()
-        response.close()
-        val json = runCatching { JSONObject(text.ifBlank { "{}" }) }.getOrElse { JSONObject() }
-        if (response.code !in 200..299 || !json.optBoolean("success")) {
-            error(json.optString("error").ifBlank { "Request failed (HTTP ${response.code})" })
+        // Blocking work is forced onto Dispatchers.IO so this can never throw
+        // "Must not be called on the main application thread" from Tasks.await.
+        return runBlocking(Dispatchers.IO) {
+            val idToken = Tasks.await(user.getIdToken(false)).token ?: error("Could not refresh sign-in")
+            val request = Request.Builder().url(base + path)
+                .header("Authorization", "Bearer $idToken")
+                .post(body.toString().toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull()))
+                .build()
+            val response = OkHttpClient().newCall(request).execute()
+            val text = response.body?.string().orEmpty()
+            response.close()
+            val json = runCatching { JSONObject(text.ifBlank { "{}" }) }.getOrElse { JSONObject() }
+            if (response.code !in 200..299 || !json.optBoolean("success")) {
+                error(json.optString("error").ifBlank { "Request failed (HTTP ${response.code})" })
+            }
+            json
         }
-        return json
     }
 
     /** Reads the publish status: is a web build staged, and what was deployed last? */
@@ -1958,16 +1965,16 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         if (!base.startsWith("https://")) return onComplete(false, "Secure Worker URL is not configured")
         viewModelScope.launch {
             val result = runCatching {
-                val idToken = Tasks.await(user.getIdToken(false)).token ?: error("Could not refresh sign-in")
-                val body = "{}".toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull())
-                val request = Request.Builder().url("$base/web-pair/revoke-all")
-                    .header("Authorization", "Bearer $idToken").post(body).build()
-                val response = withContext(Dispatchers.IO) {
-                    OkHttpClient().newCall(request).execute().use { it.code to (it.body?.string().orEmpty()) }
+                withContext(Dispatchers.IO) {
+                    val idToken = Tasks.await(user.getIdToken(false)).token ?: error("Could not refresh sign-in")
+                    val body = "{}".toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull())
+                    val request = Request.Builder().url("$base/web-pair/revoke-all")
+                        .header("Authorization", "Bearer $idToken").post(body).build()
+                    val response = OkHttpClient().newCall(request).execute().use { it.code to (it.body?.string().orEmpty()) }
+                    val json = JSONObject(response.second.ifBlank { "{}" })
+                    if (response.first !in 200..299 || !json.optBoolean("success")) error(json.optString("error").ifBlank { "Revoke failed (HTTP ${response.first})" })
+                    "All web companion sessions have been revoked"
                 }
-                val json = JSONObject(response.second.ifBlank { "{}" })
-                if (response.first !in 200..299 || !json.optBoolean("success")) error(json.optString("error").ifBlank { "Revoke failed (HTTP ${response.first})" })
-                "All web companion sessions have been revoked"
             }
             onComplete(result.isSuccess, result.getOrElse { it.message ?: "Revoke failed" })
         }
@@ -2905,7 +2912,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         if (config.provider.equals("supabase", true) && config.supabaseUrl.isNotBlank() && publicUrl.startsWith("${config.supabaseUrl.trimEnd('/')}/storage/v1/object/public/")) {
             return try {
                 val user = FirebaseAuth.getInstance().currentUser ?: return false
-                val token = Tasks.await(user.getIdToken(false)).token ?: return false
+                val token = runBlocking(Dispatchers.IO) { Tasks.await(user.getIdToken(false)).token } ?: return false
                 val payload = JSONObject().put("url", publicUrl).toString()
                 val request = Request.Builder()
                     .url("${config.storageWorkerUrl.trimEnd('/')}/storage/delete")

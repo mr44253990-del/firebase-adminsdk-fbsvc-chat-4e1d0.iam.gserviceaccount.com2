@@ -13,8 +13,9 @@
       var raw = localStorage.getItem(SESSION_KEY);
       if (!raw) return null;
       var parsed = JSON.parse(raw);
-      if (!parsed || !parsed.token || !parsed.expiresAt) return null;
-      if (Date.now() > Number(parsed.expiresAt)) return null;
+      if (!parsed || !parsed.token) return null;
+      // expiresAt === 0 (or missing) means the session has no time limit.
+      if (Number(parsed.expiresAt) > 0 && Date.now() > Number(parsed.expiresAt)) return null;
       return parsed;
     } catch (_) { return null; }
   }
@@ -85,8 +86,27 @@
       var payload = await request("redeem", { code: String(code || "").replace(/\D/g, "") }, { token: "none" });
       var session = {
         token: payload.sessionToken,
-        expiresAt: Number(payload.expiresAt || Date.now() + 12 * 3600 * 1000),
-        pairedAt: Date.now()
+        expiresAt: Number(payload.expiresAt || 0),
+        pairedAt: Date.now(),
+        via: "pair"
+      };
+      saveSession(session);
+      return session;
+    },
+
+    /** Sign in with the same email + password as the Android app. The login is saved in
+     *  this browser (localStorage) so it stays signed in with no time limit. */
+    async login(email, password) {
+      var payload = await request("login", {
+        email: String(email || "").trim(),
+        password: String(password || "")
+      }, { token: "none" });
+      var session = {
+        token: payload.sessionToken,
+        expiresAt: Number(payload.expiresAt || 0),
+        pairedAt: Date.now(),
+        via: "email",
+        email: String(email || "").trim()
       };
       saveSession(session);
       return session;

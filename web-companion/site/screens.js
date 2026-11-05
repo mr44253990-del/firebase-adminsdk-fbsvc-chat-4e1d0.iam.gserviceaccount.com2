@@ -231,8 +231,8 @@
           row({ icon: "logout", title: "Log out of this browser", subtitle: "End this web session only", onClickAttr: 'data-nav="logout"', danger: false }),
           row({ icon: "lock", title: "Log out everywhere", subtitle: "Invalidate every paired browser at once", onClickAttr: 'data-nav="logoutall"', danger: true })
         ].join("")) +
-        '<p class="tiny dim center" style="padding:18px 24px 6px">Convo Chat Web · this browser is paired through your phone. ' +
-        'No password is stored here, and the session ends automatically after 12 hours.</p>';
+        '<p class="tiny dim center" style="padding:18px 24px 6px">Convo Chat Web · this browser is signed in to your account. ' +
+        'No password is stored here, and the session has no time limit — sign out whenever you like.</p>';
       return html + "</div>";
     }
 
@@ -361,7 +361,9 @@
       html += '<div class="group"><div class="group-title">Signed in</div>' +
         '<div class="device-card"><span class="row-ic">' + U.icon("globe") + '</span>' +
         '<span class="meta"><strong>This browser (Convo Chat Web)</strong>' +
-        '<span>Paired session · ends ' + esc(new Date(window.ConvoApi.sessionExpiry()).toLocaleString()) + '</span></span>' +
+        '<span>' + (window.ConvoApi.sessionExpiry() > 0
+          ? 'Signed in · ends ' + esc(new Date(window.ConvoApi.sessionExpiry()).toLocaleString())
+          : 'Signed in · no time limit (stays until you sign out)') + '</span></span>' +
         '<span class="pill">This device</span></div>' + deviceRows + '</div>';
       if (!(state.devices || []).length) {
         html += '<div class="group"><div class="row"><span class="row-main"><strong>No other devices reported</strong>' +
@@ -483,9 +485,15 @@
       '<p class="pair-error" id="pair-error" role="alert"></p>' +
       '<div class="pair-steps">' +
         '<div class="pair-step"><b>1</b><span>Code is single-use and expires in 90 seconds.</span></div>' +
-        '<div class="pair-step"><b>2</b><span>This session lasts 12 hours and can be revoked from your phone any time.</span></div>' +
+        '<div class="pair-step"><b>2</b><span>This browser stays signed in with no time limit — sign out or revoke it from your phone whenever you like.</span></div>' +
         '<div class="pair-step"><b>3</b><span>No password is stored — your phone stays in control.</span></div>' +
       '</div>' +
+      '<div class="pair-or"><span>or sign in with your email</span></div>' +
+      '<input class="pair-code-input" id="login-email" type="email" autocomplete="email" placeholder="Email address" aria-label="Email address">' +
+      '<input class="pair-code-input" id="login-password" type="password" autocomplete="current-password" placeholder="Password" aria-label="Password">' +
+      '<button class="btn primary wide" data-action="email-login">' + U.icon("lock") + '<span>Sign in &amp; save this browser</span></button>' +
+      '<p class="pair-error" id="login-error" role="alert"></p>' +
+      '<p class="pair-fine">Use the same email and password as the Convo Chat app. Your login is saved in this browser and stays until you sign out.</p>' +
       '<p class="pair-fine">Convo Chat Web is a private companion: it shows accepted friend chats only. ' +
       'Media, calls and group chats stay on your phone.</p>' +
     '</div></div>';
