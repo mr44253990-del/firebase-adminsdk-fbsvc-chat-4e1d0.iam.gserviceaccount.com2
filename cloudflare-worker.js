@@ -12,7 +12,10 @@
 
 // Bump WORKER_API_VERSION whenever routes change; the Android app compares it with
 // the version it expects and tells the admin to redeploy when the Worker is older.
-const WORKER_API_VERSION = 49;
+const WORKER_API_VERSION = 50;
+// Human-readable Worker release tag, reported by the health endpoint and shown in
+// Admin → Server health so the admin can see exactly which build is live.
+const WORKER_RELEASE = "4.7.0";
 
 // Optional extra data forwarded to the device (rich image notifications, group calls, …).
 const PUSH_EXTRA_KEYS = ["imageUrl", "roomId", "groupId", "groupName", "memberIds", "videoCall", "probeId", "chatId", "previewKind"];
@@ -843,13 +846,19 @@ export default {
         projectId = account.project_id || null;
         serviceAccountConfigured = Boolean(account.private_key && account.client_email && projectId);
       } catch (_) {}
+      const cf = request.cf || {};
+      const mailProviders = envMailProviders(env);
       return new Response(JSON.stringify({
         ok: serviceAccountConfigured,
         service: "Convo Chat Direct FCM Gateway",
-        version: "4.6.0",
+        version: WORKER_RELEASE,
         apiVersion: WORKER_API_VERSION,
         routes: WORKER_ROUTES,
-        emailConfigured: true,
+        emailConfigured: mailProviders.length > 0,
+        emailProviders: mailProviders.map(p => p.type),
+        searchConfigured: Boolean(env.TAVILY_API_KEY || env.BRAVE_SEARCH_API_KEY || env.SERPER_API_KEY),
+        webCompanionConfigured: Boolean(env.WEB_COMPANION_ORIGIN),
+        appDownloadConfigured: Boolean(env.APP_DOWNLOAD_URL),
         projectId,
         serviceAccountConfigured,
         turnConfigured: Boolean(env.TURN_TOKEN_ID && env.TURN_API_TOKEN),
@@ -859,6 +868,8 @@ export default {
         r2Configured: Boolean(env.MEDIA_BUCKET && typeof env.MEDIA_BUCKET.put === "function" && typeof env.MEDIA_BUCKET.list === "function" && env.R2_PUBLIC_BASE_URL),
         mediaRetentionDays: 10,
         authenticatedCallsRequired: true,
+        colo: String(cf.colo || ""),
+        country: String(cf.country || ""),
         timestamp: Date.now()
       }), {
         status: serviceAccountConfigured ? 200 : 503,

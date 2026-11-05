@@ -1,5 +1,5 @@
-• The social feed now loads older posts in cursor-based pages instead of fetching the entire history at once.
-• The admin user directory loads 50 profiles at a time and can continue to the next Firestore page.
-• Administrators can globally pause automatic saving of received files; manual downloads and normal message storage remain available.
-• A new offline English/Bengali guide and a refreshed tour explain settings, privacy, location sharing, media saving and the AI assistant.
-• An opt-in browser companion supports accepted one-to-one text chats through a one-time pairing code, expiring sessions and Android revoke controls.
+• The primary Cloudflare Worker URL is now consistent across the app, and the GitHub auto-deploy was fixed — it previously targeted the wrong Worker name and a mistyped workers.dev subdomain.
+• Admin → Server health now shows the live Worker version, the Cloudflare data center, and extra service checks (email, web search, web companion, APK download link), and refreshes itself every minute.
+• Health checks now probe all workers in parallel, so a slow or offline node no longer delays the rest.
+• The Worker was upgraded to API v50 (release 4.7.0) with a more detailed, truthful health report.
+• This release is versionCode 52 / 4.4.6. After updating, redeploy the Worker once from Admin → Server health → Deploy so the live API matches the app.

@@ -249,7 +249,13 @@ fun AdminServerHealthPanel(users: List<User>) {
     }
 
     fun recheck() { scope.launch { checking = true; WorkerHealth.checkAll(); checking = false } }
-    LaunchedEffect(Unit) { recheck() }
+    // Check on open, then keep the panel live with a quiet background refresh every 60s.
+    LaunchedEffect(Unit) {
+        while (true) {
+            checking = true; WorkerHealth.checkAll(); checking = false
+            delay(60_000)
+        }
+    }
 
     val primary = reports.firstOrNull()
     val pulse by rememberInfiniteTransition(label = "health").animateFloat(1f, 1.12f, infiniteRepeatable(tween(900), RepeatMode.Reverse), label = "pulse")
@@ -261,7 +267,7 @@ fun AdminServerHealthPanel(users: List<User>) {
             primary == null || !primary.reachable -> Triple(listOf(Color(0xFFB71C1C), Color(0xFFE53935)), "Worker unreachable", primary?.error ?: "No answer from the primary Worker")
             primary.outdated -> Triple(listOf(Color(0xFFE65100), Color(0xFFFFA000)), "Worker update needed", "Live API v${primary.apiVersion} · app needs v${WorkerHealth.REQUIRED_API_VERSION}. This is why actions show \"Missing required fields: token, title, body\".")
             !primary.serviceAccount -> Triple(listOf(Color(0xFFC62828), Color(0xFFEF5350)), "Secret missing", "FIREBASE_SERVICE_ACCOUNT is not set on the Worker")
-            else -> Triple(listOf(Color(0xFF1B5E20), Color(0xFF00897B)), "All systems ready", "Worker API v${primary.apiVersion} · ${primary.latencyMs} ms")
+            else -> Triple(listOf(Color(0xFF1B5E20), Color(0xFF00897B)), "All systems ready", "Worker ${primary.version.ifBlank { "v?" }} · API v${primary.apiVersion} · ${primary.latencyMs} ms" + (if (primary.colo.isNotBlank()) " · ${primary.colo}" else ""))
         }
         Box(Modifier.fillMaxWidth().background(Brush.linearGradient(heroColors), RoundedCornerShape(24.dp)).padding(18.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -289,11 +295,15 @@ fun AdminServerHealthPanel(users: List<User>) {
                         StatusPill(if (!r.reachable) "DOWN" else if (r.outdated) "OUTDATED" else "OK", if (!r.reachable) Color(0xFFC62828) else if (r.outdated) Color(0xFFEF6C00) else Color(0xFF2E7D32))
                     }
                     Text(r.url.removePrefix("https://"), fontSize = 11.sp, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Worker ${r.version.ifBlank { "v?" }} · API v${r.apiVersion} · ${r.latencyMs} ms" + (if (r.colo.isNotBlank()) " · ${r.colo}" else ""), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         CheckChip("Firebase key", r.serviceAccount); CheckChip("TURN", r.turn); CheckChip("Calls", r.sfu)
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        CheckChip("AI key", r.ai); CheckChip("R2 media", r.r2); Text("API v${r.apiVersion} · ${r.latencyMs} ms", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp))
+                        CheckChip("AI key", r.ai); CheckChip("R2 media", r.r2); CheckChip("Email", r.email)
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        CheckChip("Search", r.search); CheckChip("Web app", r.webCompanion); CheckChip("APK link", r.appDownload)
                     }
                     if (r.outdated && !WorkerRouter.isPrimary(r.url) && r != reports.first())
                         Text("Auto-fix active: traffic for this worker's services goes to the primary until it is updated.", fontSize = 11.sp, color = Color(0xFFEF6C00))

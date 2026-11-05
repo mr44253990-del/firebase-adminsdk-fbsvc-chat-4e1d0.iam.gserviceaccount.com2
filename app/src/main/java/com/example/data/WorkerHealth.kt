@@ -1,6 +1,9 @@
 package com.example.data
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -23,7 +26,7 @@ import java.util.concurrent.TimeUnit
  */
 object WorkerHealth {
     /** Must match WORKER_API_VERSION in cloudflare-worker.js. */
-    const val REQUIRED_API_VERSION = 49
+    const val REQUIRED_API_VERSION = 50
     const val DEFAULT_PRIMARY = "https://convo-chat-companion.mr4425390.workers.dev"
     const val OUTDATED_MESSAGE =
         "Server update needed — the Cloudflare Worker is an older version and doesn't know this feature yet. " +
@@ -39,6 +42,12 @@ object WorkerHealth {
         val sfu: Boolean = false,
         val ai: Boolean = false,
         val r2: Boolean = false,
+        val email: Boolean = false,
+        val search: Boolean = false,
+        val webCompanion: Boolean = false,
+        val appDownload: Boolean = false,
+        val colo: String = "",
+        val country: String = "",
         val latencyMs: Long = 0,
         val error: String = "",
         val checkedAt: Long = System.currentTimeMillis()
@@ -89,6 +98,12 @@ object WorkerHealth {
                     sfu = json.optBoolean("sfuConfigured"),
                     ai = json.optBoolean("aiConfigured"),
                     r2 = json.optBoolean("r2Configured"),
+                    email = json.optBoolean("emailConfigured"),
+                    search = json.optBoolean("searchConfigured"),
+                    webCompanion = json.optBoolean("webCompanionConfigured"),
+                    appDownload = json.optBoolean("appDownloadConfigured"),
+                    colo = json.optString("colo"),
+                    country = json.optString("country"),
                     latencyMs = System.currentTimeMillis() - started,
                     error = if (r.isSuccessful) "" else json.optString("error").ifBlank { "HTTP ${r.code}" }
                 )
@@ -100,7 +115,8 @@ object WorkerHealth {
     suspend fun checkAll(): List<Report> {
         val primary = WorkerRouter.primary.value.ifBlank { DEFAULT_PRIMARY }
         val urls = (listOf(primary) + WorkerRouter.nodes.value.filter { it.valid }.map { it.url }).map { it.trim().trimEnd('/') }.distinct()
-        val results = urls.map { check(it) }
+        // Probe every worker concurrently so a slow/down node never delays the others.
+        val results = coroutineScope { urls.map { url -> async { check(url) } }.awaitAll() }
         results.forEach { WorkerRouter.setOutdated(it.url, it.outdated) }
         _reports.value = results
         if (results.firstOrNull()?.outdated == false) _outdatedSeen.value = false
