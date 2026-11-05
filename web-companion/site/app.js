@@ -27,6 +27,9 @@
     devices: [],
     searchQuery: "",
     searchResults: [],
+    people: [],
+    peopleLoading: false,
+    friendRequests: [],
     searchLoading: false,
     chatFilter: "all",
     loadingChats: true,
@@ -144,7 +147,7 @@
     var badge = unread ? '<span class="rail-badge">' + (unread > 99 ? "99+" : unread) + '</span>' : "";
     var items = [
       { id: "chats", icon: "chats", label: "Chats", badge: badge },
-      { id: "search", icon: "search", label: "Discover", badge: "" },
+      { id: "search", icon: "search", label: "Discover", badge: (state.friendRequests || []).length ? '<span class="rail-badge">' + state.friendRequests.length + '</span>' : "" },
       { id: "settings", icon: "settings", label: "Settings", badge: "" }
     ];
     var html = items.map(function (item) {
@@ -272,14 +275,56 @@
     try {
       var data = await Api.chats();
       if (data.me) state.me = Object.assign(state.me, data.me);
-      if (Array.isArray(data.chats)) state.chats = normalizeChats(data.chats);
+      if (Array.isArray(data.chats)) {
+        var nextChats = normalizeChats(data.chats);
+        notifyIncoming(state.chats, nextChats);
+        state.chats = nextChats;
+      }
       unreadTotal();
+      updateTitleBadge();
       if (!silent) { refreshChatListOnly(); renderNav(); }
       else { refreshChatListOnly(); renderNav(); }
       persistCache();
     } catch (error) {
       if (error.status !== 401 && !silent) toast(error.message, "error");
     }
+  }
+
+  /* --------------------------------------------- live notifications (v4.5.0) */
+  var baseTitle = document.title || "Convo Chat Web";
+  function updateTitleBadge() {
+    var total = 0;
+    (state.chats || []).forEach(function (c) { if (!c.muted) total += Number(c.unread || 0); });
+    document.title = total ? "(" + total + ") " + baseTitle : baseTitle;
+    try { if (navigator.setAppBadge) { total ? navigator.setAppBadge(total) : navigator.clearAppBadge(); } } catch (e) {}
+  }
+  function notifyIncoming(prev, next) {
+    if (!prev || !prev.length) return;
+    var byUid = {};
+    prev.forEach(function (c) { byUid[c.uid] = c; });
+    next.forEach(function (chat) {
+      var before = byUid[chat.uid];
+      if (!before || chat.muted) return;
+      var last = chat.lastMessage || {};
+      var fromPeer = last.senderId && last.senderId !== state.me.uid;
+      var isNew = chat.lastAt > (before.lastAt || 0) && chat.unread > (before.unread || 0);
+      if (!fromPeer || !isNew) return;
+      var viewing = !document.hidden && state.activePeer === chat.uid;
+      if (viewing) return;
+      var body = String(last.text || "New message").slice(0, 140);
+      if (document.hidden && "Notification" in window && Notification.permission === "granted" && S.settings().notifications !== false) {
+        try {
+          var n = new Notification(chat.name, { body: body, tag: "convo-" + chat.uid, icon: chat.profileImageUrl || undefined, renotify: true });
+          n.onclick = function () { window.focus(); openChat(chat.uid, chat.name, chat.profileImageUrl); n.close(); };
+        } catch (e) {}
+      }
+      if (!document.hidden) toast(chat.name + ": " + body.slice(0, 60), "info");
+      S.beep("recv");
+    });
+  }
+  function askNotificationPermission() {
+    if (!("Notification" in window) || Notification.permission !== "default") return;
+    try { Notification.requestPermission(); } catch (e) {}
   }
 
   async function openChat(uid, nameHint, imageHint) {
@@ -504,7 +549,16 @@
 
   function startPolls() {
     stopPolls();
-    timers.chats = setInterval(function () { if (!state.locked && !document.hidden) refreshChats(true); }, POLL_CHATS);
+    var hiddenTick = 0;
+    var friendTick = 0;
+    refreshFriendRequests();
+    timers.chats = setInterval(function () {
+      if (state.locked) return;
+      if (document.hidden) { hiddenTick++; if (hiddenTick % 3) return; } else hiddenTick = 0;
+      refreshChats(true);
+      friendTick = (friendTick + 1) % 4;
+      if (!friendTick) refreshFriendRequests();
+    }, POLL_CHATS);
     timers.messages = setInterval(pollMessages, POLL_MESSAGES);
     timers.presence = setInterval(pollPresence, POLL_PRESENCE);
   }
@@ -880,6 +934,45 @@
     }
   }
 
+  /* ------------------------------------------- create account (email only) */
+  function setAuthMode(mode) {
+    var card = document.getElementById("auth-card");
+    if (!card) return;
+    card.setAttribute("data-auth-mode", mode || "code");
+    Array.prototype.forEach.call(card.querySelectorAll(".auth-tab"), function (tab) {
+      tab.classList.toggle("active", tab.dataset.mode === mode);
+    });
+    var focusMap = { code: "pair-code", signin: "login-email", signup: "signup-name" };
+    var target = document.getElementById(focusMap[mode] || "pair-code");
+    if (target) setTimeout(function () { target.focus(); }, 60);
+  }
+
+  async function emailSignup() {
+    var nameInput = document.getElementById("signup-name");
+    var emailInput = document.getElementById("signup-email");
+    var passInput = document.getElementById("signup-password");
+    var errorNode = document.getElementById("signup-error");
+    if (!nameInput || !emailInput || !passInput) return;
+    var name = nameInput.value.trim();
+    var email = emailInput.value.trim();
+    var password = passInput.value;
+    if (!name) { if (errorNode) errorNode.textContent = "Please enter your name."; nameInput.focus(); return; }
+    if (!email || !password) { if (errorNode) errorNode.textContent = "Enter your email and a password."; (email ? passInput : emailInput).focus(); return; }
+    if (password.length < 6) { if (errorNode) errorNode.textContent = "Password must be at least 6 characters."; passInput.focus(); return; }
+    var button = document.querySelector('[data-action="email-signup"]');
+    if (button) { button.disabled = true; button.innerHTML = U.icon("refresh") + "<span>Creating your account…</span>"; }
+    try {
+      await Api.signup(name, email, password);
+      if (errorNode) errorNode.textContent = "";
+      state.tab = "chats";
+      await bootAfterSession();
+      toast("Welcome to Convo Chat — your account is ready", "success");
+    } catch (error) {
+      if (errorNode) errorNode.textContent = error.message || "Could not create the account.";
+      if (button) { button.disabled = false; button.innerHTML = U.icon("check") + "<span>Create account &amp; sign in</span>"; }
+    }
+  }
+
   /* -------------------------------------------------------------- lock/log */
   function armLockTimer() {
     if (timers.lock) clearTimeout(timers.lock);
@@ -918,6 +1011,7 @@
         state.tab = tabButton.dataset.tab;
         state.settingsSection = "";
         if (state.tab !== "chats") state.activePeer = state.tab === "search" ? "" : state.activePeer;
+        if (state.tab === "search") refreshFriendRequests();
         renderPane();
         return;
       }
@@ -1014,6 +1108,18 @@
 
     document.addEventListener("keydown", function (event) {
       if (event.key === "Enter" && event.target.id === "pair-code") { event.preventDefault(); redeemCode(); return; }
+      if (event.key === "Enter" && (event.target.id === "login-email" || event.target.id === "login-password")) {
+        event.preventDefault();
+        if (event.target.id === "login-email") { var lp = document.getElementById("login-password"); if (lp) lp.focus(); } else emailLogin();
+        return;
+      }
+      if (event.key === "Enter" && /^signup-/.test(event.target.id || "")) {
+        event.preventDefault();
+        var order = ["signup-name", "signup-email", "signup-password"];
+        var idx = order.indexOf(event.target.id);
+        if (idx >= 0 && idx < 2) { var nx = document.getElementById(order[idx + 1]); if (nx) nx.focus(); } else emailSignup();
+        return;
+      }
       if (event.target.id !== "composer-input") return;
       var sendOnEnter = S.settings().sendOnEnter;
       if (event.key === "Enter" && !event.shiftKey && sendOnEnter) { event.preventDefault(); sendMessage(); }
@@ -1027,6 +1133,38 @@
           renderComposerOnly();
         }
       }
+    });
+
+    // Keyboard-aware layout: track the visual viewport so the composer / login inputs
+    // stay above the on-screen keyboard on Android Chrome and iOS Safari.
+    (function trackKeyboard() {
+      var vv = window.visualViewport;
+      var root = document.documentElement;
+      function apply() {
+        var h = vv ? vv.height : window.innerHeight;
+        var kb = vv ? Math.max(0, window.innerHeight - vv.height - vv.offsetTop) : 0;
+        root.style.setProperty("--app-h", Math.round(h) + "px");
+        root.style.setProperty("--kb", Math.round(kb) + "px");
+        document.body.classList.toggle("kb-open", kb > 80);
+        if (kb > 80) {
+          var el = document.activeElement;
+          if (el && el.id === "composer-input") {
+            var sc = document.getElementById("msg-scroll");
+            if (sc && sc.scrollHeight - sc.scrollTop - sc.clientHeight < 260) sc.scrollTop = sc.scrollHeight;
+          } else if (el && /INPUT|TEXTAREA/.test(el.tagName)) {
+            try { el.scrollIntoView({ block: "center", behavior: "smooth" }); } catch (e) {}
+          }
+        }
+      }
+      if (vv) { vv.addEventListener("resize", apply); vv.addEventListener("scroll", apply); }
+      window.addEventListener("resize", apply);
+      document.addEventListener("focusin", function () { setTimeout(apply, 250); });
+      apply();
+    })();
+
+    document.addEventListener("pointerdown", function once() {
+      askNotificationPermission();
+      document.removeEventListener("pointerdown", once);
     });
 
     window.addEventListener("online", function () { state.online = true; toast("Back online", "success"); startPolls(); refreshChats(true); });
@@ -1066,7 +1204,7 @@
       stopPolls();
       state.chats = []; state.messages = []; state.activePeer = "";
       renderPane();
-      toast("Your browser session ended. Pair again to continue.", "error");
+      toast("Your browser session ended. Sign in again to continue.", "error");
     });
   }
 
@@ -1145,11 +1283,17 @@
     if (action === "copy-profile-link") { copyProfileLink(); return; }
     if (action === "pair") { redeemCode(); return; }
     if (action === "email-login") { emailLogin(); return; }
+    if (action === "email-signup") { emailSignup(); return; }
+    if (action === "friend-add") { addFriend(button.dataset.uid, button); return; }
+    if (action === "friend-accept") { respondFriend(button.dataset.request, true); return; }
+    if (action === "friend-decline") { respondFriend(button.dataset.request, false); return; }
+    if (action === "auth-mode") { setAuthMode(button.dataset.mode); return; }
     if (action === "unlock") { unlock(); return; }
     if (action === "logout") { logout(); return; }
   }
 
   var peopleTimer = 0;
+  var peopleSeq = 0;
   function schedulePeopleSearch() {
     if (peopleTimer) clearTimeout(peopleTimer);
     peopleTimer = setTimeout(function () {
@@ -1159,10 +1303,82 @@
             return (c.name || "").toLowerCase().indexOf(query) >= 0 || (c.username || "").toLowerCase().indexOf(query) >= 0;
           })
         : [];
-      if (state.tab === "search") renderPane();
-      var input = document.getElementById("people-search");
-      if (input) { input.focus(); input.setSelectionRange(input.value.length, input.value.length); }
-    }, 160);
+      var global = query.replace(/^@/, "");
+      state.people = [];
+      state.peopleLoading = global.length >= 3;
+      rerenderSearchKeepFocus();
+      if (global.length >= 3) {
+        var seq = ++peopleSeq;
+        Api.find(query).then(function (data) {
+          if (seq !== peopleSeq) return;
+          state.people = (data.people || []).filter(function (p) { return !p.friend; });
+          state.peopleLoading = false;
+          rerenderSearchKeepFocus();
+        }).catch(function () { if (seq === peopleSeq) { state.peopleLoading = false; rerenderSearchKeepFocus(); } });
+      }
+    }, 260);
+  }
+  function rerenderSearchKeepFocus() {
+    if (state.tab !== "search") return;
+    var input = document.getElementById("people-search");
+    var hadFocus = input && document.activeElement === input;
+    renderPane();
+    input = document.getElementById("people-search");
+    if (input && hadFocus) { input.focus(); input.setSelectionRange(input.value.length, input.value.length); }
+  }
+
+  /* ---------------------------------------------------- friends (v4.5.0) */
+  var knownRequestIds = null;
+  async function refreshFriendRequests() {
+    if (!session() || state.locked) return;
+    try {
+      var data = await Api.friendRequests();
+      var list = data.incoming || [];
+      if (knownRequestIds) {
+        list.forEach(function (r) {
+          if (knownRequestIds.indexOf(r.id) >= 0) return;
+          toast(r.name + " sent you a friend request", "info");
+          if (document.hidden && "Notification" in window && Notification.permission === "granted") {
+            try { new Notification("Convo Chat", { body: r.name + " sent you a friend request", tag: "convo-fr-" + r.id }); } catch (e) {}
+          }
+        });
+      }
+      knownRequestIds = list.map(function (r) { return r.id; });
+      state.friendRequests = list;
+      renderNav();
+      if (state.tab === "search") rerenderSearchKeepFocus();
+    } catch (e) {}
+  }
+  async function addFriend(uid, button) {
+    if (!uid) return;
+    if (button) { button.disabled = true; button.innerHTML = U.icon("refresh") + "<span>Sending…</span>"; }
+    try {
+      var data = await Api.friendRequest(uid);
+      state.people = state.people.map(function (p) { return p.uid === uid ? Object.assign({}, p, { requested: !data.friend, friend: Boolean(data.friend) }) : p; });
+      toast(data.friend ? "You are now friends — say hello!" : "Friend request sent", "success");
+      if (data.friend) await refreshChats(true);
+      rerenderSearchKeepFocus();
+    } catch (error) {
+      toast(error.message || "Could not send the request", "error");
+      if (button) { button.disabled = false; button.innerHTML = U.icon("plus") + "<span>Add friend</span>"; }
+    }
+  }
+  async function respondFriend(id, accept) {
+    try {
+      await Api.friendRespond(id, accept);
+      var req = state.friendRequests.filter(function (r) { return r.id === id; })[0];
+      state.friendRequests = state.friendRequests.filter(function (r) { return r.id !== id; });
+      knownRequestIds = (knownRequestIds || []).filter(function (x) { return x !== id; });
+      toast(accept ? "Friend added" : "Request declined", accept ? "success" : "info");
+      if (accept) {
+        await refreshChats(true);
+        if (req) { state.tab = "chats"; openChat(req.uid, req.name, req.profileImageUrl); return; }
+      }
+      rerenderSearchKeepFocus();
+      renderNav();
+    } catch (error) {
+      toast(error.message || "Could not update the request", "error");
+    }
   }
 
   function signalTyping(active) {
@@ -1204,7 +1420,7 @@
       finishLaunch();
       stopParticles();
       renderPane();
-      toast("Connect this browser from your Convo Chat app", "info");
+      toast("Sign in, create an account, or pair with your phone", "info");
       return;
     }
     setLaunchProgress(prefix(.3), "Checking your secure session…");

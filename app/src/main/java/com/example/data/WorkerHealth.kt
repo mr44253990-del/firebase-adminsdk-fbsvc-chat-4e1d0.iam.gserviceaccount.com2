@@ -26,7 +26,7 @@ import java.util.concurrent.TimeUnit
  */
 object WorkerHealth {
     /** Must match WORKER_API_VERSION in cloudflare-worker.js. */
-    const val REQUIRED_API_VERSION = 51
+    const val REQUIRED_API_VERSION = 52
     const val DEFAULT_PRIMARY = "https://convo-chat-companion.mr4425390.workers.dev"
     const val OUTDATED_MESSAGE =
         "Server update needed — the Cloudflare Worker is an older version and doesn't know this feature yet. " +

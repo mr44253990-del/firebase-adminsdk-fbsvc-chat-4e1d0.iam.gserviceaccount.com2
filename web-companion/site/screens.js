@@ -122,30 +122,60 @@
   /* --------------------------------------------------------------- discover */
   function renderSearchPane(state) {
     var results = state.searchResults || [];
+    var people = state.people || [];
+    var requests = state.friendRequests || [];
+    var q = (state.searchQuery || "").trim();
     var body = "";
-    if (state.searchLoading) body = U.skeleton(4, "row-sk");
-    else if (!state.searchQuery) {
-      var recents = state.chats.slice(0, 4);
-      body = '<div class="list-section-label">Quick access</div>' + recents.map(function (c) { return chatRow(c, state); }).join("");
-      if (!recents.length) body = U.emptyState({ icon: "search", title: "Find your people", body: "Search a friend by name or @username. Only accepted friends can chat with you." });
-    } else if (!results.length) {
-      body = U.emptyState({ icon: "search", title: "No results", body: "No friend matches “" + state.searchQuery + "”. Friends must accept you in the Convo Chat app first." });
+
+    if (requests.length) {
+      body += '<div class="list-section-label">Friend requests · ' + requests.length + '</div>' +
+        requests.map(function (r) {
+          return '<div class="person-row">' +
+            U.avatar({ name: r.name, profileImageUrl: r.profileImageUrl }, 46) +
+            '<span class="person-main"><strong>' + esc(r.name) + '</strong><span>wants to be your friend</span></span>' +
+            '<span class="person-actions">' +
+              '<button class="btn primary small" data-action="friend-accept" data-request="' + esc(r.id) + '">' + U.icon("check") + '<span>Accept</span></button>' +
+              '<button class="btn ghost small" data-action="friend-decline" data-request="' + esc(r.id) + '" aria-label="Decline">' + U.icon("close") + '</button>' +
+            '</span></div>';
+        }).join("");
+    }
+
+    if (!q) {
+      var recents = state.chats.slice(0, 6);
+      if (recents.length) body += '<div class="list-section-label">Quick access</div>' + recents.map(function (c) { return chatRow(c, state); }).join("");
+      body += '<div class="discover-tip">' + U.icon("search") +
+        '<div><strong>Add new friends</strong><span>Type a friend’s exact <b>@username</b> or <b>email</b> to find them on Convo Chat and send a request.</span></div></div>';
     } else {
-      body = results.map(function (person) {
-        return '<button class="chat-row" data-chat="' + esc(person.uid) + '">' +
-          U.avatar({ name: person.name, profileImageUrl: person.profileImageUrl, online: person.online }, 46) +
-          '<span class="chat-row-main"><span class="chat-row-top"><span class="chat-row-name">' + esc(person.name) + '</span></span>' +
-          '<span class="chat-row-bottom"><span class="chat-row-preview">' +
-            (person.username ? "@" + esc(person.username) : (person.online ? "Online now" : "Accepted friend")) +
-          '</span></span></span>' +
-          U.icon("send") +
-        '</button>';
-      }).join("");
+      if (results.length) {
+        body += '<div class="list-section-label">Your friends</div>' + results.map(function (person) {
+          return '<button class="chat-row" data-chat="' + esc(person.uid) + '">' +
+            U.avatar({ name: person.name, profileImageUrl: person.profileImageUrl, online: person.online }, 46) +
+            '<span class="chat-row-main"><span class="chat-row-top"><span class="chat-row-name">' + esc(person.name) + '</span></span>' +
+            '<span class="chat-row-bottom"><span class="chat-row-preview">' +
+              (person.username ? "@" + esc(person.username) : (person.online ? "Online now" : "Friend")) +
+            '</span></span></span>' + U.icon("send") + '</button>';
+        }).join("");
+      }
+      if (state.peopleLoading) body += '<div class="list-section-label">People on Convo Chat</div>' + U.skeleton(2, "row-sk");
+      else if (people.length) {
+        body += '<div class="list-section-label">People on Convo Chat</div>' + people.map(function (p) {
+          var action = p.requested
+            ? '<span class="chip-soft">' + U.icon("clock") + '<span>Requested</span></span>'
+            : '<button class="btn primary small" data-action="friend-add" data-uid="' + esc(p.uid) + '">' + U.icon("plus") + '<span>Add friend</span></button>';
+          return '<div class="person-row">' +
+            U.avatar({ name: p.name, profileImageUrl: p.profileImageUrl }, 46) +
+            '<span class="person-main"><strong>' + esc(p.name) + '</strong><span>' + (p.username ? "@" + esc(p.username) : esc(p.status || "")) + '</span></span>' +
+            '<span class="person-actions">' + action + '</span></div>';
+        }).join("");
+      }
+      if (!results.length && !people.length && !state.peopleLoading) {
+        body += U.emptyState({ icon: "search", title: "No one found", body: "No match for “" + q + "”. Try the exact @username or email address." });
+      }
     }
     return '<div class="pane-single">' +
-      '<div class="page-head"><h1>Discover</h1><p>Search the friends on your Convo Chat account.</p></div>' +
+      '<div class="page-head"><h1>Discover</h1><p>Find friends by @username or email, and manage friend requests.</p></div>' +
       '<label class="searchbox">' + U.icon("search") +
-        '<input id="people-search" type="search" placeholder="Name or @username" value="' + esc(state.searchQuery || "") + '" aria-label="Search people">' +
+        '<input id="people-search" type="search" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="@username or email" value="' + esc(state.searchQuery || "") + '" aria-label="Search people">' +
         (state.searchQuery ? '<button type="button" data-action="clear-search" aria-label="Clear search">' + U.icon("close") + '</button>' : "") +
       '</label>' +
       '<div class="list-scroll">' + body + '</div>' +
@@ -474,26 +504,47 @@
 
   /* --------------------------------------------------------------- pairing */
   function renderPairing() {
-    return '<div class="pair-wrap"><div class="pair-card">' +
+    return '<div class="pair-wrap"><div class="pair-card auth-card" id="auth-card" data-auth-mode="code">' +
       '<div class="pair-art"><span class="pulse"></span><span class="pulse"></span><span class="pulse"></span>' +
       '<span class="pair-mark">' + U.icon("qr") + '</span></div>' +
-      '<h1>Connect this browser</h1>' +
-      '<p class="lead">Open <strong>Convo Chat</strong> on your phone → <strong>Profile &amp; settings</strong> → ' +
-      '<strong>Account security</strong> → <strong>Link my browser</strong>, then type the 10-digit code here.</p>' +
-      '<input class="pair-code-input" id="pair-code" inputmode="numeric" autocomplete="one-time-code" maxlength="10" pattern="[0-9]*" placeholder="0000000000" aria-label="10-digit pairing code">' +
-      '<button class="btn primary wide" data-action="pair">' + U.icon("check") + '<span>Connect browser</span></button>' +
-      '<p class="pair-error" id="pair-error" role="alert"></p>' +
-      '<div class="pair-steps">' +
-        '<div class="pair-step"><b>1</b><span>Code is single-use and expires in 90 seconds.</span></div>' +
-        '<div class="pair-step"><b>2</b><span>This browser stays signed in with no time limit — sign out or revoke it from your phone whenever you like.</span></div>' +
-        '<div class="pair-step"><b>3</b><span>No password is stored — your phone stays in control.</span></div>' +
+      '<h1>Connect Convo Chat</h1>' +
+      '<p class="lead">Pair with your phone, or sign in with the same email you use in the app.</p>' +
+      '<div class="auth-tabs" role="tablist">' +
+        '<button class="auth-tab active" role="tab" data-action="auth-mode" data-mode="code">Pair code</button>' +
+        '<button class="auth-tab" role="tab" data-action="auth-mode" data-mode="signin">Sign in</button>' +
+        '<button class="auth-tab" role="tab" data-action="auth-mode" data-mode="signup">Create account</button>' +
       '</div>' +
-      '<div class="pair-or"><span>or sign in with your email</span></div>' +
-      '<input class="pair-code-input" id="login-email" type="email" autocomplete="email" placeholder="Email address" aria-label="Email address">' +
-      '<input class="pair-code-input" id="login-password" type="password" autocomplete="current-password" placeholder="Password" aria-label="Password">' +
-      '<button class="btn primary wide" data-action="email-login">' + U.icon("lock") + '<span>Sign in &amp; save this browser</span></button>' +
-      '<p class="pair-error" id="login-error" role="alert"></p>' +
-      '<p class="pair-fine">Use the same email and password as the Convo Chat app. Your login is saved in this browser and stays until you sign out.</p>' +
+
+      '<div class="auth-pane auth-code">' +
+        '<p class="auth-hint">Open <strong>Convo Chat</strong> on your phone → <strong>Profile &amp; settings</strong> → ' +
+        '<strong>Account security</strong> → <strong>Link my browser</strong>, then type the 10-digit code here.</p>' +
+        '<input class="pair-code-input" id="pair-code" inputmode="numeric" autocomplete="one-time-code" maxlength="10" pattern="[0-9]*" placeholder="0000000000" aria-label="10-digit pairing code">' +
+        '<button class="btn primary wide" data-action="pair">' + U.icon("check") + '<span>Connect browser</span></button>' +
+        '<p class="pair-error" id="pair-error" role="alert"></p>' +
+      '</div>' +
+
+      '<div class="auth-pane auth-signin">' +
+        '<input class="auth-input" id="login-email" type="email" autocomplete="email" placeholder="Email address" aria-label="Email address">' +
+        '<input class="auth-input" id="login-password" type="password" autocomplete="current-password" placeholder="Password" aria-label="Password">' +
+        '<button class="btn primary wide" data-action="email-login">' + U.icon("lock") + '<span>Sign in &amp; save this browser</span></button>' +
+        '<p class="pair-error" id="login-error" role="alert"></p>' +
+        '<p class="auth-hint">Your login is saved in this browser and stays until you sign out.</p>' +
+      '</div>' +
+
+      '<div class="auth-pane auth-signup">' +
+        '<input class="auth-input" id="signup-name" type="text" autocomplete="name" placeholder="Your name" aria-label="Your name">' +
+        '<input class="auth-input" id="signup-email" type="email" autocomplete="email" placeholder="Email address" aria-label="Email address">' +
+        '<input class="auth-input" id="signup-password" type="password" autocomplete="new-password" placeholder="Password (min 6 characters)" aria-label="Password">' +
+        '<button class="btn primary wide" data-action="email-signup">' + U.icon("check") + '<span>Create account &amp; sign in</span></button>' +
+        '<p class="pair-error" id="signup-error" role="alert"></p>' +
+        '<p class="auth-hint">Email only — no phone number needed. Use this account in the Convo Chat app too.</p>' +
+      '</div>' +
+
+      '<div class="pair-steps">' +
+        '<div class="pair-step"><b>1</b><span>Codes are single-use and expire in 90 seconds.</span></div>' +
+        '<div class="pair-step"><b>2</b><span>This browser stays signed in with no time limit — sign out whenever you like.</span></div>' +
+        '<div class="pair-step"><b>3</b><span>Your phone stays in control and can revoke any browser.</span></div>' +
+      '</div>' +
       '<p class="pair-fine">Convo Chat Web is a private companion: it shows accepted friend chats only. ' +
       'Media, calls and group chats stay on your phone.</p>' +
     '</div></div>';

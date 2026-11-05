@@ -1,5 +1,9 @@
-• Fixed: tapping "Link my browser" crashed with "Must not be called on the main application thread" — pairing and web session controls now run safely in the background.
-• Web companion: sessions now have NO time limit — your browser stays signed in until you sign out or revoke it from the phone.
-• New: sign in on the web with your email and password (same account as the app) — the login is saved in that browser.
-• New design: the account menu is completely redesigned — gold Premium banner, colorful icon rows and a cleaner layout with the version footer.
-• Worker update v4.8.0 (API v51) with email sign-in and unlimited web sessions. This release is versionCode 55 / 4.4.9.
+• Fixed: web messages failed with "Message send failed (401)" — the server now talks to the database with the right credentials, so web ↔ Android chat works live in both directions.
+• Fixed: web chats showed "Say hello" even when messages existed — message history, last message previews and unread counts now load correctly.
+• Web: the message box is pinned to the bottom, stays above the keyboard, and inputs no longer zoom or hide behind the keyboard.
+• Web: new login screen with Pair code / Sign in / Create account tabs — sign up with just your email.
+• Web: find friends by @username or email, send friend requests, accept or decline them — works with the app.
+• Web: desktop notifications, tab-title unread badge and in-app alerts for new messages and friend requests.
+• Chat screen: the AI summarize button is removed from the top bar; call buttons now follow your chat theme with a glossy, animated design.
+• Call skin refresh: 7 new Premium skins (Liquid Glass default, Midnight Pro, Emerald Pro, Sakura Night, Cosmic Violet, Bangla Green, Sunrise Glow), glowing glass controls and a brighter Answer button.
+• Worker update v4.9.0 (API 52)

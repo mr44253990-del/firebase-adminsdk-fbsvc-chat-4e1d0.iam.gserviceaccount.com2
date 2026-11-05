@@ -81,6 +81,25 @@
     hasSession: function () { return Boolean(readSession()); },
     sessionExpiry: function () { var s = readSession(); return s ? Number(s.expiresAt) : 0; },
 
+    /** Create a new account with email + password only (same accounts as the app). */
+    async signup(name, email, password) {
+      var payload = await request("signup", {
+        name: String(name || "").trim(),
+        email: String(email || "").trim(),
+        password: String(password || "")
+      }, { token: "none" });
+      var session = {
+        token: payload.sessionToken,
+        expiresAt: Number(payload.expiresAt || 0),
+        pairedAt: Date.now(),
+        via: "email",
+        email: String(email || "").trim(),
+        name: String(name || "").trim()
+      };
+      saveSession(session);
+      return session;
+    },
+
     /** Exchange the 10-digit code shown in the Android app for a browser session. */
     async redeem(code) {
       var payload = await request("redeem", { code: String(code || "").replace(/\D/g, "") }, { token: "none" });
@@ -123,6 +142,10 @@
     typing(peerUid) { return request("typing", { peerUid: peerUid }); },
     presence() { return request("presence"); },
     profile() { return request("profile"); },
+    find(query) { return request("find", { query: String(query || "") }); },
+    friendRequests() { return request("friend-requests"); },
+    friendRequest(targetUid) { return request("friend-request", { targetUid: targetUid }); },
+    friendRespond(requestId, accept) { return request("friend-respond", { requestId: requestId, accept: accept === true }); },
     saveProfile(patch) { return request("profile/save", patch); },
     uploadAvatar(dataUrl) { return request("profile/avatar", { image: dataUrl }); },
     profileLink() { return request("profile/link"); },

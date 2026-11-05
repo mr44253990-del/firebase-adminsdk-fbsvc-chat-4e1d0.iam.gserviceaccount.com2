@@ -1025,13 +1025,6 @@ fun ChatScreen(
                     }) {
                         Icon(Icons.Default.Search, contentDescription = "Search messages", tint = MaterialTheme.colorScheme.primary)
                     }
-                    IconButton(enabled = messages.isNotEmpty() && !catchUpLoading, onClick = {
-                        catchUpText = ""
-                        showCatchUpDialog = true
-                        catchUpLoading = true
-                        val transcript = messages.takeLast(80).joinToString("\n") { "${it.senderName.ifBlank { if (it.senderId == currentUserId) "Me" else recipient.name }}: ${ProTools.messagePreview(it)}" }.take(12000)
-                        viewModel.askAssistant("Summarize this recent conversation for someone catching up. Use concise bullet points, mention open questions/action items, and do not invent facts. Transcript:\n\n$transcript", emptyList()) { result -> catchUpText = result; catchUpLoading = false }
-                    }) { Icon(Icons.Default.AutoAwesome, contentDescription = "Summarize recent messages", tint = MaterialTheme.colorScheme.primary) }
                     ChatCallPill(
                         onVideo = {
                             val cameraGranted = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
