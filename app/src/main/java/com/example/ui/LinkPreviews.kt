@@ -48,7 +48,7 @@ data class LinkPreviewData(
  * Respects Privacy → "Link previews".
  */
 object LinkPreviewRepository {
-    private const val WORKER = "https://solitary-hill-dcdc.mr44253990.workers.dev/link-preview?url="
+    private const val WORKER = "https://convo-chat-companion.mr4425390.workers.dev/link-preview?url="
     private val cache = LruCache<String, LinkPreviewData>(120)
     private val failed = LruCache<String, Long>(120)
     private val client by lazy {

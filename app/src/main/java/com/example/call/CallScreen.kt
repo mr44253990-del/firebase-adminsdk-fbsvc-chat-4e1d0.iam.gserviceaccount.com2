@@ -72,7 +72,13 @@ class IncomingCallActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         alive = true
-        window.addFlags(WindowManager.LayoutParams.FLAG_SECURE or WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        // Incoming-call screen honours Privacy → Screenshot protection (off by default).
+        if (com.example.security.PrivacyPreferences.load(this).preventScreenshotOnSensitiveScreens) {
+            window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        } else {
+            window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
             setShowWhenLocked(true)
             setTurnScreenOn(true)
@@ -194,10 +200,16 @@ fun CallScreen(
     var elapsedSeconds by remember { mutableLongStateOf(0L) }
     val callMotion = rememberInfiniteTransition(label = "call_liquid_motion")
     val callPulse by callMotion.animateFloat(.94f, 1.08f, infiniteRepeatable(tween(900, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "call_pulse")
-    LaunchedEffect(effectiveVideo, state.screenSharing) {
+    val protectScreens by com.example.security.PrivacyPreferences.settings.collectAsState()
+    LaunchedEffect(effectiveVideo, state.screenSharing, protectScreens.preventScreenshotOnSensitiveScreens) {
         val window = (view.context as? Activity)?.window
-        if (state.screenSharing) window?.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
-        else window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        // Screen sharing always needs to be capturable; otherwise the user's own
+        // screenshot preference decides. Defaults to off so normal screenshots work.
+        if (state.screenSharing || !protectScreens.preventScreenshotOnSensitiveScreens) {
+            window?.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        } else {
+            window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        }
         if (effectiveVideo) window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         else window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
     }

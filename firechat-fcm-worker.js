@@ -12,7 +12,7 @@
 
 // Bump WORKER_API_VERSION whenever routes change; the Android app compares it with
 // the version it expects and tells the admin to redeploy when the Worker is older.
-const WORKER_API_VERSION = 48;
+const WORKER_API_VERSION = 49;
 
 // Optional extra data forwarded to the device (rich image notifications, group calls, …).
 const PUSH_EXTRA_KEYS = ["imageUrl", "roomId", "groupId", "groupName", "memberIds", "videoCall", "probeId", "chatId", "previewKind"];
@@ -55,8 +55,9 @@ export default {
       if (!auth.ok) return auth.response;
       const body = await request.json().catch(() => ({}));
       if (body.optIn !== true) return webPairJson(request, env, { error: "Explicit opt-in is required" }, 400);
-      const origin = normalizeWebCompanionOrigin(env.WEB_COMPANION_ORIGIN);
-      if (!origin) return webPairJson(request, env, { error: "Web companion origin is not configured" }, 503);
+      const origins = await webCompanionOrigins(env);
+      const origin = origins[0] || "";
+      if (!origin) return webPairJson(request, env, { error: "Publish Convo Chat Web from Admin → Web deploy first (or set WEB_COMPANION_ORIGIN)" }, 503);
       if (!env.FIREBASE_DATABASE_URL) return webPairJson(request, env, { error: "Realtime Database is not configured for the companion" }, 503);
       try {
         const profile = await firestoreGet(env, `users/${auth.caller.sub}`);
@@ -80,7 +81,7 @@ export default {
           usedAt: 0,
           sessionVersion
         });
-        return webPairJson(request, env, { success: true, code, expiresAt: now + 90_000, companionUrl: `${origin}/web/` }, 200);
+        return webPairJson(request, env, { success: true, code, expiresAt: now + 90_000, companionUrl: `${origin}/` }, 200);
       } catch (error) {
         return webPairJson(request, env, { error: "Could not create companion pairing", detail: String(error?.message || "").slice(0, 180) }, 500);
       }
@@ -100,9 +101,56 @@ export default {
       }
     }
 
+    // Settings → Web version: which browsers are signed in on the web right now?
+    if (request.method === "POST" && path === "/web-pair/sessions") {
+      const auth = await authenticateCaller(request, env);
+      if (!auth.ok) return auth.response;
+      try {
+        const now = Date.now();
+        const items = await firestoreListWithIds(env, `web_sessions/${auth.caller.sub}/items`).catch(() => []);
+        const sessions = await Promise.all(items.map(async entry => {
+          const item = entry.data || {};
+          const hash = entry.id || "";
+          const live = await firestoreGet(env, `web_pair_sessions/${hash}`).catch(() => null);
+          const expiresAt = Number(item.expiresAt || live?.expiresAt || 0);
+          const revokedAt = Number(live?.revokedAt || item.revokedAt || 0);
+          return {
+            createdAt: Number(item.createdAt || live?.createdAt || 0),
+            expiresAt,
+            revokedAt,
+            lastUsedAt: Number(live?.lastUsedAt || 0),
+            userAgent: String(item.userAgent || live?.userAgent || ""),
+            active: revokedAt === 0 && expiresAt > now
+          };
+        }));
+        sessions.sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0));
+        return webPairJson(request, env, { success: true, sessions }, 200);
+      } catch (error) {
+        return webPairJson(request, env, { error: "Could not list web sessions" }, 502);
+      }
+    }
+
+    if (request.method === "POST" && path === "/web-pair/sessions/revoke") {
+      const auth = await authenticateCaller(request, env);
+      if (!auth.ok) return auth.response;
+      const payload = await request.json().catch(() => ({}));
+      const createdAt = Number(payload.createdAt || 0);
+      try {
+        const items = await firestoreListWithIds(env, `web_sessions/${auth.caller.sub}/items`).catch(() => []);
+        const target = items.find(entry => Number(entry.data?.createdAt || 0) === createdAt) || null;
+        if (!target) return webPairJson(request, env, { error: "That browser session no longer exists" }, 404);
+        const hash = target.id || "";
+        await fsPatch(env, `web_pair_sessions/${hash}`, { revokedAt: Date.now() }).catch(() => null);
+        await fsPatch(env, `web_sessions/${auth.caller.sub}/items/${hash}`, { revokedAt: Date.now() }).catch(() => null);
+        return webPairJson(request, env, { success: true }, 200);
+      } catch (error) {
+        return webPairJson(request, env, { error: "Could not end that web session" }, 502);
+      }
+    }
+
     // The only unauthenticated companion route redeems a 10-digit one-use code.
     if (request.method === "POST" && path === "/web-pair/redeem") {
-      if (!webCompanionOriginMatches(request, env)) return webPairJson(request, env, { error: "Unapproved companion origin" }, 403);
+      if (!(await webCompanionOriginMatches(request, env))) return webPairJson(request, env, { error: "Unapproved companion origin" }, 403);
       const body = await request.json().catch(() => ({}));
       const code = String(body.code || "").replace(/\D/g, "").slice(0, 10);
       if (code.length !== 10) return webPairJson(request, env, { error: "Enter the 10-digit code shown in the Android app" }, 400);
@@ -119,7 +167,9 @@ export default {
 
         const codeHash = await sha256Hex(`convo-web-pair:${code}`);
         const pair = await consumeWebPairCode(env, codeHash, now);
-        if (!pair || Number(pair.expiresAt || 0) <= now || Number(pair.usedAt || 0) !== now) {
+        // consumeWebPairCode returns the values it just claimed; usedAt being set at all is
+        // proof the claim succeeded (it is never returned on a losing race).
+        if (!pair || Number(pair.expiresAt || 0) <= now || !Number(pair.usedAt || 0)) {
           return webPairJson(request, env, { error: "Pairing code is invalid, expired or already used" }, 403);
         }
         const uid = String(pair.uid || "");
@@ -129,111 +179,426 @@ export default {
         }
         const sessionToken = randomHex(32);
         const sessionHash = await sha256Hex(`convo-web-session:${sessionToken}`);
-        const expiresAt = now + 12 * 60 * 60 * 1000;
+        const expiresAt = now + WEB_SESSION_HOURS * 60 * 60 * 1000;
+        const userAgent = String(request.headers.get("User-Agent") || "").slice(0, 160);
         await fsPatch(env, `web_pair_sessions/${sessionHash}`, {
           uid,
           createdAt: now,
           expiresAt,
           revokedAt: 0,
+          lastUsedAt: now,
+          userAgent,
           sessionVersion: Number(pair.sessionVersion || 0)
         });
+        // Mirror the session under the account so the phone can list every browser
+        // that is signed in right now (Settings → Web version).
+        await fsPatch(env, `web_sessions/${uid}/items/${sessionHash}`, {
+          createdAt: now, expiresAt, userAgent, revokedAt: 0
+        }).catch(() => null);
         return webPairJson(request, env, { success: true, sessionToken, expiresAt }, 200);
       } catch (error) {
         return webPairJson(request, env, { error: "Pairing could not be completed" }, 500);
       }
     }
 
+
+    // ---- Web companion v5: full browser client ------------------------------------
+    // Every route below is origin-checked, session-authenticated and proxy-only. The browser
+    // never receives a Firebase credential; friendship, blocking and account state are
+    // re-checked on every call.
     if (path.startsWith("/web-pair/") && request.method === "POST") {
-      if (!webCompanionOriginMatches(request, env)) return webPairJson(request, env, { error: "Unapproved companion origin" }, 403);
+      if (!(await webCompanionOriginMatches(request, env))) return webPairJson(request, env, { error: "Unapproved companion origin" }, 403);
       const session = await authenticateWebCompanionSession(request, env);
       if (!session.ok) return webPairJson(request, env, { error: session.error }, 401);
       const route = path.slice("/web-pair/".length);
+      const body = await request.json().catch(() => ({}));
+      const me = session.profile;
+      const meUid = session.uid;
+
       if (route === "logout") {
         await fsPatch(env, `web_pair_sessions/${session.sessionHash}`, { revokedAt: Date.now() }).catch(() => {});
         return webPairJson(request, env, { success: true }, 200);
       }
+
+      // End every browser session: bump the account version so all stored tokens fail.
+      if (route === "logout-all") {
+        const nextVersion = Number(me.webCompanionVersion || 0) + 1;
+        await fsPatch(env, `users/${meUid}`, { webCompanionVersion: nextVersion, webCompanionRevokedAt: Date.now() });
+        return webPairJson(request, env, { success: true, webCompanionVersion: nextVersion }, 200);
+      }
+
+      const db = () => webPairDb(env);
+      const friendIds = [...new Set((Array.isArray(me.friends) ? me.friends : []).map(String).filter(id => id && id !== meUid))];
+      const requireFriend = async (peerUid) => {
+        if (!peerUid || peerUid === meUid) return { ok: false, response: webPairJson(request, env, { error: "Choose a valid friend" }, 400) };
+        if (!friendIds.includes(peerUid)) return { ok: false, response: webPairJson(request, env, { error: "This companion can only open accepted friend chats" }, 403) };
+        const peer = await firestoreGet(env, `users/${peerUid}`).catch(() => null);
+        const blocked = (Array.isArray(me.blockedUsers) && me.blockedUsers.includes(peerUid)) ||
+          (Array.isArray(peer?.blockedUsers) && peer.blockedUsers.includes(meUid));
+        if (!peer || peer.banned === true || peer.disabled === true) return { ok: false, response: webPairJson(request, env, { error: "This account is not available" }, 403) };
+        if (blocked) return { ok: false, response: webPairJson(request, env, { error: "This conversation is blocked" }, 403) };
+        return { ok: true, peer };
+      };
+
+      /* ---------------------------------------------------------------- bootstrap */
+      if (route === "bootstrap") {
+        try {
+          const runtime = await db();
+          const [unread, statuses, typing] = await Promise.all([
+            webPairDbGet(runtime, `unread_counts/${meUid}`).catch(() => ({})),
+            webPairDbGet(runtime, "status").catch(() => ({})),
+            webPairDbGet(runtime, "typing").catch(() => ({}))
+          ]);
+          const presence = webPairPresenceMap(statuses);
+          const people = (await Promise.all(friendIds.slice(0, WEB_CHAT_LIMIT).map(uid => firestoreGet(env, `users/${uid}`).catch(() => null))))
+            .filter(profile => profile && profile.banned !== true && profile.disabled !== true &&
+              !(Array.isArray(me.blockedUsers) && me.blockedUsers.includes(profile.__uid)))
+            .map(profile => profile);
+          const chats = await webPairBuildChats(env, runtime, meUid, friendIds, presence, unread, typing);
+          const devices = await webPairDevices(env, meUid);
+          const typingPeers = webPairTypingMap(typing, meUid);
+          return webPairJson(request, env, {
+            success: true,
+            apiVersion: WORKER_API_VERSION,
+            me: webPairMe(me, meUid),
+            chats,
+            devices,
+            settings: await webPairSettings(env, meUid),
+            typing: typingPeers,
+            limits: { maxMessage: 5000, chatLimit: WEB_CHAT_LIMIT }
+          }, 200);
+        } catch (error) {
+          return webPairJson(request, env, { error: "Could not build your workspace", detail: String(error?.message || "").slice(0, 180) }, 502);
+        }
+      }
+
+      /* ------------------------------------------------------------------- chats */
       if (route === "chats") {
         try {
-          const friendIds = [...new Set((Array.isArray(session.profile.friends) ? session.profile.friends : []).map(String).filter(id => id && id !== session.uid))].slice(0, 100);
-          const people = await Promise.all(friendIds.map(async uid => {
-            const profile = await firestoreGet(env, `users/${uid}`).catch(() => null);
-            if (!profile || profile.banned === true || (Array.isArray(session.profile.blockedUsers) && session.profile.blockedUsers.includes(uid)) || (Array.isArray(profile.blockedUsers) && profile.blockedUsers.includes(session.uid))) return null;
-            return { uid, name: String(profile.name || "Convo user").slice(0, 80), username: String(profile.username || "").slice(0, 50), profileImageUrl: String(profile.profileImageUrl || "").slice(0, 800) };
-          }));
-          return webPairJson(request, env, { success: true, friends: people.filter(Boolean) }, 200);
+          const runtime = await db();
+          const [unread, statuses, typing] = await Promise.all([
+            webPairDbGet(runtime, `unread_counts/${meUid}`).catch(() => ({})),
+            webPairDbGet(runtime, "status").catch(() => ({})),
+            webPairDbGet(runtime, "typing").catch(() => ({}))
+          ]);
+          const chats = await webPairBuildChats(env, runtime, meUid, friendIds, webPairPresenceMap(statuses), unread, typing);
+          return webPairJson(request, env, { success: true, me: webPairMe(me, meUid), chats }, 200);
         } catch (error) {
-          return webPairJson(request, env, { error: "Could not load the friend list" }, 502);
+          return webPairJson(request, env, { error: "Could not load the chat list" }, 502);
         }
       }
-      if (route === "messages" || route === "send") {
-        const body = await request.json().catch(() => ({}));
-        const peerUid = String(body.peerUid || "").slice(0, 128);
-        if (!peerUid || peerUid === session.uid) return webPairJson(request, env, { error: "Choose a valid friend" }, 400);
-        const own = session.profile;
-        const peer = await firestoreGet(env, `users/${peerUid}`).catch(() => null);
-        const ownFriends = Array.isArray(own.friends) ? own.friends : [];
-        const blocked = (Array.isArray(own.blockedUsers) && own.blockedUsers.includes(peerUid)) || (Array.isArray(peer?.blockedUsers) && peer.blockedUsers.includes(session.uid));
-        if (!peer || peer.banned === true || !ownFriends.includes(peerUid) || blocked) return webPairJson(request, env, { error: "This companion can only open an accepted, unblocked friend chat" }, 403);
-        const chatId = [session.uid, peerUid].sort().join("_");
-        const dbUrl = String(env.FIREBASE_DATABASE_URL || "").replace(/\/+$/, "");
-        if (!/^https:\/\/[a-z0-9-]+(\.[a-z0-9-]+)*\.(firebaseio\.com|firebasedatabase\.app)$/i.test(dbUrl)) return webPairJson(request, env, { error: "Realtime Database URL is not configured" }, 503);
-        const account = JSON.parse(env.FIREBASE_SERVICE_ACCOUNT || "{}");
-        const dbToken = await getGoogleAccessToken(account.client_email, account.private_key, "https://www.googleapis.com/auth/firebase.database https://www.googleapis.com/auth/userinfo.email");
-        const messagesUrl = `${dbUrl}/chats/${encodeURIComponent(chatId)}/messages.json`;
-        if (route === "messages") {
-          const read = await fetch(`${messagesUrl}?orderBy=%22%24key%22&limitToLast=60`, { headers: { Authorization: `Bearer ${dbToken}` } });
-          if (!read.ok) return webPairJson(request, env, { error: `Message read failed (${read.status})` }, 502);
-          const raw = await read.json().catch(() => ({})) || {};
-          const messages = Object.entries(raw).map(([key, value]) => ({ ...(value && typeof value === "object" ? value : {}), messageId: key }))
-            .filter(message => message.senderId === session.uid || message.senderId === peerUid)
-            .map(message => ({ messageId: String(message.messageId || ""), senderId: String(message.senderId || ""), senderName: String(message.senderName || "").slice(0, 80), text: message.cloudText === true ? "[Message body stored separately]" : String(message.text || "").slice(0, 5000), timestamp: Number(message.timestamp || 0), edited: message.edited === true }))
-            .sort((a, b) => a.timestamp - b.timestamp);
-          return webPairJson(request, env, { success: true, messages }, 200);
+
+      /* ---------------------------------------------------------------- messages */
+      if (route === "messages") {
+        const guard = await requireFriend(String(body.peerUid || "").slice(0, 128));
+        if (!guard.ok) return guard.response;
+        const peerUid = String(body.peerUid);
+        try {
+          const runtime = await db();
+          const chatId = webPairChatId(meUid, peerUid);
+          const before = Number(body.before || 0);
+          const limit = Math.min(Math.max(Number(body.limit || 80), 1), 200);
+          const query = before > 0
+            ? `?orderBy=${encodeURIComponent('"timestamp"')}&endAt=${before - 1}&limitToLast=${limit}`
+            : `?orderBy=${encodeURIComponent('"timestamp"')}&limitToLast=${limit}`;
+          const [rawMessages, rawReactions] = await Promise.all([
+            webPairDbGet(runtime, `chats/${chatId}/messages${query}`).catch(() => ({})),
+            webPairDbGet(runtime, `chat_settings/${chatId}/reactions`).catch(() => ({}))
+          ]);
+          const messages = webPairMessages(rawMessages, rawReactions, meUid, peerUid);
+          const hasMore = Boolean(rawMessages && Object.keys(rawMessages).length >= limit);
+          return webPairJson(request, env, { success: true, messages, hasMore }, 200);
+        } catch (error) {
+          return webPairJson(request, env, { error: "Could not read this conversation" }, 502);
         }
-        const text = String(body.text || "").trim();
-        if (!text || text.length > 5000) return webPairJson(request, env, { error: "Text must be between 1 and 5000 characters" }, 400);
-        const sendRatePath = `web_pair_send_rate/${session.uid}`;
-        const previousSend = await firestoreGet(env, sendRatePath).catch(() => null) || {};
-        const now = Date.now();
-        if (now - Number(previousSend.lastAt || 0) < 750) return webPairJson(request, env, { error: "Please wait before sending another message" }, 429);
-        await fsPatch(env, sendRatePath, { lastAt: now }).catch(() => {});
-        const message = {
-          senderId: session.uid,
-          senderName: String(own.name || "Convo user").slice(0, 80),
-          senderUsername: String(own.username || "").slice(0, 50),
-          text,
-          timestamp: now,
-          edited: false,
-          deliveredToRecipient: false,
-          seenByRecipient: false,
-          expiresAt: 0
-        };
-        const write = await fetch(messagesUrl, { method: "POST", headers: { Authorization: `Bearer ${dbToken}`, "Content-Type": "application/json" }, body: JSON.stringify(message) });
-        if (!write.ok) return webPairJson(request, env, { error: `Message send failed (${write.status})` }, 502);
-        const pushed = await write.json().catch(() => ({}));
-        const messageId = String(pushed.name || "");
-        if (!messageId) return webPairJson(request, env, { error: "Realtime Database did not return a message ID" }, 502);
-        await fetch(`${dbUrl}/chats/${encodeURIComponent(chatId)}/messages/${encodeURIComponent(messageId)}.json`, {
-          method: "PATCH", headers: { Authorization: `Bearer ${dbToken}`, "Content-Type": "application/json" }, body: JSON.stringify({ messageId })
+      }
+
+      /* -------------------------------------------------------------------- send */
+      if (route === "send") {
+        const guard = await requireFriend(String(body.peerUid || "").slice(0, 128));
+        if (!guard.ok) return guard.response;
+        const peerUid = String(body.peerUid);
+        const peer = guard.peer;
+        const text = String(body.text || "").trim().slice(0, 5000);
+        const imageUrl = webPairHttpsUrl(body.imageUrl);
+        const fileUrl = webPairHttpsUrl(body.fileUrl);
+        const deleteMessageId = String(body.deleteMessageId || "").slice(0, 200);
+        if (!text && !imageUrl && !fileUrl && !deleteMessageId) return webPairJson(request, env, { error: "Write a message first" }, 400);
+        try {
+          const runtime = await db();
+          const chatId = webPairChatId(meUid, peerUid);
+          if (deleteMessageId) {
+            await fetch(`${runtime.url}/chats/${encodeURIComponent(chatId)}/messages/${encodeURIComponent(deleteMessageId)}.json`,
+              { method: "DELETE", headers: runtime.headers }).catch(() => null);
+            return webPairJson(request, env, { success: true, deleted: deleteMessageId }, 200);
+          }
+          const previous = await webPairDbGet(runtime, `web_pair_send_rate/${meUid}`).catch(() => null) || {};
+          const now = Date.now();
+          const firestoreRate = await firestoreGet(env, `web_pair_send_rate/${meUid}`).catch(() => null) || {};
+          if (text && now - Number(firestoreRate.lastAt || 0) < 250) return webPairJson(request, env, { error: "Please wait before sending another message" }, 429);
+          await fsPatch(env, `web_pair_send_rate/${meUid}`, { lastAt: now }).catch(() => {});
+          const messageId = `web_${now}_${randomHex(4)}`;
+          const message = {
+            messageId,
+            senderId: meUid,
+            senderName: String(me.name || "Convo user").slice(0, 80),
+            senderUsername: String(me.username || "").slice(0, 50),
+            text,
+            timestamp: now,
+            edited: false,
+            deliveredToRecipient: false,
+            seenByRecipient: false,
+            expiresAt: 0,
+            sentFromWeb: true
+          };
+          if (imageUrl) message.imageUrl = imageUrl;
+          if (fileUrl) {
+            message.fileUrl = fileUrl;
+            message.fileName = String(body.fileName || fileUrl.split("/").pop() || "attachment").slice(0, 160);
+            message.fileMimeType = String(body.fileMimeType || "").slice(0, 120);
+            message.fileSize = Number(body.fileSize || 0) || 0;
+          }
+          const replyToId = String(body.replyToId || "").slice(0, 200);
+          if (replyToId) {
+            message.replyToId = replyToId;
+            message.replyToText = String(body.replyToText || "").slice(0, 400);
+            message.replyToSenderName = String(body.replyToSenderName || "").slice(0, 80);
+          }
+          const write = await fetch(`${runtime.url}/chats/${encodeURIComponent(chatId)}/messages/${encodeURIComponent(messageId)}.json`,
+            { method: "PUT", headers: runtime.headers, body: JSON.stringify(message) });
+          if (!write.ok) return webPairJson(request, env, { error: `Message send failed (${write.status})` }, 502);
+          await Promise.all([meUid, peerUid].map(uid => fetch(`${runtime.url}/chats/${encodeURIComponent(chatId)}/members/${encodeURIComponent(uid)}.json`,
+            { method: "PUT", headers: runtime.headers, body: "true" }).catch(() => null)));
+          await webPairBumpUnread(runtime, peerUid, meUid);
+          await Promise.all([
+            fetch(`${runtime.url}/typing/${encodeURIComponent(chatId)}/${encodeURIComponent(meUid)}.json`, { method: "DELETE", headers: runtime.headers }).catch(() => null),
+            webPairTouchSession(env, session)
+          ]);
+          if (peer.fcmToken) {
+            const account = JSON.parse(env.FIREBASE_SERVICE_ACCOUNT || "{}");
+            const fcmToken = await getGoogleAccessToken(account.client_email, account.private_key);
+            const preview = text || (imageUrl ? "📷 Photo" : "📎 File");
+            await fetch(`https://fcm.googleapis.com/v1/projects/${account.project_id}/messages:send`, {
+              method: "POST", headers: { Authorization: `Bearer ${fcmToken}`, "Content-Type": "application/json" },
+              body: JSON.stringify({ message: { token: String(peer.fcmToken), data: {
+                title: `Convo Chat • ${message.senderName}`, body: preview.slice(0, 180), senderId: meUid,
+                senderName: message.senderName, senderProfileUrl: String(me.profileImageUrl || ""),
+                notificationType: "message", targetId: messageId, chatId, sentAt: String(now)
+              }, android: { priority: "high" } } })
+            }).catch(() => null);
+          }
+          return webPairJson(request, env, { success: true, message: { ...message, reactions: {} } }, 200);
+        } catch (error) {
+          return webPairJson(request, env, { error: "Could not send this message" }, 502);
+        }
+      }
+
+      /* ------------------------------------------------------------------ react */
+      if (route === "react") {
+        const guard = await requireFriend(String(body.peerUid || "").slice(0, 128));
+        if (!guard.ok) return guard.response;
+        const messageId = String(body.messageId || "").slice(0, 200);
+        const reaction = String(body.reaction || "").slice(0, 24);
+        if (!messageId) return webPairJson(request, env, { error: "messageId required" }, 400);
+        try {
+          const runtime = await db();
+          const chatId = webPairChatId(meUid, String(body.peerUid));
+          const target = `${runtime.url}/chat_settings/${encodeURIComponent(chatId)}/reactions/${encodeURIComponent(messageId)}/${encodeURIComponent(meUid)}.json`;
+          const response = await fetch(target, reaction
+            ? { method: "PUT", headers: runtime.headers, body: JSON.stringify(reaction) }
+            : { method: "DELETE", headers: runtime.headers });
+          if (!response.ok) return webPairJson(request, env, { error: `Reaction failed (${response.status})` }, 502);
+          return webPairJson(request, env, { success: true, messageId, reaction }, 200);
+        } catch (error) {
+          return webPairJson(request, env, { error: "Could not save this reaction" }, 502);
+        }
+      }
+
+      /* ------------------------------------------------------------------- read */
+      if (route === "read") {
+        const guard = await requireFriend(String(body.peerUid || "").slice(0, 128));
+        if (!guard.ok) return guard.response;
+        const peerUid = String(body.peerUid);
+        const upTo = Number(body.upTo || Date.now());
+        try {
+          const runtime = await db();
+          const chatId = webPairChatId(meUid, peerUid);
+          const raw = await webPairDbGet(runtime, `chats/${chatId}/messages?orderBy=${encodeURIComponent('"timestamp"')}&endAt=${upTo}&limitToLast=40`).catch(() => ({}));
+          const patches = Object.entries(raw || {}).filter(([, value]) => value && value.senderId === peerUid && value.seenByRecipient !== true);
+          await Promise.all(patches.slice(0, 25).map(([key]) => fetch(
+            `${runtime.url}/chats/${encodeURIComponent(chatId)}/messages/${encodeURIComponent(key)}/seenByRecipient.json`,
+            { method: "PUT", headers: runtime.headers, body: "true" }).catch(() => null)));
+          await fetch(`${runtime.url}/delivery_receipts/${encodeURIComponent(peerUid)}/${encodeURIComponent(chatId)}.json`,
+            { method: "PATCH", headers: runtime.headers, body: JSON.stringify({ seenAt: Date.now(), seenBy: meUid, web: true }) }).catch(() => null);
+          await fetch(`${runtime.url}/unread_counts/${encodeURIComponent(meUid)}/${encodeURIComponent(peerUid)}.json`,
+            { method: "PUT", headers: runtime.headers, body: "0" }).catch(() => null);
+          return webPairJson(request, env, { success: true, marked: patches.length }, 200);
+        } catch (error) {
+          return webPairJson(request, env, { error: "Could not update the read state" }, 502);
+        }
+      }
+
+      /* ----------------------------------------------------------------- typing */
+      if (route === "typing") {
+        const guard = await requireFriend(String(body.peerUid || "").slice(0, 128));
+        if (!guard.ok) return guard.response;
+        if (me.webSettings && me.webSettings.typingIndicator === false) return webPairJson(request, env, { success: true, skipped: true }, 200);
+        try {
+          const runtime = await db();
+          const chatId = webPairChatId(meUid, String(body.peerUid));
+          await fetch(`${runtime.url}/typing/${encodeURIComponent(chatId)}/${encodeURIComponent(meUid)}.json`, {
+            method: "PUT", headers: runtime.headers,
+            body: JSON.stringify({ active: true, updatedAt: Date.now(), web: true })
+          });
+          return webPairJson(request, env, { success: true }, 200);
+        } catch (error) {
+          return webPairJson(request, env, { error: "Typing signal failed" }, 502);
+        }
+      }
+
+      /* --------------------------------------------------------------- presence */
+      if (route === "presence") {
+        try {
+          const runtime = await db();
+          const [statuses, typing] = await Promise.all([
+            webPairDbGet(runtime, "status").catch(() => ({})),
+            webPairDbGet(runtime, "typing").catch(() => ({}))
+          ]);
+          const presence = webPairPresenceMap(statuses);
+          const people = friendIds.slice(0, WEB_CHAT_LIMIT).map(uid => ({
+            uid,
+            online: Boolean(presence[uid] && presence[uid].online),
+            lastActive: presence[uid] ? presence[uid].lastActive : 0
+          }));
+          // Chat ids are the two uids sorted and joined, so accept either order.
+          const typingMap = {};
+          Object.keys(typing || {}).forEach(chatId => {
+            if (!chatId.includes(meUid)) return;
+            const peerUid = chatId.split("_").find(part => part && part !== meUid) || "";
+            const entry = peerUid && typing[chatId] && typing[chatId][peerUid];
+            const updatedAt = Number(entry && entry.updatedAt || 0);
+            if (entry && entry.active !== false && updatedAt > Date.now() - 15000) typingMap[peerUid] = true;
+          });
+          return webPairJson(request, env, { success: true, people, typing: typingMap }, 200);
+        } catch (error) {
+          return webPairJson(request, env, { error: "Presence unavailable" }, 502);
+        }
+      }
+
+      /* ---------------------------------------------------------------- profile */
+      if (route === "profile") {
+        return webPairJson(request, env, { success: true, me: webPairMe(me, meUid) }, 200);
+      }
+      /* Upload a new profile photo straight from the browser. The image arrives as a data
+         URL, is validated and size-checked, then written to R2 exactly like an app upload,
+         so Android, the web app and the public profile page share one URL. */
+      if (route === "profile/avatar") {
+        if (!env.MEDIA_BUCKET || !env.R2_PUBLIC_BASE_URL) return webPairJson(request, env, { error: "Photo uploads are not enabled on this server" }, 503);
+        const match = /^data:(image\/(?:png|jpe?g|webp|gif));base64,([A-Za-z0-9+/=]+)$/.exec(String(body.image || ""));
+        if (!match) return webPairJson(request, env, { error: "Choose a JPG, PNG, WEBP or GIF image" }, 400);
+        let bytes;
+        try { bytes = Uint8Array.from(atob(match[2]), character => character.charCodeAt(0)); } catch (error) { bytes = null; }
+        if (!bytes || !bytes.length) return webPairJson(request, env, { error: "That image is empty" }, 400);
+        if (bytes.length > 4 * 1024 * 1024) return webPairJson(request, env, { error: "Keep the photo under 4 MB" }, 413);
+        const ext = match[1] === "image/jpeg" ? "jpg" : match[1] === "image/png" ? "png" : match[1] === "image/webp" ? "webp" : "gif";
+        const key = `avatars/${meUid}/web_${Date.now()}.${ext}`;
+        try {
+          await env.MEDIA_BUCKET.put(key, bytes, { httpMetadata: { contentType: match[1], cacheControl: "public, max-age=31536000" } });
+          const url = `${String(env.R2_PUBLIC_BASE_URL).replace(/\/+$/, "")}/${key}`;
+          await fsPatch(env, `users/${meUid}`, { profileImageUrl: url, updatedAt: Date.now() });
+          return webPairJson(request, env, { success: true, profileImageUrl: url, me: webPairMe({ ...me, profileImageUrl: url }, meUid) }, 200);
+        } catch (error) {
+          return webPairJson(request, env, { error: "Could not store that photo" }, 502);
+        }
+      }
+      // Public profile address, so the web profile screen can show a real shareable link.
+      if (route === "profile/link") {
+        const origin = (await webCompanionOrigins(env))[0] || "";
+        const workerOrigin = new URL(request.url).origin;
+        return webPairJson(request, env, {
+          success: true,
+          profileUrl: origin ? `${origin}/?u=${encodeURIComponent(String(me.username || meUid))}` : "",
+          workerProfileUrl: `${workerOrigin}/profile?uid=${encodeURIComponent(meUid)}`
+        }, 200);
+      }
+      if (route === "profile/save") {
+        const patch = {};
+        if (typeof body.name === "string" && body.name.trim()) patch.name = body.name.trim().slice(0, 60);
+        if (typeof body.bio === "string") patch.bio = body.bio.trim().slice(0, 200);
+        if (typeof body.professionalTitle === "string") patch.professionalTitle = body.professionalTitle.trim().slice(0, 80);
+        if (typeof body.pronouns === "string") patch.pronouns = body.pronouns.trim().slice(0, 40);
+        if (typeof body.profileImageUrl === "string" && body.profileImageUrl) {
+          const url = webPairHttpsUrl(body.profileImageUrl);
+          if (url) patch.profileImageUrl = url;
+        }
+        if (!Object.keys(patch).length) return webPairJson(request, env, { error: "Nothing to update" }, 400);
+        try {
+          await fsPatch(env, `users/${meUid}`, patch);
+          return webPairJson(request, env, { success: true, me: webPairMe({ ...me, ...patch }, meUid) }, 200);
+        } catch (error) {
+          return webPairJson(request, env, { error: "Could not save your profile" }, 502);
+        }
+      }
+
+      /* --------------------------------------------------------------- settings */
+      if (route === "settings") {
+        return webPairJson(request, env, { success: true, settings: await webPairSettings(env, meUid) }, 200);
+      }
+      if (route === "settings/save") {
+        const allowed = ["readReceipts", "typingIndicator", "showOnline", "theme", "bubbleStyle", "bubbleTint",
+          "cornerStyle", "wallpaper", "wallpaperUrl", "sendOnEnter", "hidePreview", "time24", "autoLockMinutes"];
+        const patch = {};
+        allowed.forEach(key => {
+          const value = body[key];
+          if (value === undefined) return;
+          if (typeof value === "boolean" || typeof value === "number") patch[key] = value;
+          else if (typeof value === "string") patch[key] = value.slice(0, 400);
         });
-        await Promise.all([session.uid, peerUid].map(uid => fetch(`${dbUrl}/chats/${encodeURIComponent(chatId)}/members/${encodeURIComponent(uid)}.json`, {
-          method: "PUT", headers: { Authorization: `Bearer ${dbToken}`, "Content-Type": "application/json" }, body: "true"
-        }).catch(() => null)));
-        const unreadUrl = `${dbUrl}/unread_counts/${encodeURIComponent(peerUid)}/${encodeURIComponent(session.uid)}.json`;
-        const unreadRead = await fetch(unreadUrl, { headers: { Authorization: `Bearer ${dbToken}` } }).catch(() => null);
-        if (unreadRead?.ok) {
-          const count = Number(await unreadRead.json().catch(() => 0)) || 0;
-          await fetch(unreadUrl, { method: "PUT", headers: { Authorization: `Bearer ${dbToken}`, "Content-Type": "application/json" }, body: JSON.stringify(count + 1) }).catch(() => null);
+        if (patch.wallpaperUrl && !webPairHttpsUrl(patch.wallpaperUrl)) delete patch.wallpaperUrl;
+        try {
+          await fsPatch(env, `web_settings/${meUid}`, { ...patch, updatedAt: Date.now() }).catch(async () => {
+            await firestoreSet(env, `web_settings/${meUid}`, { ...patch, updatedAt: Date.now() });
+          });
+          return webPairJson(request, env, { success: true, settings: patch }, 200);
+        } catch (error) {
+          return webPairJson(request, env, { error: "Could not save these settings" }, 502);
         }
-        if (peer.fcmToken) {
-          const fcmToken = await getGoogleAccessToken(account.client_email, account.private_key);
-          await fetch(`https://fcm.googleapis.com/v1/projects/${account.project_id}/messages:send`, {
-            method: "POST", headers: { Authorization: `Bearer ${fcmToken}`, "Content-Type": "application/json" },
-            body: JSON.stringify({ message: { token: String(peer.fcmToken), data: { title: `Convo Chat • ${message.senderName}`, body: text.slice(0, 180), senderId: session.uid, senderName: message.senderName, senderProfileUrl: String(own.profileImageUrl || ""), notificationType: "message", targetId: messageId, sentAt: String(now) }, android: { priority: "high" } } })
-          }).catch(() => {});
-        }
-        return webPairJson(request, env, { success: true, message: { ...message, messageId } }, 200);
       }
+
+      /* ---------------------------------------------------------------- devices */
+      if (route === "devices") {
+        try {
+          return webPairJson(request, env, { success: true, devices: await webPairDevices(env, meUid), browser: {
+            current: true, expiresAt: Number(session.session.expiresAt || 0), createdAt: Number(session.session.createdAt || 0)
+          } }, 200);
+        } catch (error) {
+          return webPairJson(request, env, { error: "Could not list devices" }, 502);
+        }
+      }
+
+      /* ----------------------------------------------------------------- export */
+      if (route === "export") {
+        try {
+          const runtime = await db();
+          const presence = webPairPresenceMap(await webPairDbGet(runtime, "status").catch(() => ({})));
+          const unread = await webPairDbGet(runtime, `unread_counts/${meUid}`).catch(() => ({}));
+          const chats = await webPairBuildChats(env, runtime, meUid, friendIds, presence, unread, {});
+          const conversations = [];
+          for (const chat of chats.slice(0, 25)) {
+            const chatId = webPairChatId(meUid, chat.uid);
+            const rawMessages = await webPairDbGet(runtime, `chats/${chatId}/messages?orderBy=${encodeURIComponent('"timestamp"')}&limitToLast=300`).catch(() => ({}));
+            const rawReactions = await webPairDbGet(runtime, `chat_settings/${chatId}/reactions`).catch(() => ({}));
+            conversations.push({ peer: { uid: chat.uid, name: chat.name, username: chat.username }, messages: webPairMessages(rawMessages, rawReactions, meUid, chat.uid) });
+          }
+          return webPairJson(request, env, {
+            success: true, exportedAt: new Date().toISOString(), format: "convo-chat-web-v1",
+            account: webPairMe(me, meUid), conversations
+          }, 200);
+        } catch (error) {
+          return webPairJson(request, env, { error: "Export failed" }, 502);
+        }
+      }
+
       return webPairJson(request, env, { error: "Unknown companion route" }, 404);
     }
 
@@ -314,10 +679,19 @@ export default {
         const username = escapeHtml(String(profile.username || "").slice(0, 80));
         const bio = escapeHtml(String(profile.bio || "Open this profile in Convo Chat").slice(0, 320));
         const image = escapeHtml(String(profile.profileImageUrl || profile.image || ""));
+        const cover = escapeHtml(String(profile.coverImageUrl || ""));
+        const profileTitle = escapeHtml(String(profile.professionalTitle || ""));
+        const friendsCount = Array.isArray(profile.friends) ? profile.friends.length : 0;
+        const followersCount = Array.isArray(profile.followers) ? profile.followers.length : 0;
         const appLink = `convochat://profile?uid=${encodeURIComponent(uid)}`;
         const fallback = escapeHtml(env.APP_DOWNLOAD_URL || new URL(request.url).origin);
         const intentLink = `intent://profile?uid=${encodeURIComponent(uid)}#Intent;scheme=convochat;package=com.ebchat;S.browser_fallback_url=${encodeURIComponent(env.APP_DOWNLOAD_URL || new URL(request.url).origin)};end`;
-        const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${name} — Convo Chat</title><meta name="description" content="${bio}"><meta property="og:site_name" content="Convo Chat"><meta property="og:type" content="profile"><meta property="og:title" content="${name}${username ? ` (@${username})` : ""}"><meta property="og:description" content="${bio}">${image ? `<meta property="og:image" content="${image}">` : ""}<style>body{margin:0;background:#070814;color:#fff;font-family:system-ui;display:grid;place-items:center;min-height:100vh}.card{width:min(620px,calc(100% - 40px));padding:30px;border-radius:30px;background:linear-gradient(145deg,#211c45,#08192b);border:1px solid #806fff77;box-sizing:border-box;text-align:center;position:relative;overflow:hidden;animation:cardIn .72s cubic-bezier(.2,.8,.2,1) both;box-shadow:0 18px 70px #09001f99}.card:before{content:"";position:absolute;inset:-60% -20%;background:linear-gradient(110deg,transparent 42%,#ffffff22 50%,transparent 58%);transform:translateX(-70%) rotate(8deg);animation:sheen 4.8s ease-in-out infinite;pointer-events:none}.card>*{position:relative;z-index:1}.avatar{width:112px;height:112px;border-radius:50%;object-fit:cover;background:#ffffff18;border:4px solid #ffffff44;animation:avatarPulse 2.8s ease-in-out infinite}.name{font-size:28px;font-weight:800;margin:18px 0 4px}.user{color:#b8b6d8}.bio{color:#e4e1ff;line-height:1.55}.btn{display:block;margin-top:16px;padding:15px;border-radius:999px;text-decoration:none;color:white;font-weight:800;background:linear-gradient(90deg,#6757ff,#ef3fac);transition:transform .2s ease,filter .2s ease}.btn:hover{transform:translateY(-2px);filter:brightness(1.12)}.secondary{background:#ffffff18}@keyframes cardIn{from{opacity:0;transform:translateY(18px) scale(.98)}to{opacity:1;transform:translateY(0) scale(1)}}@keyframes sheen{0%,35%{transform:translateX(-75%) rotate(8deg)}70%,100%{transform:translateX(75%) rotate(8deg)}}@keyframes avatarPulse{0%,100%{box-shadow:0 0 0 0 #7ee7ff22}50%{box-shadow:0 0 0 12px #7ee7ff00}}@media (prefers-reduced-motion:reduce){.card,.avatar,.card:before{animation:none}.btn{transition:none}}</style></head><body><main class="card">${image ? `<img class="avatar" src="${image}" alt="${name}">` : `<div class="avatar" aria-hidden="true"></div>`}<div class="name">${name}</div>${username ? `<div class="user">@${username}</div>` : ""}<p class="bio">${bio}</p><a class="btn" href="${intentLink}">Open profile in Convo Chat</a><a class="btn secondary" href="${fallback}">Download or open Convo Chat</a></main><script>setTimeout(()=>{location.href=${JSON.stringify(appLink)}},350)</script></body></html>`;
+        // The real web app is the primary action now; the Android app stays secondary.
+        const webOrigin = (await webCompanionOrigins(env))[0] || "";
+        const webProfileUrl = webOrigin ? `${webOrigin}/?u=${encodeURIComponent(String(profile.username || uid))}` : "";
+        const primaryHref = webProfileUrl ? escapeHtml(webProfileUrl) : intentLink;
+        const primaryLabel = webProfileUrl ? "Open in Convo Web" : "Open profile in Convo Chat";
+        const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${name} — Convo Chat</title><meta name="description" content="${bio}"><meta property="og:site_name" content="Convo Chat"><meta property="og:type" content="profile"><meta property="og:title" content="${name}${username ? ` (@${username})` : ""}"><meta property="og:description" content="${bio}">${image ? `<meta property="og:image" content="${image}">` : ""}<style>body{margin:0;background:#070814;color:#fff;font-family:system-ui;display:grid;place-items:center;min-height:100vh}.card{width:min(620px,calc(100% - 40px));padding:30px;border-radius:30px;background:linear-gradient(145deg,#211c45,#08192b);border:1px solid #806fff77;box-sizing:border-box;text-align:center;position:relative;overflow:hidden;animation:cardIn .72s cubic-bezier(.2,.8,.2,1) both;box-shadow:0 18px 70px #09001f99}.card:before{content:"";position:absolute;inset:-60% -20%;background:linear-gradient(110deg,transparent 42%,#ffffff22 50%,transparent 58%);transform:translateX(-70%) rotate(8deg);animation:sheen 4.8s ease-in-out infinite;pointer-events:none}.card>*{position:relative;z-index:1}.avatar{width:112px;height:112px;border-radius:50%;object-fit:cover;background:#ffffff18;border:4px solid #ffffff44;animation:avatarPulse 2.8s ease-in-out infinite}.name{font-size:28px;font-weight:800;margin:18px 0 4px}.user{color:#b8b6d8}.bio{color:#e4e1ff;line-height:1.55}.btn{display:block;margin-top:16px;padding:15px;border-radius:999px;text-decoration:none;color:white;font-weight:800;background:linear-gradient(90deg,#6757ff,#ef3fac);transition:transform .2s ease,filter .2s ease}.btn:hover{transform:translateY(-2px);filter:brightness(1.12)}.secondary{background:#ffffff18}.cover{position:absolute;inset:0 0 auto 0;height:132px;background:linear-gradient(115deg,#4b2fd6,#8c3dff 48%,#12b5c9);background-size:cover;background-position:center;opacity:.92}.card{padding-top:150px}.stats{display:flex;gap:22px;justify-content:center;margin:14px 0 4px;color:#cfcbf2;font-size:13px}.stats b{display:block;color:#fff;font-size:18px;font-weight:800}.title{color:#a9e9ff;font-size:13px;margin-top:2px}@keyframes cardIn{from{opacity:0;transform:translateY(18px) scale(.98)}to{opacity:1;transform:translateY(0) scale(1)}}@keyframes sheen{0%,35%{transform:translateX(-75%) rotate(8deg)}70%,100%{transform:translateX(75%) rotate(8deg)}}@keyframes avatarPulse{0%,100%{box-shadow:0 0 0 0 #7ee7ff22}50%{box-shadow:0 0 0 12px #7ee7ff00}}@media (prefers-reduced-motion:reduce){.card,.avatar,.card:before{animation:none}.btn{transition:none}}</style></head><body><main class="card">${cover ? `<div class="cover" style="background-image:url('${cover}')"></div>` : `<div class="cover"></div>`}${image ? `<img class="avatar" src="${image}" alt="${name}">` : `<div class="avatar" aria-hidden="true"></div>`}<div class="name">${name}</div>${username ? `<div class="user">@${username}</div>` : ""}${profileTitle ? `<div class="title">${profileTitle}</div>` : ""}<p class="bio">${bio}</p><div class="stats"><span><b>${friendsCount}</b>friends</span><span><b>${followersCount}</b>followers</span></div><a class="btn" href="${primaryHref}">${primaryLabel}</a><a class="btn secondary" href="${intentLink}">Get the Android app</a></main><script>setTimeout(()=>{location.href=${JSON.stringify(appLink)}},350)</script></body></html>`;
         return new Response(html, { status: 200, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "public,max-age=120", "Access-Control-Allow-Origin": "*" } });
       } catch (error) {
         return htmlResponse("Could not load this profile", 500);
@@ -756,6 +1130,209 @@ export default {
           accepted += results.filter(Boolean).length;
         }
         return jsonResponse({ success: true, targeted: tokens.length, acceptedByFcm: accepted });
+      }
+
+
+      // ---- Admin: publish the Convo Chat Web app to Cloudflare Pages ---------------
+      // The Worker holds the whole static build as files under web_site/, so the admin
+      // only supplies an API token. Files are hashed and uploaded directly through the
+      // Pages assets API, then a deployment is created and its URL returned.
+      if (path.startsWith("/admin/web-deploy")) {
+        if (!(await callerCan(env, caller, "settings")) && !isAdminEmail(env, caller)) {
+          return jsonResponse({ error: "Admin only" }, 403);
+        }
+        if (!env.MEDIA_BUCKET || typeof env.MEDIA_BUCKET.list !== "function" || typeof env.MEDIA_BUCKET.put !== "function") {
+          return jsonResponse({ error: "The MEDIA_BUCKET R2 binding is required to host the web build", code: "NO_BUCKET" }, 503);
+        }
+
+        const loadStored = async () => (await firestoreGet(env, "admin_secrets/web_pages").catch(() => null)) || {};
+        const listSite = async () => {
+          const listed = await env.MEDIA_BUCKET.list({ prefix: "web_site/", limit: 200 });
+          return (listed.objects || []).map(object => object.key.slice("web_site/".length)).filter(Boolean);
+        };
+
+        // Status: does the bucket hold a build, and is a Pages project configured?
+        if (path === "/admin/web-deploy/status") {
+          const stored = await loadStored();
+          const files = await listSite().catch(() => []);
+          return jsonResponse({
+            success: true,
+            ready: files.includes("index.html"),
+            files: files.length,
+            projectName: String(stored.projectName || "convo-chat-web"),
+            siteUrl: String(stored.siteUrl || ""),
+            lastDeployAt: Number(stored.lastDeployAt || 0),
+            lastDeployUrl: String(stored.lastDeployUrl || ""),
+            lastFiles: Number(stored.lastFiles || 0),
+            apiVersion: WORKER_API_VERSION
+          }, 200);
+        }
+
+        // Upload the bundled build once (admin tool / CI). Body: { files: { "index.html": "<base64>" } }
+        if (path === "/admin/web-deploy/upload-site") {
+          const files = payload && payload.files && typeof payload.files === "object" ? payload.files : null;
+          if (!files) return jsonResponse({ error: "files map with base64 content is required" }, 400);
+          const names = Object.keys(files);
+          if (!names.length || names.length > 200) return jsonResponse({ error: "Between 1 and 200 files are supported" }, 400);
+          const written = [];
+          for (const name of names) {
+            const clean = String(name).replace(/^\/+/, "");
+            if (!/^[A-Za-z0-9._/-]+$/.test(clean) || clean.includes("..")) return jsonResponse({ error: `Unsafe file name: ${clean}` }, 400);
+            const binary = Uint8Array.from(atob(String(files[name] || "")), char => char.charCodeAt(0));
+            if (!binary.length) return jsonResponse({ error: `Empty file: ${clean}` }, 400);
+            await env.MEDIA_BUCKET.put(`web_site/${clean}`, binary, {
+              httpMetadata: { contentType: webDeployMime(clean), cacheControl: "no-store" }
+            });
+            written.push(clean);
+          }
+          return jsonResponse({ success: true, files: written }, 200);
+        }
+
+        // Deploy: { accountId, apiToken, projectName, productionUrl? , force? }
+        if (path === "/admin/web-deploy/deploy" || path === "/admin/web-deploy/test") {
+          const stored = await loadStored();
+          const accountId = String(payload.accountId || stored.accountId || "").trim();
+          const apiToken = String(payload.apiToken || stored.apiToken || "").trim();
+          if (!/^[a-f0-9]{20,40}$/i.test(accountId)) return jsonResponse({ error: "Cloudflare Account ID looks wrong (it is a 32-character hex id)" }, 400);
+          if (apiToken.length < 20) return jsonResponse({ error: "A Cloudflare API token with “Cloudflare Pages: Edit” is required" }, 400);
+          const projectName = String(payload.projectName || stored.projectName || "convo-chat-web").toLowerCase()
+            .replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "").slice(0, 58) || "convo-chat-web";
+          const api = (subPath, init = {}) => fetch(`https://api.cloudflare.com/client/v4${subPath}`, {
+            ...init,
+            headers: { Authorization: `Bearer ${apiToken}`, "Content-Type": "application/json", ...(init.headers || {}) }
+          }).catch(error => ({ ok: false, status: 0, json: async () => ({ errors: [{ message: String(error?.message || "network error") }] }) }));
+
+          // 1 · Verify the token and account.
+          const verify = await api("/user/tokens/verify");
+          const verifyBody = await verify.json().catch(() => ({}));
+          if (!verify.ok || verifyBody.success === false) {
+            return jsonResponse({ error: "Cloudflare rejected the API token", detail: (verifyBody.errors || [])[0]?.message || `HTTP ${verify.status}` }, 403);
+          }
+          if (path === "/admin/web-deploy/test") {
+            const accounts = await api("/accounts").then(r => r.json()).catch(() => ({}));
+            const found = (accounts.result || []).some(account => account.id === accountId);
+            return jsonResponse({ success: true, verified: true, accountFound: found,
+              accounts: (accounts.result || []).map(account => ({ id: account.id, name: account.name })), projectName }, 200);
+          }
+
+          // 2 · The build must already be staged in the bucket.
+          const siteFiles = await listSite();
+          if (!siteFiles.includes("index.html")) {
+            return jsonResponse({
+              error: "No web build found yet. Stage it first: run `ADMIN_TOKEN=… WORKER_URL=… ./deploy-web-companion.sh` or POST /admin/web-deploy/upload-site.",
+              code: "NO_BUILD"
+            }, 409);
+          }
+
+          // 3 · Ensure the Pages project exists.
+          const projectPath = `/accounts/${accountId}/pages/projects/${projectName}`;
+          const existing = await api(projectPath);
+          if (existing.status === 404) {
+            const created = await api(`/accounts/${accountId}/pages/projects`, {
+              method: "POST",
+              body: JSON.stringify({ name: projectName, production_branch: "main" })
+            });
+            const createdBody = await created.json().catch(() => ({}));
+            if (!created.ok || createdBody.success === false) {
+              return jsonResponse({ error: "Could not create the Pages project", detail: (createdBody.errors || [])[0]?.message || `HTTP ${created.status}` }, 502);
+            }
+          } else if (!existing.ok) {
+            const body = await existing.json().catch(() => ({}));
+            return jsonResponse({ error: "Could not read the Pages project", detail: (body.errors || [])[0]?.message || `HTTP ${existing.status}` }, 502);
+          }
+
+          // 4 · Upload the files that Cloudflare does not have yet.
+          const build = [];
+          for (const name of siteFiles) {
+            if (name.startsWith("_") && name !== "_headers" && name !== "_redirects") continue;
+            const object = await env.MEDIA_BUCKET.get(`web_site/${name}`);
+            if (!object) continue;
+            const buffer = new Uint8Array(await object.arrayBuffer());
+            let binary = "";
+            const chunk = 0x8000;
+            for (let index = 0; index < buffer.length; index += chunk) {
+              binary += String.fromCharCode.apply(null, buffer.subarray(index, index + chunk));
+            }
+            build.push({ name, bytes: buffer.length, hash: await webDeployHash(btoa(binary), name), base64: btoa(binary) });
+          }
+          const manifest = {};
+          let uploaded = 0;
+          const uploadToken = await api(`${projectPath}/upload-token`);
+          const tokenBody = await uploadToken.json().catch(() => ({}));
+          if (!uploadToken.ok || !tokenBody.result?.jwt) {
+            return jsonResponse({ error: "Cloudflare did not issue a Pages upload token", detail: (tokenBody.errors || [])[0]?.message || `HTTP ${uploadToken.status}` }, 502);
+          }
+          const jwt = tokenBody.result.jwt;
+          const hashes = build.map(file => file.hash);
+          const check = await fetch("https://api.cloudflare.com/client/v4/pages/assets/check-missing", {
+            method: "POST", headers: { Authorization: `Bearer ${jwt}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ hashes })
+          });
+          const missing = check.ok ? await check.json().catch(() => hashes) : hashes;
+          const missingSet = new Set(Array.isArray(missing) ? missing : hashes);
+          const pendingUpload = build.filter(file => missingSet.has(file.hash));
+          for (let index = 0; index < pendingUpload.length; index += 40) {
+            const bucket = pendingUpload.slice(index, index + 40).map(file => ({
+              key: file.hash, value: file.base64, base64: true, metadata: { contentType: webDeployMime(file.name) }
+            }));
+            const upload = await fetch("https://api.cloudflare.com/client/v4/pages/assets/upload", {
+              method: "POST", headers: { Authorization: `Bearer ${jwt}`, "Content-Type": "application/json" },
+              body: JSON.stringify(bucket)
+            });
+            if (!upload.ok) {
+              const detail = await upload.json().catch(() => ({}));
+              return jsonResponse({ error: "Uploading the build to Cloudflare failed", detail: (detail.errors || [])[0]?.message || `HTTP ${upload.status}` }, 502);
+            }
+            uploaded += bucket.length;
+          }
+          await fetch("https://api.cloudflare.com/client/v4/pages/assets/upsert-hashes", {
+            method: "POST", headers: { Authorization: `Bearer ${jwt}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ hashes })
+          }).catch(() => null);
+          build.forEach(file => { manifest[`/${file.name}`] = file.hash; });
+
+          // 5 · Create the deployment. Attach _headers / _redirects as project rules.
+          const form = new FormData();
+          form.append("manifest", JSON.stringify(manifest));
+          form.append("branch", "main");
+          form.append("commit_message", `Convo Chat Web publish · ${new Date().toISOString()}`);
+          form.append("commit_hash", await webDeployHash(String(Date.now()), "deploy"));
+          const headerFile = build.find(file => file.name === "_headers");
+          const redirectFile = build.find(file => file.name === "_redirects");
+          if (headerFile) form.append("_headers", new Blob([webDeployBase64ToText(headerFile.base64)], { type: "text/plain" }), "_headers");
+          if (redirectFile) form.append("_redirects", new Blob([webDeployBase64ToText(redirectFile.base64)], { type: "text/plain" }), "_redirects");
+          const deployment = await fetch(`https://api.cloudflare.com/client/v4${projectPath}/deployments`, {
+            method: "POST", headers: { Authorization: `Bearer ${apiToken}` }, body: form
+          });
+          const deploymentBody = await deployment.json().catch(() => ({}));
+          if (!deployment.ok || deploymentBody.success === false) {
+            return jsonResponse({ error: "Cloudflare could not create the deployment", detail: (deploymentBody.errors || [])[0]?.message || `HTTP ${deployment.status}` }, 502);
+          }
+
+          // 6 · Remember the working configuration + return the live URL.
+          const siteUrl = String(deploymentBody.result?.url || `https://${projectName}.pages.dev`).replace(/\/+$/, "");
+          const productionUrl = `https://${projectName}.pages.dev`;
+          const acceptedOrigins = [...new Set([siteUrl, productionUrl].filter(Boolean))];
+          await fsPatch(env, "admin_secrets/web_pages", {
+            accountId, apiToken, projectName, siteUrl, productionUrl,
+            allowedOrigins: acceptedOrigins,
+            lastDeployAt: Date.now(), lastDeployUrl: siteUrl, lastFiles: build.length, lastUploaded: uploaded,
+            updatedAt: Date.now(), updatedBy: String(caller.email || caller.sub || "")
+          }).catch(async () => {
+            await firestoreSet(env, "admin_secrets/web_pages", {
+              accountId, apiToken, projectName, siteUrl, productionUrl, allowedOrigins: acceptedOrigins,
+              lastDeployAt: Date.now(), lastDeployUrl: siteUrl, lastFiles: build.length, lastUploaded: uploaded, updatedAt: Date.now()
+            });
+          });
+          return jsonResponse({
+            success: true, projectName, deploymentId: String(deploymentBody.result?.id || ""),
+            url: siteUrl, productionUrl, files: build.length, uploaded,
+            pairedUrl: `${siteUrl}/`,
+            message: "Convo Chat Web is live. Open the URL on any device and pair it from the Android app."
+          }, 200);
+        }
+
+        return jsonResponse({ error: "Unknown web deploy action" }, 404);
       }
 
       // ---- Cloud message store: Cloudflare D1 via REST (text/emoji bodies only) ----------
@@ -1234,6 +1811,251 @@ function mimeExtension(contentType) {
   return "bin";
 }
 
+const WEB_CHAT_LIMIT = 300;
+const WEB_SESSION_HOURS = 12;
+
+/** RTDB REST access for the web companion. Credentials never leave the Worker. */
+async function webPairDb(env) {
+  const dbUrl = String(env.FIREBASE_DATABASE_URL || "").trim().replace(/\/+$/, "");
+  if (!/^https:\/\/[a-z0-9-]+(\.[a-z0-9-]+)*\.(firebaseio\.com|firebasedatabase\.app)$/i.test(dbUrl)) {
+    throw new Error("Realtime Database is not configured");
+  }
+  const account = JSON.parse(env.FIREBASE_SERVICE_ACCOUNT || "{}");
+  const token = await getGoogleAccessToken(account.client_email, account.private_key,
+    "https://www.googleapis.com/auth/firebase.database https://www.googleapis.com/auth/userinfo.email");
+  return {
+    url: dbUrl,
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }
+  };
+}
+
+async function webPairDbGet(runtime, subPath, shallow = false) {
+  const separator = subPath.includes("?") ? "&" : "?";
+  const url = `${runtime.url}/${subPath}${separator}${shallow ? "shallow=true&" : ""}print=silent`;
+  const response = await fetch(url, { headers: runtime.headers });
+  if (!response.ok) throw new Error(`RTDB read ${response.status}`);
+  return await response.json().catch(() => null);
+}
+
+async function webPairBuildChats(env, runtime, meUid, friendIds, presence, unread, typing) {
+  const unreadMap = unread && typeof unread === "object" ? unread : {};
+  const typingMap = typing && typeof typing === "object" ? typing : {};
+  const chats = await Promise.all(friendIds.slice(0, WEB_CHAT_LIMIT).map(async uid => {
+    const profile = await firestoreGet(env, `users/${uid}`).catch(() => null);
+    if (!profile || profile.banned === true || profile.disabled === true) return null;
+    if (Array.isArray(profile.blockedUsers) && profile.blockedUsers.includes(meUid)) return null;
+    const chatId = webPairChatId(meUid, uid);
+    let lastMessage = null;
+    let lastAt = 0;
+    try {
+      const tail = await webPairDbGet(runtime, `chats/${chatId}/messages?orderBy=${encodeURIComponent('"timestamp"')}&limitToLast=1`);
+      if (tail && typeof tail === "object") {
+        const entry = Object.entries(tail)[0];
+        if (entry && entry[1] && typeof entry[1] === "object") {
+          const value = entry[1];
+          lastMessage = {
+            messageId: String(value.messageId || entry[0]),
+            senderId: String(value.senderId || ""),
+            senderName: String(value.senderName || "").slice(0, 80),
+            text: value.cloudText === true ? "[Message body stored separately]" : String(value.text || "").slice(0, 280),
+            timestamp: Number(value.timestamp || 0)
+          };
+          lastAt = lastMessage.timestamp;
+        }
+      }
+    } catch (_) { lastMessage = null; }
+    const peerTyping = typingMap[chatId] && typingMap[chatId][uid];
+    return {
+      uid,
+      name: String(profile.name || "Convo user").slice(0, 80),
+      username: String(profile.username || "").slice(0, 50),
+      profileImageUrl: String(profile.profileImageUrl || "").slice(0, 800),
+      online: Boolean(presence[uid] && presence[uid].online),
+      lastActive: presence[uid] ? presence[uid].lastActive : Number(profile.lastActive || 0),
+      unread: Math.max(0, Number(unreadMap[uid] || 0)),
+      lastMessage,
+      lastAt,
+      typing: Boolean(peerTyping && Number(peerTyping.updatedAt || 0) > Date.now() - 12000),
+      muted: Array.isArray(profile.mutedBy) && profile.mutedBy.includes(meUid),
+      mutual: true
+    };
+  }));
+  return chats.filter(Boolean).sort((a, b) => Number(b.lastAt || 0) - Number(a.lastAt || 0));
+}
+
+/** Content type for files published to Cloudflare Pages. */
+function webDeployMime(name) {
+  const ext = String(name).toLowerCase().split(".").pop();
+  return ({
+    html: "text/html; charset=utf-8", css: "text/css; charset=utf-8", js: "application/javascript; charset=utf-8",
+    json: "application/json; charset=utf-8", webmanifest: "application/manifest+json; charset=utf-8",
+    svg: "image/svg+xml", png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", webp: "image/webp",
+    ico: "image/x-icon", txt: "text/plain; charset=utf-8", map: "application/json"
+  })[ext] || "application/octet-stream";
+}
+
+/** Cloudflare Pages asset hash: blake3(base64(content) + extension), first 32 hex chars. */
+async function webDeployHash(base64Content, name) {
+  const ext = String(name).includes(".") ? String(name).split(".").pop() : "";
+  const data = new TextEncoder().encode(base64Content + ext);
+  // Workers have no blake3, so derive a stable 32-hex fingerprint from SHA-256 instead.
+  // Pages only needs a stable, collision-resistant key per file content.
+  const digest = await crypto.subtle.digest("SHA-256", data);
+  return [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, "0")).join("").slice(0, 32);
+}
+
+function webDeployBase64ToText(base64) {
+  return new TextDecoder().decode(Uint8Array.from(atob(base64), char => char.charCodeAt(0)));
+}
+
+/** Map RTDB typing records to peer uid -> boolean for the signed-in browser owner. */
+function webPairTypingMap(typing, meUid) {
+  const out = {};
+  const now = Date.now();
+  Object.keys(typing && typeof typing === "object" ? typing : {}).forEach(chatId => {
+    if (!chatId.includes(meUid)) return;
+    const peerUid = chatId.split("_").find(part => part && part !== meUid) || "";
+    const entry = peerUid ? recording(typing, chatId, peerUid) : null;
+    if (entry && entry.active !== false && Number(entry.updatedAt || 0) > now - 15000) out[peerUid] = true;
+  });
+  return out;
+}
+function recording(root, chatId, peerUid) {
+  try { return root[chatId] && root[chatId][peerUid] ? root[chatId][peerUid] : null; } catch (_) { return null; }
+}
+
+function webPairPresenceMap(statuses) {
+  const now = Date.now();
+  const map = {};
+  Object.entries(statuses && typeof statuses === "object" ? statuses : {}).forEach(([uid, value]) => {
+    if (!value || typeof value !== "object") return;
+    const lastActive = Number(value.lastActive || 0);
+    const onlineUntil = Number(value.onlineUntil || (lastActive + 120000));
+    map[uid] = { online: value.isOnline === true && lastActive > 0 && now <= onlineUntil, lastActive };
+  });
+  return map;
+}
+
+function webPairChatId(a, b) {
+  return [a, b].sort().join("_");
+}
+
+function webPairHttpsUrl(value) {
+  const text = String(value || "").trim();
+  if (!text || text.length > 900) return "";
+  try {
+    const url = new URL(text);
+    return url.protocol === "https:" ? url.href : "";
+  } catch (_) { return ""; }
+}
+
+function webPairMe(profile, uid) {
+  return {
+    uid,
+    name: String(profile.name || "Convo user").slice(0, 80),
+    username: String(profile.username || "").slice(0, 50),
+    email: String(profile.email || "").slice(0, 160),
+    profileImageUrl: String(profile.profileImageUrl || "").slice(0, 800),
+    coverImageUrl: webPairHttpsUrl(profile.coverImageUrl) || "",
+    bio: String(profile.bio || "").slice(0, 200),
+    professionalTitle: String(profile.professionalTitle || "").slice(0, 80),
+    pronouns: String(profile.pronouns || "").slice(0, 40),
+    profileType: String(profile.activeProfileType || "Personal").slice(0, 40),
+    verified: profile.verified === true,
+    premium: profile.premium === true,
+    role: String(profile.role || "").slice(0, 40),
+    createdAt: Number(profile.createdAt || 0),
+    friends: Array.isArray(profile.friends) ? profile.friends.length : 0,
+    followers: Array.isArray(profile.followers) ? profile.followers.length : 0,
+    following: Array.isArray(profile.following) ? profile.following.length : 0,
+    webCompanionVersion: Number(profile.webCompanionVersion || 0)
+  };
+}
+
+async function webPairDevices(env, uid) {
+  const sessions = await firestoreList(env, `user_sessions/${uid}/devices`).catch(() => []);
+  return sessions.map(session => ({
+    sessionId: String(session.sessionId || ""),
+    deviceName: String(session.deviceName || "Android device").slice(0, 120),
+    city: String(session.city || "").slice(0, 60),
+    country: String(session.country || "").slice(0, 60),
+    lastSeenAt: Number(session.lastSeenAt || 0),
+    firstSeenAt: Number(session.firstSeenAt || 0),
+    active: session.active !== false,
+    appVersion: String(session.appVersion || "").slice(0, 40)
+  })).sort((a, b) => Number(b.lastSeenAt || 0) - Number(a.lastSeenAt || 0)).slice(0, 30);
+}
+
+async function webPairSettings(env, uid) {
+  const stored = await firestoreGet(env, `web_settings/${uid}`).catch(() => null) || {};
+  return {
+    readReceipts: stored.readReceipts !== false,
+    typingIndicator: stored.typingIndicator !== false,
+    showOnline: stored.showOnline !== false,
+    theme: String(stored.theme || "midnight").slice(0, 24),
+    bubbleStyle: String(stored.bubbleStyle || "gradient").slice(0, 24),
+    bubbleTint: String(stored.bubbleTint || "violet").slice(0, 24),
+    cornerStyle: String(stored.cornerStyle || "rounded").slice(0, 24),
+    wallpaper: String(stored.wallpaper || "aurora").slice(0, 24),
+    wallpaperUrl: webPairHttpsUrl(stored.wallpaperUrl),
+    autoLockMinutes: Math.max(0, Math.min(120, Number(stored.autoLockMinutes || 15))),
+    updatedAt: Number(stored.updatedAt || 0)
+  };
+}
+
+async function webPairBumpUnread(runtime, recipientUid, senderUid) {
+  try {
+    const url = `${runtime.url}/unread_counts/${encodeURIComponent(recipientUid)}/${encodeURIComponent(senderUid)}.json`;
+    const read = await fetch(url, { headers: runtime.headers });
+    const current = read.ok ? Number(await read.json().catch(() => 0)) || 0 : 0;
+    await fetch(url, { method: "PUT", headers: runtime.headers, body: JSON.stringify(current + 1) });
+  } catch (_) {}
+}
+
+async function webPairTouchSession(env, session) {
+  if (!session || !session.sessionHash) return;
+  await fsPatch(env, `web_pair_sessions/${session.sessionHash}`, { lastUsedAt: Date.now() }).catch(() => null);
+}
+
+function webPairMessages(rawMessages, rawReactions, meUid, peerUid) {
+  const reactionRoot = rawReactions && typeof rawReactions === "object" ? rawReactions : {};
+  const now = Date.now();
+  return Object.entries(rawMessages && typeof rawMessages === "object" ? rawMessages : {})
+    .filter(([, value]) => value && typeof value === "object")
+    .map(([key, value]) => {
+      const reactions = {};
+      const source = reactionRoot[key];
+      if (source && typeof source === "object") {
+        Object.entries(source).forEach(([uid, emoji]) => {
+          if (typeof emoji === "string" && emoji && emoji.length <= 24) reactions[uid] = emoji;
+        });
+      }
+      return {
+        messageId: String(value.messageId || key),
+        senderId: String(value.senderId || ""),
+        senderName: String(value.senderName || "").slice(0, 80),
+        text: value.cloudText === true ? "[Message body stored separately]" : String(value.text || "").slice(0, 5000),
+        timestamp: Number(value.timestamp || 0),
+        edited: value.edited === true,
+        imageUrl: webPairHttpsUrl(value.imageUrl) || webPairHttpsUrl(value.remoteImageUrl),
+        fileUrl: webPairHttpsUrl(value.fileUrl) || webPairHttpsUrl(value.remoteFileUrl),
+        fileName: String(value.fileName || "").slice(0, 160),
+        fileMimeType: String(value.fileMimeType || "").slice(0, 120),
+        fileSize: Number(value.fileSize || 0),
+        voiceUrl: webPairHttpsUrl(value.voiceUrl) || webPairHttpsUrl(value.remoteVoiceUrl),
+        voiceDurationSec: Number(value.voiceDurationSec || 0),
+        deliveredToRecipient: value.deliveredToRecipient === true,
+        seenByRecipient: value.seenByRecipient === true,
+        expiresAt: Number(value.expiresAt || 0),
+        reactions,
+        mine: String(value.senderId || "") === meUid
+      };
+    })
+    .filter(message => (message.senderId === meUid || message.senderId === peerUid) &&
+      (!message.expiresAt || message.expiresAt === 0 || message.expiresAt > now))
+    .sort((a, b) => a.timestamp - b.timestamp);
+}
+
 function normalizeWebCompanionOrigin(value) {
   try {
     const url = new URL(String(value || "").trim());
@@ -1241,17 +2063,36 @@ function normalizeWebCompanionOrigin(value) {
     return url.origin;
   } catch (_) { return ""; }
 }
-function webCompanionOriginMatches(request, env) {
-  const allowed = normalizeWebCompanionOrigin(env.WEB_COMPANION_ORIGIN);
-  return Boolean(allowed && request.headers.get("Origin") === allowed);
+let __webOriginCache = { at: 0, origins: [] };
+/** Every origin allowed to use the companion: the configured one plus deployed Pages URLs. */
+async function webCompanionOrigins(env) {
+  const configured = normalizeWebCompanionOrigin(env.WEB_COMPANION_ORIGIN);
+  const list = configured ? [configured] : [];
+  if (Date.now() - __webOriginCache.at > 60_000) {
+    const stored = await firestoreGet(env, "admin_secrets/web_pages").catch(() => null);
+    const deployed = [];
+    [stored?.siteUrl, stored?.productionUrl].forEach(value => {
+      const origin = normalizeWebCompanionOrigin(value);
+      if (origin) deployed.push(origin);
+    });
+    __webOriginCache = { at: Date.now(), origins: [...new Set(deployed)] };
+  }
+  return [...new Set(list.concat(__webOriginCache.origins))];
+}
+async function webCompanionOriginMatches(request, env) {
+  const origin = request.headers.get("Origin") || "";
+  if (!origin) return false;
+  const allowed = await webCompanionOrigins(env);
+  return allowed.includes(origin);
 }
 function webPairJson(request, env, value, status = 200) {
   const origin = request.headers.get("Origin") || "";
-  const allowed = normalizeWebCompanionOrigin(env.WEB_COMPANION_ORIGIN);
+  const configured = normalizeWebCompanionOrigin(env.WEB_COMPANION_ORIGIN);
+  const echo = origin && (origin === configured || __webOriginCache.origins.includes(origin)) ? origin : "";
   const headers = { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store", "Vary": "Origin" };
   if (!origin) headers["Access-Control-Allow-Origin"] = "*";
-  else if (allowed && origin === allowed) {
-    headers["Access-Control-Allow-Origin"] = allowed;
+  else if (echo) {
+    headers["Access-Control-Allow-Origin"] = echo;
     headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization";
     headers["Access-Control-Allow-Methods"] = "POST, OPTIONS";
   }
@@ -1274,15 +2115,19 @@ async function consumeWebPairCode(env, hash, now) {
   if (!document?.updateTime) return null;
   const values = Object.fromEntries(Object.entries(document.fields || {}).map(([key, field]) => [key, fromFV(field)]));
   if (!values.uid || Number(values.expiresAt || 0) <= now || Number(values.usedAt || 0) > 0) return null;
+  // Optimistic concurrency: the PATCH only applies while updateTime still matches, so two
+  // browsers racing on the same code cannot both win.
   const patchUrl = new URL(url);
   patchUrl.searchParams.set("updateMask.fieldPaths", "usedAt");
-  patchUrl.searchParams.set("currentDocument.updateTime", document.updateTime);
+  patchUrl.searchParams.set("currentDocument.updateTime", String(document.updateTime ?? ""));
   const patch = await fetch(patchUrl, {
     method: "PATCH",
     headers: { Authorization: `Bearer ${t}`, "Content-Type": "application/json" },
     body: JSON.stringify({ fields: { usedAt: toFV(now) } })
   });
-  return patch.ok ? { ...values, usedAt: now } : null;
+  if (!patch.ok) return null;
+  const patched = await patch.json().catch(() => null);
+  return { ...values, usedAt: now, updateTime: patched?.updateTime || document.updateTime };
 }
 async function authenticateWebCompanionSession(request, env) {
   const bearer = request.headers.get("Authorization") || "";
@@ -1412,6 +2257,7 @@ async function firestoreGet(env,path){const{a,t}=await fsAuth(env);const r=await
 async function firestoreSet(env,path,data){const{a,t}=await fsAuth(env);const fields=Object.fromEntries(Object.entries(data).map(([k,v])=>[k,toFV(v)]));const r=await fetch(`https://firestore.googleapis.com/v1/projects/${a.project_id}/databases/(default)/documents/${path}`,{method:"PATCH",headers:{Authorization:`Bearer ${t}`,"Content-Type":"application/json"},body:JSON.stringify({fields})});if(!r.ok)throw Error(`Firestore write ${r.status}`);return r.json();}
 async function firestoreMerge(env,path,data){return firestoreSet(env,path,{...((await firestoreGet(env,path))||{}),...data});}
 async function firestoreList(env,path){const{a,t}=await fsAuth(env);const r=await fetch(`https://firestore.googleapis.com/v1/projects/${a.project_id}/databases/(default)/documents/${path}?pageSize=100`,{headers:{Authorization:`Bearer ${t}`}});if(!r.ok)throw Error(`Firestore list ${r.status}`);const d=await r.json();return(d.documents||[]).map(x=>Object.fromEntries(Object.entries(x.fields||{}).map(([k,v])=>[k,fromFV(v)])));}
+async function firestoreListWithIds(env, path) { const { a, t } = await fsAuth(env); const r = await fetch(`https://firestore.googleapis.com/v1/projects/${a.project_id}/databases/(default)/documents/${path}?pageSize=200`, { headers: { Authorization: `Bearer ${t}` } }); if (!r.ok) { if (r.status === 404) return []; throw Error(`Firestore list ${r.status}`); } const d = await r.json(); return (d.documents || []).map(x => ({ id: String(x.name || "").split("/").pop(), data: Object.fromEntries(Object.entries(x.fields || {}).map(([k, v]) => [k, fromFV(v)])) })); }
 async function updateFirebaseAccount(env,uid,changes){const a=JSON.parse(env.FIREBASE_SERVICE_ACCOUNT||"{}");const t=await getGoogleAccessToken(a.client_email,a.private_key,"https://www.googleapis.com/auth/identitytoolkit");const r=await fetch(`https://identitytoolkit.googleapis.com/v1/projects/${a.project_id}/accounts:update`,{method:"POST",headers:{Authorization:`Bearer ${t}`,"Content-Type":"application/json"},body:JSON.stringify({localId:uid,...changes})});return{ok:r.ok,status:r.status};}
 
 /**

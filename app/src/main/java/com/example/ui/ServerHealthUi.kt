@@ -89,7 +89,7 @@ import java.util.concurrent.TimeUnit
  */
 object WorkerDeployer {
     const val DEFAULT_ACCOUNT = "54ff9e3c4c5908b14f410044be85b698"
-    const val DEFAULT_SCRIPT = "solitary-hill-dcdc"
+    const val DEFAULT_SCRIPT = "convo-chat-companion"
     private const val API = "https://api.cloudflare.com/client/v4"
     private val http by lazy { OkHttpClient.Builder().callTimeout(90, TimeUnit.SECONDS).build() }
 

@@ -1238,6 +1238,15 @@ fun HomeScreen(
                                 accent = Color(0xFF32A68B),
                                 onClick = onQrContacts
                             )
+                            SettingsHubDivider()
+                            SettingsHubRow(
+                                icon = Icons.Outlined.Language,
+                                title = "Web version",
+                                subtitle = "See who is signed in to Convo Chat on the web",
+                                trailingValue = viewModel.webLogins.collectAsState().value.size.takeIf { it > 0 }?.toString(),
+                                accent = Color(0xFF0B84F3),
+                                onClick = { settingsPage = "web" }
+                            )
                         }
 
                         SettingsHubGroup("Personalization") {
@@ -1929,6 +1938,10 @@ fun HomeScreen(
                                 )
                             }
 
+                            // Web face: the same profile exists as a real browser page, so it gets
+                            // a first-class card instead of being buried in a menu.
+                            ProfileWebCard(user = user)
+
                             Card(
                                 shape = RoundedCornerShape(28.dp),
                                 colors = CardDefaults.cardColors(containerColor = Color.Transparent),
@@ -2242,13 +2255,15 @@ fun HomeScreen(
                                 PrivacyToggleRow("Hide notification content", privacySettings.hideNotificationContent) {
                                     PrivacyPreferences.update(context) { it.copy(hideNotificationContent = !it.hideNotificationContent) }
                                 }
-                                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(Icons.Outlined.Shield, null, tint = MaterialTheme.colorScheme.primary)
-                                    Column(Modifier.weight(1f).padding(start = 12.dp)) {
-                                        Text(tr("Screenshot protection"), fontWeight = FontWeight.SemiBold)
-                                        Text("Always on inside chats and calls. Screenshots are allowed everywhere else.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    }
-                                    Icon(Icons.Default.Lock, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+                                PrivacyToggleRow(
+                                    "Screenshot protection",
+                                    privacySettings.preventScreenshotOnSensitiveScreens,
+                                    note = if (privacySettings.preventScreenshotOnSensitiveScreens)
+                                        "On — screenshots and recording are blocked inside chats and calls."
+                                    else
+                                        "Off — screenshots and screen recording always work. Turn on to protect chats and calls."
+                                ) {
+                                    PrivacyPreferences.update(context) { it.copy(preventScreenshotOnSensitiveScreens = !it.preventScreenshotOnSensitiveScreens) }
                                 }
                                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                                     Icon(Icons.Outlined.Timer, null, tint = MaterialTheme.colorScheme.primary)
@@ -2353,6 +2368,71 @@ fun HomeScreen(
                                 }
                             }
                         }
+                        }
+
+                        if (settingsPage == "web") {
+                            val logins by viewModel.webLogins.collectAsState()
+                            val loginsLoading by viewModel.webLoginsLoading.collectAsState()
+                            var revokeTarget by remember { mutableStateOf<WebLoginEntry?>(null) }
+                            LaunchedEffect(Unit) { viewModel.refreshWebLogins() }
+                            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                Card(shape = RoundedCornerShape(24.dp), modifier = Modifier.fillMaxWidth()) {
+                                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Icon(Icons.Outlined.Language, null, tint = MaterialTheme.colorScheme.primary)
+                                            Spacer(Modifier.width(9.dp))
+                                            Column(Modifier.weight(1f)) {
+                                                Text("Signed in on the web", fontWeight = FontWeight.ExtraBold)
+                                                Text("Each browser holds its own session and can be signed out separately.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            }
+                                            if (loginsLoading) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                                        }
+                                        if (logins.isEmpty() && !loginsLoading) {
+                                            Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .5f)) {
+                                                Text("No browser is signed in right now. Open convo chat on a computer and pair it from Account security.", Modifier.padding(12.dp), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            }
+                                        }
+                                        logins.forEach { entry ->
+                                            Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                                                Box(Modifier.size(38.dp).clip(RoundedCornerShape(13.dp)).background(MaterialTheme.colorScheme.primary.copy(alpha = .12f)), contentAlignment = Alignment.Center) {
+                                                    Icon(Icons.Outlined.LaptopChromebook, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
+                                                }
+                                                Spacer(Modifier.width(10.dp))
+                                                Column(Modifier.weight(1f)) {
+                                                    Text(entry.label, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                                                    Text(entry.detail, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                                }
+                                                TextButton(onClick = { revokeTarget = entry }) { Text("Sign out", fontSize = 11.sp, color = MaterialTheme.colorScheme.error) }
+                                            }
+                                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = .4f))
+                                        }
+                                        TextButton(onClick = { viewModel.refreshWebLogins() }, enabled = !loginsLoading) {
+                                            Icon(Icons.Default.Refresh, null, Modifier.size(15.dp)); Spacer(Modifier.width(6.dp)); Text("Refresh", fontSize = 11.sp)
+                                        }
+                                    }
+                                }
+                                val webLoginsMessage by viewModel.webLoginsMessage.collectAsState()
+                                if (webLoginsMessage.isNotBlank() && logins.isEmpty()) {
+                                    Text(webLoginsMessage, fontSize = 10.sp, color = MaterialTheme.colorScheme.error)
+                                }
+                                if (revokeTarget != null) {
+                                    AlertDialog(
+                                        onDismissRequest = { revokeTarget = null },
+                                        title = { Text("Sign out this browser?") },
+                                        text = { Text("The session ends immediately. You can pair a browser again any time from Account security.") },
+                                        confirmButton = {
+                                            TextButton(onClick = {
+                                                val target = revokeTarget
+                                                revokeTarget = null
+                                                if (target != null) viewModel.revokeWebLogin(target.pairedAt) { ok, error ->
+                                                    Toast.makeText(context, if (ok) "Browser signed out" else error.ifBlank { "Could not sign out" }, Toast.LENGTH_SHORT).show()
+                                                }
+                                            }) { Text("Sign out", color = MaterialTheme.colorScheme.error) }
+                                        },
+                                        dismissButton = { TextButton(onClick = { revokeTarget = null }) { Text("Cancel") } }
+                                    )
+                                }
+                            }
                         }
 
                         if (settingsPage == "devices") {
@@ -4756,7 +4836,7 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
                     modifier = Modifier
                         .clip(RoundedCornerShape(18.dp))
                         .clickable {
-                            val link = "https://solitary-hill-dcdc.mr44253990.workers.dev/post/${post.id}"
+                            val link = "https://convo-chat-companion.mr4425390.workers.dev/post/${post.id}"
                             val shareText = "${post.title.ifBlank { "A post from ${post.senderName}" }}\n${post.text.take(180)}\n\nOpen in Convo Chat: $link"
                             context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply { type = "text/plain"; putExtra(Intent.EXTRA_TEXT, shareText) }, "Share Convo post"))
                         }
@@ -5053,37 +5133,54 @@ fun ChatConversationUserItem(
     val unreadCount = unreadCounts[user.uid] ?: 0
     val hasUnread = unreadCount > 0
 
+    // Premium conversation row: one clean surface, an unread accent rail instead of a heavy
+    // border, a larger avatar with a real presence ring, and a two-line message preview.
+    val accent = MaterialTheme.colorScheme.primary
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .combinedClickable(onClick = onSelect, onLongClick = onLongPress),
-        shape = RoundedCornerShape(22.dp),
+        shape = RoundedCornerShape(24.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = if (hasUnread) 3.dp else 0.dp),
         colors = CardDefaults.cardColors(
-            containerColor = if (hasUnread) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
-                             else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+            containerColor = if (hasUnread) accent.copy(alpha = .085f)
+                             else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .32f)
         ),
         border = BorderStroke(
-            width = if (hasUnread) 2.dp else 1.dp,
-            color = if (hasUnread) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
+            width = 1.dp,
+            color = if (hasUnread) accent.copy(alpha = .35f) else MaterialTheme.colorScheme.outlineVariant.copy(alpha = .55f)
         )
     ) {
+        Box(Modifier.fillMaxWidth()) {
+        if (hasUnread) {
+            // Left accent rail: instant "unread" recognition without shouting.
+            Box(
+                Modifier
+                    .align(Alignment.CenterStart)
+                    .padding(vertical = 14.dp)
+                    .width(3.dp)
+                    .fillMaxHeight(.55f)
+                    .clip(RoundedCornerShape(3.dp))
+                    .background(accent)
+            )
+        }
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 11.dp, vertical = 10.dp),
+                .padding(start = 12.dp, end = 12.dp, top = 12.dp, bottom = 12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             // User Avatar bubble with online indicator badge
             Box(contentAlignment = Alignment.BottomEnd) {
                 val storyModifier = if (hasActiveStory) {
                     Modifier
-                        .size(50.dp)
-                        .border(3.dp, MaterialTheme.colorScheme.error, CircleShape)
+                        .size(56.dp)
+                        .border(2.5.dp, Brush.linearGradient(listOf(Color(0xFFFF6FB5), Color(0xFFFFB25A), Color(0xFF8B7BFF))), CircleShape)
                         .padding(3.dp)
                 } else {
                     Modifier
-                        .size(46.dp)
-                        .border(1.5.dp, MaterialTheme.colorScheme.primary, CircleShape)
+                        .size(52.dp)
+                        .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = .7f), CircleShape)
                 }
 
                 if (user.profileImageUrl.isNotBlank()) {
@@ -5169,16 +5266,16 @@ fun ChatConversationUserItem(
                     if (hasUnread) {
                         Box(
                             modifier = Modifier
-                                .clip(CircleShape)
-                                .background(MaterialTheme.colorScheme.error)
-                                .padding(horizontal = 6.dp, vertical = 2.dp),
+                                .clip(RoundedCornerShape(50))
+                                .background(Brush.horizontalGradient(listOf(accent, accent.copy(alpha = .82f))))
+                                .padding(horizontal = 8.dp, vertical = 3.dp),
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
-                                text = unreadCount.toString(),
-                                color = MaterialTheme.colorScheme.onError,
+                                text = if (unreadCount > 99) "99+" else unreadCount.toString(),
+                                color = MaterialTheme.colorScheme.onPrimary,
                                 fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold
+                                fontWeight = FontWeight.ExtraBold
                             )
                         }
                     }
@@ -5214,13 +5311,13 @@ fun ChatConversationUserItem(
                         fontSize = 13.sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
-                        fontWeight = if (hasUnread) FontWeight.ExtraBold else FontWeight.Normal,
+                        fontWeight = if (hasUnread) FontWeight.Bold else FontWeight.Normal,
                         color = previewColor
                     )
                 }
                 val presenceText = if (user.isOnline) tr("Active now") else {
                     val since = user.offlineSince.takeIf { it > 0L } ?: user.lastActive
-                    if (since <= 0L) "Offline" else "Offline · ${formatOfflineAge(since)}"
+                    if (since <= 0L) "Offline" else formatOfflineAge(since)
                 }
                 Text(
                     text = presenceText,
@@ -5255,6 +5352,7 @@ fun ChatConversationUserItem(
                     )
                 }
             }
+        }
         }
     }
 }
@@ -5371,9 +5469,14 @@ private fun LinkifiedPostText(
 private fun postBackgroundColors(style: String): List<Color> = postCanvasColors(style)
 
 @Composable
-private fun PrivacyToggleRow(label: String, checked: Boolean, onCheckedChange: () -> Unit) {
+private fun PrivacyToggleRow(label: String, checked: Boolean, note: String? = null, onCheckedChange: () -> Unit) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Text(label, Modifier.weight(1f), fontSize = 13.sp)
+        Column(Modifier.weight(1f)) {
+            Text(label, fontSize = 13.sp)
+            if (note != null) {
+                Text(note, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
         Switch(checked = checked, onCheckedChange = { onCheckedChange() })
     }
 }
@@ -5440,6 +5543,79 @@ private fun SettingsHubGroup(
             )
         }
         Column(Modifier.fillMaxWidth().liquidCard(shape = RoundedCornerShape(25.dp)), content = content)
+    }
+}
+
+/** Profile → "Your web profile": open or copy the browser version in one tap. */
+@Composable
+private fun ProfileWebCard(user: com.example.data.User) {
+    val context = LocalContext.current
+    val webUrl = remember(user.username) {
+        val base = "https://convo-chat-companion.mr4425390.workers.dev"
+        if (user.username.isNotBlank()) "$base/?u=${android.net.Uri.encode(user.username)}" else base
+    }
+    val link = remember(user.uid) { "https://convo-chat-companion.mr4425390.workers.dev/profile?uid=${android.net.Uri.encode(user.uid)}" }
+    Card(
+        shape = RoundedCornerShape(26.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.Transparent),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(26.dp))
+                .background(Brush.linearGradient(listOf(Color(0xFF0B1B3A), Color(0xFF13284F), Color(0xFF0A3550))))
+                .border(1.dp, Color(0xFF4FA8FF).copy(alpha = .35f), RoundedCornerShape(26.dp))
+        ) {
+            Column(Modifier.padding(15.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        Modifier.size(36.dp).clip(RoundedCornerShape(12.dp))
+                            .background(Color(0xFF2F8DFF).copy(alpha = .22f)),
+                        contentAlignment = Alignment.Center
+                    ) { Icon(Icons.Outlined.Language, null, Modifier.size(19.dp), tint = Color(0xFF8CCBFF)) }
+                    Spacer(Modifier.width(10.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text("Your web profile", color = Color.White, fontWeight = FontWeight.ExtraBold)
+                        Text("convo-chat-companion.mr4425390.workers.dev", fontSize = 10.sp, color = Color(0xFFB7C6E4), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                }
+                Text(
+                    "Your photo, bio and stats are already on the web. Open it in any browser, or share the link.",
+                    fontSize = 11.sp, color = Color(0xFFC9D6EE), lineHeight = 16.sp
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = {
+                            runCatching { context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(link))) }
+                                .onFailure { Toast.makeText(context, "No browser available", Toast.LENGTH_SHORT).show() }
+                        },
+                        shape = RoundedCornerShape(15.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2F8DFF)),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(Icons.Outlined.OpenInBrowser, null, Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Open", fontSize = 13.sp)
+                    }
+                    OutlinedButton(
+                        onClick = {
+                            (context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager)
+                                .setPrimaryClip(android.content.ClipData.newPlainText("Convo web profile", link))
+                            Toast.makeText(context, "Web profile link copied", Toast.LENGTH_SHORT).show()
+                        },
+                        shape = RoundedCornerShape(15.dp),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF8CCBFF).copy(alpha = .5f)),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF8CCBFF)),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(Icons.Outlined.Link, null, Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Copy link", fontSize = 13.sp)
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -5518,6 +5694,7 @@ private fun settingsPageTitle(page: String): String = when (page) {
     "notifications" -> "Notifications & calls"
     "viewers" -> "Profile viewers"
     "devices" -> "Account security"
+    "web" -> "Web version"
     "blocked" -> "Blocked accounts"
     "smart" -> "Smart tools"
     "language" -> "Language"
@@ -5536,6 +5713,7 @@ private fun settingsPageSubtitle(page: String): String = when (page) {
     "notifications" -> "Alerts, sounds and incoming-call access"
     "viewers" -> "Stored only on this phone"
     "devices" -> "2-step verification, devices & alerts"
+    "web" -> "Browsers currently signed in to your account"
     "blocked" -> "People who cannot contact you"
     "smart" -> "Quiet hours, motion, live location and storage"
     "language" -> "Choose your app language"

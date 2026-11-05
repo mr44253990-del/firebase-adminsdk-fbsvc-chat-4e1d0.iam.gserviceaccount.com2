@@ -29,7 +29,7 @@ Convo Chat no longer requires an n8n webhook. The Android client calls the inclu
 2. Generate a fresh Firebase service-account JSON key.
 3. In Cloudflare Worker → Settings → Variables, create an **encrypted secret** named `FIREBASE_SERVICE_ACCOUNT` and paste the fresh JSON there. Never place it in Android resources, BuildConfig, `.env`, `google-services.json`, or Git.
 4. Deploy the current `cloudflare-worker.js`. It sends data-only high-priority messages so Android applies separate Message, Request, and Activity channels with custom vibration and profile imagery.
-5. Convo Chat defaults to `https://solitary-hill-dcdc.mr44253990.workers.dev/`. The Admin Service panel can run `/health`, save a replacement URL, and send a self-test notification.
+5. Convo Chat defaults to `https://convo-chat-companion.mr4425390.workers.dev/`. The Admin Service panel can run `/health`, save a replacement URL, and send a self-test notification.
 
 A safe deployment helper is included:
 

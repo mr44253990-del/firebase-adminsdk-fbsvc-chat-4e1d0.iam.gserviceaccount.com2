@@ -3,10 +3,10 @@ set -euo pipefail
 
 : "${CLOUDFLARE_API_TOKEN:?Set CLOUDFLARE_API_TOKEN in your terminal; never put it in this file}"
 CLOUDFLARE_ACCOUNT_ID="${CLOUDFLARE_ACCOUNT_ID:-54ff9e3c4c5908b14f410044be85b698}"
-WORKER_NAME="${WORKER_NAME:-solitary-hill-dcdc}"
+WORKER_NAME="${WORKER_NAME:-convo-chat-companion}"
 SERVICE_ACCOUNT_FILE="${FIREBASE_SERVICE_ACCOUNT_FILE:-chat-4e1d0-service-account.json}"
 WORKER_FILE="${WORKER_FILE:-cloudflare-worker.js}"
-WORKER_URL="https://${WORKER_NAME}.mr44253990.workers.dev/"
+WORKER_URL="https://${WORKER_NAME}.mr4425390.workers.dev/"
 R2_BUCKET_NAME="${R2_BUCKET_NAME:-firechat-media}"
 : "${R2_PUBLIC_BASE_URL:?Set R2_PUBLIC_BASE_URL to your bucket's https://pub-....r2.dev URL}"
 

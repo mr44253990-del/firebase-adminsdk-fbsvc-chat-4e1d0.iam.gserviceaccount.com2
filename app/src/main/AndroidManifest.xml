@@ -75,8 +75,8 @@
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="https" android:host="solitary-hill-dcdc.mr44253990.workers.dev" android:pathPrefix="/post/" />
-                <data android:scheme="https" android:host="solitary-hill-dcdc.mr44253990.workers.dev" android:pathPrefix="/profile" />
+                <data android:scheme="https" android:host="convo-chat-companion.mr4425390.workers.dev" android:pathPrefix="/post/" />
+                <data android:scheme="https" android:host="convo-chat-companion.mr4425390.workers.dev" android:pathPrefix="/profile" />
             </intent-filter>
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />

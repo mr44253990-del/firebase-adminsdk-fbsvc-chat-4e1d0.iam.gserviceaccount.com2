@@ -66,7 +66,17 @@ fun UserProfileScreen(
     val isRequested = sentRequests.contains("${currentUser?.uid}_${liveUser.uid}")
     var showFeatureSuggestion by remember { mutableStateOf(false) }
     var showProfileMenu by remember { mutableStateOf(false) }
-    val profileLink = remember(liveUser.uid) { "https://solitary-hill-dcdc.mr44253990.workers.dev/profile?uid=${Uri.encode(liveUser.uid)}" }
+    val profileLink = remember(liveUser.uid) { "https://convo-chat-companion.mr4425390.workers.dev/profile?uid=${Uri.encode(liveUser.uid)}" }
+    // The web app is a first-class surface now: its address is derived from the same worker,
+    // and admins can override it once a custom Pages domain is deployed.
+    val webAppUrl = remember(liveUser.username) {
+        val base = "https://convo-chat-companion.mr4425390.workers.dev"
+        if (liveUser.username.isNotBlank()) "$base/?u=${Uri.encode(liveUser.username)}" else base
+    }
+    fun openWeb(target: String) {
+        runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(target))) }
+            .onFailure { Toast.makeText(context, "No browser available", Toast.LENGTH_SHORT).show() }
+    }
     // The QR is created only after the owner taps "Generate QR".
     var qrRequested by remember(liveUser.uid) { mutableStateOf(false) }
     val profileQr = remember(profileLink, qrRequested) { if (qrRequested) runCatching { createQrBitmap(profileLink, 640) }.getOrNull() else null }
@@ -118,6 +128,14 @@ fun UserProfileScreen(
                                     clipboard.setPrimaryClip(ClipData.newPlainText("Convo profile link", profileLink))
                                     showProfileMenu = false
                                     Toast.makeText(context, "Profile link copied", Toast.LENGTH_SHORT).show()
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text(tr("Open web profile")) },
+                                leadingIcon = { Icon(Icons.Outlined.Language, null) },
+                                onClick = {
+                                    showProfileMenu = false
+                                    openWeb("https://convo-chat-companion.mr4425390.workers.dev/profile?uid=${Uri.encode(liveUser.uid)}")
                                 }
                             )
                             DropdownMenuItem(
@@ -328,6 +346,73 @@ fun UserProfileScreen(
                                         Box(Modifier.size(9.dp).clip(CircleShape).background(if (liveUser.isOnline) Color(0xFF45D483) else Color(0xFF68728E)))
                                     }
                                     Text(profileLink, color = Color(0xFF83DFFF), fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Web presence: one tap to the full browser profile, plus an honest note about what
+            // it does. This is what makes the web version feel like part of the product.
+            item(key = "web_profile") {
+                Card(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                    shape = RoundedCornerShape(26.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color.Transparent)
+                ) {
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(26.dp))
+                            .background(Brush.linearGradient(listOf(Color(0xFF0B1B3A), Color(0xFF13284F), Color(0xFF0A3550))))
+                            .border(1.dp, Color(0xFF4FA8FF).copy(alpha = .38f), RoundedCornerShape(26.dp))
+                    ) {
+                        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(
+                                    Modifier.size(38.dp).clip(RoundedCornerShape(13.dp))
+                                        .background(Color(0xFF2F8DFF).copy(alpha = .22f)),
+                                    contentAlignment = Alignment.Center
+                                ) { Icon(Icons.Outlined.Language, null, Modifier.size(20.dp), tint = Color(0xFF8CCBFF)) }
+                                Spacer(Modifier.width(10.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text("Convo Chat Web", color = Color.White, fontWeight = FontWeight.ExtraBold)
+                                    Text("Open this profile in any browser — no app needed", fontSize = 11.sp, color = Color(0xFFB7C6E4))
+                                }
+                            }
+                            Text(
+                                if (isMe) "Your web profile shows your photo, bio and stats. Sign in on a computer with a pairing code from Account security."
+                                else "See ${liveUser.name}'s profile on the web, the same page anyone can open from a shared link.",
+                                fontSize = 11.sp,
+                                color = Color(0xFFC9D6EE),
+                                lineHeight = 16.sp
+                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Button(
+                                    onClick = { openWeb(if (isMe) webAppUrl else profileLink) },
+                                    shape = RoundedCornerShape(16.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2F8DFF)),
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Icon(Icons.Outlined.OpenInBrowser, null, Modifier.size(17.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("Open web", fontSize = 13.sp)
+                                }
+                                OutlinedButton(
+                                    onClick = {
+                                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                        clipboard.setPrimaryClip(ClipData.newPlainText("Convo profile link", profileLink))
+                                        Toast.makeText(context, "Web profile link copied", Toast.LENGTH_SHORT).show()
+                                    },
+                                    shape = RoundedCornerShape(16.dp),
+                                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF8CCBFF).copy(alpha = .5f)),
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF8CCBFF)),
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Icon(Icons.Outlined.Link, null, Modifier.size(16.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("Copy link", fontSize = 13.sp)
                                 }
                             }
                         }

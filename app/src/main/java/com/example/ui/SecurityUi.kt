@@ -67,7 +67,7 @@ data class MfaStatus(
 )
 
 object MfaClient {
-    private const val FALLBACK = "https://solitary-hill-dcdc.mr44253990.workers.dev"
+    private const val FALLBACK = "https://convo-chat-companion.mr4425390.workers.dev"
 
     fun sessionId(context: Context): String =
         context.getSharedPreferences("convo_device_session", Context.MODE_PRIVATE).getString("id", null)

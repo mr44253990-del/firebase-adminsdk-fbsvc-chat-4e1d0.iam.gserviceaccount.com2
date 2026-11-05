@@ -102,7 +102,7 @@ object PhoneNumbers {
 object AuthMethodConfig {
     data class Methods(val phone: Boolean = false, val email: Boolean = true, val countryCode: String = "+880", val contacts: Boolean = true)
 
-    private const val DEFAULT_WORKER = "https://solitary-hill-dcdc.mr44253990.workers.dev"
+    private const val DEFAULT_WORKER = "https://convo-chat-companion.mr4425390.workers.dev"
     private val _state = MutableStateFlow(Methods())
     val state: StateFlow<Methods> = _state.asStateFlow()
     @Volatile private var loaded = false

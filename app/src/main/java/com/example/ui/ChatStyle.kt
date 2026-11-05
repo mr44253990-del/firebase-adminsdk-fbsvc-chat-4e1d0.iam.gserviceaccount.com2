@@ -47,16 +47,16 @@ import kotlin.math.roundToInt
 @Immutable
 data class ChatAppearance(
     /** auto, liquid, neon, outline, solid, minimal */
-    val bubbleStyle: String = "auto",
+    val bubbleStyle: String = "liquid",
     val borderWidth: Float = 1f,
-    val cornerRadius: Float = 20f,
+    val cornerRadius: Float = 22f,
     val tail: Boolean = true,
     val maxWidthFraction: Float = .80f,
     /** Space between the screen edge and bubbles. */
     val sidePadding: Float = 8f,
     /** Space between the text and the bubble edge. */
-    val innerPadding: Float = 10f,
-    val messageSpacing: Float = 6f,
+    val innerPadding: Float = 12f,
+    val messageSpacing: Float = 7f,
     val use24h: Boolean = false,
     val backgroundDim: Float = 0f,
     val glow: Boolean = true,
@@ -133,15 +133,22 @@ fun rememberBubblePalette(isSent: Boolean, spec: ChatThemeSpec?, bubbleAccent: C
             spec != null -> spec.colors.first().copy(alpha = 1f)
             else -> scheme.background
         }
+        // v5 bubble palette: outgoing bubbles read as one confident gradient in either theme,
+        // incoming bubbles stay calm and translucent so long conversations remain readable.
         var fill = when {
             spec?.isScene == true -> (if (isSent) spec.outgoingFill else spec.incomingFill) ?: accent.copy(alpha = .6f)
-            isSent -> bubbleAccent?.copy(alpha = .94f) ?: scheme.primary.copy(alpha = if (isDark) .32f else .86f)
-            else -> scheme.surfaceVariant.copy(alpha = if (isDark) .62f else .92f)
+            isSent -> bubbleAccent?.copy(alpha = .96f) ?: if (isDark) {
+                // Deep violet → periwinkle gradient in dark mode (high contrast, still premium).
+                lerpColor(Color(0xFF6F5BFF), Color(0xFF9B6BFF), .55f).copy(alpha = .96f)
+            } else {
+                lerpColor(scheme.primary, Color(0xFF8B5CF6), .45f).copy(alpha = .94f)
+            }
+            else -> if (isDark) Color.White.copy(alpha = .075f) else scheme.surfaceVariant.copy(alpha = .92f)
         }
         var border = when {
             spec?.isScene == true -> accent.copy(alpha = if (isSent) .95f else .55f)
-            isSent -> accent.copy(alpha = .28f)
-            else -> scheme.onSurface.copy(alpha = .10f)
+            isSent -> Color.White.copy(alpha = if (isDark) .17f else .28f)
+            else -> scheme.onSurface.copy(alpha = if (isDark) .10f else .09f)
         }
         when (style) {
             "outline" -> {
@@ -168,13 +175,17 @@ fun rememberBubblePalette(isSent: Boolean, spec: ChatThemeSpec?, bubbleAccent: C
             else -> Unit
         }
         val effective = fill.compositeOver(baseBackground)
-        val text = if (effective.luminance() > .55f) Color(0xFF17142A) else Color.White
+        val text = when {
+            isSent && style !in setOf("outline", "minimal") -> Color.White
+            effective.luminance() > .55f -> Color(0xFF17142A)
+            else -> Color.White
+        }
         BubblePalette(
             fill = fill,
             fillTop = lerpColor(fill, Color.White, if (effective.luminance() > .55f) .35f else .14f),
             border = border,
             text = text,
-            meta = text.copy(alpha = .66f),
+            meta = if (isSent && style !in setOf("outline", "minimal")) Color.White.copy(alpha = .82f) else text.copy(alpha = .66f),
             accent = accent,
             glow = accent,
             label = if (spec?.isScene == true || spec != null) lerpColor(accent, text, .15f) else scheme.primary
@@ -221,13 +232,21 @@ fun Modifier.chatBubble(style: String, shape: Shape, palette: BubblePalette, app
     }
     m = m.clip(shape)
     m = when (style) {
-        "liquid" -> m.background(Brush.verticalGradient(listOf(palette.fillTop, palette.fill)))
+        "liquid" -> m.background(Brush.linearGradient(listOf(palette.fillTop, palette.fill), start = Offset(0f, 0f), end = Offset(0f, 2000f)))
             .drawBehind {
+                // Top specular band: the "wet glass" highlight.
                 drawRoundRect(
-                    brush = Brush.verticalGradient(listOf(Color.White.copy(alpha = .22f), Color.Transparent), endY = size.height * .5f),
-                    topLeft = Offset(size.width * .04f, 1.5.dp.toPx()),
-                    size = Size(size.width * .92f, size.height * .42f),
+                    brush = Brush.verticalGradient(listOf(Color.White.copy(alpha = .26f), Color.Transparent), endY = size.height * .55f),
+                    topLeft = Offset(size.width * .03f, 1.dp.toPx()),
+                    size = Size(size.width * .94f, size.height * .46f),
                     cornerRadius = CornerRadius(radius.toPx())
+                )
+                // Inner rim light along the top edge.
+                drawRoundRect(
+                    color = Color.White.copy(alpha = .30f),
+                    topLeft = Offset(radius.toPx() * .5f, 1.dp.toPx()),
+                    size = Size((size.width - radius.toPx()).coerceAtLeast(1f), 1.dp.toPx()),
+                    cornerRadius = CornerRadius(1.dp.toPx())
                 )
             }
         "gradient" -> m.background(

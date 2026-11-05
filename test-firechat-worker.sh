@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-WORKER_URL="${WORKER_URL:-https://solitary-hill-dcdc.mr44253990.workers.dev/}"
+WORKER_URL="${WORKER_URL:-https://convo-chat-companion.mr4425390.workers.dev/}"
 
 echo "== Health check =="
 curl -fsS "$WORKER_URL" | python3 -m json.tool
