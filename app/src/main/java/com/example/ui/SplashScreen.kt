@@ -52,36 +52,50 @@ private fun splashGreeting(): String = when (Calendar.getInstance().get(Calendar
 @Composable
 fun SplashScreen(onFinished: () -> Unit) {
     val motion = rememberInfiniteTransition(label = "splash_motion")
-    val orbit by motion.animateFloat(0f, 360f, infiniteRepeatable(tween(9000, easing = LinearEasing)), label = "orbit")
-    val ring by motion.animateFloat(0f, 360f, infiniteRepeatable(tween(5200, easing = LinearEasing)), label = "ring")
-    val drift by motion.animateFloat(-18f, 22f, infiniteRepeatable(tween(1800, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "drift")
-    val bubbles by motion.animateFloat(0f, 1f, infiniteRepeatable(tween(4200, easing = LinearEasing)), label = "bubbles")
+    val orbit by motion.animateFloat(0f, 360f, infiniteRepeatable(tween(4800, easing = LinearEasing)), label = "orbit")
+    val ring by motion.animateFloat(0f, 360f, infiniteRepeatable(tween(3200, easing = LinearEasing)), label = "ring")
+    val drift by motion.animateFloat(-14f, 16f, infiniteRepeatable(tween(1400, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "drift")
+    val glowPulse by motion.animateFloat(0.7f, 1f, infiniteRepeatable(tween(900, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "glow_pulse")
+    val bubbles by motion.animateFloat(0f, 1f, infiniteRepeatable(tween(2800, easing = LinearEasing)), label = "bubbles")
 
-    val logoScale = remember { Animatable(0.2f) }
-    val logoTilt = remember { Animatable(-25f) }
+    val logoScale = remember { Animatable(0.4f) }
+    val logoTilt = remember { Animatable(-15f) }
     val emojiReveal = remember { Animatable(0f) }
     val progress = remember { Animatable(0f) }
     var lettersShown by remember { mutableIntStateOf(0) }
     val title = "Convo Chat"
     val greeting = remember { splashGreeting() }
 
+    // High-speed, fluid transition (takes ~850ms total for an ultra-fast, snappy startup)
     LaunchedEffect(Unit) {
-        launch { logoScale.animateTo(1f, spring(dampingRatio = .45f, stiffness = 260f)) }
-        launch { logoTilt.animateTo(0f, spring(dampingRatio = .5f, stiffness = 200f)) }
-        launch { delay(220); emojiReveal.animateTo(1f, tween(700, easing = FastOutSlowInEasing)) }
-        launch { delay(300); for (i in 1..title.length) { lettersShown = i; delay(55) } }
-        progress.animateTo(1f, tween(1900, easing = FastOutSlowInEasing))
-        delay(120)
+        launch { logoScale.animateTo(1f, spring(dampingRatio = 0.52f, stiffness = 420f)) }
+        launch { logoTilt.animateTo(0f, spring(dampingRatio = 0.55f, stiffness = 380f)) }
+        launch { emojiReveal.animateTo(1f, tween(350, easing = FastOutSlowInEasing)) }
+        launch {
+            for (i in 1..title.length) {
+                lettersShown = i
+                delay(20)
+            }
+        }
+        progress.animateTo(1f, tween(750, easing = FastOutSlowInEasing))
+        delay(60)
         onFinished()
     }
 
     Box(
-        Modifier.fillMaxSize().background(Brush.linearGradient(listOf(Color(0xFF070816), Color(0xFF15123A), Color(0xFF071622)))),
+        Modifier
+            .fillMaxSize()
+            .background(
+                Brush.radialGradient(
+                    colors = listOf(Color(0xFF1E1446), Color(0xFF0C091F), Color(0xFF04030A)),
+                    center = Offset(Float.POSITIVE_INFINITY, 0f)
+                )
+            ),
         contentAlignment = Alignment.Center
     ) {
-        Box(Modifier.align(Alignment.TopStart).offset(x = (-55).dp, y = (90 + drift).dp).size(230.dp).blur(54.dp).background(Color(0xFF755CFF).copy(alpha = .55f), CircleShape))
-        Box(Modifier.align(Alignment.BottomEnd).offset(x = 70.dp, y = (-90 - drift).dp).size(260.dp).blur(64.dp).background(Color(0xFF1DD6C0).copy(alpha = .38f), CircleShape))
-        Box(Modifier.align(Alignment.Center).offset(x = 120.dp, y = (-170).dp).size(150.dp).blur(48.dp).background(Color(0xFFFF68B2).copy(alpha = .34f), CircleShape))
+        Box(Modifier.align(Alignment.TopStart).offset(x = (-40).dp, y = (60 + drift).dp).size(260.dp).blur(60.dp).background(Color(0xFF8C52FF).copy(alpha = .45f * glowPulse), CircleShape))
+        Box(Modifier.align(Alignment.BottomEnd).offset(x = 50.dp, y = (-70 - drift).dp).size(280.dp).blur(70.dp).background(Color(0xFF00E5FF).copy(alpha = .35f * glowPulse), CircleShape))
+        Box(Modifier.align(Alignment.Center).offset(x = 80.dp, y = (-120).dp).size(180.dp).blur(50.dp).background(Color(0xFFFF2A85).copy(alpha = .28f * glowPulse), CircleShape))
 
         // Rising emoji bubbles + twinkles.
         Canvas(Modifier.fillMaxSize()) {
@@ -148,19 +162,29 @@ fun SplashScreen(onFinished: () -> Unit) {
             Text("$greeting  •  Connect • Share • Belong", color = Color.White.copy(alpha = .7f * emojiReveal.value), style = MaterialTheme.typography.bodyMedium)
             Spacer(Modifier.height(30.dp))
             Box(
-                Modifier.width(190.dp).clip(CircleShape).background(Color.White.copy(alpha = .09f))
-                    .border(1.dp, Color.White.copy(alpha = .16f), CircleShape).padding(5.dp)
+                Modifier.width(210.dp).clip(CircleShape).background(Color.White.copy(alpha = .12f))
+                    .border(1.dp, Brush.horizontalGradient(listOf(Color(0xFF8A72FF).copy(alpha = .6f), Color(0xFF00E5FF).copy(alpha = .6f))), CircleShape).padding(3.dp)
             ) {
                 Box(
-                    Modifier.fillMaxWidth(progress.value).height(5.dp).clip(CircleShape)
-                        .background(Brush.horizontalGradient(listOf(Color(0xFF8A72FF), Color(0xFFFF68B2), Color(0xFF36D8C4))))
+                    Modifier.fillMaxWidth(progress.value).height(6.dp).clip(CircleShape)
+                        .background(Brush.horizontalGradient(listOf(Color(0xFF8A72FF), Color(0xFFFF2A85), Color(0xFF00E5FF))))
                 )
             }
-            Spacer(Modifier.height(12.dp))
-            Text(
-                when { progress.value < .35f -> "Waking up your chats…"; progress.value < .7f -> "Loading friends & stories…"; else -> "Almost there…" },
-                color = Color.White.copy(alpha = .6f), style = MaterialTheme.typography.labelMedium
-            )
+            Spacer(Modifier.height(14.dp))
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(50))
+                    .background(Color.White.copy(alpha = 0.08f))
+                    .padding(horizontal = 14.dp, vertical = 5.dp)
+            ) {
+                Box(Modifier.size(7.dp).clip(CircleShape).background(Color(0xFF00E5FF)))
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    when { progress.value < .4f -> "Connecting securely…"; progress.value < .8f -> "Syncing conversations…"; else -> "Ready!" },
+                    color = Color.White.copy(alpha = .9f), style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold
+                )
+            }
         }
 
         Text(
