@@ -11,6 +11,27 @@ permissions:
   contents: read
 
 jobs:
+  presence-edge-function:
+    name: Supabase presence Edge Function tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Type-check, lint and test
+        run: |
+          set -euo pipefail
+          deno check supabase/functions/presence-monitor/index.ts
+          deno lint supabase/functions/presence-monitor/
+          deno test --allow-env supabase/functions/presence-monitor/
+
   validate:
     name: Validate source and release compilation
     runs-on: ubuntu-latest
@@ -46,6 +67,12 @@ jobs:
             gradle wrapper
           fi
           chmod +x gradlew
+
+      - name: Bundle the latest Worker code into the app
+        run: |
+          node --check cloudflare-worker.js
+          mkdir -p app/src/main/assets/worker
+          cp cloudflare-worker.js app/src/main/assets/worker/cloudflare-worker.js
 
       - name: Compile release Kotlin sources
         run: ./gradlew --no-daemon :app:compileReleaseKotlin
@@ -93,6 +120,12 @@ jobs:
             -storepass "$RELEASE_STORE_PASSWORD" \
             | grep -E "SHA1:|SHA-1:|SHA256:|SHA-256:"
 
+      - name: Bundle the latest Worker code into the app
+        run: |
+          node --check cloudflare-worker.js
+          mkdir -p app/src/main/assets/worker
+          cp cloudflare-worker.js app/src/main/assets/worker/cloudflare-worker.js
+
       - name: Build signed arm64-v8a release APK
         env:
           KEYSTORE_PATH: ${{ github.workspace }}/release-upload.jks
@@ -116,17 +149,22 @@ jobs:
             test "${ABIS[0]}" = "arm64-v8a"
           fi
 
-          mv "$APK" app/build/outputs/apk/release/Convo-Chat-v3.9.0-arm64-v8a-release.apk
-          sha256sum app/build/outputs/apk/release/Convo-Chat-v3.9.0-arm64-v8a-release.apk \
-            | tee app/build/outputs/apk/release/Convo-Chat-v3.9.0-arm64-v8a-release.apk.sha256
+          VERSION_NAME="$(sed -nE 's/^[[:space:]]*versionName = "([^"]+)".*/\1/p' app/build.gradle.kts | head -n 1)"
+          test -n "$VERSION_NAME"
+          APK_NAME="Convo-Chat-v${VERSION_NAME}-arm64-v8a-release.apk"
+          echo "APP_VERSION=$VERSION_NAME" >> "$GITHUB_ENV"
+          echo "APK_NAME=$APK_NAME" >> "$GITHUB_ENV"
+          mv "$APK" "app/build/outputs/apk/release/$APK_NAME"
+          sha256sum "app/build/outputs/apk/release/$APK_NAME" \
+            | tee "app/build/outputs/apk/release/$APK_NAME.sha256"
 
       - name: Upload signed arm64-v8a release APK
         uses: actions/upload-artifact@v4
         with:
-          name: Convo-Chat-v3.9.0-arm64-v8a-release
+          name: Convo-Chat-v${{ env.APP_VERSION }}-arm64-v8a-release
           path: |
-            app/build/outputs/apk/release/Convo-Chat-v3.9.0-arm64-v8a-release.apk
-            app/build/outputs/apk/release/Convo-Chat-v3.9.0-arm64-v8a-release.apk.sha256
+            app/build/outputs/apk/release/${{ env.APK_NAME }}
+            app/build/outputs/apk/release/${{ env.APK_NAME }}.sha256
           if-no-files-found: error
           retention-days: 30
           

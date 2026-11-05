@@ -13,6 +13,11 @@ object CallRingtoneController {
     private var ringtone: Ringtone? = null
     private var vibrator: Vibrator? = null
     private var activeCallId: String? = null
+    /** Wall-clock start of the current vibration loop (0 when idle); used to phase-lock UI animation. */
+    @Volatile var startedAt: Long = 0L
+        private set
+    val VIBRATION_PATTERN = longArrayOf(0, 260, 140, 420, 1180)
+    const val VIBRATION_PERIOD_MS = 2000L
     private val handler = Handler(Looper.getMainLooper())
     private var timeout: Runnable? = null
 
@@ -35,9 +40,11 @@ object CallRingtoneController {
             }
         }
         vibrator = context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
-        val pattern = longArrayOf(0, 700, 350, 700, 350, 700)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) vibrator?.vibrate(VibrationEffect.createWaveform(pattern, 1))
-        else @Suppress("DEPRECATION") vibrator?.vibrate(pattern, 1)
+        // "Ba-dum" heartbeat repeating every 2 s; the incoming-call screen animates in sync with it.
+        val pattern = VIBRATION_PATTERN
+        startedAt = System.currentTimeMillis()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) vibrator?.vibrate(VibrationEffect.createWaveform(pattern, 0))
+        else @Suppress("DEPRECATION") vibrator?.vibrate(pattern, 0)
         timeout = Runnable { stop(context.applicationContext, callId, cancelNotification = true) }.also { handler.postDelayed(it, 30_000L) }
     }
 
@@ -46,6 +53,7 @@ object CallRingtoneController {
         if (callId != null && activeCallId != null && callId != activeCallId) return
         runCatching { ringtone?.stop() }; ringtone = null
         runCatching { vibrator?.cancel() }; vibrator = null
+        startedAt = 0L
         timeout?.let(handler::removeCallbacks); timeout = null
         if (cancelNotification && callId != null) {
             (context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).cancel(callId.hashCode())

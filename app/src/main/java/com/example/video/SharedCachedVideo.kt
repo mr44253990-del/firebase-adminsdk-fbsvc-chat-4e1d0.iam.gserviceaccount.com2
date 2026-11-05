@@ -35,7 +35,11 @@ fun SharedCachedVideo(
     }
     DisposableEffect(player, active) {
         val listener = object : Player.Listener {
-            override fun onPlaybackStateChanged(state: Int) { buffering = state == Player.STATE_BUFFERING || state == Player.STATE_IDLE }
+            override fun onPlaybackStateChanged(state: Int) {
+                buffering = state == Player.STATE_BUFFERING || state == Player.STATE_IDLE
+                if (state == Player.STATE_READY) failed = false
+            }
+            override fun onRenderedFirstFrame() { buffering = false; failed = false }
             override fun onPlayerError(error: PlaybackException) { failed = true; buffering = false }
         }
         player?.addListener(listener)
@@ -60,7 +64,11 @@ fun SharedCachedVideo(
         }
         if (active && player != null) {
             AndroidView(
-                factory = { ctx -> PlayerView(ctx).apply { useController = false; resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT; this.player = player } },
+                factory = { ctx ->
+                    (android.view.LayoutInflater.from(ctx).inflate(com.example.R.layout.convo_player_view, null, false) as PlayerView).apply {
+                        useController = false; resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT; this.player = player
+                    }
+                },
                 update = { it.player = player },
                 onRelease = { it.player = null },
                 modifier = Modifier.fillMaxSize()

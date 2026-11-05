@@ -30,6 +30,7 @@ class CallForegroundService : Service() {
         val memberIds = intent?.getStringArrayListExtra("memberIds").orEmpty()
         val openIntent = Intent(this, com.example.MainActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            if (groupId.isBlank()) setAction("com.ebchat.OPEN_ACTIVE_CALL")
             if (groupId.isNotBlank() && roomId.isNotBlank()) {
                 setAction("com.ebchat.OPEN_ACTIVE_GROUP_CALL")
                 putExtra("groupId", groupId)
@@ -57,8 +58,19 @@ class CallForegroundService : Service() {
             var type = android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE or android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL
             if (video && !screenShare) type = type or android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
             if (screenShare && Build.VERSION.SDK_INT >= 29) type = type or android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
-            startForeground(NOTIFICATION_ID, notification, type)
-        } else startForeground(NOTIFICATION_ID, notification)
+            try {
+                startForeground(NOTIFICATION_ID, notification, type)
+                projectionForegroundAt = if (screenShare) System.currentTimeMillis() else 0L
+            } catch (error: Exception) {
+                android.util.Log.e("CALL_FGS", "startForeground failed (screenShare=$screenShare)", error)
+                projectionForegroundAt = 0L
+                // Fall back to a plain call service so the call itself keeps running.
+                runCatching { startForeground(NOTIFICATION_ID, notification, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE or android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL) }
+            }
+        } else {
+            startForeground(NOTIFICATION_ID, notification)
+            projectionForegroundAt = if (screenShare) System.currentTimeMillis() else 0L
+        }
         // Keep the foreground call service eligible for restart if Android recreates
         // the process while the user is backgrounded or the screen is locked.
         return START_STICKY
@@ -69,6 +81,11 @@ class CallForegroundService : Service() {
     companion object {
         private const val CHANNEL = "firechat_ongoing_call_v1"
         private const val NOTIFICATION_ID = 9044
+        /**
+         * Android 14+ only hands out a MediaProjection after a foreground service of type
+         * mediaProjection is running. The engine waits for this timestamp before capturing.
+         */
+        @Volatile var projectionForegroundAt: Long = 0L
         fun start(
             context: Context,
             callId: String,
@@ -91,7 +108,7 @@ class CallForegroundService : Service() {
                 .putStringArrayListExtra("memberIds", ArrayList(memberIds))
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) context.startForegroundService(intent) else context.startService(intent)
         }
-        fun stop(context: Context) { context.stopService(Intent(context, CallForegroundService::class.java)) }
+        fun stop(context: Context) { projectionForegroundAt = 0L; context.stopService(Intent(context, CallForegroundService::class.java)) }
     }
 }
 

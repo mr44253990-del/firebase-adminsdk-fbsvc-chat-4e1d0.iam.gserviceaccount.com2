@@ -9,6 +9,7 @@ import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -23,6 +24,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.CallEnd
 import androidx.compose.material.icons.filled.Group
+import androidx.compose.material.icons.filled.Groups
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -90,10 +95,15 @@ class IncomingGroupCallActivity : ComponentActivity() {
         } else finish()
     }
 
+    override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: android.content.res.Configuration) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        CallPipState.set(isInPictureInPictureMode)
+    }
+
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
         val active = accepted && GroupCallEngine.state.value.status !in listOf("idle", "ended", "failed")
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && active && !isInPictureInPictureMode) minimizeCallToPip()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && active && GroupCallEngine.state.value.video && !isInPictureInPictureMode) minimizeCallToPip()
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -126,7 +136,8 @@ class IncomingGroupCallActivity : ComponentActivity() {
                         // the passive Join Call card is only for group-chat banners.
                         autoStart = true,
                         onClose = { GroupCallEngine.end(); finish() },
-                        onMinimize = { minimizeCallToPip() }
+                        onMinimize = { if (GroupCallEngine.state.value.video) minimizeCallToPip() else moveTaskToBack(true) },
+                        onPipCallOver = { CallPipState.set(false); finish() }
                     )
                 } else {
                     IncomingGroupCallPrompt(
@@ -150,33 +161,27 @@ private fun IncomingGroupCallPrompt(
     onAccept: () -> Unit,
     onDecline: () -> Unit
 ) {
-    Surface(Modifier.fillMaxSize()) {
+    val accent = Color(0xFF7C9CFF)
+    Box(
+        Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF0E1330), Color(0xFF1C1F4A), Color(0xFF071A2B)))),
+        contentAlignment = Alignment.Center
+    ) {
+        IncomingCallBackdrop(accent)
         Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Brush.verticalGradient(listOf(MaterialTheme.colorScheme.primaryContainer, MaterialTheme.colorScheme.background)))
-                .padding(28.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
+            Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).padding(horizontal = 20.dp, vertical = 28.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Icon(Icons.Default.Group, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(72.dp).clip(CircleShape))
-            Spacer(Modifier.height(22.dp))
-            Text("Incoming group call", style = MaterialTheme.typography.headlineSmall)
-            Spacer(Modifier.height(8.dp))
-            Text(groupName, style = MaterialTheme.typography.titleLarge)
-            Spacer(Modifier.height(6.dp))
-            Text("$callerName invited you to a ${if (video) "video" else "audio"} call", color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Spacer(Modifier.height(38.dp))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = onDecline, modifier = Modifier.size(64.dp)) {
-                    Icon(Icons.Default.CallEnd, contentDescription = "Decline group call", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(34.dp))
-                }
-                Button(onClick = onAccept, modifier = Modifier.height(56.dp)) {
-                    Icon(Icons.Default.Call, contentDescription = null)
-                    Spacer(Modifier.size(8.dp))
-                    Text("Join call")
-                }
+            Spacer(Modifier.weight(.16f))
+            Box(Modifier.size(150.dp).clip(CircleShape).background(Brush.linearGradient(listOf(accent, Color(0xFF00E5FF)))), contentAlignment = Alignment.Center) {
+                Icon(Icons.Default.Groups, contentDescription = null, tint = Color.White, modifier = Modifier.size(78.dp))
             }
+            Spacer(Modifier.height(24.dp))
+            Text(groupName, color = Color.White, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.ExtraBold, textAlign = TextAlign.Center)
+            Spacer(Modifier.height(8.dp))
+            Text("$callerName invited you to a ${if (video) "video" else "audio"} group call", color = Color.White.copy(alpha = .8f), textAlign = TextAlign.Center)
+            Spacer(Modifier.weight(1f))
+            IncomingAnswerControls(video = video, onAccept = onAccept, onDecline = onDecline)
+            Spacer(Modifier.height(12.dp))
         }
     }
 }

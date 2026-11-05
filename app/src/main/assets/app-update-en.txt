@@ -1,0 +1,5 @@
+• The social feed now loads older posts in cursor-based pages instead of fetching the entire history at once.
+• The admin user directory loads 50 profiles at a time and can continue to the next Firestore page.
+• Administrators can globally pause automatic saving of received files; manual downloads and normal message storage remain available.
+• A new offline English/Bengali guide and a refreshed tour explain settings, privacy, location sharing, media saving and the AI assistant.
+• An opt-in browser companion supports accepted one-to-one text chats through a one-time pairing code, expiring sessions and Android revoke controls.

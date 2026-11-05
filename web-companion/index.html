@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="referrer" content="no-referrer">
+  <meta name="color-scheme" content="dark light">
+  <title>Convo Chat Web Companion</title>
+  <link rel="stylesheet" href="styles.css">
+  <script defer src="config.js"></script>
+  <script defer src="app.js"></script>
+</head>
+<body>
+  <main class="shell">
+    <header class="brandbar">
+      <div class="brandmark" aria-hidden="true">C</div>
+      <div><h1>Convo Chat</h1><p>Secure web companion</p></div>
+      <button id="logout" class="ghost hidden" type="button">Log out</button>
+    </header>
+
+    <section id="pair-panel" class="glass panel pair-panel">
+      <div class="eyebrow">PRIVATE · OPT-IN PAIRING</div>
+      <h2>Link your browser</h2>
+      <p>In the Android app, open <strong>Profile &amp; settings → Account security</strong>, choose <strong>Link my browser</strong>, then enter the temporary code below.</p>
+      <form id="pair-form" autocomplete="off">
+        <label for="pair-code">10-digit one-time code</label>
+        <input id="pair-code" inputmode="numeric" autocomplete="one-time-code" maxlength="10" pattern="[0-9]{10}" placeholder="0000000000" required>
+        <button id="pair-submit" class="primary" type="submit">Pair this browser</button>
+      </form>
+      <p class="fineprint">The code expires in 90 seconds and can be used once. The browser session expires after 12 hours. Keep the code private; you can revoke all web sessions from Android.</p>
+      <p id="pair-error" class="error" role="alert" aria-live="polite"></p>
+    </section>
+
+    <section id="chat-panel" class="glass chat-panel hidden" aria-label="Chats">
+      <aside class="sidebar">
+        <div class="sidebar-heading"><h2>Friends</h2><button id="refresh-friends" class="iconbutton" type="button" aria-label="Refresh friends">↻</button></div>
+        <div id="friend-list" class="friend-list"></div>
+      </aside>
+      <section class="conversation">
+        <header id="conversation-header" class="conversation-header"><span class="avatar placeholder">C</span><div><strong>Select a friend</strong><span>Accepted one-to-one chats only</span></div></header>
+        <div id="messages" class="messages" aria-live="polite"><div class="empty-state">Your paired browser is ready. Choose a friend to open a chat.</div></div>
+        <form id="send-form" class="send-form">
+          <textarea id="message-text" rows="1" maxlength="5000" placeholder="Write a message…" aria-label="Message" disabled></textarea>
+          <button id="send-button" class="primary send-button" type="submit" disabled>Send</button>
+        </form>
+        <p class="fineprint chat-disclaimer">Text messaging only. Calls, groups, files and media are not available in this companion.</p>
+      </section>
+    </section>
+    <p id="global-error" class="error global-error" role="alert" aria-live="polite"></p>
+    <footer>Use only on a device you trust. Sign out when finished.</footer>
+  </main>
+</body>
+</html>
