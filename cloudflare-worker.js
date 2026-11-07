@@ -12,10 +12,10 @@
 
 // Bump WORKER_API_VERSION whenever routes change; the Android app compares it with
 // the version it expects and tells the admin to redeploy when the Worker is older.
-const WORKER_API_VERSION = 53;
+const WORKER_API_VERSION = 54;
 // Human-readable Worker release tag, reported by the health endpoint and shown in
 // Admin → Server health so the admin can see exactly which build is live.
-const WORKER_RELEASE = "4.9.1";
+const WORKER_RELEASE = "4.9.2";
 
 // Optional extra data forwarded to the device (rich image notifications, group calls, …).
 const PUSH_EXTRA_KEYS = ["imageUrl", "roomId", "groupId", "groupName", "memberIds", "videoCall", "probeId", "chatId", "previewKind"];
@@ -893,6 +893,32 @@ export default {
       }
 
       /* ---------------------------------------------------------------- devices */
+      if (route === "home/posts") {
+        try {
+          const raw = await firestoreListWithIds(env, "posts").catch(() => []);
+          const posts = raw.map(r => ({ ...(r.data||{}), __id: r.id }));
+          // Sort by createdAt desc, limit 30, filter not banned
+          const sorted = posts.filter(p => p && !p.isDeleted && p.banned !== true).sort((a,b)=>Number(b.createdAt||b.timestamp||0)-Number(a.createdAt||a.timestamp||0)).slice(0,30);
+          // Enrich with author profile
+          const enriched = await Promise.all(sorted.map(async p => {
+            const author = p.uid ? await firestoreGet(env, `users/${p.uid}`).catch(()=>null) : null;
+            return {
+              id: p.__id || p.id || "",
+              text: p.text || p.caption || "",
+              imageUrl: p.imageUrl || (Array.isArray(p.imageUrls)?p.imageUrls[0]:"") || "",
+              videoUrl: p.videoUrl || "",
+              createdAt: Number(p.createdAt||p.timestamp||0),
+              likes: Number(p.likes||p.likeCount||0),
+              comments: Number(p.comments||p.commentCount||0),
+              author: author ? { uid: author.__uid||p.uid, name: author.name||"Convo user", username: author.username||"", profileImageUrl: author.profileImageUrl||"" } : { uid: p.uid||"", name: p.senderName||"Convo user", username: "", profileImageUrl: "" }
+            };
+          }));
+          return webPairJson(request, env, { success: true, posts: enriched }, 200);
+        } catch (error) {
+          return webPairJson(request, env, { error: "Could not load home feed" }, 502);
+        }
+      }
+
       if (route === "devices") {
         try {
           return webPairJson(request, env, { success: true, devices: await webPairDevices(env, meUid), browser: {

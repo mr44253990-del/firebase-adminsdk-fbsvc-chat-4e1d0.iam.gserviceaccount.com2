@@ -220,6 +220,7 @@
     logout() { return request("logout").catch(function () { return {}; }); },
     logoutEverywhere() { return request("logout-all"); },
     exportData() { return request("export"); },
+    homePosts() { return request("home/posts"); },
 
     // ── QR sign-in (secure phone-approval via Worker → Firestore) ──
     async qrCreate() {

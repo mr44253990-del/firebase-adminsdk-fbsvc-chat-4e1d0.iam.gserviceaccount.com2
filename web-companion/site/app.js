@@ -1,4 +1,4 @@
-/* Convo Chat Web — application controller. v4.8.0 */
+/* Convo Chat Web — application controller. v4.9.2 */
 (function () {
   "use strict";
   var S = window.ConvoStore;
@@ -9,7 +9,7 @@
 
   var POLL_CHATS = 20000;
   var POLL_MESSAGES = 7000;
-  var WEB_VERSION = "4.8.0";
+  var WEB_VERSION = "v4.9.2";
   var POLL_PRESENCE = 45000;
   // v4.7.0: premium friends invite vibration handled via ActivityNotification type premium_approved
   var LAUNCH_MIN_MS = 1150;
@@ -34,6 +34,8 @@
     friendRequests: [],
     searchLoading: false,
     chatFilter: "all",
+    homePosts: [],
+    homeLoading: false,
     authMode: (function(){ try{ return localStorage.getItem("convo.authMode")||"code"; }catch(_){ return "code"; } })(),
     loadingChats: true,
     loadingMessages: false,
@@ -119,6 +121,7 @@
     var unread=unreadTotal();
     var badge=unread ? '<span class="rail-badge">'+(unread>99?"99+":unread)+'</span>' : "";
     var items=[
+      {id:"home",icon:"home",label:"Home",badge:""},
       {id:"chats",icon:"chats",label:"Chats",badge:badge},
       {id:"search",icon:"search",label:"Discover",badge:(state.friendRequests||[]).length ? '<span class="rail-badge">'+state.friendRequests.length+'</span>' : ""},
       {id:"settings",icon:"settings",label:"Settings",badge:""}
@@ -246,6 +249,13 @@
     return (list||[]).map(function(chat){
       return { uid:String(chat.uid||""), name:String(chat.name||"Convo user"), username:String(chat.username||""), profileImageUrl:String(chat.profileImageUrl||""), lastMessage:chat.lastMessage||null, lastAt:Number(chat.lastAt||(chat.lastMessage&&chat.lastMessage.timestamp)||0), unread:Number(chat.unread||0), online:chat.online===true, lastActive:Number(chat.lastActive||0), muted:chat.muted===true, mutual:chat.mutual!==false };
     }).filter(function(chat){return chat.uid && chat.uid!==state.me.uid;});
+  }
+  async function loadHomePosts(){
+    if(!session()||state.locked) return;
+    state.homeLoading=true;
+    try{ var data=await Api.homePosts(); if(Array.isArray(data.posts)) state.homePosts=data.posts; }catch(e){ state.homePosts=[]; }
+    state.homeLoading=false;
+    if(state.tab==="home") renderPane();
   }
   async function refreshChats(silent){
     if(!session()||state.locked) return;
@@ -480,6 +490,7 @@
       if(state.locked) return;
       if(document.hidden){ hiddenTick++; if(hiddenTick%3) return; } else hiddenTick=0;
       refreshChats(true); friendTick=(friendTick+1)%4; if(!friendTick) refreshFriendRequests();
+      if(friendTick===1 && state.tab==="home") loadHomePosts();
     }, POLL_CHATS);
     timers.messages=setInterval(pollMessages, POLL_MESSAGES);
     timers.presence=setInterval(pollPresence, POLL_PRESENCE);
@@ -761,6 +772,12 @@
 
     document.addEventListener("click", function(event){
       var target=event.target;
+      // Critical fix: don't hijack clicks inside inputs/textareas/forms — allows keyboard to show
+      if(target.closest("input, textarea, select, [contenteditable]")) {
+        // Still close overlay if needed but don't prevent input focus
+        if(!target.closest(".popover")) { /* keep overlay check minimal for inputs */ }
+        return;
+      }
       if(!target.closest(".popover") && !target.closest('[data-action="emoji"]') && !target.closest('[data-bubble]')) closeOverlay();
       var tabButton=target.closest("[data-tab]"); if(tabButton){ state.tab=tabButton.dataset.tab; state.settingsSection=""; if(state.tab!=="chats") state.activePeer=state.tab==="search"?"":state.activePeer; if(state.tab==="search") refreshFriendRequests(); renderPane(); return; }
       var navButton=target.closest("[data-nav]"); if(navButton){ handleNav(navButton.dataset.nav); return; }

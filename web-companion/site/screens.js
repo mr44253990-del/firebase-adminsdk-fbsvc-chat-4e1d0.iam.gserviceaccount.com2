@@ -41,6 +41,39 @@
     return state.chats.filter(function (chat) { return chat.online; }).length;
   }
 
+  /* ------------------------------------------------------------- home feed (posts) */
+  function renderHomePane(state){
+    var posts = state.homePosts||[];
+    if(state.homeLoading && !posts.length){
+      return '<div class="pane-single"><div class="page-head"><h1>Home</h1><p>Fresh posts from your community</p></div>' + U.skeleton(3, "post-sk") + '</div>';
+    }
+    if(!posts.length){
+      return '<div class="pane-single"><div class="page-head"><h1>Home</h1><p>Fresh posts from your community</p></div>' +
+        U.emptyState({ icon:"home", title:"No posts yet", body:"Posts from Convo Chat app will appear here. Follow friends to see their updates." }) +
+        '<div style="text-align:center;padding:16px"><button type="button" class="btn ghost" data-action="refresh-home">Refresh</button></div></div>';
+    }
+    var html='<div class="pane-single"><div class="page-head"><h1>Home</h1><p>Fresh posts from your community</p></div>';
+    html+='<div class="home-feed">';
+    posts.forEach(function(post){
+      var author=post.author||{};
+      var time=S.listLabel(post.createdAt);
+      var img=post.imageUrl||"";
+      var video=post.videoUrl||"";
+      html+='<article class="post-card">' +
+        '<div class="post-head">' + U.avatar({name:author.name||post.authorName||"Convo user",profileImageUrl:author.profileImageUrl},36) +
+          '<div class="post-who"><strong>'+esc(author.name||"Convo user")+'</strong><span>'+esc(author.username?"@"+author.username:time)+' · '+esc(time)+'</span></div>' +
+          '<button type="button" class="icon-btn" data-action="post-menu" data-post="'+esc(post.id)+'">'+U.icon("more")+'</button>' +
+        '</div>' +
+        (post.text?'<p class="post-text">'+esc(post.text)+'</p>':"") +
+        (video?'<video class="post-media" controls preload="metadata" poster="'+esc(img)+'"><source src="'+esc(video)+'"></video>': img?'<img class="post-media" src="'+esc(img)+'" alt="Post image" loading="lazy">':"") +
+        '<div class="post-actions"><span class="post-stat">'+U.icon("heart")+' '+ (post.likes||0) +'</span><span class="post-stat">'+U.icon("chats")+' '+(post.comments||0)+'</span><button type="button" class="btn ghost small" data-action="post-open" data-post="'+esc(post.id)+'">Open</button></div>' +
+      '</article>';
+    });
+    html+='</div>';
+    html+='<div style="text-align:center;padding:16px"><button type="button" class="btn ghost" data-action="refresh-home">'+U.icon("refresh")+'<span>Refresh feed</span></button></div>';
+    return html+'</div>';
+  }
+
   /* ------------------------------------------------------------- chats list */
   function renderChatsPane(state) {
     var filter = state.chatFilter || "all";
@@ -504,7 +537,7 @@
   function isDesktop() { return window.matchMedia("(min-width: 860px)").matches; }
 
   function renderPairing() {
-    // Desktop: show QR + tabs side-by-side. Mobile: tabbed view (QR tab included).
+    // Modern redesign: glass auth card, no form submission, inputs keep focus
     var isDesk = isDesktop();
     var qrPane = '<div class="qr-pane" id="qr-pane">' +
       '<div class="qr-header"><span class="qr-badge">' + U.icon("qr") + ' QR sign-in</span><span class="qr-timer" id="qr-timer">30s</span></div>' +
@@ -521,41 +554,38 @@
         '<button type="button" class="auth-tab active" role="tab" data-action="auth-mode" data-mode="code">Pair code</button>' +
         '<button type="button" class="auth-tab" role="tab" data-action="auth-mode" data-mode="signin">Sign in</button>' +
         '<button type="button" class="auth-tab" role="tab" data-action="auth-mode" data-mode="signup">Create account</button>' +
-        (isDesk ? "" : '<button type="button" class="auth-tab" role="tab" data-action="auth-mode" data-mode="qr">QR</button>') +
+        '<button type="button" class="auth-tab" role="tab" data-action="auth-mode" data-mode="qr">QR</button>' +
       '</div>';
 
+    // Use divs not forms to avoid auto-submit refresh; inputs have explicit handlers
     var codePane = '<div class="auth-pane auth-code">' +
         '<p class="auth-hint">Open <strong>Convo Chat</strong> on your phone → <strong>Account security</strong> → <strong>Link my browser</strong>, then type the 10-digit code here.</p>' +
-        '<form data-form="pair" novalidate><input class="pair-code-input" id="pair-code" inputmode="numeric" autocomplete="one-time-code" maxlength="10" pattern="[0-9]*" placeholder="0000000000" aria-label="10-digit pairing code">' +
-        '<button type="button" class="btn primary wide" data-action="pair">' + U.icon("check") + '<span>Connect browser</span></button></form>' +
+        '<div class="auth-field"><input class="pair-code-input" id="pair-code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="10" pattern="[0-9]*" placeholder="0000000000" aria-label="10-digit pairing code"></div>' +
+        '<button type="button" class="btn primary wide" data-action="pair">' + U.icon("check") + '<span>Connect browser</span></button>' +
         '<p class="pair-error" id="pair-error" role="alert"></p>' +
       '</div>';
 
     var signinPane = '<div class="auth-pane auth-signin">' +
-        '<form data-form="login" novalidate>' +
-        '<input class="auth-input" id="login-email" type="email" autocomplete="email" placeholder="Email address" aria-label="Email address">' +
-        '<input class="auth-input" id="login-password" type="password" autocomplete="current-password" placeholder="Password" aria-label="Password">' +
-        '<button type="button" class="btn primary wide" data-action="email-login">' + U.icon("lock") + '<span>Sign in &amp; save this browser</span></button></form>' +
+        '<div class="auth-field"><input class="auth-input" id="login-email" type="email" autocomplete="email" placeholder="Email address" aria-label="Email address" name="email"></div>' +
+        '<div class="auth-field"><input class="auth-input" id="login-password" type="password" autocomplete="current-password" placeholder="Password" aria-label="Password" name="password"></div>' +
+        '<button type="button" class="btn primary wide" data-action="email-login">' + U.icon("lock") + '<span>Sign in &amp; save this browser</span></button>' +
         '<p class="pair-error" id="login-error" role="alert"></p>' +
         '<p class="auth-hint">Your login is saved in this browser and stays until you sign out.</p>' +
       '</div>';
 
     var signupPane = '<div class="auth-pane auth-signup">' +
-        '<form data-form="signup" novalidate>' +
-        '<input class="auth-input" id="signup-name" type="text" autocomplete="name" placeholder="Your name" aria-label="Your name">' +
-        '<input class="auth-input" id="signup-email" type="email" autocomplete="email" placeholder="Email address" aria-label="Email address">' +
-        '<input class="auth-input" id="signup-password" type="password" autocomplete="new-password" placeholder="Password (min 6 characters)" aria-label="Password">' +
-        '<button type="button" class="btn primary wide" data-action="email-signup">' + U.icon("check") + '<span>Create account &amp; sign in</span></button></form>' +
+        '<div class="auth-field"><input class="auth-input" id="signup-name" type="text" autocomplete="name" placeholder="Your name" aria-label="Your name" name="name"></div>' +
+        '<div class="auth-field"><input class="auth-input" id="signup-email" type="email" autocomplete="email" placeholder="Email address" aria-label="Email address" name="email"></div>' +
+        '<div class="auth-field"><input class="auth-input" id="signup-password" type="password" autocomplete="new-password" placeholder="Password (min 6 characters)" aria-label="Password" name="new-password"></div>' +
+        '<button type="button" class="btn primary wide" data-action="email-signup">' + U.icon("check") + '<span>Create account &amp; sign in</span></button>' +
         '<p class="pair-error" id="signup-error" role="alert"></p>' +
         '<p class="auth-hint">Email only — no phone number needed. Use this account in the Convo Chat app too.</p>' +
       '</div>';
 
-    // Mobile QR tab content (hidden unless mode=qr)
     var qrTabPane = '<div class="auth-pane auth-qr">' + qrPane + '</div>';
 
     if (isDesk) {
-      // Desktop dual layout: left QR, right tabs
-      var _mode=(window.ConvoApp&&window.ConvoApp.state&&window.ConvoApp.state.authMode)||"code"; return '<div class="pair-wrap pair-desktop"><div class="pair-card auth-card pair-card-wide" id="auth-card" data-auth-mode="'+_mode+'">' +
+      return '<div class="pair-wrap pair-desktop"><div class="pair-card auth-card pair-card-wide" id="auth-card" data-auth-mode="code">' +
         '<div class="pair-art"><span class="pulse"></span><span class="pulse"></span><span class="pulse"></span>' +
         '<span class="pair-mark">' + U.icon("qr") + '</span></div>' +
         '<h1>Connect Convo Chat</h1>' +
@@ -574,7 +604,7 @@
       '</div></div>';
     }
 
-    var _mode2=(window.ConvoApp&&window.ConvoApp.state&&window.ConvoApp.state.authMode)||"code"; return '<div class="pair-wrap"><div class="pair-card auth-card" id="auth-card" data-auth-mode="'+_mode2+'">' +
+    return '<div class="pair-wrap"><div class="pair-card auth-card" id="auth-card" data-auth-mode="code">' +
       '<div class="pair-art"><span class="pulse"></span><span class="pulse"></span><span class="pulse"></span>' +
       '<span class="pair-mark">' + U.icon("qr") + '</span></div>' +
       '<h1>Connect Convo Chat</h1>' +
@@ -590,7 +620,6 @@
       'Media, calls and group chats stay on your phone.</p>' +
     '</div></div>';
   }
-
   window.ConvoScreens = {
     renderChatsPane: renderChatsPane,
     renderChatPlaceholder: renderChatPlaceholder,
