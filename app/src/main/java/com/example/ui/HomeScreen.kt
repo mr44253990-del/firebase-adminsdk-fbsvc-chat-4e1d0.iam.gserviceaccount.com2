@@ -244,6 +244,7 @@ fun HomeScreen(
     val mfaGate by viewModel.mfaGate.collectAsState()
     val inAppNotification by viewModel.inAppNotification.collectAsState()
     val activityNotifications by viewModel.activityNotifications.collectAsState()
+    val rememberedAccounts by viewModel.rememberedAccounts.collectAsState()
     val openActivitySignal by viewModel.openActivityCenterSignal.collectAsState()
     val friendRequests by viewModel.friendRequests.collectAsState()
     val sentFriendRequests by viewModel.sentFriendRequestIds.collectAsState()
@@ -690,7 +691,7 @@ fun HomeScreen(
         ) {
             if (incomingAccountBanner != null) {
                 Box(Modifier.align(Alignment.TopCenter).fillMaxWidth()) {
-                    AccountSwitchBanner(incomingAccountId = incomingAccountBanner!!.first, incomingMessage = incomingAccountBanner!!.second, rememberedAccounts = rememberedAccounts, onSwitch = { uid -> viewModel.loginRememberedAccount(rememberedAccounts.first { it.uid == uid }) {} { incomingAccountBanner = null } }, onDismiss = { incomingAccountBanner = null })
+                    AccountSwitchBanner(incomingAccountId = incomingAccountBanner!!.first, incomingMessage = incomingAccountBanner!!.second, rememberedAccounts = rememberedAccounts, onSwitch = { uid -> viewModel.loginRememberedAccount(rememberedAccounts.first { it.uid == uid }) { incomingAccountBanner = null } }, onDismiss = { incomingAccountBanner = null })
                 }
             }
             when (currentTab) {

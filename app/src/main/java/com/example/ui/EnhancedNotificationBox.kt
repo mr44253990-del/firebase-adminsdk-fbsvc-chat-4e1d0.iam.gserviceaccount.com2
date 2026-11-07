@@ -131,6 +131,7 @@ private fun timeBucket(ts: Long): String {
 private fun formatTime(ts: Long): String = SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date(ts))
 
 @Composable
+@OptIn(ExperimentalMaterial3Api::class)
 fun SmartMutedChatMenu(
     chatName: String,
     isMuted: Boolean,
