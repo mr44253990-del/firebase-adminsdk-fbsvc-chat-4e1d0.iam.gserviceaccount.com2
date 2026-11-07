@@ -109,7 +109,6 @@ import com.example.ui.AccountSwitchBanner
 import com.example.data.DeviceSession
 import com.example.ui.DeviceLoginScreen
 import com.example.ui.SmartMutedChatMenu
-import com.example.ui.AccountSwitchBanner
 import com.google.firebase.auth.FirebaseAuth
 import java.io.File
 import java.io.InputStream
