@@ -36,9 +36,8 @@ android {
       storePassword = System.getenv("RELEASE_STORE_PASSWORD") ?: System.getenv("STORE_PASSWORD")
       keyAlias = System.getenv("RELEASE_KEY_ALIAS") ?: "upload"
       keyPassword = System.getenv("RELEASE_KEY_PASSWORD") ?: System.getenv("KEY_PASSWORD")
-      isV1SigningEnabled = true
-      isV2SigningEnabled = true
-      isV3SigningEnabled = true
+      enableV1Signing = true
+      enableV2Signing = true
       enableV3Signing = true
       enableV4Signing = false
     }
