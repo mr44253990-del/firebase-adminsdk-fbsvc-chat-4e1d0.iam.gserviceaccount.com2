@@ -94,6 +94,7 @@ import android.webkit.WebViewClient
 import com.example.R
 import androidx.compose.ui.graphics.lerp
 import com.example.data.ActivityNotification
+import com.example.ui.AccountSwitchBanner
 import com.example.security.AppLockManager
 import com.example.security.PrivacyPreferences
 import com.example.data.FriendRequest
@@ -105,10 +106,7 @@ import com.example.video.SharedCachedVideo
 import com.example.video.VideoPlayerManager
 import com.example.data.Story
 import com.example.data.User
-import com.example.ui.AccountSwitchBanner
 import com.example.data.DeviceSession
-import com.example.ui.DeviceLoginScreen
-import com.example.ui.SmartMutedChatMenu
 import com.google.firebase.auth.FirebaseAuth
 import java.io.File
 import java.io.InputStream
@@ -240,7 +238,6 @@ fun HomeScreen(
     val featureRequests by viewModel.featureRequests.collectAsState()
     val premiumRequests by viewModel.premiumRequests.collectAsState()
     val deviceSessions by viewModel.deviceSessions.collectAsState()
-    val rememberedAccounts by viewModel.rememberedAccounts.collectAsState()
     val adminReports by viewModel.adminReports.collectAsState()
     val accountBanned by viewModel.accountBanned.collectAsState()
     val forcedLogout by viewModel.forcedLogout.collectAsState()
@@ -284,9 +281,6 @@ fun HomeScreen(
     var webPairExpiresAt by remember { mutableLongStateOf(0L) }
     var webPairLoading by remember { mutableStateOf(false) }
     var webRevokeLoading by remember { mutableStateOf(false) }
-    var showChatActionMenu by remember { mutableStateOf(false) }
-    var selectedChatForMenu by remember { mutableStateOf<com.example.data.User?>(null) }
-    var showDeviceLogin by remember { mutableStateOf(false) }
     var showAllDeviceSessions by rememberSaveable { mutableStateOf(false) }
     var deviceSessionPendingDelete by remember { mutableStateOf<DeviceSession?>(null) }
     var showClearDeviceHistoryDialog by rememberSaveable { mutableStateOf(false) }
@@ -359,6 +353,8 @@ fun HomeScreen(
     }
 
     val scaffoldBgColor = Color.Transparent
+    var showDeviceLogin by remember { mutableStateOf(false) }
+    var incomingAccountBanner by remember { mutableStateOf<Pair<String,String>?>(null) }
 
     // First-launch guided tour (spotlight + blurred surroundings). Replayable from Settings.
     var coachTourActive by remember { mutableStateOf(false) }
@@ -480,7 +476,7 @@ fun HomeScreen(
                             DropdownMenu(
                                 expanded = showAccountMenu,
                                 onDismissRequest = { showAccountMenu = false },
-                                modifier = Modifier.width(260.dp) // v4.6.0 compact (was 322)
+                                modifier = Modifier.width(322.dp)
                             ) {
                                 Column(
                                     Modifier
@@ -589,6 +585,11 @@ fun HomeScreen(
                         containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.72f)
                     )
                 )
+                    }
+                }
+                if (currentTab == 1 && chatChromeCollapsed) {
+                    Spacer(Modifier.fillMaxWidth().windowInsetsTopHeight(androidx.compose.foundation.layout.WindowInsets.statusBars))
+                }
             }
         },
         bottomBar = {
@@ -687,12 +688,9 @@ fun HomeScreen(
                 .background(scaffoldBgColor)
                 .padding(innerPadding)
         ) {
-            // v4.6.0 multi-account banner now correctly inside Scaffold content (not topBar)
-            var incomingAccountBanner by remember { mutableStateOf<Pair<String,String>?>(null) }
             if (incomingAccountBanner != null) {
-                Column(Modifier.align(Alignment.TopCenter).fillMaxWidth()) {
+                Box(Modifier.align(Alignment.TopCenter).fillMaxWidth()) {
                     AccountSwitchBanner(incomingAccountId = incomingAccountBanner!!.first, incomingMessage = incomingAccountBanner!!.second, rememberedAccounts = rememberedAccounts, onSwitch = { uid -> viewModel.loginRememberedAccount(rememberedAccounts.first { it.uid == uid }) {} { incomingAccountBanner = null } }, onDismiss = { incomingAccountBanner = null })
-                    if (currentTab == 1 && chatChromeCollapsed) Spacer(Modifier.fillMaxWidth().windowInsetsTopHeight(androidx.compose.foundation.layout.WindowInsets.statusBars))
                 }
             }
             when (currentTab) {
@@ -1019,10 +1017,8 @@ fun HomeScreen(
                                         isMuted = user.uid in mutedUsers,
                                         onSelect = { onUserSelected(user) },
                                         onLongPress = {
-                                            // v4.6.0 — hold shows action menu (mute/pin/mark read etc.)
-                                            // v4.6.0 hold will show menu
-                                            selectedChatForMenu = user
-                                            showChatActionMenu = true
+                                            viewModel.toggleMuteUser(user.uid)
+                                            Toast.makeText(context, if (user.uid in mutedUsers) "${user.name} unmuted" else "${user.name} muted", Toast.LENGTH_SHORT).show()
                                         }
                                     )
                                 }
@@ -2974,29 +2970,9 @@ fun HomeScreen(
     }
 
     // CREATE GROUP DIALOG (Renders users multi selection nicely)
-
-                    // v4.6.0 Chat long-press action sheet
-                    if (showChatActionMenu && selectedChatForMenu != null) {
-                        SmartMutedChatMenu(
-                            chatName = selectedChatForMenu!!.name,
-                            isMuted = selectedChatForMenu!!.uid in mutedUsers,
-                            onMuteToggle = {
-                                viewModel.toggleMuteUser(selectedChatForMenu!!.uid)
-                                android.widget.Toast.makeText(context, if (selectedChatForMenu!!.uid in mutedUsers) "Unmuted" else "Muted", android.widget.Toast.LENGTH_SHORT).show()
-                            },
-                            onPin = { ConversationPrefs.setPinned(context, selectedChatForMenu!!.uid, !ConversationPrefs.isPinned(context, selectedChatForMenu!!.uid)) },
-                            onMarkRead = { showChatActionMenu = false },
-                            onClearChat = { showChatActionMenu = false },
-                            onBlock = {
-                                viewModel.blockUser(selectedChatForMenu!!.uid) {}
-                                showChatActionMenu = false
-                            },
-                            onDismiss = { showChatActionMenu = false }
-                        )
-                    }
-                    if (showDeviceLogin) {
-                        DeviceLoginScreen(onBack = { showDeviceLogin = false }, onAuthenticated = { showDeviceLogin = false })
-                    }
+    if (showDeviceLogin) {
+        DeviceLoginScreen(onBack = { showDeviceLogin = false }, onAuthenticated = { showDeviceLogin = false })
+    }
 
     if (showCreateGroupDialog) {
         var groupName by remember { mutableStateOf("") }
