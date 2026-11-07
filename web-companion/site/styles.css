@@ -1766,7 +1766,9 @@ form { display: contents; }
   display: block;
   border-radius: 12px;
 }
-.login-qr-corners {
+.login-qr-corners { pointer-events: none;
+}
+.login-qr-corners span {
   position: absolute;
   inset: 0;
   pointer-events: none;

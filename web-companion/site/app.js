@@ -802,10 +802,9 @@
 
     document.addEventListener("click", function(event){
       var target=event.target;
-      // Critical fix: don't hijack clicks inside inputs/textareas/forms — allows keyboard to show
-      if(target.closest("input, textarea, select, [contenteditable]")) {
-        // Still close overlay if needed but don't prevent input focus
-        if(!target.closest(".popover")) { /* keep overlay check minimal for inputs */ }
+      // Don't interfere with text input focus - but still allow button clicks inside same card
+      // Only skip if the click is directly on an input element itself, not its container
+      if(target.tagName==="INPUT" || target.tagName==="TEXTAREA" || target.tagName==="SELECT" || target.isContentEditable){
         return;
       }
       if(!target.closest(".popover") && !target.closest('[data-action="emoji"]') && !target.closest('[data-bubble]')) closeOverlay();
