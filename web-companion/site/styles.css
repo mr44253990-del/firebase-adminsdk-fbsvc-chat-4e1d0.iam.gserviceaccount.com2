@@ -1409,3 +1409,125 @@ body.kb-open .pair-wrap { place-items: start center; padding-top: 12px; }
 .discover-tip div { display: grid; gap: 3px; }
 .discover-tip strong { font-size: 14px; }
 .discover-tip span { font-size: 12.5px; color: var(--text-soft); line-height: 1.5; }
+
+/* =====================================================================
+   v4.6.0 — Web Version Fixes (glitch, keyboard, QR, file share, menu)
+   ===================================================================== */
+
+/* Fix 1: scroll glitch — contain layout, smooth anchoring, hide bounce */
+.msg-scroll {
+  contain: layout paint;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+  scroll-behavior: auto !important; /* prevent RAF + smooth conflict */
+  overflow-anchor: none; /* disable browser scroll anchoring that causes jump */
+}
+.msg-scroll > * { overflow-anchor: none; }
+.pane-main { overscroll-behavior: contain; }
+#stream-host { contain: layout; }
+
+/* Fix 2: file sharing — enhanced file card + drag overlay */
+.file-card-enhanced {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px; margin: 4px 0 6px;
+  border-radius: 14px; background: rgba(0,0,0,.18);
+  border: 1px solid rgba(255,255,255,.12);
+  transition: transform 140ms var(--ease);
+}
+.file-card-enhanced:hover { transform: translateY(-1px); }
+.msg.in .file-card-enhanced { background: rgba(127,127,127,.12); border-color: var(--line); }
+.file-card-enhanced .file-actions { margin-left: auto; display: flex; gap: 6px; }
+.file-btn {
+  width: 32px; height: 32px; border-radius: 10px;
+  display: grid; place-items: center;
+  background: rgba(255,255,255,.10); color: var(--text);
+  border: 1px solid rgba(255,255,255,.12);
+  transition: background var(--speed) var(--ease), transform 120ms var(--ease);
+}
+.file-btn:hover { background: rgba(255,255,255,.18); }
+.file-btn:active { transform: scale(.93); }
+.file-btn.preview { background: linear-gradient(135deg, var(--accent-a), var(--accent-b)); color: #fff; border-color: transparent; }
+.drag-overlay {
+  position: absolute; inset: 0; z-index: 10;
+  display: grid; place-items: center;
+  background: rgba(10,10,22,.72); backdrop-filter: blur(8px);
+  border: 2px dashed var(--accent-b); border-radius: 16px; margin: 8px;
+}
+.drag-overlay-card {
+  display: grid; place-items: center; gap: 8px;
+  padding: 26px 24px; border-radius: 18px;
+  background: var(--panel-solid); border: 1px solid var(--line-strong);
+  text-align: center; box-shadow: var(--shadow-2);
+}
+.drag-overlay-card .ic { width: 36px; height: 36px; color: var(--accent-b); }
+.drag-overlay-card strong { font-size: 15px; }
+.drag-overlay-card span { font-size: 12px; color: var(--text-soft); }
+
+.upload-progress {
+  height: 6px; border-radius: 20px; background: var(--line);
+  margin: 0 14px 8px; position: relative; overflow: hidden;
+}
+.upload-progress-bar { height: 100%; background: linear-gradient(90deg, var(--accent-a), var(--accent-b)); border-radius: 20px; transition: width 300ms var(--ease); }
+.upload-progress span { position: absolute; right: 8px; top: -18px; font-size: 10px; font-weight: 800; color: var(--accent-b); }
+
+.file-trigger { cursor: pointer; }
+.file-trigger .ic { pointer-events: none; }
+
+/* Fix 3: QR login — canvas + status */
+.qr-pane {
+  display: grid; gap: 12px; justify-items: center;
+  padding: 16px; border-radius: 18px;
+  background: color-mix(in srgb, var(--panel-2) 80%, transparent);
+  border: 1px solid var(--line);
+}
+.qr-header { width: 100%; display: flex; justify-content: space-between; align-items: center; }
+.qr-badge { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; background: linear-gradient(135deg, var(--accent-a), var(--accent-b)); color: #fff; font-size: 11px; font-weight: 800; }
+.qr-badge .ic { width: 14px; height: 14px; }
+.qr-live { display: inline-flex; align-items: center; gap: 5px; font-size: 10px; font-weight: 800; color: var(--success); letter-spacing: .06em; text-transform: uppercase; }
+.qr-live i { width: 7px; height: 7px; border-radius: 50%; background: var(--success); box-shadow: 0 0 0 3px color-mix(in srgb, var(--success) 20%, transparent); animation: pulseDot 1.6s infinite; }
+@keyframes pulseDot { 0%,100%{opacity:1} 50%{opacity:.4} }
+.qr-canvas-wrap { position: relative; padding: 10px; border-radius: 16px; background: #fff; border: 1px solid var(--line-strong); }
+#qr-canvas { display: block; border-radius: 8px; }
+.qr-scan-line { position: absolute; left: 10px; right: 10px; height: 2px; background: linear-gradient(90deg, transparent, var(--accent-b), transparent); top: 12px; animation: scanDown 2.2s linear infinite; }
+@keyframes scanDown { 0%{top:12px;opacity:1} 100%{top:210px;opacity:0} }
+.qr-hint { font-size: 11.5px; color: var(--text-soft); text-align: center; line-height: 1.5; margin: 0; }
+.qr-status { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-soft); }
+.qr-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent-b); animation: pulseDot 1.2s infinite; }
+.qr-countdown { font-weight: 800; color: var(--accent-b); }
+
+.pair-desktop { padding: 18px; }
+.pair-card-wide { max-width: 860px; }
+.pair-desktop-grid { display: grid; grid-template-columns: 280px minmax(0,1fr); gap: 16px; }
+.pair-desktop-forms { display: grid; gap: 0; }
+@media (max-width: 860px) { .pair-desktop-grid { grid-template-columns: 1fr; } }
+
+/* Fix 4: menu size — compact on all viewports */
+.menu-item { padding: 9px 12px; font-size: 12.5px; gap: 10px; border-radius: 12px; }
+.menu-item .ic { width: 17px; height: 17px; }
+.sheet-card { max-width: 360px; margin: 0 auto; border-radius: 22px 22px 0 0; }
+@media (min-width: 861px){
+  .sheet { display: grid; place-items: center; background: rgba(4,4,10,.45); }
+  .sheet-card { border-radius: 20px; max-height: 78vh; margin: 0; max-width: 380px; }
+  .popover { max-width: 320px; }
+}
+
+/* Fix 5: auth tabs — add QR tab on mobile, fix refresh */
+.auth-card[data-auth-mode="qr"] .auth-qr { display: grid; }
+.auth-card[data-auth-mode="code"] .auth-qr,
+.auth-card[data-auth-mode="signin"] .auth-qr,
+.auth-card[data-auth-mode="signup"] .auth-qr { display: none !important; }
+form { display: contents; }
+.pair-code-input, .auth-input { font-size: 16px !important; } /* prevent zoom */
+
+/* Fix 6: notification banner polish (future hook) */
+.notification-banner-enhanced {
+  position: sticky; top: 0; z-index: 5;
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 14px; margin: 0 10px 8px;
+  border-radius: 14px;
+  background: linear-gradient(135deg, var(--accent-a), var(--accent-b));
+  color: #fff; font-size: 12.5px; font-weight: 700;
+  box-shadow: 0 8px 24px -12px var(--accent-a);
+}
+.notification-banner-enhanced .ic { color: #fff; }
+

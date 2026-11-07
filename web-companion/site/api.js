@@ -73,6 +73,37 @@
     return payload;
   }
 
+  // Lightweight upload helper for unlimited file sharing (R2 via Worker)
+  async function uploadRequest(route, formData) {
+    var session = readSession();
+    var headers = {};
+    if (session && session.token) headers.Authorization = "Bearer " + session.token;
+    var response;
+    try {
+      response = await fetch(WORKER + "/web-pair/" + route, {
+        method: "POST",
+        mode: "cors",
+        cache: "no-store",
+        credentials: "omit",
+        referrerPolicy: "no-referrer",
+        headers: headers,
+        body: formData
+      });
+    } catch (e) {
+      throw new Error("Cannot reach Convo Chat servers. Check your connection.");
+    }
+    var payload = {};
+    try { payload = await response.json(); } catch (_) { payload = {}; }
+    if (!response.ok || payload.success === false) {
+      if (response.status === 401) onExpired();
+      var error = new Error(friendlyError(response.status, payload));
+      error.status = response.status;
+      error.payload = payload;
+      throw error;
+    }
+    return payload;
+  }
+
   var Api = {
     workerUrl: WORKER,
     session: readSession,
@@ -130,6 +161,61 @@
       saveSession(session);
       return session;
     },
+
+    // ── QR Device Login (v4.6.0) ──────────────────────────────────────────
+    // Desktop generates a QR that the phone scans. Phone writes auth to Firestore,
+    // web polls until sessionToken appears.
+    qrCreate() { return request("qr/create", {}, { token: "none" }); },
+    qrPoll(qrId) { return request("qr/poll", { qrId: qrId }, { token: "none" }); },
+    // The poll returns { status: "pending"|"scanned"|"authenticated"|"expired", sessionToken?, expiresAt? }
+    // When authenticated, web saves session automatically:
+    async qrPollAndSave(qrId) {
+      var res = await request("qr/poll", { qrId: qrId }, { token: "none" });
+      if (res.status === "authenticated" && res.sessionToken) {
+        var session = {
+          token: res.sessionToken,
+          expiresAt: Number(res.expiresAt || 0),
+          pairedAt: Date.now(),
+          via: "qr"
+        };
+        saveSession(session);
+      }
+      return res;
+    },
+
+    // ── File upload (unlimited, chunked via Worker → R2) ─────────────────
+    async uploadFile(file, onProgress) {
+      // Try Worker R2 path first (no MB limit). Falls back to base64 for tiny files.
+      var fd = new FormData();
+      fd.append("file", file, file.name);
+      fd.append("fileName", file.name);
+      fd.append("mimeType", file.type || "application/octet-stream");
+      // Upload with progress via XHR wrapper
+      return new Promise(function (resolve, reject) {
+        var xhr = new XMLHttpRequest();
+        xhr.open("POST", WORKER + "/web-pair/upload");
+        var s = readSession();
+        if (s && s.token) xhr.setRequestHeader("Authorization", "Bearer " + s.token);
+        else xhr.setRequestHeader("Authorization", "Bearer none");
+        if (onProgress) xhr.upload.onprogress = function (e) { if (e.lengthComputable) onProgress(Math.round(e.loaded * 100 / e.total)); };
+        xhr.onload = function () {
+          try {
+            var payload = JSON.parse(xhr.responseText || "{}");
+            if (xhr.status >= 200 && xhr.status < 300 && payload.success !== false) resolve(payload);
+            else {
+              var msg = (payload && (payload.error || payload.message)) || "Upload failed (" + xhr.status + ")";
+              var err = new Error(msg); err.status = xhr.status; err.payload = payload; reject(err);
+              if (xhr.status === 401) onExpired();
+            }
+          } catch (e) { reject(new Error("Upload failed: invalid server response")); }
+        };
+        xhr.onerror = function () { reject(new Error("Cannot reach Convo Chat servers. Check your connection.")); };
+        xhr.send(fd);
+      });
+    },
+
+    // Preview helper — asks Worker for a signed preview URL (if R2 object requires auth)
+    async filePreview(fileId) { return request("file/preview", { fileId: fileId }); },
 
     bootstrap() { return request("bootstrap"); },
     chats() { return request("chats"); },

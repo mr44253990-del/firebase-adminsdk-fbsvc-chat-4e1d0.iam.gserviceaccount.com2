@@ -17,8 +17,8 @@ android {
     applicationId = "com.ebchat"
     minSdk = 24
     targetSdk = 36
-    versionCode = 56
-    versionName = "4.5.0"
+    versionCode = 57
+    versionName = "4.6.0"
 
     // Convo Chat is distributed as a single modern 64-bit APK. This excludes
     // armeabi-v7a/x86/x86_64 native libraries pulled in by WebRTC/Media3.
@@ -44,8 +44,6 @@ android {
       isCrunchPngs = false
       isDebuggable = false
       isJniDebuggable = false
-      // Keep reflection-heavy Firebase/Room models stable. R8 obfuscation does
-      // not prevent Play Protect warnings and can break serialized field names.
       isMinifyEnabled = false
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
       signingConfig = signingConfigs.getByName("release")
@@ -63,6 +61,21 @@ android {
   testOptions { unitTests { isIncludeAndroidResources = true } }
 }
 
+// Show keystore info at build time (as requested — only path/alias, never password)
+tasks.named("assembleRelease") {
+  doLast {
+    val ksPath = System.getenv("KEYSTORE_PATH") ?: "${rootDir}/my-upload-key.jks"
+    val ksAlias = System.getenv("RELEASE_KEY_ALIAS") ?: System.getenv("KEY_ALIAS") ?: "upload"
+    val user = System.getenv("KEYSTORE_USER") ?: System.getenv("USER") ?: "mr44253990-del"
+    println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    println("🔑 Keystore: $ksPath")
+    println("🔑 Alias   : $ksAlias")
+    println("👤 User    : $user")
+    println("📦 Version : 4.6.0 (57) — Web + Device Login Release")
+    println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+  }
+}
+
 // Production-only project: do not create or publish a debug APK variant.
 androidComponents {
   beforeVariants(selector().withBuildType("debug")) { variantBuilder ->
@@ -70,8 +83,6 @@ androidComponents {
   }
 }
 
-// Configure the Secrets Gradle Plugin to use .env and .env.example files
-// to match the convention used in Web projects.
 secrets {
   propertiesFileName = ".env"
   defaultPropertiesFileName = ".env.example"
@@ -79,12 +90,9 @@ secrets {
 
 googleServices { missingGoogleServicesStrategy = MissingGoogleServicesStrategy.WARN }
 
-// Some unused dependencies are commented out below instead of being removed.
-// This makes it easy to add them back in the future if needed.
 dependencies {
   implementation(platform(libs.androidx.compose.bom))
   implementation(platform(libs.firebase.bom))
-  // implementation(libs.accompanist.permissions)
   implementation(libs.androidx.activity.compose)
   implementation(libs.androidx.biometric)
   implementation(libs.androidx.camera.camera2)
@@ -102,7 +110,6 @@ dependencies {
   implementation(libs.androidx.compose.ui.tooling.preview)
   implementation(libs.androidx.core.ktx)
   implementation(libs.androidx.core.splashscreen)
-  // implementation(libs.androidx.datastore.preferences)
   implementation(libs.androidx.lifecycle.runtime.compose)
   implementation(libs.androidx.lifecycle.runtime.ktx)
   implementation(libs.androidx.lifecycle.viewmodel.compose)
@@ -130,7 +137,6 @@ dependencies {
   implementation(libs.logging.interceptor)
   implementation(libs.moshi.kotlin)
   implementation(libs.okhttp)
-  // implementation(libs.play.services.location)
   implementation(libs.retrofit)
   testImplementation(libs.androidx.compose.ui.test.junit4)
   testImplementation(libs.androidx.core)
