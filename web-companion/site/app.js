@@ -1,4 +1,4 @@
-/* Convo Chat Web — application controller. v4.7.0 */
+/* Convo Chat Web — application controller. v4.8.0 */
 (function () {
   "use strict";
   var S = window.ConvoStore;
@@ -9,6 +9,7 @@
 
   var POLL_CHATS = 20000;
   var POLL_MESSAGES = 7000;
+  var WEB_VERSION = "4.8.0";
   var POLL_PRESENCE = 45000;
   // v4.7.0: premium friends invite vibration handled via ActivityNotification type premium_approved
   var LAUNCH_MIN_MS = 1150;
@@ -47,11 +48,13 @@
     qrCountdown: 30
   };
 
-  var timers = { chats: 0, messages: 0, presence: 0, typing: 0, lock: 0, qr: 0, qrCount: 0 };
+  var timers = { chats: 0, messages: 0, presence: 0, typing: 0, lock: 0 };
   var launchStartedAt = Date.now();
   var lastTypingSentAt = 0;
   var typingStopTimer = 0;
   var messagePollFailures = 0;
+  var pollingMessages = false;
+  var loadingOlder = false;
   var openOverlayCloser = null;
 
   /* ------------------------------------------------------------ launch screen */
@@ -148,12 +151,8 @@
     }
     document.getElementById("tabbar").hidden=false;
     if(state.tab==="chats"){
-      pane.innerHTML='<div class="split '+(state.activePeer?"has-open":"")+'">'+Screens.renderChatsPane(state)+(state.activePeer?Chat.renderChatPane(state):Screens.renderChatPlaceholder())+'</div><div style="position:fixed;bottom:8px;right:12px;background:linear-gradient(135deg,#8b7bff,#5ac8fa);color:#fff;padding:6px 12px;border-radius:20px;font-size:11px;font-weight:800;z-index:999">v4.7.0 • V1+V2+V3 • Groups in Chats</div>';
+      pane.innerHTML='<div class="split '+(state.activePeer?"has-open":"")+'">'+Screens.renderChatsPane(state)+(state.activePeer?Chat.renderChatPane(state):Screens.renderChatPlaceholder())+'</div><div style="position:fixed;bottom:8px;right:12px;background:linear-gradient(135deg,#8b7bff,#5ac8fa);color:#fff;padding:6px 12px;border-radius:20px;font-size:11px;font-weight:800;z-index:999">v'+WEB_VERSION+' • Web</div>';
       requestAnimationFrame(function(){
-        var scroller=document.getElementById("msg-scroll");
-        if(scroller) scroller.scrollTop=scroller.scrollHeight;
-        var input=document.getElementById("composer-input");
-        if(input && !isMobile()) input.focus({preventScroll:true});
         var back=document.getElementById("chat-back");
         if(back) back.style.display=isMobile()?"inline-flex":"none";
         bindChatScrollGuard();
@@ -292,27 +291,32 @@
     var chat=findChat(uid);
     state.activePeerName=(chat&&chat.name)||nameHint||"Chat";
     state.activePeerImage=(chat&&chat.profileImageUrl)||imageHint||"";
-    state.messages=[]; state.replyTo=null; state.loadingMessages=true; state.hasMoreMessages=false; state.typing={};
+    state.messages=[]; state.replyTo=null; state.loadingMessages=true; state.hasMoreMessages=false; state.typing={}; state.lastReadPeer=uid; state.lastReadSent="";
     if(chat && chat.unread) chat.unread=0;
     if(isMobile() && state.tab!=="chats") state.tab="chats";
     renderPane();
     await loadMessages();
   }
   async function loadMessages(older){
-    var peer=state.activePeer; if(!peer) return;
+    var peer=state.activePeer; if(!peer || (older && loadingOlder)) return;
+    if(older) loadingOlder=true;
     try{
       var before=older && state.messages.length ? state.messages[0].timestamp : 0;
+      var previousScrollTop=0; var previousScrollHeight=0;
+      var previousScroller=document.getElementById("msg-scroll");
+      if(older && previousScroller){ previousScrollTop=previousScroller.scrollTop; previousScrollHeight=previousScroller.scrollHeight; }
       var data=await Api.messages(peer, before);
-      if(state.activePeer!==peer) return;
+      if(state.activePeer!==peer){ if(older) loadingOlder=false; return; }
       var incoming=(data.messages||[]).map(normalizeMessage);
-      state.messages=older ? mergeMessages(incoming,state.messages) : incoming;
+      state.messages=mergeMessages(incoming,state.messages);
       state.hasMoreMessages=Boolean(data.hasMore);
       state.loadingMessages=false; messagePollFailures=0;
       markRead();
       Chat.updateStream(state, !older);
-      if(older){ var sc=document.getElementById("msg-scroll"); if(sc) sc.scrollTop=240; }
+      if(older){ var sc=document.getElementById("msg-scroll"); if(sc) sc.scrollTop=previousScrollTop + Math.max(0, sc.scrollHeight-previousScrollHeight); loadingOlder=false; }
       var chat=findChat(peer); if(chat && chat.unread){chat.unread=0; refreshChatListOnly(); renderNav();}
     }catch(error){
+      if(older) loadingOlder=false;
       state.loadingMessages=false; messagePollFailures++; if(messagePollFailures===1) toast(error.message||"Could not load messages","error");
       Chat.updateStream(state,true);
     }
@@ -324,30 +328,49 @@
     return { messageId:String(raw.messageId||raw.id||""), senderId:String(raw.senderId||""), senderName:String(raw.senderName||""), text:String(raw.text||""), timestamp:Number(raw.timestamp||0), edited:raw.edited===true, imageUrl:raw.imageUrl||"", fileUrl:raw.fileUrl||"", fileName:raw.fileName||"", fileMimeType:raw.fileMimeType||"", fileSize:raw.fileSize||0, voiceUrl:raw.voiceUrl||"", voiceDurationSec:raw.voiceDurationSec||0, seenByRecipient:raw.seenByRecipient===true, deliveredToRecipient:raw.deliveredToRecipient===true, read:raw.read===true, reactions:raw.reactions&&typeof raw.reactions==="object"?raw.reactions:{} };
   }
   async function markRead(){
-    if(!state.activePeer || !S.settings().readReceipts) return;
-    var newest=state.messages.filter(function(m){return m.senderId!==state.me.uid;}).slice(-1)[0];
-    if(!newest) return; if(state.lastReadSent===newest.messageId) return;
-    state.lastReadSent=newest.messageId;
-    try{ await Api.read(state.activePeer, newest.timestamp); }catch(_){}
-  }
-  async function sendMessage(){
-    var input=document.getElementById("composer-input");
-    if(!input || !state.activePeer) return;
-    var text=input.value.trim(); if(!text) return;
     var peer=state.activePeer;
-    var optimistic={ messageId:"local-"+Date.now(), senderId:state.me.uid, senderName:state.me.name||"You", text:text, timestamp:Date.now(), pending:true, reactions:{} };
-    var reply=state.replyTo; if(reply){ optimistic.replyToId=reply.messageId; optimistic.replyToText=reply.text; optimistic.replyToSenderName=reply.senderName; }
-    state.messages.push(optimistic); state.drafts[peer]=""; state.replyTo=null; input.value=""; autosize(input); Chat.updateStream(state,true); renderComposerOnly();
+    if(!peer || !S.settings().readReceipts) return;
+    var newest=state.messages.filter(function(m){return m.senderId!==state.me.uid;}).slice(-1)[0];
+    if(!newest) return;
+    if(state.lastReadPeer!==peer){ state.lastReadPeer=peer; state.lastReadSent=""; }
+    if(state.lastReadSent===newest.messageId) return;
+    state.lastReadSent=newest.messageId;
+    try{ await Api.read(peer, newest.timestamp); }catch(_){ if(state.lastReadPeer===peer && state.lastReadSent===newest.messageId) state.lastReadSent=""; }
+  }
+  function createClientMessageId(){
+    try{ if(window.crypto && crypto.randomUUID) return crypto.randomUUID().replace(/-/g, ""); }catch(_){}
+    return Date.now().toString(36)+Math.random().toString(36).slice(2,18);
+  }
+  async function sendMessage(retry){
+    var input=document.getElementById("composer-input");
+    var peer=retry ? retry.peer : state.activePeer;
+    if(!peer || (!retry && !input)) return;
+    var text=retry ? retry.text : input.value.trim(); if(!text) return;
+    var reply=retry ? retry.reply : state.replyTo;
+    var clientMessageId=retry ? retry.clientMessageId : createClientMessageId();
+    var serverMessageId="web_"+state.me.uid+"_"+clientMessageId;
+    var optimistic=retry ? retry.message : { messageId:serverMessageId, clientMessageId:clientMessageId, senderId:state.me.uid, senderName:state.me.name||"You", text:text, timestamp:Date.now(), pending:true, reactions:{} };
+    if(reply && !retry){ optimistic.replyToId=reply.messageId; optimistic.replyToText=reply.text; optimistic.replyToSenderName=reply.senderName; }
+    if(!retry){
+      state.messages.push(optimistic); state.drafts[peer]=""; state.replyTo=null;
+      input.value=""; autosize(input); Chat.updateStream(state,true); renderComposerOnly();
+    } else { optimistic.pending=true; optimistic.failed=false; }
     try{
-      var payload=await Api.send(peer,text,reply?{replyToId:reply.messageId, replyToText:String(reply.text||"").slice(0,400), replyToSenderName:reply.senderName||""}:{});
-      var idx=state.messages.indexOf(optimistic);
-      if(idx>=0) state.messages[idx]=normalizeMessage(Object.assign({},optimistic,payload.message||{},{pending:false}));
-      S.beep("send"); Chat.updateStream(state,true); refreshChats(true);
+      var extra=Object.assign({}, reply ? {replyToId:reply.messageId, replyToText:String(reply.text||"").slice(0,400), replyToSenderName:reply.senderName||""} : {}, {clientMessageId:clientMessageId});
+      var payload=await Api.send(peer,text,extra);
+      if(state.activePeer===peer){
+        var idx=state.messages.indexOf(optimistic);
+        if(idx>=0) state.messages[idx]=normalizeMessage(Object.assign({},optimistic,payload.message||{},{pending:false,failed:false}));
+        Chat.updateStream(state,true);
+      }
+      S.beep("send"); refreshChats(true);
     }catch(error){
-      optimistic.pending=false; optimistic.failed=true; Chat.updateStream(state,true);
+      optimistic.pending=false; optimistic.failed=true;
+      if(state.activePeer===peer) Chat.updateStream(state,false);
       toast(error.message||"Message failed to send","error",{ label:"Retry", onClick:function(){
-        state.messages=state.messages.filter(function(m){return m!==optimistic;}); var box=document.getElementById("composer-input");
-        if(box){ box.value=text; autosize(box); sendMessage(); } else { openChat(peer).then(function(){ var b=document.getElementById("composer-input"); if(b){ b.value=text; sendMessage(); } }); }
+        var attempt={peer:peer,text:text,clientMessageId:clientMessageId,message:optimistic,reply:reply};
+        if(state.activePeer===peer) sendMessage(attempt);
+        else openChat(peer).then(function(){ sendMessage(attempt); });
       }});
     }
   }
@@ -407,21 +430,27 @@
 
   /* ------------------------------------------------------------------ polls */
   async function pollMessages(){
-    if(!state.activePeer||state.locked||document.hidden) return;
+    var peer=state.activePeer;
+    if(!peer||state.locked||document.hidden||pollingMessages) return;
+    pollingMessages=true;
     try{
-      var data=await Api.messages(state.activePeer,0);
-      if(state.activePeer!==state.activePeer) return;
+      var data=await Api.messages(peer,0);
+      if(state.activePeer!==peer) return;
       var incoming=(data.messages||[]).map(normalizeMessage);
       if(!incoming.length && !state.messages.length) return;
       var previousLast=state.messages.length ? state.messages[state.messages.length-1].messageId : "";
-      var localPending=state.messages.filter(function(m){return m.pending;});
-      var merged=mergeMessages(incoming, localPending);
-      state.messages=merged; state.loadingMessages=false;
-      var newest=merged.length ? merged[merged.length-1] : null;
-      if(newest && newest.messageId!==previousLast && newest.senderId!==state.me.uid) S.beep("recv");
-      Chat.updateStream(state, Boolean(newest && newest.messageId!==previousLast));
-      markRead(); messagePollFailures=0;
+      // Merge the newest server window into the locally paginated history. Polls must
+      // never replace older messages that the user has already loaded.
+      state.messages=mergeMessages(incoming,state.messages);
+      state.loadingMessages=false;
+      var newest=state.messages.length ? state.messages[state.messages.length-1] : null;
+      var hasNewPeerMessage=Boolean(newest && newest.messageId!==previousLast && newest.senderId!==state.me.uid);
+      if(hasNewPeerMessage) S.beep("recv");
+      Chat.updateStream(state,false); // scroll only if the reader was already at the bottom
+      markRead();
+      messagePollFailures=0;
     }catch(error){ messagePollFailures++; if(error.status===401) return; if(messagePollFailures===3) toast("Live updates paused — reconnecting…","info"); }
+    finally{ pollingMessages=false; }
   }
   async function pollPresence(){
     if(state.locked||document.hidden||!session()) return;
@@ -623,85 +652,14 @@
     catch(error){ if(errorNode) errorNode.textContent=error.message||"Could not create the account."; if(button){button.disabled=false; button.innerHTML=U.icon("check")+"<span>Create account &amp; sign in</span>";} }
   }
 
-  // ── QR Login: create + poll + render ──────────────────────────────────
-  // Minimal QR draw: we encode qrId as base64 via canvas QR (no external lib needed for MVP — fallback to text code)
-  function drawQrCanvas(canvas, text){
-    if(!canvas) return;
-    var ctx=canvas.getContext("2d"); if(!ctx) return;
-    // Simple placeholder QR: use api.qrserver fallback if available, else draw text pattern
-    // For offline/MVP: draw deterministic grid from text hash
-    var size=220; var cells=21; var cellSize=size/cells;
-    ctx.fillStyle="#fff"; ctx.fillRect(0,0,size,size);
-    ctx.fillStyle="#0a0a16";
-    // Finder patterns corners
-    function finder(x,y){ ctx.fillRect(x*cellSize,y*cellSize,7*cellSize,7*cellSize); ctx.fillStyle="#fff"; ctx.fillRect((x+1)*cellSize,(y+1)*cellSize,5*cellSize,5*cellSize); ctx.fillStyle="#0a0a16"; ctx.fillRect((x+2)*cellSize,(y+2)*cellSize,3*cellSize,3*cellSize); ctx.fillStyle="#0a0a16"; }
-    finder(0,0); finder(14,0); finder(0,14);
-    // Deterministic pseudo-random fill from text
-    var hash=0; for(var i=0;i<text.length;i++) hash=(hash*31+text.charCodeAt(i))>>>0;
-    function rnd(){ hash=(hash*1664525+1013904223)>>>0; return (hash & 0xff)/255; }
-    ctx.fillStyle="#0a0a16";
-    for(var r=0;r<cells;r++) for(var c=0;c<cells;c++){
-      if(r<7 && c<7) continue; if(r<7 && c>13) continue; if(r>13 && c<7) continue;
-      if(rnd()>0.55) ctx.fillRect(c*cellSize+0.5,r*cellSize+0.5,cellSize-1,cellSize-1);
-    }
-    // Center logo hint
-    ctx.fillStyle="#7b6bff"; ctx.fillRect(9*cellSize,9*cellSize,3*cellSize,3*cellSize);
-  }
+  // QR device approval is not implemented by the currently deployed Worker/API contract.
+  // Never draw a decorative pseudo-QR or report a fake scan/login success.
   async function initQrOnLogin(){
-    if(session()) return;
-    var canvas=document.getElementById("qr-canvas");
-    var statusText=document.getElementById("qr-status-text");
-    if(!canvas) return;
-    // If already polling, skip
-    if(timers.qr) return;
-    try{
-      var data=await Api.qrCreate();
-      state.qrId=data.qrId||data.id||"";
-      state.qrData=data.qrData||data.payload||state.qrId;
-      state.qrCountdown=30;
-      drawQrCanvas(canvas, state.qrData||state.qrId);
-      if(statusText) statusText.textContent="Waiting for scan…";
-      startQrPoll();
-      startQrCountdown();
-    }catch(e){
-      // Fallback: if Worker doesn't support QR yet, show info
-      if(statusText) statusText.textContent="QR login will be available after Worker update";
-      // Still draw placeholder with session hint
-      drawQrCanvas(canvas, "convo-qr-"+Date.now());
-    }
-  }
-  function startQrPoll(){
-    stopQrPoll();
-    timers.qr=setInterval(async function(){
-      if(!state.qrId) return;
-      try{
-        var res=await Api.qrPoll(state.qrId);
-        var status=res.status||"pending";
-        var stEl=document.getElementById("qr-status-text");
-        if(status==="scanned"){ if(stEl) stEl.textContent="Scanned — confirm on phone…"; }
-        else if(status==="authenticated" && res.sessionToken){
-          Api.saveSession({ token:res.sessionToken, expiresAt:Number(res.expiresAt||0), pairedAt:Date.now(), via:"qr" });
-          stopQr();
-          if(stEl) stEl.textContent="Authenticated — signing you in…";
-          state.tab="chats"; await bootAfterSession(); toast("QR login successful — welcome!","success");
-        } else if(status==="expired"){ if(stEl) stEl.textContent="Expired — generating new QR…"; refreshQr(); }
-      }catch(_){}
-    }, 2000);
-  }
-  function startQrCountdown(){
-    if(timers.qrCount) clearInterval(timers.qrCount);
-    timers.qrCount=setInterval(function(){
-      state.qrCountdown--; var el=document.getElementById("qr-countdown"); if(el) el.textContent=state.qrCountdown+"s";
-      if(state.qrCountdown<=0){ refreshQr(); }
-    },1000);
-  }
-  async function refreshQr(){
     stopQr();
-    state.qrCountdown=30;
-    await initQrOnLogin();
+    var statusText=document.getElementById("qr-status-text");
+    if(statusText) statusText.textContent="QR sign-in is not enabled on this Worker. Use Pair code or Sign in instead.";
   }
-  function stopQrPoll(){ if(timers.qr){ clearInterval(timers.qr); timers.qr=0; } }
-  function stopQr(){ stopQrPoll(); if(timers.qrCount){ clearInterval(timers.qrCount); timers.qrCount=0; } state.qrId=""; state.qrData=""; }
+  function stopQr(){ state.qrId=""; state.qrData=""; }
 
   /* -------------------------------------------------------------- lock/log */
   function armLockTimer(){ if(timers.lock) clearTimeout(timers.lock); if(!session()) return; var minutes=Number(S.settings().autoLockMinutes||0); if(!minutes) return; timers.lock=setTimeout(function(){ if(document.hidden) return; lock(); }, minutes*60000); }
@@ -795,7 +753,9 @@
     document.addEventListener("scroll", function(event){
       if(event.target && event.target.id==="msg-scroll"){
         var el=event.target; var atBottom=(el.scrollHeight-el.scrollTop-el.clientHeight)<120;
+        window.__convoUserScrollingUntil=atBottom?0:Date.now()+1800;
         var button=document.getElementById("scroll-bottom"); if(button) button.classList.toggle("show", !atBottom);
+        if(el.scrollTop<90 && state.hasMoreMessages && !loadingOlder) loadMessages(true);
       }
     }, true);
     window.addEventListener("resize", function(){ var back=document.getElementById("chat-back"); if(back) back.style.display=isMobile()?"inline-flex":"none"; });
@@ -841,7 +801,6 @@
     if(action==="friend-accept"){ respondFriend(button.dataset.request, true); return; }
     if(action==="friend-decline"){ respondFriend(button.dataset.request, false); return; }
     if(action==="auth-mode"){ setAuthMode(button.dataset.mode); return; }
-    if(action==="qr-refresh"){ refreshQr(); return; }
     if(action==="unlock"){ unlock(); return; }
     if(action==="logout"){ logout(); return; }
   }

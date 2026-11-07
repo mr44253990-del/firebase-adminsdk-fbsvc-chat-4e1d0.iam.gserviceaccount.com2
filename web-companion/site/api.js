@@ -162,27 +162,6 @@
       return session;
     },
 
-    // ── QR Device Login (v4.6.0) ──────────────────────────────────────────
-    // Desktop generates a QR that the phone scans. Phone writes auth to Firestore,
-    // web polls until sessionToken appears.
-    qrCreate() { return request("qr/create", {}, { token: "none" }); },
-    qrPoll(qrId) { return request("qr/poll", { qrId: qrId }, { token: "none" }); },
-    // The poll returns { status: "pending"|"scanned"|"authenticated"|"expired", sessionToken?, expiresAt? }
-    // When authenticated, web saves session automatically:
-    async qrPollAndSave(qrId) {
-      var res = await request("qr/poll", { qrId: qrId }, { token: "none" });
-      if (res.status === "authenticated" && res.sessionToken) {
-        var session = {
-          token: res.sessionToken,
-          expiresAt: Number(res.expiresAt || 0),
-          pairedAt: Date.now(),
-          via: "qr"
-        };
-        saveSession(session);
-      }
-      return res;
-    },
-
     // ── File upload (unlimited, chunked via Worker → R2) ─────────────────
     async uploadFile(file, onProgress) {
       // Try Worker R2 path first (no MB limit). Falls back to base64 for tiny files.

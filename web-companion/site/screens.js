@@ -507,15 +507,9 @@
     // Desktop: show QR + tabs side-by-side. Mobile: tabbed view (QR tab included).
     var isDesk = isDesktop();
     var qrPane = '<div class="qr-pane" id="qr-pane">' +
-      '<div class="qr-header"><span class="qr-badge">' + U.icon("qr") + ' Fast sign-in</span><span class="qr-live"><i></i> Live</span></div>' +
-      '<div class="qr-canvas-wrap" id="qr-canvas-wrap">' +
-        '<canvas id="qr-canvas" width="220" height="220" aria-label="Scan QR to log in"></canvas>' +
-        '<div class="qr-scan-line"></div>' +
-      '</div>' +
-      '<p class="qr-hint">Open <strong>Convo Chat</strong> on your phone → <strong>Settings → Device Login</strong> → scan this QR</p>' +
-      '<div class="qr-status" id="qr-status"><span class="qr-dot"></span><span id="qr-status-text">Waiting for scan…</span> <span class="qr-countdown" id="qr-countdown">30s</span></div>' +
-      '<button type="button" class="btn ghost small" data-action="qr-refresh">' + U.icon("refresh") + '<span>New QR code</span></button>' +
-      '<p class="pair-fine" style="margin-top:6px">QR rotates every 30 seconds. Scanning requires your phone password / biometric.</p>' +
+      '<div class="qr-header"><span class="qr-badge">' + U.icon("qr") + ' QR sign-in</span><span class="tiny dim">Unavailable</span></div>' +
+      '<div class="qr-status" id="qr-status"><span class="qr-dot"></span><span id="qr-status-text">QR sign-in is not enabled on this Worker. Use Pair code or Sign in instead.</span></div>' +
+      '<p class="pair-fine" style="margin-top:6px">No decorative or non-functional QR is shown. QR login needs a matching secure phone-approval API.</p>' +
     '</div>';
 
     var tabs = '<div class="auth-tabs" role="tablist">' +
