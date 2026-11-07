@@ -477,17 +477,27 @@ fun HomeScreen(
                                         .border(2.dp, MaterialTheme.colorScheme.primary.copy(alpha = .65f), CircleShape)
                                 )
                             }
+                            // v4.8.0 Profile Menu — Android only, not Web: opaque + isolated scroll + safe area
                             DropdownMenu(
                                 expanded = showAccountMenu,
                                 onDismissRequest = { showAccountMenu = false },
-                                modifier = Modifier.width(260.dp)
+                                modifier = Modifier
+                                    .width(260.dp)
+                                    .shadow(16.dp, RoundedCornerShape(18.dp))
+                                    .clip(RoundedCornerShape(18.dp))
+                                    .background(MaterialTheme.colorScheme.surface),
+                                containerColor = MaterialTheme.colorScheme.surface,
+                                shadowElevation = 16.dp,
+                                tonalElevation = 8.dp
                             ) {
                                 Column(
                                     Modifier
                                         .fillMaxWidth()
-                                        .heightIn(max = 420.dp)
+                                        .heightIn(max = 480.dp)
                                         .verticalScroll(rememberScrollState())
-                                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                                        .padding(horizontal = 12.dp, vertical = 8.dp)
+                                        .windowInsetsPadding(WindowInsets.navigationBars)
+                                        .padding(bottom = 12.dp),
                                     verticalArrangement = Arrangement.spacedBy(7.dp)
                                 ) {
                                     // ── Premium banner ──
