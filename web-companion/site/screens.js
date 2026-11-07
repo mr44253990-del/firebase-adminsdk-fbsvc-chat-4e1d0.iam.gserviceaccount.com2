@@ -537,88 +537,85 @@
   function isDesktop() { return window.matchMedia("(min-width: 860px)").matches; }
 
   function renderPairing() {
-    // Modern redesign: glass auth card, no form submission, inputs keep focus
-    var isDesk = isDesktop();
-    var qrPane = '<div class="qr-pane" id="qr-pane">' +
-      '<div class="qr-header"><span class="qr-badge">' + U.icon("qr") + ' QR sign-in</span><span class="qr-timer" id="qr-timer">30s</span></div>' +
-      '<div class="qr-code-wrap" style="display:grid;place-items:center;padding:12px;background:#fff;border-radius:16px;margin:10px 0;position:relative;min-height:180px">' +
-        '<canvas id="qr-canvas" width="180" height="180" style="display:block"></canvas>' +
-        '<div id="qr-overlay" class="qr-overlay" style="position:absolute;inset:0;display:none;place-items:center;background:rgba(7,7,15,0.85);border-radius:16px;color:#fff;font-size:13px;font-weight:700"></div>' +
-      '</div>' +
-      '<div class="qr-status" id="qr-status"><span class="qr-dot" id="qr-dot"></span><span id="qr-status-text">Scan with Convo Chat app → Device Login</span></div>' +
-      '<button type="button" class="btn ghost small" data-action="qr-refresh" style="margin-top:8px;width:100%">' + U.icon("refresh") + '<span>Refresh QR</span></button>' +
-      '<p class="pair-fine" style="margin-top:6px">QR expires in 30s • Secure phone approval via Worker</p>' +
+    // Exact match to provided design image - desktop + mobile
+    var mode = (window.ConvoApp && window.ConvoApp.state && window.ConvoApp.state.authMode) || "code";
+    var qrHtml = '<div class="login-qr-panel">' +
+      '<div class="login-qr-header"><span class="login-qr-badge">' + U.icon("qr") + ' QR sign-in</span><span class="login-qr-timer" id="qr-timer">' + U.icon("clock") + '<span id="qr-timer-text">30s</span></span></div>' +
+      '<div class="login-qr-code" style="position:relative"><canvas id="qr-canvas" width="180" height="180"></canvas><div class="login-qr-corners"><span></span><span></span><span></span><span></span></div><div id="qr-overlay" style="position:absolute;inset:12px;display:none;place-items:center;background:rgba(2,6,23,0.92);border-radius:16px;color:#fff;font-size:13px;font-weight:700;z-index:2"></div></div>' +
+      '<div class="login-qr-status"><span class="dot" id="qr-dot"></span><span id="qr-status-text">Scan with Convo Chat app → Device Login</span></div>' +
+      '<button type="button" class="login-qr-refresh" data-action="qr-refresh">' + U.icon("refresh") + '<span>Refresh QR</span></button>' +
+      '<div class="login-qr-foot">' + U.icon("shield") + '<span>QR expires in 30s • Secure phone approval via Worker</span></div>' +
     '</div>';
 
-    var tabs = '<div class="auth-tabs" role="tablist">' +
-        '<button type="button" class="auth-tab active" role="tab" data-action="auth-mode" data-mode="code">Pair code</button>' +
-        '<button type="button" class="auth-tab" role="tab" data-action="auth-mode" data-mode="signin">Sign in</button>' +
-        '<button type="button" class="auth-tab" role="tab" data-action="auth-mode" data-mode="signup">Create account</button>' +
-        '<button type="button" class="auth-tab" role="tab" data-action="auth-mode" data-mode="qr">QR</button>' +
-      '</div>';
+    var tabsHtml = '<div class="login-tabs">' +
+      '<button type="button" class="login-tab ' + (mode==="code"?"active":"") + '" data-action="auth-mode" data-mode="code">' + U.icon("code") + '<span>Pair<br>code</span></button>' +
+      '<button type="button" class="login-tab ' + (mode==="signin"?"active":"") + '" data-action="auth-mode" data-mode="signin">' + U.icon("user") + '<span>Sign<br>in</span></button>' +
+      '<button type="button" class="login-tab ' + (mode==="signup"?"active":"") + '" data-action="auth-mode" data-mode="signup">' + U.icon("userPlus") + '<span>Create<br>account</span></button>' +
+      '<button type="button" class="login-tab ' + (mode==="qr"?"active":"") + '" data-action="auth-mode" data-mode="qr">' + U.icon("qr") + '<span>QR</span></button>' +
+    '</div>';
 
-    // Use divs not forms to avoid auto-submit refresh; inputs have explicit handlers
-    var codePane = '<div class="auth-pane auth-code">' +
-        '<p class="auth-hint">Open <strong>Convo Chat</strong> on your phone → <strong>Account security</strong> → <strong>Link my browser</strong>, then type the 10-digit code here.</p>' +
-        '<div class="auth-field"><input class="pair-code-input" id="pair-code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="10" pattern="[0-9]*" placeholder="0000000000" aria-label="10-digit pairing code"></div>' +
-        '<button type="button" class="btn primary wide" data-action="pair">' + U.icon("check") + '<span>Connect browser</span></button>' +
-        '<p class="pair-error" id="pair-error" role="alert"></p>' +
-      '</div>';
+    // Pair code pane
+    var codePane = '<div class="auth-pane ' + (mode==="code"?"active":"") + '" data-pane="code" style="' + (mode==="code"?"display:grid":"display:none") + ';gap:12px">' +
+      '<p style="font-size:13px;color:#94a3b8;line-height:1.5;margin:0">Open <strong style="color:#e2e8f0">Convo Chat</strong> on your phone → <strong style="color:#e2e8f0">Account security</strong> → <strong style="color:#e2e8f0">Link my browser</strong>, then type the 10-digit code here.</p>' +
+      '<div class="login-input-group"><input id="pair-code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="10" pattern="[0-9]*" placeholder="0000000000" aria-label="Pairing code" style="text-align:center;letter-spacing:0.2em;font-weight:700"></div>' +
+      '<button type="button" class="login-btn-primary" data-action="pair">' + U.icon("check") + '<span>Connect browser</span></button>' +
+      '<p class="pair-error" id="pair-error" role="alert" style="min-height:16px;font-size:12px;color:#f87171;text-align:center;margin:0"></p>' +
+    '</div>';
 
-    var signinPane = '<div class="auth-pane auth-signin">' +
-        '<div class="auth-field"><input class="auth-input" id="login-email" type="email" autocomplete="email" placeholder="Email address" aria-label="Email address" name="email"></div>' +
-        '<div class="auth-field"><input class="auth-input" id="login-password" type="password" autocomplete="current-password" placeholder="Password" aria-label="Password" name="password"></div>' +
-        '<button type="button" class="btn primary wide" data-action="email-login">' + U.icon("lock") + '<span>Sign in &amp; save this browser</span></button>' +
-        '<p class="pair-error" id="login-error" role="alert"></p>' +
-        '<p class="auth-hint">Your login is saved in this browser and stays until you sign out.</p>' +
-      '</div>';
+    // Sign in pane - Exact to image
+    var signinPane = '<div class="auth-pane ' + (mode==="signin"?"active":"") + '" data-pane="signin" style="' + (mode==="signin"?"display:grid":"display:none") + ';gap:12px">' +
+      '<div class="login-input-group">' + U.icon("mail") + '<input id="login-email" type="email" autocomplete="email" placeholder="Email address" aria-label="Email address" name="email"></div>' +
+      '<div class="login-input-group">' + U.icon("lock") + '<input id="login-password" type="password" autocomplete="current-password" placeholder="Password" aria-label="Password" name="password"></div>' +
+      '<button type="button" class="login-btn-primary" data-action="email-login">' + U.icon("login") + '<span>Sign in &amp; save this browser</span></button>' +
+      '<div class="login-forgot"><button type="button" data-action="forgot-password">Forgot password?</button></div>' +
+      '<p class="pair-error" id="login-error" role="alert" style="min-height:16px;font-size:12px;color:#f87171;text-align:center;margin:0"></p>' +
+      '<div class="login-info">' + U.icon("info") + '<span>Your login is saved in this browser and stays until you sign out.</span></div>' +
+    '</div>';
 
-    var signupPane = '<div class="auth-pane auth-signup">' +
-        '<div class="auth-field"><input class="auth-input" id="signup-name" type="text" autocomplete="name" placeholder="Your name" aria-label="Your name" name="name"></div>' +
-        '<div class="auth-field"><input class="auth-input" id="signup-email" type="email" autocomplete="email" placeholder="Email address" aria-label="Email address" name="email"></div>' +
-        '<div class="auth-field"><input class="auth-input" id="signup-password" type="password" autocomplete="new-password" placeholder="Password (min 6 characters)" aria-label="Password" name="new-password"></div>' +
-        '<button type="button" class="btn primary wide" data-action="email-signup">' + U.icon("check") + '<span>Create account &amp; sign in</span></button>' +
-        '<p class="pair-error" id="signup-error" role="alert"></p>' +
-        '<p class="auth-hint">Email only — no phone number needed. Use this account in the Convo Chat app too.</p>' +
-      '</div>';
+    // Create account pane
+    var signupPane = '<div class="auth-pane ' + (mode==="signup"?"active":"") + '" data-pane="signup" style="' + (mode==="signup"?"display:grid":"display:none") + ';gap:12px">' +
+      '<div class="login-input-group">' + U.icon("user") + '<input id="signup-name" type="text" autocomplete="name" placeholder="Your name" aria-label="Your name" name="name"></div>' +
+      '<div class="login-input-group">' + U.icon("mail") + '<input id="signup-email" type="email" autocomplete="email" placeholder="Email address" aria-label="Email address" name="email"></div>' +
+      '<div class="login-input-group">' + U.icon("lock") + '<input id="signup-password" type="password" autocomplete="new-password" placeholder="Password (min 6 characters)" aria-label="Password" name="new-password"></div>' +
+      '<button type="button" class="login-btn-primary" data-action="email-signup">' + U.icon("check") + '<span>Create account &amp; sign in</span></button>' +
+      '<p class="pair-error" id="signup-error" role="alert" style="min-height:16px;font-size:12px;color:#f87171;text-align:center;margin:0"></p>' +
+    '</div>';
 
-    var qrTabPane = '<div class="auth-pane auth-qr">' + qrPane + '</div>';
+    // QR tab pane (mobile only shows QR here, desktop already has QR left)
+    var qrPaneTab = '<div class="auth-pane ' + (mode==="qr"?"active":"") + '" data-pane="qr" style="' + (mode==="qr"?"display:grid":"display:none") + ';gap:12px"><div class="login-qr-panel">' +
+      '<div class="login-qr-header"><span class="login-qr-badge">' + U.icon("qr") + ' QR sign-in</span><span class="login-qr-timer" id="qr-timer-m">' + U.icon("clock") + '<span id="qr-timer-text-m">30s</span></span></div>' +
+      '<div class="login-qr-code" style="position:relative"><canvas id="qr-canvas-m" width="180" height="180"></canvas><div class="login-qr-corners"><span></span><span></span><span></span><span></span></div><div id="qr-overlay-m" style="position:absolute;inset:12px;display:none;place-items:center;background:rgba(2,6,23,0.92);border-radius:16px;color:#fff;font-size:13px;font-weight:700"></div></div>' +
+      '<div class="login-qr-status"><span class="dot" id="qr-dot-m"></span><span id="qr-status-text-m">Scan with Convo Chat app → Device Login</span></div>' +
+      '<button type="button" class="login-qr-refresh" data-action="qr-refresh">' + U.icon("refresh") + '<span>Refresh QR</span></button>' +
+    '</div></div>';
 
-    if (isDesk) {
-      return '<div class="pair-wrap pair-desktop"><div class="pair-card auth-card pair-card-wide" id="auth-card" data-auth-mode="code">' +
-        '<div class="pair-art"><span class="pulse"></span><span class="pulse"></span><span class="pulse"></span>' +
-        '<span class="pair-mark">' + U.icon("qr") + '</span></div>' +
-        '<h1>Connect Convo Chat</h1>' +
-        '<p class="lead">Scan with your phone for instant login, or use code / email.</p>' +
-        '<div class="pair-desktop-grid">' +
-          '<div class="pair-desktop-qr">' + qrPane + '</div>' +
-          '<div class="pair-desktop-forms">' + tabs + codePane + signinPane + signupPane + '</div>' +
-        '</div>' +
-        '<div class="pair-steps">' +
-          '<div class="pair-step"><b>1</b><span>QR expires in 30s and requires phone authentication.</span></div>' +
-          '<div class="pair-step"><b>2</b><span>This browser stays signed in with no time limit — sign out whenever you like.</span></div>' +
-          '<div class="pair-step"><b>3</b><span>Your phone stays in control and can revoke any browser.</span></div>' +
-        '</div>' +
-        '<p class="pair-fine">Convo Chat Web is a private companion: it shows accepted friend chats only. ' +
-        'Media, calls and group chats stay on your phone.</p>' +
+    var isDesk = isDesktop();
+    var mainCard = "";
+    if(isDesk){
+      mainCard = '<div class="login-card"><div class="login-grid">' +
+        qrHtml +
+        '<div class="login-form-panel">' + tabsHtml + codePane + signinPane + signupPane + '</div>' +
       '</div></div>';
+    } else {
+      mainCard = '<div class="login-card">' + tabsHtml + codePane + signinPane + signupPane + qrPaneTab + '</div>';
+      // On mobile, also show QR panel outside tabs when in code/signin mode? No - only when QR tab active
     }
 
-    return '<div class="pair-wrap"><div class="pair-card auth-card" id="auth-card" data-auth-mode="code">' +
-      '<div class="pair-art"><span class="pulse"></span><span class="pulse"></span><span class="pulse"></span>' +
-      '<span class="pair-mark">' + U.icon("qr") + '</span></div>' +
-      '<h1>Connect Convo Chat</h1>' +
-      '<p class="lead">Pair with your phone, or sign in with the same email you use in the app.</p>' +
-      tabs +
-      codePane + signinPane + signupPane + qrTabPane +
-      '<div class="pair-steps">' +
-        '<div class="pair-step"><b>1</b><span>Codes are single-use and expire in 90 seconds.</span></div>' +
-        '<div class="pair-step"><b>2</b><span>This browser stays signed in with no time limit — sign out whenever you like.</span></div>' +
-        '<div class="pair-step"><b>3</b><span>Your phone stays in control and can revoke any browser.</span></div>' +
-      '</div>' +
-      '<p class="pair-fine">Convo Chat Web is a private companion: it shows accepted friend chats only. ' +
-      'Media, calls and group chats stay on your phone.</p>' +
+    // Important notes + footer
+    var notes = '<div class="login-notes"><div class="login-notes-icon">' + U.icon("shieldCheck") + '</div><div style="flex:1"><h3>Important Notes</h3>' +
+      '<div class="login-notes-item"><span class="login-notes-num n1">1</span><span>QR expires in 30s and requires phone authentication.</span></div>' +
+      '<div class="login-notes-item"><span class="login-notes-num n2">2</span><span>This browser stay signed in in with no time limit — sign out whenever you like.</span></div>' +
+      '<div class="login-notes-item"><span class="login-notes-num n3">3</span><span>Your phone stays in control and can revoke any browser.</span></div>' +
     '</div></div>';
+
+    var footer = '<div class="login-footer"><div class="login-footer-brand">' + U.icon("chatBubble") + '<span>Convo Chat</span></div><div class="login-footer-tagline"><span>Chat</span><span>•</span><span>Connect</span><span>•</span><span>Stay Together</span></div></div>';
+
+    return '<div class="pair-wrap" id="login-wrap">' +
+      '<div class="login-brand"><div class="login-brand-icon">' + U.icon("chatBubble") + '</div></div>' +
+      '<h1 class="login-title">Connect <span>Convo Chat</span></h1>' +
+      '<p class="login-subtitle">Scan with your phone for instant login, or use code / email.</p>' +
+      mainCard + notes + footer +
+    '</div>';
   }
   window.ConvoScreens = {
     renderChatsPane: renderChatsPane,

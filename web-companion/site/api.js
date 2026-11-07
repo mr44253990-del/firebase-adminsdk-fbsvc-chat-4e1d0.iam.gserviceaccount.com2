@@ -221,6 +221,7 @@
     logoutEverywhere() { return request("logout-all"); },
     exportData() { return request("export"); },
     homePosts() { return request("home/posts"); },
+    requestPasswordReset(email) { return request("password/reset", { email: String(email||"").trim() }, { token: "none" }); },
 
     // ── QR sign-in (secure phone-approval via Worker → Firestore) ──
     async qrCreate() {

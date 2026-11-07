@@ -149,13 +149,12 @@
       pane.innerHTML=Screens.renderPairing();
       document.getElementById("tabbar").hidden=true;
       var rn=document.getElementById("rail-nav"); if(rn) rn.innerHTML="";
-      // Restore last auth tab, don't always reset to code
+      // New design: mode already set in render, just init QR if needed
       setTimeout(function(){
         var m=state.authMode||"code";
-        var card=document.getElementById("auth-card");
-        if(card) card.setAttribute("data-auth-mode", m);
-        Array.prototype.forEach.call(document.querySelectorAll(".auth-tab"), function(tab){ tab.classList.toggle("active", tab.dataset.mode===m); });
         if(m==="qr") initQrOnLogin();
+        // Auto-generate QR even when on desktop (QR always visible)
+        if(document.getElementById("qr-canvas")) initQrOnLogin();
       }, 80);
       return;
     }
@@ -666,6 +665,25 @@
       if(focusId){ var el=document.getElementById(focusId); if(el) try{ el.focus(); }catch(_){} }
     }, 80);
   }
+  async function handleForgotPassword(){
+    var emailInput=document.getElementById("login-email");
+    var email=emailInput?emailInput.value.trim():"";
+    if(!email) { await U.prompt({title:"Reset password",label:"Enter your email",placeholder:"you@example.com",help:"We will send a reset link if this email is registered."}).then(function(v){ if(v) email=v.trim(); }); if(!email) return; }
+    try{
+      // Use Firebase Auth REST via Worker or direct
+      var payload=await Api.requestPasswordReset(email);
+      toast("If this email is registered, a reset link has been sent","success");
+    }catch(e){
+      // Fallback: direct Firebase API
+      try{
+        var apiKey="AIzaSyAw1P7TLWfkLXS1f0qjrLUSwkfVEOhLxfk";
+        var res=await fetch("https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode?key="+apiKey, {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({requestType:"PASSWORD_RESET", email: email})});
+        var j=await res.json();
+        if(res.ok) toast("Reset link sent to "+email,"success");
+        else toast(j.error&&j.error.message||"Could not send reset link","error");
+      }catch(err){ toast(err.message||"Reset failed","error"); }
+    }
+  }
   async function emailSignup(){
     var nameInput=document.getElementById("signup-name"); var emailInput=document.getElementById("signup-email"); var passInput=document.getElementById("signup-password"); var errorNode=document.getElementById("signup-error"); if(!nameInput||!emailInput||!passInput) return;
     var name=nameInput.value.trim(); var email=emailInput.value.trim(); var password=passInput.value;
@@ -705,7 +723,16 @@
       qrTimer=setInterval(function(){
         qrCountdown--;
         if(timerEl) timerEl.textContent=qrCountdown+"s";
-        if(qrCountdown<=0){ clearInterval(qrTimer); if(statusText) statusText.textContent="QR expired — tap Refresh"; if(dot) dot.className="qr-dot expired"; if(overlay){ overlay.textContent="Expired"; overlay.style.display="grid"; } stopQrPoll(); }
+        var timerM=document.getElementById("qr-timer-text-m"); if(timerM) timerM.textContent=qrCountdown+"s";
+        if(qrCountdown<=0){
+          clearInterval(qrTimer);
+          if(statusText) statusText.textContent="Generating new QR…";
+          if(dot) dot.className="dot expired";
+          if(overlay){ overlay.textContent="Expired"; overlay.style.display="grid"; }
+          stopQrPoll();
+          // Auto regenerate after 1s
+          setTimeout(function(){ initQrOnLogin(); }, 1000);
+        }
       },1000);
       // Poll every 2s
       clearInterval(qrPollTimer);
@@ -743,18 +770,21 @@
     }
   }
   function drawQr(canvas, text){
-    // Minimal QR via qrserver image fallback + canvas draw
     try{
-      var ctx=canvas.getContext("2d");
-      ctx.clearRect(0,0,canvas.width,canvas.height);
-      ctx.fillStyle="#fff"; ctx.fillRect(0,0,canvas.width,canvas.height);
-      var img=new Image();
-      img.crossOrigin="anonymous";
-      img.onload=function(){ try{ ctx.drawImage(img,0,0,canvas.width,canvas.height); }catch(_){} };
-      img.onerror=function(){ ctx.fillStyle="#111"; ctx.font="12px sans-serif"; ctx.textAlign="center"; ctx.fillText(text.slice(0,24), canvas.width/2, canvas.height/2); };
-      img.src="https://api.qrserver.com/v1/create-qr-code/?size=180x180&data="+encodeURIComponent(text);
+      if(!canvas) canvas=document.getElementById("qr-canvas");
+      var canvases = [canvas, document.getElementById("qr-canvas-m")].filter(Boolean);
+      canvases.forEach(function(c){
+        var ctx=c.getContext("2d");
+        ctx.clearRect(0,0,c.width,c.height);
+        ctx.fillStyle="#fff"; ctx.fillRect(0,0,c.width,c.height);
+        var img=new Image();
+        img.crossOrigin="anonymous";
+        img.onload=(function(cv, ct){ return function(){ try{ ct.drawImage(img,0,0,cv.width,cv.height); }catch(_){} }; })(c, ctx);
+        img.onerror=(function(cv, ct){ return function(){ ct.fillStyle="#111"; ct.font="12px sans-serif"; ct.textAlign="center"; ct.fillText(text.slice(0,24), cv.width/2, cv.height/2); }; })(c, ctx);
+        img.src="https://api.qrserver.com/v1/create-qr-code/?size=180x180&data="+encodeURIComponent(text);
+      });
     }catch(e){
-      try{ var c=document.getElementById("qr-canvas"); if(c){ var cx=c.getContext("2d"); cx.fillStyle="#fff"; cx.fillRect(0,0,180,180); cx.fillStyle="#000"; cx.font="11px monospace"; cx.fillText(text.slice(0,20),10,90); } }catch(_){}
+      try{ var c2=document.getElementById("qr-canvas")||document.getElementById("qr-canvas-m"); if(c2){ var cx=c2.getContext("2d"); cx.fillStyle="#fff"; cx.fillRect(0,0,180,180); cx.fillStyle="#000"; cx.font="11px monospace"; cx.fillText(text.slice(0,20),10,90); } }catch(_){}
     }
   }
   function stopQrPoll(){ if(qrPollTimer){ clearInterval(qrPollTimer); qrPollTimer=0; } }
@@ -901,6 +931,8 @@
     if(action==="copy-profile-link"){ copyProfileLink(); return; }
     if(action==="pair"){ redeemCode(); return; }
     if(action==="email-login"){ emailLogin(); return; }
+
+    if(action==="forgot-password"){ handleForgotPassword(); return; }
     if(action==="email-signup"){ emailSignup(); return; }
     if(action==="friend-add"){ addFriend(button.dataset.uid, button); return; }
     if(action==="friend-accept"){ respondFriend(button.dataset.request, true); return; }
