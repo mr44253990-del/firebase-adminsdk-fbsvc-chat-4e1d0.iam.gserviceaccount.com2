@@ -139,6 +139,12 @@ jobs:
           RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
           RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
         run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "Keystore: ${KEYSTORE_PATH:-my-upload-key.jks}"
+          echo "Alias   : ${RELEASE_KEY_ALIAS:-upload}"
+          echo "User    : mr44253990-del"
+          echo "Version : $(sed -nE 's/^[[:space:]]*versionName = "([^"]+)".*/\1/p' app/build.gradle.kts | head -n 1) ($(sed -nE 's/^[[:space:]]*versionCode = ([0-9]+).*/\1/p' app/build.gradle.kts | head -n 1))"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           if [ -f release-upload.jks ]; then
             ./gradlew --no-daemon clean assembleRelease
           else
@@ -146,6 +152,10 @@ jobs:
             sed -i 's/signingConfig = signingConfigs.getByName("release")/signingConfig = signingConfigs.getByName("debug")/' app/build.gradle.kts || true
             ./gradlew --no-daemon clean assembleRelease
           fi
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "Built APKs:"
+          ls -lh app/build/outputs/apk/release/*.apk 2>/dev/null || echo "No APKs"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
       - name: Verify release signature and ABI
         run: |
