@@ -37,7 +37,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import android.os.VibrationEffect
 import android.os.Vibrator
-import android.content.Context
 import android.os.Build
 import com.example.data.User
 import java.text.SimpleDateFormat

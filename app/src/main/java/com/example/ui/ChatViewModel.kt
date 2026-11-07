@@ -1647,7 +1647,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         batch.update(firestore.collection("premium_requests").document(request.id), mapOf("status" to if (approve) "approved" else "rejected", "reviewedAt" to now, "reviewedBy" to admin.uid, "adminNote" to note.take(500)))
         if (approve) batch.update(firestore.collection("users").document(request.userId), mapOf("isPremium" to true, "premiumPlan" to request.plan, "premiumUntil" to until, "premiumApprovedAt" to now))
         batch.commit().addOnSuccessListener {
-            createActivityNotification(request.userId, if (approve) "premium_approved" else "premium_rejected" // vibration + friends invite: UI vibrates on premium_approved, friends get activity notif below, request.id, if (approve) "আপনার Convo Chat Premium চালু হয়েছে " else "Premium request was not approved")
+            createActivityNotification(request.userId, if (approve) "premium_approved" else "premium_rejected", request.id, if (approve) "আপনার Convo Chat Premium চালু হয়েছে " else "Premium request was not approved")
             onComplete(true)
         }.addOnFailureListener { onComplete(false) }
     }
