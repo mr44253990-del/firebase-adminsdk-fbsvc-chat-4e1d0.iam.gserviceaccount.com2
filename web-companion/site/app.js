@@ -1,4 +1,4 @@
-/* Convo Chat Web — application controller. v4.6.0 */
+/* Convo Chat Web — application controller. v4.7.0 */
 (function () {
   "use strict";
   var S = window.ConvoStore;
@@ -10,6 +10,7 @@
   var POLL_CHATS = 20000;
   var POLL_MESSAGES = 7000;
   var POLL_PRESENCE = 45000;
+  // v4.7.0: premium friends invite vibration handled via ActivityNotification type premium_approved
   var LAUNCH_MIN_MS = 1150;
 
   var state = {

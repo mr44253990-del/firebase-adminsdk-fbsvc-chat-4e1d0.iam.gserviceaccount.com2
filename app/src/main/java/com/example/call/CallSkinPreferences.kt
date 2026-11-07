@@ -40,6 +40,10 @@ object CallSkinPreferences {
         CallSkinOption("rose", "Rose", listOf(Color(0xFF1A0A17), Color(0xFF541D3C), Color(0xFF201225)), Color(0xFFFF81C4), Color(0xEE301629), "petals"),
         CallSkinOption("amoled", "AMOLED", listOf(Color.Black, Color(0xFF07070A), Color(0xFF0D1018)), Color(0xFFA6B6FF), Color(0xEE090A0F)),
         // Textured
+        // Call Received Skin — more future
+        CallSkinOption("neon_storm", "Neon Storm", listOf(Color(0xFF0A0018), Color(0xFF3A0A6B), Color(0xFF050010)), Color(0xFFFF3BFF), Color(0xEE1A0030), "grid", "Premium"),
+        CallSkinOption("aurora_pulse", "Aurora Pulse", listOf(Color(0xFF001A14), Color(0xFF00B896), Color(0xFF002B1F)), Color(0xFF4CFFD0), Color(0xEE003328), "aurora", "Premium"),
+        CallSkinOption("midnight_bloom", "Midnight Bloom", listOf(Color(0xFF0F001A), Color(0xFF5B0A4A), Color(0xFF120018)), Color(0xFFFF8AC6), Color(0xEE2A001F), "petals", "Premium"),
         CallSkinOption("galaxy", "Galaxy", listOf(Color(0xFF03040B), Color(0xFF1B1240), Color(0xFF05030F)), Color(0xFFB69CFF), Color(0xEE100C24), "stars", "Textured"),
         CallSkinOption("neon_grid", "Neon Grid", listOf(Color(0xFF05010F), Color(0xFF1A0838), Color(0xFF02101C)), Color(0xFFFF4FD8), Color(0xEE140826), "grid", "Textured"),
         CallSkinOption("bokeh", "Bokeh Lights", listOf(Color(0xFF120A00), Color(0xFF3D2405), Color(0xFF140B02)), Color(0xFFFFC46B), Color(0xEE24170A), "bokeh", "Textured"),

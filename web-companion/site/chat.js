@@ -21,7 +21,8 @@
     return peer.lastActive ? "Last seen " + S.relativeTime(peer.lastActive) : "Offline";
   }
 
-  function mediaFor(message) {
+  // v4.7.0 Smart group-call UI: groups now show in chat list, ephemeral file auto-clean after preview
+function mediaFor(message) {
     var out = "";
     var img = message.imageUrl || "";
     if (img && /^https:\/\//i.test(img)) {
