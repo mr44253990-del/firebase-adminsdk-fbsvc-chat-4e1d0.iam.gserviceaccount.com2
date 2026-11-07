@@ -107,6 +107,8 @@ import com.example.data.Story
 import com.example.data.User
 import com.example.ui.AccountSwitchBanner
 import com.example.data.DeviceSession
+import com.example.ui.DeviceLoginScreen
+import com.example.ui.SmartMutedChatMenu
 import com.example.ui.AccountSwitchBanner
 import com.google.firebase.auth.FirebaseAuth
 import java.io.File
@@ -239,6 +241,7 @@ fun HomeScreen(
     val featureRequests by viewModel.featureRequests.collectAsState()
     val premiumRequests by viewModel.premiumRequests.collectAsState()
     val deviceSessions by viewModel.deviceSessions.collectAsState()
+    val rememberedAccounts by viewModel.rememberedAccounts.collectAsState()
     val adminReports by viewModel.adminReports.collectAsState()
     val accountBanned by viewModel.accountBanned.collectAsState()
     val forcedLogout by viewModel.forcedLogout.collectAsState()
@@ -588,6 +591,17 @@ fun HomeScreen(
                     )
                 )
                     }
+                }
+                // v4.6.0 Smart multi-account banner — shows when other account gets message
+                var incomingAccountBanner by remember { mutableStateOf<Pair<String,String>?>(null) }
+                if (incomingAccountBanner != null) {
+                    AccountSwitchBanner(
+                        incomingAccountId = incomingAccountBanner!!.first,
+                        incomingMessage = incomingAccountBanner!!.second,
+                        rememberedAccounts = rememberedAccounts,
+                        onSwitch = { uid -> viewModel.loginRememberedAccount(rememberedAccounts.first { it.uid == uid }) {} { incomingAccountBanner = null } },
+                        onDismiss = { incomingAccountBanner = null }
+                    )
                 }
                 if (currentTab == 1 && chatChromeCollapsed) {
                     Spacer(Modifier.fillMaxWidth().windowInsetsTopHeight(androidx.compose.foundation.layout.WindowInsets.statusBars))
@@ -2977,11 +2991,15 @@ fun HomeScreen(
                             isMuted = selectedChatForMenu!!.uid in mutedUsers,
                             onMuteToggle = {
                                 viewModel.toggleMuteUser(selectedChatForMenu!!.uid)
+                                android.widget.Toast.makeText(context, if (selectedChatForMenu!!.uid in mutedUsers) "Unmuted" else "Muted", android.widget.Toast.LENGTH_SHORT).show()
                             },
                             onPin = { ConversationPrefs.setPinned(context, selectedChatForMenu!!.uid, !ConversationPrefs.isPinned(context, selectedChatForMenu!!.uid)) },
-                            onMarkRead = { },
-                            onClearChat = { },
-                            onBlock = { },
+                            onMarkRead = { showChatActionMenu = false },
+                            onClearChat = { showChatActionMenu = false },
+                            onBlock = {
+                                viewModel.blockUser(selectedChatForMenu!!.uid) {}
+                                showChatActionMenu = false
+                            },
                             onDismiss = { showChatActionMenu = false }
                         )
                     }

@@ -2,9 +2,14 @@ package com.example.ui
 
 import android.Manifest
 import android.content.Context
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.VibrationEffect
 import android.os.Vibrator
+import android.os.VibratorManager
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.Preview
@@ -32,10 +37,6 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
-import com.google.accompanist.permissions.ExperimentalPermissionsApi
-import com.google.accompanist.permissions.isGranted
-import com.google.accompanist.permissions.rememberPermissionState
-import com.google.android.gms.tasks.Task
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.mlkit.vision.barcode.BarcodeScannerOptions
@@ -47,16 +48,9 @@ import kotlinx.coroutines.tasks.await
 
 /**
  * Device Login — Scan QR from web version to log in that browser.
- * Flow:
- * 1. Camera scans QR (contains qrId + payload like `convo-qr://<qrId>` or plain qrId)
- * 2. Ask for authentication (biometric / password) — reuses AppLock logic
- * 3. Write to Firestore `web_qr_sessions/{qrId}` { scanned:true, scannedBy: uid, scannedAt, status:"scanned" }
- *    then Worker verifies and creates session.
- * 4. Poll for `status == authenticated` and show success.
- *
- * QR rotates every 30s on web; this screen accepts any fresh qrId.
+ * Uses native permission launcher (no accompanist) for CI stability.
  */
-@OptIn(ExperimentalPermissionsApi::class, ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DeviceLoginScreen(
     onBack: () -> Unit,
@@ -70,11 +64,14 @@ fun DeviceLoginScreen(
     var isAuthenticating by remember { mutableStateOf(false) }
     var statusText by remember { mutableStateOf("Point your camera at the QR on your computer") }
     var hasScanned by remember { mutableStateOf(false) }
+    var hasCameraPermission by remember { mutableStateOf(ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) }
 
-    val cameraPermission = rememberPermissionState(Manifest.permission.CAMERA)
+    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        hasCameraPermission = granted
+    }
 
     LaunchedEffect(Unit) {
-        if (!cameraPermission.status.isGranted) cameraPermission.launchPermissionRequest()
+        if (!hasCameraPermission) permissionLauncher.launch(Manifest.permission.CAMERA)
     }
 
     Scaffold(
@@ -104,12 +101,11 @@ fun DeviceLoginScreen(
                 return@Column
             }
 
-            // Camera preview area
             Box(
                 modifier = Modifier.fillMaxWidth().weight(1f).padding(16.dp).clip(RoundedCornerShape(20.dp)).background(Color.Black).border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(20.dp)),
                 contentAlignment = Alignment.Center
             ) {
-                if (cameraPermission.status.isGranted && !hasScanned) {
+                if (hasCameraPermission && !hasScanned) {
                     QrCameraPreview(
                         onQrDetected = { payload ->
                             if (!hasScanned) {
@@ -117,46 +113,47 @@ fun DeviceLoginScreen(
                                 scannedPayload = payload
                                 statusText = "QR detected — authenticating…"
                                 vibrate(context)
-                                scope.launch { authenticateAndLinkQr(context, payload, currentUser.uid, { ok, msg ->
-                                    if (ok) {
-                                        statusText = "Authenticated! Web is signing in…"
-                                        vibrateSuccess(context)
-                                        // Poll Firestore for session creation
-                                        scope.launch {
-                                            val firestore = FirebaseFirestore.getInstance()
-                                            val docRef = firestore.collection("web_qr_sessions").document(extractQrId(payload))
-                                            // Wait up to 10s for worker to mark authenticated
-                                            repeat(20) {
-                                                kotlinx.coroutines.delay(500)
-                                                val snap = docRef.get().await()
-                                                if (snap.getString("status") == "authenticated") {
-                                                    statusText = "Done — your computer is now logged in!"
-                                                    onAuthenticated(payload)
-                                                    return@launch
+                                scope.launch {
+                                    isAuthenticating = true
+                                    authenticateAndLinkQr(context, payload, currentUser.uid) { ok, msg ->
+                                        if (ok) {
+                                            statusText = "Authenticated! Web is signing in…"
+                                            vibrateSuccess(context)
+                                            scope.launch {
+                                                val firestore = FirebaseFirestore.getInstance()
+                                                val docRef = firestore.collection("web_qr_sessions").document(extractQrId(payload))
+                                                repeat(20) {
+                                                    kotlinx.coroutines.delay(500)
+                                                    try {
+                                                        val snap = docRef.get().await()
+                                                        if (snap.getString("status") == "authenticated") {
+                                                            statusText = "Done — your computer is now logged in!"
+                                                            onAuthenticated(payload)
+                                                            return@launch
+                                                        }
+                                                    } catch (_: Exception) {}
                                                 }
                                             }
+                                        } else {
+                                            statusText = msg ?: "Authentication failed"
+                                            hasScanned = false
                                         }
-                                    } else {
-                                        statusText = msg ?: "Authentication failed"
-                                        hasScanned = false
+                                        isAuthenticating = false
                                     }
-                                    isAuthenticating = false
-                                }) }
+                                }
                             }
                         }
                     )
-                    // Overlay guide
                     Box(Modifier.fillMaxSize().padding(32.dp), contentAlignment = Alignment.Center) {
                         Box(Modifier.size(220.dp).border(3.dp, Color.White.copy(alpha = 0.9f), RoundedCornerShape(16.dp)))
                     }
-                } else if (!cameraPermission.status.isGranted) {
+                } else if (!hasCameraPermission) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.padding(24.dp)) {
                         Icon(Icons.Outlined.QrCodeScanner, null, modifier = Modifier.size(56.dp), tint = Color.White)
                         Text("Camera permission needed", color = Color.White, fontWeight = FontWeight.Bold)
-                        Button(onClick = { cameraPermission.launchPermissionRequest() }) { Text("Grant camera") }
+                        Button(onClick = { permissionLauncher.launch(Manifest.permission.CAMERA) }) { Text("Grant camera") }
                     }
                 } else {
-                    // Scanned state
                     Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         if (isAuthenticating) CircularProgressIndicator(color = Color.White)
                         else Icon(Icons.Default.CheckCircle, null, modifier = Modifier.size(56.dp), tint = Color(0xFF4CAF50))
@@ -170,7 +167,6 @@ fun DeviceLoginScreen(
                 }
             }
 
-            // Instructions
             Card(modifier = Modifier.fillMaxWidth().padding(16.dp), shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -181,14 +177,12 @@ fun DeviceLoginScreen(
                     Text("QR changes every 30 seconds for security", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f))
                 }
             }
-
             Text(statusText, modifier = Modifier.padding(12.dp), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
         }
     }
 }
 
 private fun extractQrId(payload: String): String {
-    // Supports `convo-qr://<id>`, `https://...?qrId=<id>`, or plain id
     val trimmed = payload.trim()
     if (trimmed.contains("qrId=")) return trimmed.substringAfter("qrId=").substringBefore("&").substringBefore("#")
     if (trimmed.contains("://")) return trimmed.substringAfterLast("/").substringBefore("?").trim()
@@ -203,35 +197,21 @@ private suspend fun authenticateAndLinkQr(
 ) {
     try {
         val qrId = extractQrId(qrPayload)
-        if (qrId.length < 8) {
-            callback(false, "Invalid QR code")
-            return
-        }
+        if (qrId.length < 8) { callback(false, "Invalid QR code"); return }
         val firestore = FirebaseFirestore.getInstance()
         val docRef = firestore.collection("web_qr_sessions").document(qrId)
         val snap = docRef.get().await()
-        if (!snap.exists()) {
-            callback(false, "QR expired — please refresh on web")
-            return
-        }
+        if (!snap.exists()) { callback(false, "QR expired — please refresh on web"); return }
         val status = snap.getString("status") ?: "pending"
-        if (status == "expired") {
-            callback(false, "QR expired — please refresh on web")
-            return
-        }
-        // Write authenticated marker — Worker will create sessionToken
+        if (status == "expired") { callback(false, "QR expired — please refresh on web"); return }
         docRef.update(
             mapOf(
                 "scannedBy" to uid,
                 "scannedAt" to System.currentTimeMillis(),
                 "status" to "scanned",
-                "deviceName" to android.os.Build.MODEL
+                "deviceName" to Build.MODEL
             )
         ).await()
-
-        // Also try direct Worker verify if available (calls cloudflare-worker endpoint)
-        // Fallback is Firestore poll — Worker watches this doc via trigger.
-
         callback(true, null)
     } catch (e: Exception) {
         callback(false, e.message ?: "Authentication failed")
@@ -293,12 +273,20 @@ private fun startCamera(context: Context, lifecycleOwner: LifecycleOwner, previe
 }
 
 private fun vibrate(context: Context) {
-    val vibrator = context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator ?: return
-    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) vibrator.vibrate(VibrationEffect.createOneShot(80, VibrationEffect.DEFAULT_AMPLITUDE))
-    else @Suppress("DEPRECATION") vibrator.vibrate(80)
+    try {
+        val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            (context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager).defaultVibrator
+        } else @Suppress("DEPRECATION") context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) vibrator.vibrate(VibrationEffect.createOneShot(80, VibrationEffect.DEFAULT_AMPLITUDE))
+        else @Suppress("DEPRECATION") vibrator.vibrate(80)
+    } catch (_: Exception) {}
 }
 private fun vibrateSuccess(context: Context) {
-    val vibrator = context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator ?: return
-    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) vibrator.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 60, 40, 60), -1))
-    else @Suppress("DEPRECATION") vibrator.vibrate(longArrayOf(0, 60, 40, 60), -1)
+    try {
+        val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            (context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager).defaultVibrator
+        } else @Suppress("DEPRECATION") context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) vibrator.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 60, 40, 60), -1))
+        else @Suppress("DEPRECATION") vibrator.vibrate(longArrayOf(0, 60, 40, 60), -1)
+    } catch (_: Exception) {}
 }

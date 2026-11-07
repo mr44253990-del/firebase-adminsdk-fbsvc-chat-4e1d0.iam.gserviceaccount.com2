@@ -41,7 +41,7 @@ fun AccountSwitchBanner(
     ) {
         if (incomingAccountId == null) return@AnimatedVisibility
         val account = rememberedAccounts.find { it.uid == incomingAccountId }
-        val name = account?.displayName ?: incomingAccountId.take(8)
+        val name = account?.name ?: incomingAccountId.take(8)
         Card(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
             shape = RoundedCornerShape(14.dp),
