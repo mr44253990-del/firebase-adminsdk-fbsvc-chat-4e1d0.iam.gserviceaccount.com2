@@ -19,7 +19,7 @@
     var previewText = typing ? "" : S.preview(last ? last.text : (chat.mutual ? "Say hello" : "Start a conversation"));
     var time = S.listLabel(chat.lastAt || 0);
     var mutedIcon = chat.muted ? U.icon("bellOff") : "";
-    return '<button type="button" class="chat-row ' + (unread ? "unread " : "") + (state.activePeer === chat.uid ? "active" : "") +
+    var isGroup = chat.isGroup; return '<button type="button" class="chat-row ' + (isGroup ? "group " : "") + (unread ? "unread " : "") + (state.activePeer === chat.uid ? "active" : "") +
       '" data-chat="' + esc(chat.uid) + '" aria-label="Open chat with ' + esc(chat.name) + '">' +
       U.avatar({ name: chat.name, profileImageUrl: chat.profileImageUrl, online: chat.online }, 48) +
       '<span class="chat-row-main">' +

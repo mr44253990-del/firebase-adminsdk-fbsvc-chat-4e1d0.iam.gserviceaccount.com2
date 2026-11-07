@@ -17,7 +17,7 @@ android {
     applicationId = "com.ebchat"
     minSdk = 24
     targetSdk = 36
-    versionCode = 59
+    versionCode = 60
     versionName = "4.7.0"
 
     // Convo Chat is distributed as a single modern 64-bit APK. This excludes
@@ -36,6 +36,11 @@ android {
       storePassword = System.getenv("RELEASE_STORE_PASSWORD") ?: System.getenv("STORE_PASSWORD")
       keyAlias = System.getenv("RELEASE_KEY_ALIAS") ?: "upload"
       keyPassword = System.getenv("RELEASE_KEY_PASSWORD") ?: System.getenv("KEY_PASSWORD")
+      isV1SigningEnabled = true
+      isV2SigningEnabled = true
+      isV3SigningEnabled = true
+      enableV3Signing = true
+      enableV4Signing = false
     }
   }
 

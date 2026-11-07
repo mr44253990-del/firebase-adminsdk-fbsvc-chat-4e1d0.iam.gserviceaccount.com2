@@ -148,7 +148,7 @@
     }
     document.getElementById("tabbar").hidden=false;
     if(state.tab==="chats"){
-      pane.innerHTML='<div class="split '+(state.activePeer?"has-open":"")+'">'+Screens.renderChatsPane(state)+(state.activePeer?Chat.renderChatPane(state):Screens.renderChatPlaceholder())+'</div>';
+      pane.innerHTML='<div class="split '+(state.activePeer?"has-open":"")+'">'+Screens.renderChatsPane(state)+(state.activePeer?Chat.renderChatPane(state):Screens.renderChatPlaceholder())+'</div><div style="position:fixed;bottom:8px;right:12px;background:linear-gradient(135deg,#8b7bff,#5ac8fa);color:#fff;padding:6px 12px;border-radius:20px;font-size:11px;font-weight:800;z-index:999">v4.7.0 • V1+V2+V3 • Groups in Chats</div>';
       requestAnimationFrame(function(){
         var scroller=document.getElementById("msg-scroll");
         if(scroller) scroller.scrollTop=scroller.scrollHeight;
