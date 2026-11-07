@@ -68,7 +68,7 @@
           ? U.emptyState({ icon: "check", title: "All caught up", body: "No unread messages. Your inbox is clear." })
           : filter === "online"
             ? U.emptyState({ icon: "wifi", title: "Nobody online", body: "Your contacts are offline right now. Messages still get delivered." })
-            : U.emptyState({ icon: "chats", title: "No chats yet", body: "Add friends from the Convo Chat app — every accepted friend appears here automatically." });
+            : U.emptyState({ icon: "chats", title: "No chats yet", body: "Add friends from the Convo Chat app — every accepted friend and joined groups appear here automatically." });
     } else {
       var online = list.filter(function (c) { return c.online; });
       var offline = list.filter(function (c) { return !c.online; });

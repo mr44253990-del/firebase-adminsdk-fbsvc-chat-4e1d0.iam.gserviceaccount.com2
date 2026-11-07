@@ -38,6 +38,7 @@
       var isAudio = /^audio\//.test(mime);
       // Preview capability detection
       var previewable = isImage || isPdf || isVideo;
+      // Ephemeral: web keeps file until preview/download, then auto-removes from R2 after 10 days (same as app)
       var iconName = isImage ? "image" : isPdf ? "file" : isVideo ? "play" : isAudio ? "music" : "file";
       out += '<div class="file-card-enhanced">' +
         '<span class="file-ic">' + U.icon(iconName) + '</span>' +

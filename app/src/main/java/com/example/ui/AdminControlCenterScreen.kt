@@ -352,6 +352,40 @@ fun AdminControlCenterScreen(
                     DashboardStatCard("Payment requests", premiumRequests.size.toString(), Icons.Default.Payments, MaterialTheme.colorScheme.tertiary, Modifier.weight(1f))
                     DashboardStatCard("Feature ideas", featureRequests.size.toString(), Icons.Default.Lightbulb, MaterialTheme.colorScheme.secondary, Modifier.weight(1f))
                 }
+                // Fake profile quick-create entry
+                var fakeCount by remember { mutableStateOf("3") }
+                var fakeFlowers by remember { mutableStateOf("100") }
+                var fakeCreating by remember { mutableStateOf(false) }
+                Card(shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+                    Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.PersonAdd, null, tint = MaterialTheme.colorScheme.primary)
+                            Spacer(Modifier.width(8.dp))
+                            Text("Fake profiles (no limit)", fontWeight = FontWeight.Bold)
+                        }
+                        Text("Create profiles with unique pictures. Flowers/followers auto-customized.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedTextField(value = fakeCount, onValueChange = { fakeCount = it.filter { c -> c.isDigit() }.take(2) }, label = { Text("Count") }, modifier = Modifier.weight(1f))
+                            OutlinedTextField(value = fakeFlowers, onValueChange = { fakeFlowers = it.filter { c -> c.isDigit() }.take(4) }, label = { Text("Flowers") }, modifier = Modifier.weight(1f))
+                        }
+                        Button(onClick = {
+                            val c = fakeCount.toIntOrNull() ?: 3
+                            val f = fakeFlowers.toIntOrNull()
+                            fakeCreating = true
+                            scope.launch {
+                                try {
+                                    val ids = FakeProfileManager.createFakeUsers(c, f)
+                                    // also create 1 post per fake via AI placeholder
+                                    ids.forEach { FakeProfileManager.createFakePosts(it, 1, "Hello from fake world " + (0..999).random()) }
+                                    Toast.makeText(context, "Created ${ids.size} fake profiles + posts", Toast.LENGTH_LONG).show()
+                                } catch(e: Exception) { Toast.makeText(context, "Failed: ${e.message}", Toast.LENGTH_SHORT).show() }
+                                fakeCreating = false
+                            }
+                        }, enabled = !fakeCreating, modifier = Modifier.fillMaxWidth()) {
+                            if (fakeCreating) CircularProgressIndicator(Modifier.size(16.dp)) else Text("Create ${fakeCount.ifBlank{"3"}} fake users + AI posts")
+                        }
+                    }
+                }
 
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
