@@ -2593,7 +2593,13 @@ async function webCompanionOriginMatches(request, env) {
   const origin = request.headers.get("Origin") || "";
   if (!origin) return false;
   const allowed = await webCompanionOrigins(env);
-  return allowed.includes(origin);
+  if (allowed.includes(origin)) return true;
+  // Allow preview deployments of the same Pages project (e.g. https://abc123.convo-chat-companion.pages.dev)
+  try {
+    const url = new URL(origin);
+    if (url.hostname.endsWith(".convo-chat-companion.pages.dev") || url.hostname === "convo-chat-companion.pages.dev") return true;
+  } catch (_) {}
+  return false;
 }
 function webPairJson(request, env, value, status = 200) {
   const origin = request.headers.get("Origin") || "";
