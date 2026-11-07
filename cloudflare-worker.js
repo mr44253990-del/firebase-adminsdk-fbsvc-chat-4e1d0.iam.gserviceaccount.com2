@@ -12,10 +12,10 @@
 
 // Bump WORKER_API_VERSION whenever routes change; the Android app compares it with
 // the version it expects and tells the admin to redeploy when the Worker is older.
-const WORKER_API_VERSION = 52;
+const WORKER_API_VERSION = 53;
 // Human-readable Worker release tag, reported by the health endpoint and shown in
 // Admin → Server health so the admin can see exactly which build is live.
-const WORKER_RELEASE = "4.9.0";
+const WORKER_RELEASE = "4.9.1";
 
 // Optional extra data forwarded to the device (rich image notifications, group calls, …).
 const PUSH_EXTRA_KEYS = ["imageUrl", "roomId", "groupId", "groupName", "memberIds", "videoCall", "probeId", "chatId", "previewKind"];
@@ -347,6 +347,101 @@ export default {
         return webPairJson(request, env, { success: true, sessionToken, expiresAt: 0, name, email }, 200);
       } catch (error) {
         return webPairJson(request, env, { error: "Sign-up could not be completed" }, 500);
+      }
+    }
+
+    // ---- QR Sign-in: secure phone-approval API (v4.8.0) ------------------------------------
+    // No decorative QR is shown; these routes provide real session creation.
+    if (request.method === "POST" && path === "/web-pair/qr/create") {
+      if (!(await webCompanionOriginMatches(request, env))) return webPairJson(request, env, { error: "Unapproved companion origin" }, 403);
+      try {
+        const qrId = randomHex(16);
+        const now = Date.now();
+        const expiresAt = now + 60_000;
+        const origin = (await webCompanionOrigins(env))[0] || "";
+        // Store in Firestore so phone can approve
+        await fsPatch(env, `web_qr_sessions/${qrId}`, {
+          qrId,
+          status: "pending",
+          createdAt: now,
+          expiresAt,
+          origin,
+          scannedBy: "",
+          scannedAt: 0
+        });
+        // QR data is a URL that encodes the qrId for the phone scanner
+        const qrData = `convo-qr://${qrId}`;
+        return webPairJson(request, env, { success: true, qrId, qrData, expiresAt }, 200);
+      } catch (e) {
+        return webPairJson(request, env, { error: "Could not create QR session" }, 500);
+      }
+    }
+
+    if (request.method === "POST" && path === "/web-pair/qr/poll") {
+      if (!(await webCompanionOriginMatches(request, env))) return webPairJson(request, env, { error: "Unapproved companion origin" }, 403);
+      const body = await request.json().catch(() => ({}));
+      const qrId = String(body.qrId || "").trim().slice(0, 64);
+      if (!qrId) return webPairJson(request, env, { error: "Missing qrId" }, 400);
+      try {
+        const doc = await firestoreGet(env, `web_qr_sessions/${qrId}`).catch(() => null);
+        if (!doc) return webPairJson(request, env, { status: "expired", error: "QR expired" }, 410);
+        const now = Date.now();
+        if (Number(doc.expiresAt || 0) <= now && doc.status !== "authenticated") {
+          return webPairJson(request, env, { status: "expired", error: "QR expired" }, 410);
+        }
+        if (doc.status === "authenticated" && doc.sessionToken) {
+          return webPairJson(request, env, { status: "authenticated", sessionToken: doc.sessionToken, expiresAt: doc.expiresAt, uid: doc.uid }, 200);
+        }
+        return webPairJson(request, env, { status: doc.status || "pending" }, 200);
+      } catch (e) {
+        return webPairJson(request, env, { error: "Could not check QR status" }, 500);
+      }
+    }
+
+    if (request.method === "POST" && path === "/web-pair/qr/approve") {
+      const auth = await authenticateCaller(request, env);
+      if (!auth.ok) return auth.response;
+      const body = await request.json().catch(() => ({}));
+      const qrId = String(body.qrId || "").trim().slice(0, 64);
+      if (!qrId) return webPairJson(request, env, { error: "Missing qrId" }, 400);
+      try {
+        const doc = await firestoreGet(env, `web_qr_sessions/${qrId}`).catch(() => null);
+        if (!doc) return webPairJson(request, env, { error: "QR not found or expired" }, 404);
+        const now = Date.now();
+        if (Number(doc.expiresAt || 0) <= now) return webPairJson(request, env, { error: "QR expired" }, 410);
+        const uid = auth.caller.sub;
+        const profile = await firestoreGet(env, `users/${uid}`).catch(() => null);
+        if (!profile || profile.banned === true) return webPairJson(request, env, { error: "Account not eligible" }, 403);
+        // Create a real web session for the phone's account, so web logs in as that user
+        const sessionToken = randomHex(32);
+        const sessionHash = await sha256Hex(`convo-web-session:${sessionToken}`);
+        const userAgent = String(request.headers.get("User-Agent") || "Phone QR").slice(0, 160);
+        await fsPatch(env, `web_pair_sessions/${sessionHash}`, {
+          uid,
+          createdAt: now,
+          expiresAt: 0,
+          revokedAt: 0,
+          lastUsedAt: now,
+          userAgent,
+          via: "qr",
+          sessionVersion: Number(profile.webCompanionVersion || 0)
+        });
+        await fsPatch(env, `web_sessions/${uid}/items/${sessionHash}`, {
+          createdAt: now, expiresAt: 0, userAgent, revokedAt: 0
+        }).catch(() => null);
+        // Mark QR as authenticated with the new session
+        await fsPatch(env, `web_qr_sessions/${qrId}`, {
+          status: "authenticated",
+          authenticatedAt: now,
+          uid,
+          scannedBy: uid,
+          scannedAt: now,
+          sessionToken,
+          expiresAt: 0
+        });
+        return webPairJson(request, env, { success: true, status: "authenticated", sessionToken, expiresAt: 0 }, 200);
+      } catch (e) {
+        return webPairJson(request, env, { error: "Could not approve QR" }, 500);
       }
     }
 

@@ -198,21 +198,25 @@ private suspend fun authenticateAndLinkQr(
     try {
         val qrId = extractQrId(qrPayload)
         if (qrId.length < 8) { callback(false, "Invalid QR code"); return }
-        val firestore = FirebaseFirestore.getInstance()
-        val docRef = firestore.collection("web_qr_sessions").document(qrId)
-        val snap = docRef.get().await()
-        if (!snap.exists()) { callback(false, "QR expired — please refresh on web"); return }
-        val status = snap.getString("status") ?: "pending"
-        if (status == "expired") { callback(false, "QR expired — please refresh on web"); return }
-        docRef.update(
-            mapOf(
-                "scannedBy" to uid,
-                "scannedAt" to System.currentTimeMillis(),
-                "status" to "scanned",
-                "deviceName" to Build.MODEL
-            )
-        ).await()
-        callback(true, null)
+        // Secure phone-approval via Worker (no direct Firestore write — prevents spoofing)
+        val user = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser ?: run { callback(false, "Not signed in"); return }
+        val idToken = user.getIdToken(true).await().token ?: run { callback(false, "Could not get auth token"); return }
+        val url = java.net.URL("https://convo-chat-companion.mr4425390.workers.dev/web-pair/qr/approve")
+        val conn = url.openConnection() as java.net.HttpURLConnection
+        conn.requestMethod = "POST"
+        conn.setRequestProperty("Content-Type", "application/json")
+        conn.setRequestProperty("Authorization", "Bearer " + idToken)
+        conn.doOutput = true
+        val body = org.json.JSONObject().put("qrId", qrId).toString()
+        conn.outputStream.use { it.write(body.toByteArray()) }
+        val code = conn.responseCode
+        val text = try { conn.inputStream.bufferedReader().readText() } catch(_: Exception) { conn.errorStream?.bufferedReader()?.readText() ?: "" }
+        if (code in 200..299) {
+            callback(true, null)
+        } else {
+            val err = try { org.json.JSONObject(text).optString("error", text) } catch(_: Exception) { text }
+            callback(false, err.ifBlank { "QR approve failed ($code)" })
+        }
     } catch (e: Exception) {
         callback(false, e.message ?: "Authentication failed")
     }
