@@ -62,17 +62,20 @@ android {
 }
 
 // Show keystore info at build time (as requested — only path/alias, never password)
-tasks.named("assembleRelease") {
-  doLast {
-    val ksPath = System.getenv("KEYSTORE_PATH") ?: "${rootDir}/my-upload-key.jks"
-    val ksAlias = System.getenv("RELEASE_KEY_ALIAS") ?: System.getenv("KEY_ALIAS") ?: "upload"
-    val user = System.getenv("KEYSTORE_USER") ?: System.getenv("USER") ?: "mr44253990-del"
-    println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-    println("🔑 Keystore: $ksPath")
-    println("🔑 Alias   : $ksAlias")
-    println("👤 User    : $user")
-    println("📦 Version : 4.6.0 (57) — Web + Device Login Release")
-    println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+// Use afterEvaluate so assembleRelease exists; safe for configuration cache
+afterEvaluate {
+  tasks.findByName("assembleRelease")?.let { t ->
+    t.doLast {
+      val ksPath = System.getenv("KEYSTORE_PATH") ?: "${rootDir}/my-upload-key.jks"
+      val ksAlias = System.getenv("RELEASE_KEY_ALIAS") ?: System.getenv("KEY_ALIAS") ?: "upload"
+      val user = System.getenv("KEYSTORE_USER") ?: System.getenv("USER") ?: "mr44253990-del"
+      println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+      println("🔑 Keystore: $ksPath")
+      println("🔑 Alias   : $ksAlias")
+      println("👤 User    : $user")
+      println("📦 Version : 4.6.0 (57) — Web + Device Login Release")
+      println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    }
   }
 }
 
