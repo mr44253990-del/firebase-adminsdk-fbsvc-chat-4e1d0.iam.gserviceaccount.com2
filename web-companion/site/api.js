@@ -219,7 +219,15 @@
     devices() { return request("devices"); },
     logout() { return request("logout").catch(function () { return {}; }); },
     logoutEverywhere() { return request("logout-all"); },
-    exportData() { return request("export"); }
+    exportData() { return request("export"); },
+
+    // ── QR sign-in (secure phone-approval via Worker → Firestore) ──
+    async qrCreate() {
+      return request("qr/create", {}, { token: "none" });
+    },
+    async qrPoll(qrId) {
+      return request("qr/poll", { qrId: String(qrId||"") }, { token: "none" });
+    }
   };
 
   window.ConvoApi = Api;

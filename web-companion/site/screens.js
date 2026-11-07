@@ -507,9 +507,14 @@
     // Desktop: show QR + tabs side-by-side. Mobile: tabbed view (QR tab included).
     var isDesk = isDesktop();
     var qrPane = '<div class="qr-pane" id="qr-pane">' +
-      '<div class="qr-header"><span class="qr-badge">' + U.icon("qr") + ' QR sign-in</span><span class="tiny dim">Unavailable</span></div>' +
-      '<div class="qr-status" id="qr-status"><span class="qr-dot"></span><span id="qr-status-text">QR sign-in is not enabled on this Worker. Use Pair code or Sign in instead.</span></div>' +
-      '<p class="pair-fine" style="margin-top:6px">No decorative or non-functional QR is shown. QR login needs a matching secure phone-approval API.</p>' +
+      '<div class="qr-header"><span class="qr-badge">' + U.icon("qr") + ' QR sign-in</span><span class="qr-timer" id="qr-timer">30s</span></div>' +
+      '<div class="qr-code-wrap" style="display:grid;place-items:center;padding:12px;background:#fff;border-radius:16px;margin:10px 0;position:relative;min-height:180px">' +
+        '<canvas id="qr-canvas" width="180" height="180" style="display:block"></canvas>' +
+        '<div id="qr-overlay" class="qr-overlay" style="position:absolute;inset:0;display:none;place-items:center;background:rgba(7,7,15,0.85);border-radius:16px;color:#fff;font-size:13px;font-weight:700"></div>' +
+      '</div>' +
+      '<div class="qr-status" id="qr-status"><span class="qr-dot" id="qr-dot"></span><span id="qr-status-text">Scan with Convo Chat app → Device Login</span></div>' +
+      '<button type="button" class="btn ghost small" data-action="qr-refresh" style="margin-top:8px;width:100%">' + U.icon("refresh") + '<span>Refresh QR</span></button>' +
+      '<p class="pair-fine" style="margin-top:6px">QR expires in 30s • Secure phone approval via Worker</p>' +
     '</div>';
 
     var tabs = '<div class="auth-tabs" role="tablist">' +
@@ -550,7 +555,7 @@
 
     if (isDesk) {
       // Desktop dual layout: left QR, right tabs
-      return '<div class="pair-wrap pair-desktop"><div class="pair-card auth-card pair-card-wide" id="auth-card" data-auth-mode="code">' +
+      var _mode=(window.ConvoApp&&window.ConvoApp.state&&window.ConvoApp.state.authMode)||"code"; return '<div class="pair-wrap pair-desktop"><div class="pair-card auth-card pair-card-wide" id="auth-card" data-auth-mode="'+_mode+'">' +
         '<div class="pair-art"><span class="pulse"></span><span class="pulse"></span><span class="pulse"></span>' +
         '<span class="pair-mark">' + U.icon("qr") + '</span></div>' +
         '<h1>Connect Convo Chat</h1>' +
@@ -569,7 +574,7 @@
       '</div></div>';
     }
 
-    return '<div class="pair-wrap"><div class="pair-card auth-card" id="auth-card" data-auth-mode="code">' +
+    var _mode2=(window.ConvoApp&&window.ConvoApp.state&&window.ConvoApp.state.authMode)||"code"; return '<div class="pair-wrap"><div class="pair-card auth-card" id="auth-card" data-auth-mode="'+_mode2+'">' +
       '<div class="pair-art"><span class="pulse"></span><span class="pulse"></span><span class="pulse"></span>' +
       '<span class="pair-mark">' + U.icon("qr") + '</span></div>' +
       '<h1>Connect Convo Chat</h1>' +

@@ -34,6 +34,7 @@
     friendRequests: [],
     searchLoading: false,
     chatFilter: "all",
+    authMode: (function(){ try{ return localStorage.getItem("convo.authMode")||"code"; }catch(_){ return "code"; } })(),
     loadingChats: true,
     loadingMessages: false,
     hasMoreMessages: false,
@@ -145,8 +146,14 @@
       pane.innerHTML=Screens.renderPairing();
       document.getElementById("tabbar").hidden=true;
       var rn=document.getElementById("rail-nav"); if(rn) rn.innerHTML="";
-      // init QR after render
-      setTimeout(initQrOnLogin, 120);
+      // Restore last auth tab, don't always reset to code
+      setTimeout(function(){
+        var m=state.authMode||"code";
+        var card=document.getElementById("auth-card");
+        if(card) card.setAttribute("data-auth-mode", m);
+        Array.prototype.forEach.call(document.querySelectorAll(".auth-tab"), function(tab){ tab.classList.toggle("active", tab.dataset.mode===m); });
+        if(m==="qr") initQrOnLogin();
+      }, 80);
       return;
     }
     document.getElementById("tabbar").hidden=false;
@@ -635,11 +642,18 @@
     catch(error){ if(errorNode) errorNode.textContent=error.message||"Sign-in failed. Check your email and password."; if(button){button.disabled=false; button.innerHTML=U.icon("lock")+"<span>Sign in &amp; save this browser</span>";} passInput.value=""; passInput.focus(); }
   }
   function setAuthMode(mode){
+    mode=mode||"code";
+    state.authMode=mode;
+    try{ localStorage.setItem("convo.authMode", mode); }catch(_){}
     var card=document.getElementById("auth-card"); if(!card) return;
-    card.setAttribute("data-auth-mode", mode||"code");
+    card.setAttribute("data-auth-mode", mode);
     Array.prototype.forEach.call(card.querySelectorAll(".auth-tab"), function(tab){ tab.classList.toggle("active", tab.dataset.mode===mode); });
-    // On renderPairing, QR pane is inside auth-qr, so handle it specially
-    if(mode==="qr") initQrOnLogin();
+    if(mode==="qr") initQrOnLogin(); else stopQr();
+    // Focus first input of the active pane so keyboard shows on mobile
+    setTimeout(function(){
+      var focusId = mode==="code" ? "pair-code" : mode==="signin" ? "login-email" : mode==="signup" ? "signup-name" : "";
+      if(focusId){ var el=document.getElementById(focusId); if(el) try{ el.focus(); }catch(_){} }
+    }, 80);
   }
   async function emailSignup(){
     var nameInput=document.getElementById("signup-name"); var emailInput=document.getElementById("signup-email"); var passInput=document.getElementById("signup-password"); var errorNode=document.getElementById("signup-error"); if(!nameInput||!emailInput||!passInput) return;
@@ -652,14 +666,88 @@
     catch(error){ if(errorNode) errorNode.textContent=error.message||"Could not create the account."; if(button){button.disabled=false; button.innerHTML=U.icon("check")+"<span>Create account &amp; sign in</span>";} }
   }
 
-  // QR device approval is not implemented by the currently deployed Worker/API contract.
-  // Never draw a decorative pseudo-QR or report a fake scan/login success.
+  // Real QR sign-in via Worker secure phone-approval API (v4.9.1)
+  var qrTimer=0, qrPollTimer=0, qrCountdown=0;
   async function initQrOnLogin(){
     stopQr();
+    var canvas=document.getElementById("qr-canvas");
     var statusText=document.getElementById("qr-status-text");
-    if(statusText) statusText.textContent="QR sign-in is not enabled on this Worker. Use Pair code or Sign in instead.";
+    var timerEl=document.getElementById("qr-timer");
+    var dot=document.getElementById("qr-dot");
+    var overlay=document.getElementById("qr-overlay");
+    if(statusText) statusText.textContent="Creating secure QR…";
+    if(dot) dot.className="qr-dot loading";
+    try{
+      var data=await Api.qrCreate();
+      state.qrId=data.qrId||data.qr_id||"";
+      state.qrData=data.qrData||data.qr_data||data.qrId||"";
+      if(!state.qrId||!state.qrData) throw new Error("Worker did not return QR");
+      // Draw QR
+      if(canvas) drawQr(canvas, state.qrData);
+      if(statusText) statusText.textContent="Scan with Convo Chat app → Device Login";
+      if(dot) dot.className="qr-dot active";
+      // Countdown 30s
+      qrCountdown=30;
+      if(timerEl) timerEl.textContent=qrCountdown+"s";
+      if(overlay) overlay.style.display="none";
+      clearInterval(qrTimer);
+      qrTimer=setInterval(function(){
+        qrCountdown--;
+        if(timerEl) timerEl.textContent=qrCountdown+"s";
+        if(qrCountdown<=0){ clearInterval(qrTimer); if(statusText) statusText.textContent="QR expired — tap Refresh"; if(dot) dot.className="qr-dot expired"; if(overlay){ overlay.textContent="Expired"; overlay.style.display="grid"; } stopQrPoll(); }
+      },1000);
+      // Poll every 2s
+      clearInterval(qrPollTimer);
+      qrPollTimer=setInterval(async function(){
+        if(!state.qrId) return;
+        try{
+          var poll=await Api.qrPoll(state.qrId);
+          if(poll.status==="authenticated"||poll.sessionToken){
+            clearInterval(qrTimer); clearInterval(qrPollTimer);
+            if(statusText) statusText.textContent="Approved — signing in…";
+            if(dot) dot.className="qr-dot success";
+            // Save session
+            var sess={ token: poll.sessionToken, expiresAt: Number(poll.expiresAt||0), pairedAt: Date.now(), via: "qr" };
+            Api.saveSession(sess);
+            state.tab="chats"; stopQr();
+            await bootAfterSession();
+            toast("QR approved — welcome","success");
+          } else if(poll.status==="scanned"){
+            if(statusText) statusText.textContent="Scanned — confirm on phone…";
+            if(dot) dot.className="qr-dot scanned";
+          }
+        }catch(e){
+          // If 410 expired, show refresh
+          if(e.status===410||(e.message||"").toLowerCase().indexOf("expired")>=0){
+            clearInterval(qrTimer); clearInterval(qrPollTimer);
+            if(statusText) statusText.textContent="QR expired — tap Refresh";
+            if(dot) dot.className="qr-dot expired";
+          }
+        }
+      },2000);
+    }catch(error){
+      if(statusText) statusText.textContent=error.message||"Could not create QR — use Pair code";
+      if(dot) dot.className="qr-dot error";
+      if(timerEl) timerEl.textContent="—";
+    }
   }
-  function stopQr(){ state.qrId=""; state.qrData=""; }
+  function drawQr(canvas, text){
+    // Minimal QR via qrserver image fallback + canvas draw
+    try{
+      var ctx=canvas.getContext("2d");
+      ctx.clearRect(0,0,canvas.width,canvas.height);
+      ctx.fillStyle="#fff"; ctx.fillRect(0,0,canvas.width,canvas.height);
+      var img=new Image();
+      img.crossOrigin="anonymous";
+      img.onload=function(){ try{ ctx.drawImage(img,0,0,canvas.width,canvas.height); }catch(_){} };
+      img.onerror=function(){ ctx.fillStyle="#111"; ctx.font="12px sans-serif"; ctx.textAlign="center"; ctx.fillText(text.slice(0,24), canvas.width/2, canvas.height/2); };
+      img.src="https://api.qrserver.com/v1/create-qr-code/?size=180x180&data="+encodeURIComponent(text);
+    }catch(e){
+      try{ var c=document.getElementById("qr-canvas"); if(c){ var cx=c.getContext("2d"); cx.fillStyle="#fff"; cx.fillRect(0,0,180,180); cx.fillStyle="#000"; cx.font="11px monospace"; cx.fillText(text.slice(0,20),10,90); } }catch(_){}
+    }
+  }
+  function stopQrPoll(){ if(qrPollTimer){ clearInterval(qrPollTimer); qrPollTimer=0; } }
+  function stopQr(){ state.qrId=""; state.qrData=""; stopQrPoll(); if(qrTimer){ clearInterval(qrTimer); qrTimer=0; } }
 
   /* -------------------------------------------------------------- lock/log */
   function armLockTimer(){ if(timers.lock) clearTimeout(timers.lock); if(!session()) return; var minutes=Number(S.settings().autoLockMinutes||0); if(!minutes) return; timers.lock=setTimeout(function(){ if(document.hidden) return; lock(); }, minutes*60000); }
@@ -801,6 +889,7 @@
     if(action==="friend-accept"){ respondFriend(button.dataset.request, true); return; }
     if(action==="friend-decline"){ respondFriend(button.dataset.request, false); return; }
     if(action==="auth-mode"){ setAuthMode(button.dataset.mode); return; }
+    if(action==="qr-refresh"){ initQrOnLogin(); return; }
     if(action==="unlock"){ unlock(); return; }
     if(action==="logout"){ logout(); return; }
   }
@@ -884,5 +973,6 @@
     finishLaunch(); stopParticles(); startPolls(); armLockTimer();
     if(state.chats.length && !isMobile()){ var first=state.chats.slice().sort(function(a,b){return Number(b.lastAt||0)-Number(a.lastAt||0);})[0]; if(first) openChat(first.uid); }
   }
+  window.ConvoApp = { state: state };
   window.addEventListener("DOMContentLoaded", function(){ start().catch(function(error){ setLaunchProgress(1,"Something went wrong"); finishLaunch(); toast("Could not start Convo Chat Web: "+(error.message||"unknown error"),"error"); }); });
 })();
