@@ -45,7 +45,7 @@ fun EnhancedNotificationBox(
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
                 Column {
                     Text("Notifications", color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 18.sp)
-                    Text("${notifications.count { !it.read }} new • ${notifications.size} total", color = Color.White.copy(alpha = 0.85f), fontSize = 12.sp)
+                    Text("${notifications.count { !it.isRead }} new • ${notifications.size} total", color = Color.White.copy(alpha = 0.85f), fontSize = 12.sp)
                 }
                 if (notifications.isNotEmpty()) {
                     TextButton(onClick = onClearAll, colors = ButtonDefaults.textButtonColors(contentColor = Color.White)) {
@@ -86,8 +86,8 @@ private fun NotificationCard(notif: ActivityNotification, onMarkRead: (String) -
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = if (!notif.read) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f)),
-        elevation = CardDefaults.cardElevation(defaultElevation = if (!notif.read) 3.dp else 0.dp),
+        colors = CardDefaults.cardColors(containerColor = if (!notif.isRead) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f)),
+        elevation = CardDefaults.cardElevation(defaultElevation = if (!notif.isRead) 3.dp else 0.dp),
         onClick = { onOpen(notif) }
     ) {
         Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -108,11 +108,11 @@ private fun NotificationCard(notif: ActivityNotification, onMarkRead: (String) -
                 )
             }
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(notif.title, fontWeight = FontWeight.Bold, fontSize = 13.sp, maxLines = 1, color = MaterialTheme.colorScheme.onSurface)
-                Text(notif.body, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2)
+                Text(notif.actorName.ifBlank { notif.type }, fontWeight = FontWeight.Bold, fontSize = 13.sp, maxLines = 1, color = MaterialTheme.colorScheme.onSurface)
+                Text(notif.text, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2)
                 Text(formatTime(notif.timestamp), fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f))
             }
-            if (!notif.read) Box(Modifier.size(10.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary))
+            if (!notif.isRead) Box(Modifier.size(10.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary))
         }
     }
 }

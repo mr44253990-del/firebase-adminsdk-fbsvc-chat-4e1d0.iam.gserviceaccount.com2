@@ -29,7 +29,6 @@ import androidx.compose.ui.window.Dialog
 
 /**
  * 14-day trial welcome — beautiful + vibrates, shown on first login.
- * Replaces AppVersionWelcomeDialog for new users.
  */
 @Composable
 fun TrialWelcomeDialog(
@@ -41,10 +40,8 @@ fun TrialWelcomeDialog(
     val context = LocalContext.current
     val infinite = rememberInfiniteTransition(label = "trial-pulse")
     val scale by infinite.animateFloat(initialValue = 1f, targetValue = 1.06f, animationSpec = infiniteRepeatable(tween(900, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "scale")
-    val shimmer by infinite.animateFloat(initialValue = 0f, targetValue = 1f, animationSpec = infiniteRepeatable(tween(1600), RepeatMode.Restart), label = "shimmer")
 
     LaunchedEffect(Unit) {
-        // Vibrate on show
         val vib = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             (context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager).defaultVibrator
         } else @Suppress("DEPRECATION") context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
@@ -55,14 +52,21 @@ fun TrialWelcomeDialog(
 
     Dialog(onDismissRequest = onDismiss) {
         Card(shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), elevation = CardDefaults.cardElevation(16.dp)) {
-            Column(Modifier.fillMaxWidth().background(Brush.linearGradient(listOf(Color(0xFF1A1A2E), Color(0xFF16213E), Color(0xFF0F3460)))), verticalArrangement = Arrangement.spacedBy(0.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                Box(Modifier.fillMaxWidth().background(Brush.linearGradient(listOf(Color(0xFFFFD700), Color(0xFFFFA500), Color(0xFFFF6B35)))), contentAlignment = Alignment.Center).padding(20.dp)) {
+            Column(
+                modifier = Modifier.fillMaxWidth().background(Brush.linearGradient(listOf(Color(0xFF1A1A2E), Color(0xFF16213E), Color(0xFF0F3460)))),
+                verticalArrangement = Arrangement.spacedBy(0.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Box(
+                    modifier = Modifier.fillMaxWidth().background(Brush.linearGradient(listOf(Color(0xFFFFD700), Color(0xFFFFA500), Color(0xFFFF6B35)))).padding(20.dp),
+                    contentAlignment = Alignment.Center
+                ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Box(Modifier.size(72.dp).scale(scale).clip(RoundedCornerShape(18.dp)).background(Color.White.copy(alpha = 0.9f)), contentAlignment = Alignment.Center) {
                             Icon(Icons.Default.WorkspacePremium, null, modifier = Modifier.size(42.dp), tint = Color(0xFFFFA500))
                         }
-                        Text("🎉 Welcome, $userName!", color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 18.sp, textAlign = TextAlign.Center)
-                        Text("You have 14 days of Premium — free!", color = Color.White.copy(alpha = 0.95f), fontSize = 13.sp, textAlign = TextAlign.Center, fontWeight = FontWeight.SemiBold)
+                        Text("Welcome, " + userName + "!", color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 18.sp, textAlign = TextAlign.Center)
+                        Text("You have 14 days of Premium - free!", color = Color.White.copy(alpha = 0.95f), fontSize = 13.sp, textAlign = TextAlign.Center, fontWeight = FontWeight.SemiBold)
                     }
                 }
                 Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -78,9 +82,8 @@ fun TrialWelcomeDialog(
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFFA500), contentColor = Color.White)
                     ) { Text("Start my 14-day free trial", fontWeight = FontWeight.Bold, fontSize = 15.sp) }
                     TextButton(onClick = onMaybeLater, modifier = Modifier.fillMaxWidth()) { Text("Maybe later", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp) }
-                    Text("No card required • Cancel anytime", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f))
+                    Text("No card required - Cancel anytime", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f))
                 }
-            }
             }
         }
     }

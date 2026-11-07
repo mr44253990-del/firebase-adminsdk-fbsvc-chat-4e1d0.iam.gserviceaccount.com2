@@ -589,22 +589,6 @@ fun HomeScreen(
                         containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.72f)
                     )
                 )
-                    }
-                }
-                // v4.6.0 Smart multi-account banner — shows when other account gets message
-                var incomingAccountBanner by remember { mutableStateOf<Pair<String,String>?>(null) }
-                if (incomingAccountBanner != null) {
-                    AccountSwitchBanner(
-                        incomingAccountId = incomingAccountBanner!!.first,
-                        incomingMessage = incomingAccountBanner!!.second,
-                        rememberedAccounts = rememberedAccounts,
-                        onSwitch = { uid -> viewModel.loginRememberedAccount(rememberedAccounts.first { it.uid == uid }) {} { incomingAccountBanner = null } },
-                        onDismiss = { incomingAccountBanner = null }
-                    )
-                }
-                if (currentTab == 1 && chatChromeCollapsed) {
-                    Spacer(Modifier.fillMaxWidth().windowInsetsTopHeight(androidx.compose.foundation.layout.WindowInsets.statusBars))
-                }
             }
         },
         bottomBar = {
@@ -703,6 +687,14 @@ fun HomeScreen(
                 .background(scaffoldBgColor)
                 .padding(innerPadding)
         ) {
+            // v4.6.0 multi-account banner now correctly inside Scaffold content (not topBar)
+            var incomingAccountBanner by remember { mutableStateOf<Pair<String,String>?>(null) }
+            if (incomingAccountBanner != null) {
+                Column(Modifier.align(Alignment.TopCenter).fillMaxWidth()) {
+                    AccountSwitchBanner(incomingAccountId = incomingAccountBanner!!.first, incomingMessage = incomingAccountBanner!!.second, rememberedAccounts = rememberedAccounts, onSwitch = { uid -> viewModel.loginRememberedAccount(rememberedAccounts.first { it.uid == uid }) {} { incomingAccountBanner = null } }, onDismiss = { incomingAccountBanner = null })
+                    if (currentTab == 1 && chatChromeCollapsed) Spacer(Modifier.fillMaxWidth().windowInsetsTopHeight(androidx.compose.foundation.layout.WindowInsets.statusBars))
+                }
+            }
             when (currentTab) {
                 0 -> {
                     val feedState = rememberLazyListState()
