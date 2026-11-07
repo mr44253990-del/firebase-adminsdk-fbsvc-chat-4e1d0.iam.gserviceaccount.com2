@@ -94,6 +94,7 @@ import android.webkit.WebViewClient
 import com.example.R
 import androidx.compose.ui.graphics.lerp
 import com.example.data.ActivityNotification
+import com.example.ui.SmartMutedChatMenu
 import com.example.ui.AccountSwitchBanner
 import com.example.security.AppLockManager
 import com.example.security.PrivacyPreferences
@@ -355,6 +356,8 @@ fun HomeScreen(
 
     val scaffoldBgColor = Color.Transparent
     var showDeviceLogin by remember { mutableStateOf(false) }
+    var showChatActionMenu by remember { mutableStateOf(false) }
+    var selectedChatForMenu by remember { mutableStateOf<User?>(null) }
     var incomingAccountBanner by remember { mutableStateOf<Pair<String,String>?>(null) }
 
     // First-launch guided tour (spotlight + blurred surroundings). Replayable from Settings.
@@ -477,12 +480,12 @@ fun HomeScreen(
                             DropdownMenu(
                                 expanded = showAccountMenu,
                                 onDismissRequest = { showAccountMenu = false },
-                                modifier = Modifier.width(322.dp)
+                                modifier = Modifier.width(260.dp)
                             ) {
                                 Column(
                                     Modifier
                                         .fillMaxWidth()
-                                        .heightIn(max = 570.dp)
+                                        .heightIn(max = 420.dp)
                                         .verticalScroll(rememberScrollState())
                                         .padding(horizontal = 12.dp, vertical = 8.dp),
                                     verticalArrangement = Arrangement.spacedBy(7.dp)
@@ -1018,13 +1021,31 @@ fun HomeScreen(
                                         isMuted = user.uid in mutedUsers,
                                         onSelect = { onUserSelected(user) },
                                         onLongPress = {
-                                            viewModel.toggleMuteUser(user.uid)
-                                            Toast.makeText(context, if (user.uid in mutedUsers) "${user.name} unmuted" else "${user.name} muted", Toast.LENGTH_SHORT).show()
+                                            selectedChatForMenu = user
+                                            showChatActionMenu = true
                                         }
                                     )
                                 }
                             }
                         }
+                    }
+                    if (showChatActionMenu && selectedChatForMenu != null) {
+                        SmartMutedChatMenu(
+                            chatName = selectedChatForMenu!!.name,
+                            isMuted = selectedChatForMenu!!.uid in mutedUsers,
+                            onMuteToggle = {
+                                viewModel.toggleMuteUser(selectedChatForMenu!!.uid)
+                                Toast.makeText(context, if (selectedChatForMenu!!.uid in mutedUsers) "Unmuted" else "Muted", Toast.LENGTH_SHORT).show()
+                            },
+                            onPin = { ConversationPrefs.setPinned(context, selectedChatForMenu!!.uid, !ConversationPrefs.isPinned(context, selectedChatForMenu!!.uid)) },
+                            onMarkRead = { showChatActionMenu = false },
+                            onClearChat = { showChatActionMenu = false },
+                            onBlock = {
+                                viewModel.blockUser(selectedChatForMenu!!.uid) {}
+                                showChatActionMenu = false
+                            },
+                            onDismiss = { showChatActionMenu = false }
+                        )
                     }
                 }
                 2 -> {
