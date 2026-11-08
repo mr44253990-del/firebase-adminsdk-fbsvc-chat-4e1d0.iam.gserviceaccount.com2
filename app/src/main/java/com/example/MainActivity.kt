@@ -61,6 +61,7 @@ import com.example.ui.PremiumScreen
 import com.example.ui.SplashScreen
 import com.example.ui.UserProfileScreen
 import com.example.ui.QrContactScreen
+import com.example.ui.QrDeviceLoginScreen
 import com.example.ui.isOnboardingCompleted
 import com.example.ui.theme.MyApplicationTheme
 import com.example.ui.theme.PremiumBackground
@@ -412,7 +413,7 @@ class MainActivity : FragmentActivity() {
                     val code = pendingPairCode.value ?: return@LaunchedEffect
                     if (!splashFinished || currentUser == null) return@LaunchedEffect
                     pendingPairCode.value = null
-                    viewModel.pendingQrPairCode = code
+                    viewModel.setPendingQrPairCode(code)
                     navController.navigate("device_login") { launchSingleTop = true }
                 }
                 LaunchedEffect(activeGroupRoomId) {

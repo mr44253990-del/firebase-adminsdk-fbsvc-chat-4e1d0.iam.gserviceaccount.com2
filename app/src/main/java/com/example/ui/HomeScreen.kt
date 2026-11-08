@@ -219,7 +219,7 @@ fun HomeScreen(
     val appLanguage by AppLanguage.code.collectAsState()
 
     // 14-day trial welcome dialog — shown once on first login with vibration.
-    val showTrialWelcome by remember(currentUser?.uid) {
+    var showTrialWelcome by remember(currentUser?.uid) {
         val isTrial = currentUser?.isPremium == true &&
             currentUser?.premiumPlan == "trial" &&
             currentUser?.premiumTrialClaimed == true
