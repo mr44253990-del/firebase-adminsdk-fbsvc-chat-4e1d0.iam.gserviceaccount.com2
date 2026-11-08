@@ -15,7 +15,7 @@
 const WORKER_API_VERSION = 54;
 // Human-readable Worker release tag, reported by the health endpoint and shown in
 // Admin → Server health so the admin can see exactly which build is live.
-const WORKER_RELEASE = "4.9.2";
+const WORKER_RELEASE = "4.9.3";
 
 // Optional extra data forwarded to the device (rich image notifications, group calls, …).
 const PUSH_EXTRA_KEYS = ["imageUrl", "roomId", "groupId", "groupName", "memberIds", "videoCall", "probeId", "chatId", "previewKind"];
@@ -357,7 +357,7 @@ export default {
       try {
         const qrId = randomHex(16);
         const now = Date.now();
-        const expiresAt = now + 60_000;
+        const expiresAt = now + 300_000;
         const origin = (await webCompanionOrigins(env))[0] || "";
         // Store in Firestore so phone can approve
         await fsPatch(env, `web_qr_sessions/${qrId}`, {

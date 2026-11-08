@@ -544,7 +544,7 @@
       '<div class="login-qr-code" style="position:relative"><canvas id="qr-canvas" width="180" height="180"></canvas><div class="login-qr-corners"><span></span><span></span><span></span><span></span></div><div id="qr-overlay" style="position:absolute;inset:12px;display:none;place-items:center;background:rgba(2,6,23,0.92);border-radius:16px;color:#fff;font-size:13px;font-weight:700;z-index:2"></div></div>' +
       '<div class="login-qr-status"><span class="dot" id="qr-dot"></span><span id="qr-status-text">Scan with Convo Chat app → Device Login</span></div>' +
       '<button type="button" class="login-qr-refresh" data-action="qr-refresh">' + U.icon("refresh") + '<span>Refresh QR</span></button>' +
-      '<div class="login-qr-foot">' + U.icon("shield") + '<span>QR expires in 30s • Secure phone approval via Worker</span></div>' +
+      '<div class="login-qr-foot">' + U.icon("shield") + '<span>QR expires in 5 min • Secure phone approval via Worker</span></div>' +
     '</div>';
 
     var tabsHtml = '<div class="login-tabs">' +
@@ -603,7 +603,7 @@
 
     // Important notes + footer
     var notes = '<div class="login-notes"><div class="login-notes-icon">' + U.icon("shieldCheck") + '</div><div style="flex:1"><h3>Important Notes</h3>' +
-      '<div class="login-notes-item"><span class="login-notes-num n1">1</span><span>QR expires in 30s and requires phone authentication.</span></div>' +
+      '<div class="login-notes-item"><span class="login-notes-num n1">1</span><span>QR expires in 5 min and requires phone authentication.</span></div>' +
       '<div class="login-notes-item"><span class="login-notes-num n2">2</span><span>This browser stay signed in in with no time limit — sign out whenever you like.</span></div>' +
       '<div class="login-notes-item"><span class="login-notes-num n3">3</span><span>Your phone stays in control and can revoke any browser.</span></div>' +
     '</div></div>';

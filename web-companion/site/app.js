@@ -1,4 +1,4 @@
-/* Convo Chat Web — application controller. v4.9.2 */
+/* Convo Chat Web — application controller. v4.9.3 */
 (function () {
   "use strict";
   var S = window.ConvoStore;
@@ -9,7 +9,7 @@
 
   var POLL_CHATS = 20000;
   var POLL_MESSAGES = 7000;
-  var WEB_VERSION = "v4.9.2";
+  var WEB_VERSION = "v4.9.3";
   var POLL_PRESENCE = 45000;
   // v4.7.0: premium friends invite vibration handled via ActivityNotification type premium_approved
   var LAUNCH_MIN_MS = 1150;
@@ -716,14 +716,14 @@
       if(statusText) statusText.textContent="Scan with Convo Chat app → Device Login";
       if(dot) dot.className="qr-dot active";
       // Countdown 30s
-      qrCountdown=30;
-      if(timerEl) timerEl.textContent=qrCountdown+"s";
+      qrCountdown=300;
+      if(timerEl) timerEl.textContent=Math.floor(qrCountdown/60)+":"+(qrCountdown%60).toString().padStart(2,"0");
       if(overlay) overlay.style.display="none";
       clearInterval(qrTimer);
       qrTimer=setInterval(function(){
         qrCountdown--;
-        if(timerEl) timerEl.textContent=qrCountdown+"s";
-        var timerM=document.getElementById("qr-timer-text-m"); if(timerM) timerM.textContent=qrCountdown+"s";
+        if(timerEl) timerEl.textContent=Math.floor(qrCountdown/60)+":"+(qrCountdown%60).toString().padStart(2,"0");
+        var timerM=document.getElementById("qr-timer-text-m"); if(timerM) timerM.textContent=Math.floor(qrCountdown/60)+":"+(qrCountdown%60).toString().padStart(2,"0");
         if(qrCountdown<=0){
           clearInterval(qrTimer);
           if(statusText) statusText.textContent="Generating new QR…";

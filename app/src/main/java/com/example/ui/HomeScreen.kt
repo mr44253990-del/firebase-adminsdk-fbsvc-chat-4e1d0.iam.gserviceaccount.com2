@@ -494,11 +494,12 @@ fun HomeScreen(
                                 Column(
                                     Modifier
                                         .fillMaxWidth()
-                                        .heightIn(max = 480.dp)
+                                        .heightIn(max = 680.dp)
+                                        .fillMaxHeight(0.85f)
                                         .verticalScroll(rememberScrollState())
                                         .padding(horizontal = 12.dp, vertical = 8.dp)
                                         .windowInsetsPadding(WindowInsets.navigationBars)
-                                        .padding(bottom = 12.dp),
+                                        .padding(bottom = 24.dp),
                                     verticalArrangement = Arrangement.spacedBy(7.dp)
                                 ) {
                                     // ── Premium banner ──

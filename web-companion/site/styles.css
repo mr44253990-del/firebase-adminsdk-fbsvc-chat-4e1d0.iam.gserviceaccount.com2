@@ -1562,7 +1562,7 @@ form { display: contents; }
 
 
 /* v4.7.0 watermark + V1+V2+V3 signing indicator */
-.pane-head h1::after { content: ' v4.9.2'; font-size: 10px; color: var(--accent); margin-left: 6px; font-weight: 800; }
+.pane-head h1::after { content: ' v4.9.3'; font-size: 10px; color: var(--accent); margin-left: 6px; font-weight: 800; }
 
 /* === LOGIN REDESIGN v4.9.3 - Exact match to provided design === */
 .pair-wrap {
