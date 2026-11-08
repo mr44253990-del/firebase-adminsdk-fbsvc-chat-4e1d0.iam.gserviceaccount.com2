@@ -1,5 +1,9 @@
-• The social feed now loads older posts in cursor-based pages instead of fetching the entire history at once.
-• The admin user directory loads 50 profiles at a time and can continue to the next Firestore page.
-• Administrators can globally pause automatic saving of received files; manual downloads and normal message storage remain available.
-• A new offline English/Bengali guide and a refreshed tour explain settings, privacy, location sharing, media saving and the AI assistant.
-• An opt-in browser companion supports accepted one-to-one text chats through a one-time pairing code, expiring sessions and Android revoke controls.
+• Fixed: web messages failed with "Message send failed (401)" — the server now talks to the database with the right credentials, so web ↔ Android chat works live in both directions.
+• Fixed: web chats showed "Say hello" even when messages existed — message history, last message previews and unread counts now load correctly.
+• Web: the message box is pinned to the bottom, stays above the keyboard, and inputs no longer zoom or hide behind the keyboard.
+• Web: new login screen with Pair code / Sign in / Create account tabs — sign up with just your email.
+• Web: find friends by @username or email, send friend requests, accept or decline them — works with the app.
+• Web: desktop notifications, tab-title unread badge and in-app alerts for new messages and friend requests.
+• Chat screen: the AI summarize button is removed from the top bar; call buttons now follow your chat theme with a glossy, animated design.
+• Call skin refresh: 7 new Premium skins (Liquid Glass default, Midnight Pro, Emerald Pro, Sakura Night, Cosmic Violet, Bangla Green, Sunrise Glow), glowing glass controls and a brighter Answer button.
+• Worker update v4.9.0 (API 52)

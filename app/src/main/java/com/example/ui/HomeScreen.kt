@@ -64,6 +64,7 @@ import com.example.call.CallSkinPreferences
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -94,6 +95,8 @@ import android.webkit.WebViewClient
 import com.example.R
 import androidx.compose.ui.graphics.lerp
 import com.example.data.ActivityNotification
+import com.example.ui.SmartMutedChatMenu
+import com.example.ui.AccountSwitchBanner
 import com.example.security.AppLockManager
 import com.example.security.PrivacyPreferences
 import com.example.data.FriendRequest
@@ -244,6 +247,7 @@ fun HomeScreen(
     val mfaGate by viewModel.mfaGate.collectAsState()
     val inAppNotification by viewModel.inAppNotification.collectAsState()
     val activityNotifications by viewModel.activityNotifications.collectAsState()
+    val rememberedAccounts by viewModel.rememberedAccounts.collectAsState()
     val openActivitySignal by viewModel.openActivityCenterSignal.collectAsState()
     val friendRequests by viewModel.friendRequests.collectAsState()
     val sentFriendRequests by viewModel.sentFriendRequestIds.collectAsState()
@@ -353,6 +357,10 @@ fun HomeScreen(
     }
 
     val scaffoldBgColor = Color.Transparent
+    var showDeviceLogin by remember { mutableStateOf(false) }
+    var showChatActionMenu by remember { mutableStateOf(false) }
+    var selectedChatForMenu by remember { mutableStateOf<User?>(null) }
+    var incomingAccountBanner by remember { mutableStateOf<Pair<String,String>?>(null) }
 
     // First-launch guided tour (spotlight + blurred surroundings). Replayable from Settings.
     var coachTourActive by remember { mutableStateOf(false) }
@@ -471,69 +479,122 @@ fun HomeScreen(
                                         .border(2.dp, MaterialTheme.colorScheme.primary.copy(alpha = .65f), CircleShape)
                                 )
                             }
+                            // v4.8.0 Profile Menu — Android only, not Web: opaque + isolated scroll + safe area
                             DropdownMenu(
                                 expanded = showAccountMenu,
-                                onDismissRequest = { showAccountMenu = false }
+                                onDismissRequest = { showAccountMenu = false },
+                                modifier = Modifier
+                                    .width(260.dp)
+                                    .shadow(16.dp, RoundedCornerShape(18.dp))
+                                    .clip(RoundedCornerShape(18.dp))
+                                    .background(MaterialTheme.colorScheme.surface),
+                                containerColor = MaterialTheme.colorScheme.surface,
+                                shadowElevation = 16.dp,
+                                tonalElevation = 8.dp
                             ) {
-                                DropdownMenuItem(
-                                    text = { Text(tr("Convo Chat Premium")) },
-                                    leadingIcon = { Icon(Icons.Default.WorkspacePremium, null, tint = Color(0xFFFFB300)) },
-                                    onClick = { showAccountMenu = false; onPremium() }
-                                )
-                                DropdownMenuItem(
-                                    text = { Text(tr("Search people and media")) },
-                                    leadingIcon = { Icon(Icons.Outlined.Search, null) },
-                                    onClick = { showAccountMenu = false; showGlobalSearch = true }
-                                )
-                                DropdownMenuItem(
-                                    text = { Text(tr("Messages")) },
-                                    leadingIcon = { Icon(Icons.Outlined.ChatBubbleOutline, null) },
-                                    onClick = { showAccountMenu = false; viewModel.setCurrentTab(1) }
-                                )
-                                DropdownMenuItem(
-                                    text = { Text(tr("Groups")) },
-                                    leadingIcon = { Icon(Icons.Outlined.Groups, null) },
-                                    onClick = { showAccountMenu = false; viewModel.setCurrentTab(2) }
-                                )
-                                DropdownMenuItem(
-                                    text = { Text(tr("My profile")) },
-                                    leadingIcon = { Icon(Icons.Outlined.AccountCircle, null) },
-                                    enabled = currentUser != null,
-                                    onClick = { showAccountMenu = false; currentUser?.let { onProfileSelected(it) } }
-                                )
-                                DropdownMenuItem(
-                                    text = { Text(tr("Profile & settings")) },
-                                    leadingIcon = { Icon(Icons.Outlined.Person, null) },
-                                    onClick = {
-                                        showAccountMenu = false
-                                        viewModel.setCurrentTab(4)
+                                Column(
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .heightIn(max = 680.dp)
+                                        .fillMaxHeight(0.85f)
+                                        .verticalScroll(rememberScrollState())
+                                        .padding(horizontal = 12.dp, vertical = 8.dp)
+                                        .windowInsetsPadding(WindowInsets.navigationBars)
+                                        .padding(bottom = 24.dp),
+                                    verticalArrangement = Arrangement.spacedBy(7.dp)
+                                ) {
+                                    // ── Premium banner ──
+                                    Box(
+                                        Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(18.dp))
+                                            .background(Brush.linearGradient(listOf(Color(0xFF241B2E), Color(0xFF3A2B14))))
+                                            .border(1.4.dp, Brush.linearGradient(listOf(Color(0xFFFFD766), Color(0xFFFFB300))), RoundedCornerShape(18.dp))
+                                    ) {
+                                        Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                                            Box(
+                                                Modifier.size(52.dp).clip(CircleShape)
+                                                    .background(Brush.linearGradient(listOf(Color(0xFFFFD766), Color(0xFFF59E0B)))),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Icon(Icons.Default.WorkspacePremium, null, tint = Color(0xFF3A2B00), modifier = Modifier.size(30.dp))
+                                            }
+                                            Spacer(Modifier.width(12.dp))
+                                            Column(Modifier.weight(1f)) {
+                                                Text("Convo Chat Premium", color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 16.sp)
+                                                Text(
+                                                    if (appLanguage == "bn") "আরও ফিচার আনলক করুন" else "Unlock more features",
+                                                    color = Color(0xFFB7A6E8), fontSize = 11.5.sp, fontWeight = FontWeight.Medium
+                                                )
+                                                Spacer(Modifier.height(9.dp))
+                                                Row(
+                                                    Modifier
+                                                        .clip(RoundedCornerShape(50))
+                                                        .background(Brush.linearGradient(listOf(Color(0xFFFFD766), Color(0xFFFFB300))))
+                                                        .clickable { showAccountMenu = false; onPremium() }
+                                                        .padding(horizontal = 16.dp, vertical = 6.dp),
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    Text(
+                                                        if (appLanguage == "bn") "প্রিমিয়াম নিন" else "Go Premium",
+                                                        color = Color(0xFF3A2B00), fontWeight = FontWeight.ExtraBold, fontSize = 12.5.sp
+                                                    )
+                                                    Icon(Icons.Default.KeyboardArrowRight, null, tint = Color(0xFF3A2B00), modifier = Modifier.size(15.dp))
+                                                }
+                                            }
+                                        }
                                     }
-                                )
-                                DropdownMenuItem(
-                                    text = { Text(tr("Discover people")) },
-                                    leadingIcon = { Icon(Icons.Outlined.PersonAdd, null) },
-                                    onClick = { showAccountMenu = false; viewModel.setCurrentTab(5) }
-                                )
-                                if (isAdmin) {
-                                    DropdownMenuItem(
-                                        text = { Text("Admin analytics dashboard") },
-                                        leadingIcon = { Icon(Icons.Outlined.Analytics, null) },
-                                        onClick = { showAccountMenu = false; viewModel.setCurrentTab(7) }
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text("Admin control center") },
-                                        leadingIcon = { Icon(Icons.Outlined.AdminPanelSettings, null) },
-                                        onClick = { showAccountMenu = false; viewModel.setCurrentTab(3) }
-                                    )
+
+                                    // ── Menu rows ──
+                                    AccountMenuRow(Icons.Outlined.Search, listOf(Color(0xFF2E7DFF), Color(0xFF1E5FE0)), tr("Search people and media"), chevron = false) {
+                                        showAccountMenu = false; showGlobalSearch = true
+                                    }
+                                    AccountMenuRow(Icons.Outlined.ChatBubbleOutline, listOf(Color(0xFF5B5BE8), Color(0xFF3D3DD1)), tr("Messages")) {
+                                        showAccountMenu = false; viewModel.setCurrentTab(1)
+                                    }
+                                    AccountMenuRow(Icons.Outlined.Groups, listOf(Color(0xFF7C4DFF), Color(0xFF5E35B1)), tr("Groups")) {
+                                        showAccountMenu = false; viewModel.setCurrentTab(2)
+                                    }
+                                    if (currentUser != null) {
+                                        AccountMenuRow(Icons.Outlined.AccountCircle, listOf(Color(0xFF6A5AE0), Color(0xFF4C3BCF)), tr("My profile")) {
+                                            showAccountMenu = false; currentUser?.let { onProfileSelected(it) }
+                                        }
+                                    }
+                                    AccountMenuRow(Icons.Outlined.Settings, listOf(Color(0xFF4F46E5), Color(0xFF3730A3)), tr("Profile & settings")) {
+                                        showAccountMenu = false; viewModel.setCurrentTab(4)
+                                    }
+                                    AccountMenuRow(Icons.Outlined.Explore, listOf(Color(0xFF1E88E5), Color(0xFF1565C0)), tr("Discover people")) {
+                                        showAccountMenu = false; viewModel.setCurrentTab(5)
+                                    }
+                                    AccountMenuRow(Icons.Outlined.QrCodeScanner, listOf(Color(0xFF7B6BFF), Color(0xFF5AC8FA)), "Device Login  •  Scan QR to log in on PC") {
+                                        showAccountMenu = false; showDeviceLogin = true
+                                    }
+                                    if (isAdmin) {
+                                        AccountMenuRow(Icons.Outlined.Analytics, listOf(Color(0xFF14B8A6), Color(0xFF0E9384)), "Admin analytics dashboard", chevron = false) {
+                                            showAccountMenu = false; viewModel.setCurrentTab(7)
+                                        }
+                                        AccountMenuRow(Icons.Outlined.AdminPanelSettings, listOf(Color(0xFF0EA5A4), Color(0xFF0B8078)), "Admin control center") {
+                                            showAccountMenu = false; viewModel.setCurrentTab(3)
+                                        }
+                                    }
+                                    AccountMenuRow(Icons.Outlined.Logout, listOf(Color(0xFFE11D48), Color(0xFF9F1239)), tr("Sign out"), danger = true) {
+                                        showAccountMenu = false; viewModel.logout { onSignOut() }
+                                    }
+
+                                    // ── Footer ──
+                                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(top = 2.dp)) {
+                                        HorizontalDivider(Modifier.weight(1f), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = .5f))
+                                        Text("💙", fontSize = 12.sp, modifier = Modifier.padding(horizontal = 8.dp))
+                                        HorizontalDivider(Modifier.weight(1f), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = .5f))
+                                    }
+                                    Column(Modifier.fillMaxWidth().padding(bottom = 6.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                                        Text(
+                                            "Convo Chat v" + com.example.BuildConfig.VERSION_NAME,
+                                            fontWeight = FontWeight.SemiBold, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                        Text("Made with ❤️ by Rakib", fontSize = 10.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
                                 }
-                                DropdownMenuItem(
-                                    text = { Text(tr("Sign out"), color = MaterialTheme.colorScheme.error) },
-                                    leadingIcon = { Icon(Icons.Outlined.Logout, null, tint = MaterialTheme.colorScheme.error) },
-                                    onClick = {
-                                        showAccountMenu = false
-                                        viewModel.logout { onSignOut() }
-                                    }
-                                )
                             }
                         }
                     },
@@ -644,6 +705,11 @@ fun HomeScreen(
                 .background(scaffoldBgColor)
                 .padding(innerPadding)
         ) {
+            if (incomingAccountBanner != null) {
+                Box(Modifier.align(Alignment.TopCenter).fillMaxWidth()) {
+                    AccountSwitchBanner(incomingAccountId = incomingAccountBanner!!.first, incomingMessage = incomingAccountBanner!!.second, rememberedAccounts = rememberedAccounts, onSwitch = { uid -> viewModel.loginRememberedAccount(rememberedAccounts.first { it.uid == uid }) { incomingAccountBanner = null } }, onDismiss = { incomingAccountBanner = null })
+                }
+            }
             when (currentTab) {
                 0 -> {
                     val feedState = rememberLazyListState()
@@ -968,13 +1034,31 @@ fun HomeScreen(
                                         isMuted = user.uid in mutedUsers,
                                         onSelect = { onUserSelected(user) },
                                         onLongPress = {
-                                            viewModel.toggleMuteUser(user.uid)
-                                            Toast.makeText(context, if (user.uid in mutedUsers) "${user.name} unmuted" else "${user.name} muted", Toast.LENGTH_SHORT).show()
+                                            selectedChatForMenu = user
+                                            showChatActionMenu = true
                                         }
                                     )
                                 }
                             }
                         }
+                    }
+                    if (showChatActionMenu && selectedChatForMenu != null) {
+                        SmartMutedChatMenu(
+                            chatName = selectedChatForMenu!!.name,
+                            isMuted = selectedChatForMenu!!.uid in mutedUsers,
+                            onMuteToggle = {
+                                viewModel.toggleMuteUser(selectedChatForMenu!!.uid)
+                                Toast.makeText(context, if (selectedChatForMenu!!.uid in mutedUsers) "Unmuted" else "Muted", Toast.LENGTH_SHORT).show()
+                            },
+                            onPin = { ConversationPrefs.setPinned(context, selectedChatForMenu!!.uid, !ConversationPrefs.isPinned(context, selectedChatForMenu!!.uid)) },
+                            onMarkRead = { showChatActionMenu = false },
+                            onClearChat = { showChatActionMenu = false },
+                            onBlock = {
+                                viewModel.blockUser(selectedChatForMenu!!.uid) {}
+                                showChatActionMenu = false
+                            },
+                            onDismiss = { showChatActionMenu = false }
+                        )
                     }
                 }
                 2 -> {
@@ -2446,7 +2530,7 @@ fun HomeScreen(
                                     Text(if (appLanguage == "bn") "ওয়েব কম্প্যানিয়ন" else "Web companion", fontWeight = FontWeight.Bold)
                                 }
                                 Text(
-                                    if (appLanguage == "bn") "আপনার স্পষ্ট অনুমতিতে ৯০ সেকেন্ডের একবার-ব্যবহারযোগ্য কোড তৈরি হবে। ব্রাউজার সেশন ১২ ঘণ্টা থাকে; এই ফোন থেকে সব সেশন বাতিল করা যাবে।" else "Create a one-time 90-second code only when you choose. Browser sessions last 12 hours and can be revoked from this phone.",
+                                    if (appLanguage == "bn") "আপনার স্পষ্ট অনুমতিতে ৯০ সেকেন্ডের একবার-ব্যবহারযোগ্য কোড তৈরি হবে। ব্রাউজার সেশনের কোনো সময়সীমা নেই — এই ফোন থেকে যেকোনো সময় সব সেশন বাতিল করা যাবে।" else "Create a one-time 90-second code only when you choose. Browser sessions have no time limit and can be revoked from this phone at any time.",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -2922,6 +3006,10 @@ fun HomeScreen(
     }
 
     // CREATE GROUP DIALOG (Renders users multi selection nicely)
+    if (showDeviceLogin) {
+        DeviceLoginScreen(onBack = { showDeviceLogin = false }, onAuthenticated = { showDeviceLogin = false })
+    }
+
     if (showCreateGroupDialog) {
         var groupName by remember { mutableStateOf("") }
         var groupPicUrl by remember { mutableStateOf("") }
@@ -5851,4 +5939,46 @@ fun HeartBurstOverlay(trigger: Int, modifier: Modifier = Modifier) {
             shadowElevation = 18f
         }
     )
+}
+
+/** One row of the redesigned account menu: colored icon chip, bold label, optional chevron. */
+@Composable
+private fun AccountMenuRow(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    gradient: List<Color>,
+    label: String,
+    chevron: Boolean = true,
+    danger: Boolean = false,
+    onClick: () -> Unit
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(15.dp))
+            .background(
+                if (danger) Brush.linearGradient(listOf(Color(0xFFE11D48).copy(alpha = .16f), Color(0xFF9F1239).copy(alpha = .16f)))
+                else Brush.linearGradient(listOf(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .50f), MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .32f)))
+            )
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 11.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            Modifier.size(36.dp).clip(RoundedCornerShape(11.dp)).background(Brush.linearGradient(gradient)),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(icon, null, tint = Color.White, modifier = Modifier.size(20.dp))
+        }
+        Spacer(Modifier.width(12.dp))
+        Text(
+            label,
+            modifier = Modifier.weight(1f),
+            fontWeight = FontWeight.SemiBold,
+            fontSize = 14.sp,
+            color = if (danger) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
+        )
+        if (chevron) {
+            Icon(Icons.Default.KeyboardArrowRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(20.dp))
+        }
+    }
 }

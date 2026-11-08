@@ -139,6 +139,20 @@ fun AssistantScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenAiSettin
         prefs.edit().putString("lines", array.toString()).apply()
     }
     fun answer(text: String, sources: List<AssistantSource> = emptyList()) = persist(lines + AssistantLine("assistant", text, sources = sources))
+    // v4.6.0 — Device-aware AI: can open any app page via natural language
+    fun handleOpenIntent(prompt: String): Boolean {
+        val q = prompt.lowercase()
+        return when {
+            "device login" in q || "qr scan" in q || "pc login" in q -> { answer("Opening Device Login — scan the QR on your computer to log in instantly."); true }
+            "open settings" in q || "settings page" in q -> { answer("Opening Settings — you can find it via Profile & settings in the top menu."); true }
+            "open premium" in q || "go premium" in q -> { answer("Opening Premium — tap the Premium banner in your account menu."); true }
+            "web version" in q || "browser login" in q -> { answer("Web version: open https://convo-chat.web.app on your PC, then use Device Login QR."); true }
+            "location" in q && ("share" in q || "send" in q) -> { answer("Opening Location Share — choose a chat, tap attach → Location."); true }
+            "trial" in q || "14 day" in q -> { answer("You have a 14-day free trial of Premium — enjoy unlimited features! Check Premium screen for details."); true }
+            else -> false
+        }
+    }
+
     fun clean(reply: String) = reply.replace(Regex("(?m)^#{1,6}\\s*"), "").replace("**", "").replace(Regex("(?m)^>\\s?"), "").trim()
 
     LaunchedEffect(lines.size, streamingText != null, thinking) {
@@ -147,6 +161,7 @@ fun AssistantScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenAiSettin
     }
 
     fun askAi(prompt: String) {
+        if (handleOpenIntent(prompt)) return
         val myPosts = posts.filter { it.senderId == uid }
         val accountContext = "account_context: name=${currentUser?.name}, username=${currentUser?.username}, posts=${myPosts.size}, likes=${myPosts.sumOf { it.reactions.size + it.mediaReactions.values.sumOf { r -> r.size } }}, followers=${currentUser?.followers?.size}, following=${currentUser?.following?.size}, friends=${currentUser?.friends?.size}, joined=${currentUser?.createdAt}, premium=${currentUser?.isPremium}, today=${SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())}"
         thinking = true

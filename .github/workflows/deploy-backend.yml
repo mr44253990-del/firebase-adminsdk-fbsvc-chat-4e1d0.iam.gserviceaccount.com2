@@ -34,8 +34,10 @@ jobs:
     runs-on: ubuntu-latest
     env:
       CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      CF_ACCOUNT: ${{ vars.CLOUDFLARE_ACCOUNT_ID || '54ff9e3c4c5908b14f410044be85b698' }}
-      WORKER_NAME: ${{ vars.WORKER_NAME || 'solitary-hill-dcdc' }}
+      CF_ACCOUNT: ${{ vars.CLOUDFLARE_ACCOUNT_ID || 'e86734d4b9f828cf4ddc695610c514d0' }}
+      # Must match the app's primary URL: https://convo-chat-companion.mr4425390.workers.dev
+      WORKER_NAME: ${{ vars.WORKER_NAME || 'convo-chat-companion' }}
+      WORKER_SUBDOMAIN: ${{ vars.WORKER_SUBDOMAIN || 'mr4425390' }}
     steps:
       - uses: actions/checkout@v4
       - name: Syntax check
@@ -53,8 +55,32 @@ jobs:
       - name: Verify the live Worker version
         if: env.CF_TOKEN != ''
         run: |
-          sleep 8
-          curl -sS "https://${WORKER_NAME}.mr44253990.workers.dev/" | python3 -c 'import json,sys; d=json.load(sys.stdin); print("apiVersion", d.get("apiVersion"), "serviceAccount", d.get("serviceAccountConfigured")); sys.exit(0 if d.get("apiVersion") else 1)'
+          set -euo pipefail
+          EXPECTED=$(sed -nE 's/^const WORKER_API_VERSION = ([0-9]+);.*/\1/p' cloudflare-worker.js | head -n 1)
+          URL="https://${WORKER_NAME}.${WORKER_SUBDOMAIN}.workers.dev/"
+          echo "Expecting API v${EXPECTED} at ${URL}"
+          python3 - "$URL" "$EXPECTED" <<'PY'
+          import json, sys, time, urllib.request
+          url, expected = sys.argv[1], int(sys.argv[2])
+          headers = {"User-Agent": "ConvoChat-CI/1.0", "Accept": "application/json", "Cache-Control": "no-cache"}
+          last = {}
+          for attempt in range(12):
+              try:
+                  req = urllib.request.Request(url, headers=headers)
+                  with urllib.request.urlopen(req, timeout=20) as r:
+                      last = json.load(r)
+                  api = int(last.get("apiVersion") or 0)
+                  print(f"attempt {attempt+1}: version={last.get('version')} apiVersion={api} "
+                        f"serviceAccount={last.get('serviceAccountConfigured')} colo={last.get('colo')}")
+                  if api >= expected and last.get("serviceAccountConfigured"):
+                      print("Live Worker is up to date and healthy.")
+                      sys.exit(0)
+              except Exception as e:
+                  print(f"attempt {attempt+1}: {e}")
+              time.sleep(5)
+          print("Live Worker did not reach the expected version in time:", json.dumps(last))
+          sys.exit(1)
+          PY
       - name: Skipped
         if: env.CF_TOKEN == ''
         run: echo "::notice::Add the CLOUDFLARE_API_TOKEN repository secret to auto-deploy the Worker."

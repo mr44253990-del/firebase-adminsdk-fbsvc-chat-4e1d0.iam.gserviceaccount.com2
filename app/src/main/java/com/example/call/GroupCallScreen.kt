@@ -47,12 +47,15 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import android.os.VibrationEffect
+import android.os.Vibrator
 import androidx.core.content.ContextCompat
 import com.example.data.Group
 import org.webrtc.SurfaceViewRenderer
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
+// Smart group call UI — 2026-11-07: participant grid + vibration + adaptive layout
 fun GroupCallScreen(
     group: Group,
     video: Boolean,
@@ -103,7 +106,8 @@ fun GroupCallScreen(
             GroupCallEngine.state.value.let { live -> if (live.groupId == group.id && live.status !in listOf("idle", "ended", "failed")) return@LaunchedEffect }
             val startCall: ((Boolean) -> Unit) -> Unit = { ready ->
                 if (joinRoomId.isNullOrBlank()) {
-                    GroupCallEngine.start(
+                    try { (context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator).vibrate(VibrationEffect.createOneShot(120, VibrationEffect.DEFAULT_AMPLITUDE)) } catch(_:Exception){}
+                GroupCallEngine.start(
                         app = context,
                         groupId = group.id,
                         groupName = group.name,

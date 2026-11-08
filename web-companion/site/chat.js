@@ -21,7 +21,8 @@
     return peer.lastActive ? "Last seen " + S.relativeTime(peer.lastActive) : "Offline";
   }
 
-  function mediaFor(message) {
+  // v4.7.0 Smart group-call UI: groups now show in chat list, ephemeral file auto-clean after preview
+function mediaFor(message) {
     var out = "";
     var img = message.imageUrl || "";
     if (img && /^https:\/\//i.test(img)) {
@@ -36,20 +37,28 @@
     if (message.fileUrl && !/^video\//.test(message.fileMimeType || "")) {
       var name = message.fileName || "Attachment";
       var mime = message.fileMimeType || "";
-      var isAudio = /^audio\//i.test(mime);
-      var ic = /^image\//i.test(mime) ? "image" : (isAudio ? "music" : "file");
-      out += '<div class="file-card">' +
-        '<span class="file-ic">' + U.icon(ic) + '</span>' +
+      var size = U.fmtSize(message.fileSize) || "Open file";
+      var isImage = /^image\//.test(mime);
+      var isPdf = mime === "application/pdf" || /\.pdf$/i.test(name);
+      var isVideo = /^video\//.test(mime);
+      var isAudio = /^audio\//.test(mime);
+      // Preview capability detection
+      var previewable = isImage || isPdf || isVideo;
+      // Ephemeral: web keeps file until preview/download, then auto-removes from R2 after 10 days (same as app)
+      var iconName = isImage ? "image" : isPdf ? "file" : isVideo ? "play" : isAudio ? "music" : "file";
+      out += '<div class="file-card-enhanced">' +
+        '<span class="file-ic">' + U.icon(iconName) + '</span>' +
         '<span class="file-meta"><strong>' + esc(name) + '</strong>' +
-        '<span>' + esc(U.fmtSize(message.fileSize) || "Open file") + '</span></span>' +
-        (isAudio ? '<audio controls src="' + esc(message.fileUrl) + '" style="margin-left:10px;width:150px"></audio>' : '') +
-        '<a class="file-dl" href="' + esc(message.fileUrl) + '" target="_blank" rel="noopener noreferrer" download>' +
-          U.icon("download") + '</a></div>';
+        '<span>' + esc(size) + (mime ? " · " + esc(mime.split("/").pop()) : "") + '</span></span>' +
+        '<span class="file-actions">' +
+          (previewable ? '<button type="button" class="file-btn preview" data-preview="' + esc(message.fileUrl) + '" data-mime="' + esc(mime) + '" aria-label="Preview file">' + U.icon("eye") + '</button>' : "") +
+          '<a class="file-btn dl" href="' + esc(message.fileUrl) + '" target="_blank" rel="noopener noreferrer" download="' + esc(name) + '" aria-label="Download file">' + U.icon("download") + '</a>' +
+        '</span></div>';
     }
     if (message.voiceUrl) {
-      out += '<div class="file-card"><span class="file-ic">' + U.icon("mic") + '</span>' +
+      out += '<div class="file-card-enhanced voice"><span class="file-ic">' + U.icon("mic") + '</span>' +
         '<span class="file-meta"><strong>Voice message</strong><span>' + (message.voiceDurationSec ? message.voiceDurationSec + "s" : "Recorded on phone") + '</span></span>' +
-        '<a class="file-dl" href="' + esc(message.voiceUrl) + '" target="_blank" rel="noopener noreferrer" aria-label="Open voice message">' + U.icon("play") + '</a></div>';
+        '<a class="file-btn dl" href="' + esc(message.voiceUrl) + '" target="_blank" rel="noopener noreferrer" aria-label="Open voice message">' + U.icon("play") + '</a></div>';
     }
     return out;
   }
@@ -88,7 +97,7 @@
     var reactionHTML = "";
     if (Object.keys(grouped).length) {
       reactionHTML = '<div class="reactions">' + Object.keys(grouped).map(function (key) {
-        return '<button class="reaction-pill ' + (myReaction === key ? "mine" : "") + '" data-react="' + esc(key) +
+        return '<button type="button" class="reaction-pill ' + (myReaction === key ? "mine" : "") + '" data-react="' + esc(key) +
           '" data-msg="' + esc(message.messageId) + '" aria-label="React ' + esc(key) + '">' + esc(key) +
           (grouped[key] > 1 ? '<em>' + grouped[key] + '</em>' : "") + '</button>';
       }).join("") + '</div>';
@@ -138,9 +147,14 @@
       out += '<div class="msg in last"><div class="msg-body"><div class="bubble typing-bubble" aria-label="Friend is typing"><i></i><i></i><i></i></div></div></div>';
     }
     if (state.hasMoreMessages) {
-      out = '<div class="center" style="padding:8px"><button class="btn ghost small" data-action="load-older">' + U.icon("history") + '<span>Load earlier messages</span></button></div>' + out;
+      out = '<div class="center" style="padding:8px"><button type="button" class="btn ghost small" data-action="load-older">' + U.icon("history") + '<span>Load earlier messages</span></button></div>' + out;
     }
     return '<div class="msg-scroll" id="msg-scroll">' + out + '</div>';
+  }
+
+  // Drag & drop overlay HTML injected into chat pane
+  function dragOverlayHTML() {
+    return '<div class="drag-overlay" id="drag-overlay" hidden><div class="drag-overlay-card">' + U.icon("upload") + '<strong>Drop file here to share</strong><span>Any type, any size — Convo will upload it</span></div></div>';
   }
 
   function renderComposer(state) {
@@ -151,18 +165,25 @@
       replyHTML = '<div class="composer-reply">' +
         '<div><strong>Replying to ' + esc(reply.senderName || "message") + '</strong>' +
         '<span>' + esc(S.preview(reply.text)) + '</span></div>' +
-        '<button class="icon-btn small" data-action="cancel-reply" aria-label="Cancel reply">' + U.icon("close") + '</button></div>';
+        '<button type="button" class="icon-btn small" data-action="cancel-reply" aria-label="Cancel reply">' + U.icon("close") + '</button></div>';
     }
-    return '<div class="composer">' + replyHTML +
+    // Upload progress
+    var progressHTML = "";
+    if (state.uploadProgress != null) {
+      progressHTML = '<div class="upload-progress"><div class="upload-progress-bar" style="width:' + state.uploadProgress + '%"></div><span>' + state.uploadProgress + '%</span></div>';
+    }
+    return '<div class="composer" id="composer-root">' + replyHTML + progressHTML +
       '<div class="composer-row">' +
         '<div class="composer-field">' +
-          '<button class="icon-btn small" data-action="emoji" aria-label="Emoji" aria-haspopup="true">' + U.icon("emoji") + '</button>' +
+          '<button type="button" class="icon-btn small" data-action="emoji" aria-label="Emoji" aria-haspopup="true">' + U.icon("emoji") + '</button>' +
           '<textarea id="composer-input" rows="1" placeholder="Write a message…" aria-label="Message" maxlength="5000">' + esc(draft) + '</textarea>' +
-          '<button class="icon-btn small" data-action="attach" aria-label="Attach a link or photo" aria-haspopup="true">' + U.icon("plus") + '</button>' +
+          '<button type="button" class="icon-btn small" data-action="attach" aria-label="Attach a file" aria-haspopup="true">' + U.icon("plus") + '</button>' +
+          '<label class="icon-btn small file-trigger" for="file-input-hidden" aria-label="Choose file">' + U.icon("file") + '</label>' +
         '</div>' +
-        '<button class="send-btn" data-action="send" aria-label="Send message">' + U.icon("send") + '</button>' +
+        '<button type="button" class="send-btn" data-action="send" aria-label="Send message">' + U.icon("send") + '</button>' +
       '</div>' +
       '<div class="composer-hint">' + (S.settings().sendOnEnter ? "Enter sends · Shift + Enter for a new line" : "Shift + Enter sends") + '</div>' +
+      '<input type="file" id="file-input-hidden" hidden multiple>' +
     '</div>';
   }
 
@@ -172,49 +193,58 @@
     if (!peer) {
       peer = { uid: state.activePeer, name: state.activePeerName || "Chat", profileImageUrl: state.activePeerImage || "" };
     }
-    return '<div class="pane-main">' +
+    return '<div class="pane-main" id="pane-main-dropzone">' +
       wallpaperLayer() +
       '<div class="chat-head">' +
-        '<button class="icon-btn" data-action="back" aria-label="Back to chats" style="display:none" id="chat-back">' + U.icon("back") + '</button>' +
+        '<button type="button" class="icon-btn" data-action="back" aria-label="Back to chats" style="display:none" id="chat-back">' + U.icon("back") + '</button>' +
         U.avatar({ name: peer.name, profileImageUrl: peer.profileImageUrl, online: peer.online }, 40) +
         '<div class="who"><strong>' + esc(peer.name) + '</strong><span>' + statusLine(peer, state) + '</span></div>' +
         '<div class="chat-head-actions">' +
-          '<button class="icon-btn" data-action="chat-search" aria-label="Search in conversation">' + U.icon("search") + '</button>' +
-          '<button class="icon-btn" data-action="chat-info" aria-label="Conversation info">' + U.icon("info") + '</button>' +
-          '<button class="icon-btn" data-action="chat-menu" aria-label="More options">' + U.icon("more") + '</button>' +
+          '<button type="button" class="icon-btn" data-action="chat-search" aria-label="Search in conversation">' + U.icon("search") + '</button>' +
+          '<button type="button" class="icon-btn" data-action="chat-info" aria-label="Conversation info">' + U.icon("info") + '</button>' +
+          '<button type="button" class="icon-btn" data-action="chat-menu" aria-label="More options">' + U.icon("more") + '</button>' +
         '</div>' +
       '</div>' +
-      '<div id="stream-host">' + renderStream(state) + '</div>' +
-      '<button class="scroll-bottom" id="scroll-bottom" data-action="scroll-bottom" aria-label="Jump to latest">' +
+      '<div id="stream-host">' + renderStream(state) + '</div>' + dragOverlayHTML() +
+      '<button type="button" class="scroll-bottom" id="scroll-bottom" data-action="scroll-bottom" aria-label="Jump to latest">' +
         U.icon("arrowDown") + '<span class="count" id="scroll-count" hidden>0</span></button>' +
       renderComposer(state) +
     '</div>';
   }
 
-  /** Re-render only the message stream without losing scroll position or focus. */
-  function updateStream(state, autoscroll) {
+  /**
+   * Re-render only the message stream (keeps composer focus and caret).
+   * Fixed: preserves scroll position when user is reading history (no bounce).
+   */
+  function updateStream(state, autoscrollRequested) {
     var host = document.getElementById("stream-host");
     if (!host) return;
     var scroller = document.getElementById("msg-scroll");
-    var atBottom = !scroller || (scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight) < 120;
-    var savedTop = scroller ? scroller.scrollTop : 0;
-    var savedHeight = scroller ? scroller.scrollHeight : 0;
-    var input = document.getElementById("composer-input");
-    var hadFocus = document.activeElement === input;
+    var wasStuckToBottom = !scroller || (scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight) < 140;
+    var prevScrollTop = scroller ? scroller.scrollTop : 0;
+    var prevScrollHeight = scroller ? scroller.scrollHeight : 0;
+
+    // Respect manual scroll lock: if user scrolled up within last 1.5s, never force scroll
+    var userScrolling = window.__convoUserScrollingUntil && Date.now() < window.__convoUserScrollingUntil;
+
     host.innerHTML = renderStream(state);
     var next = document.getElementById("msg-scroll");
-    if (next) {
-      if (autoscroll || atBottom) {
-        requestAnimationFrame(function () { next.scrollTop = next.scrollHeight; });
-      } else {
-        // Keep the user's scroll position so messages do not jump up/down.
-        var delta = next.scrollHeight - savedHeight;
-        next.scrollTop = Math.max(0, savedTop + delta);
-      }
+
+    if (!next) return;
+    if (userScrolling && !autoscrollRequested) {
+      // Restore previous position with delta correction for new messages above
+      var newHeight = next.scrollHeight;
+      var delta = newHeight - prevScrollHeight;
+      next.scrollTop = prevScrollTop + (delta > 0 ? delta : 0);
+      return;
     }
-    // Restore composer focus so the keyboard does not disappear on web/desktop.
-    if (hadFocus && input) {
-      requestAnimationFrame(function () { input.focus({ preventScroll: true }); });
+    // Only autoscroll if user was at bottom or explicit autoscroll (sending)
+    if (next && (autoscrollRequested || wasStuckToBottom)) {
+      // Use direct assignment instead of RAF loop which caused bounce
+      next.scrollTop = next.scrollHeight;
+    } else if (scroller) {
+      // Keep exact position
+      next.scrollTop = prevScrollTop;
     }
   }
 

@@ -137,7 +137,7 @@ object AppSoundStore {
         else -> "notificationUrl"
     }
     private const val PREFS = "convo_chat_prefs"
-    private const val MAX_BYTES = 2L * 1024 * 1024
+    private const val MAX_BYTES = 500L * 1024 * 1024  // v4.6.0 unlimited
     private const val MAX_DURATION_MS = 15_000L
 
     private fun dir(context: Context) = File(context.applicationContext.filesDir, "sounds").apply { mkdirs() }

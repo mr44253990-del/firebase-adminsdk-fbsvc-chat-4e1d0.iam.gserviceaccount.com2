@@ -12,7 +12,10 @@
 
 // Bump WORKER_API_VERSION whenever routes change; the Android app compares it with
 // the version it expects and tells the admin to redeploy when the Worker is older.
-const WORKER_API_VERSION = 49;
+const WORKER_API_VERSION = 54;
+// Human-readable Worker release tag, reported by the health endpoint and shown in
+// Admin → Server health so the admin can see exactly which build is live.
+const WORKER_RELEASE = "4.9.3";
 
 // Optional extra data forwarded to the device (rich image notifications, group calls, …).
 const PUSH_EXTRA_KEYS = ["imageUrl", "roomId", "groupId", "groupName", "memberIds", "videoCall", "probeId", "chatId", "previewKind"];
@@ -179,7 +182,8 @@ export default {
         }
         const sessionToken = randomHex(32);
         const sessionHash = await sha256Hex(`convo-web-session:${sessionToken}`);
-        const expiresAt = now + WEB_SESSION_HOURS * 60 * 60 * 1000;
+        // 0 = no time limit: the browser stays signed in until it signs out or the phone revokes.
+        const expiresAt = 0;
         const userAgent = String(request.headers.get("User-Agent") || "").slice(0, 160);
         await fsPatch(env, `web_pair_sessions/${sessionHash}`, {
           uid,
@@ -201,6 +205,245 @@ export default {
       }
     }
 
+
+    // Email + password sign-in for the browser (the same accounts as the Android app).
+    // Credentials are checked once against Firebase Auth; the browser only ever receives an
+    // opaque web session token (saved in localStorage — "keep me signed in"), never a
+    // Firebase credential. Sessions have no time limit; they end on sign-out or revoke.
+    if (request.method === "POST" && path === "/web-pair/login") {
+      if (!(await webCompanionOriginMatches(request, env))) return webPairJson(request, env, { error: "Unapproved companion origin" }, 403);
+      const body = await request.json().catch(() => ({}));
+      const email = String(body.email || "").trim().toLowerCase();
+      const password = String(body.password || "");
+      if (!email || !password) return webPairJson(request, env, { error: "Enter your email and password" }, 400);
+      if (password.length < 6) return webPairJson(request, env, { error: "Password is too short" }, 400);
+      try {
+        const now = Date.now();
+        const ip = request.headers.get("CF-Connecting-IP") || "unknown";
+        const rateId = await sha256Hex(`web-login-ip:${ip}`);
+        const ratePath = `web_pair_rate/${rateId}`;
+        const rate = await firestoreGet(env, ratePath).catch(() => null) || {};
+        const windowAt = Number(rate.windowAt || 0);
+        const attempts = windowAt > now - 60_000 ? Number(rate.attempts || 0) : 0;
+        if (attempts >= 5) return webPairJson(request, env, { error: "Too many attempts. Wait one minute and try again." }, 429);
+        await fsPatch(env, ratePath, { windowAt: attempts ? windowAt : now, attempts: attempts + 1, expiresAt: now + 120_000 });
+
+        const apiKey = String(env.FIREBASE_WEB_API_KEY || "").trim();
+        if (!apiKey) return webPairJson(request, env, { error: "Email sign-in is not configured on this server" }, 503);
+        const authRes = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${apiKey}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email, password, returnSecureToken: true })
+        }).catch(error => ({ ok: false, status: 0, json: async () => ({ error: { message: String(error?.message || "network error") } }) }));
+        const authBody = await authRes.json().catch(() => ({}));
+        if (!authRes.ok || !authBody.localId) {
+          const reason = String((authBody.error && authBody.error.message) || "");
+          if (reason.includes("TOO_MANY_ATTEMPTS") || authRes.status === 429) {
+            return webPairJson(request, env, { error: "Too many attempts. Try again a bit later." }, 429);
+          }
+          return webPairJson(request, env, { error: "Email or password is wrong" }, 401);
+        }
+        const uid = String(authBody.localId);
+        const profile = await firestoreGet(env, `users/${uid}`);
+        if (!profile || profile.banned === true || profile.disabled === true) {
+          return webPairJson(request, env, { error: "Account is not eligible for the web companion" }, 403);
+        }
+        const sessionToken = randomHex(32);
+        const sessionHash = await sha256Hex(`convo-web-session:${sessionToken}`);
+        const userAgent = String(request.headers.get("User-Agent") || "").slice(0, 160);
+        await fsPatch(env, `web_pair_sessions/${sessionHash}`, {
+          uid,
+          createdAt: now,
+          expiresAt: 0,
+          revokedAt: 0,
+          lastUsedAt: now,
+          userAgent,
+          via: "email",
+          sessionVersion: Number(profile.webCompanionVersion || 0)
+        });
+        await fsPatch(env, `web_sessions/${uid}/items/${sessionHash}`, {
+          createdAt: now, expiresAt: 0, userAgent, revokedAt: 0
+        }).catch(() => null);
+        return webPairJson(request, env, { success: true, sessionToken, expiresAt: 0 }, 200);
+      } catch (error) {
+        return webPairJson(request, env, { error: "Sign-in could not be completed" }, 500);
+      }
+    }
+
+    // Email-only sign-up for the browser: creates the same account type as the Android
+    // app (Firebase Auth email + password), writes a starter profile and signs the
+    // browser straight in with an unlimited web session.
+    if (request.method === "POST" && path === "/web-pair/signup") {
+      if (!(await webCompanionOriginMatches(request, env))) return webPairJson(request, env, { error: "Unapproved companion origin" }, 403);
+      const body = await request.json().catch(() => ({}));
+      const name = String(body.name || "").trim().slice(0, 60);
+      const email = String(body.email || "").trim().toLowerCase();
+      const password = String(body.password || "");
+      if (!name) return webPairJson(request, env, { error: "Enter your name" }, 400);
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return webPairJson(request, env, { error: "Enter a valid email address" }, 400);
+      if (password.length < 6) return webPairJson(request, env, { error: "Password must be at least 6 characters" }, 400);
+      try {
+        const now = Date.now();
+        const ip = request.headers.get("CF-Connecting-IP") || "unknown";
+        const rateId = await sha256Hex(`web-signup-ip:${ip}`);
+        const ratePath = `web_pair_rate/${rateId}`;
+        const rate = await firestoreGet(env, ratePath).catch(() => null) || {};
+        const windowAt = Number(rate.windowAt || 0);
+        const attempts = windowAt > now - 60_000 ? Number(rate.attempts || 0) : 0;
+        if (attempts >= 5) return webPairJson(request, env, { error: "Too many attempts. Wait one minute and try again." }, 429);
+        await fsPatch(env, ratePath, { windowAt: attempts ? windowAt : now, attempts: attempts + 1, expiresAt: now + 120_000 });
+
+        const apiKey = String(env.FIREBASE_WEB_API_KEY || "").trim();
+        if (!apiKey) return webPairJson(request, env, { error: "Email sign-up is not configured on this server" }, 503);
+        const authRes = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${apiKey}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email, password, returnSecureToken: true })
+        }).catch(error => ({ ok: false, status: 0, json: async () => ({ error: { message: String(error?.message || "network error") } }) }));
+        const authBody = await authRes.json().catch(() => ({}));
+        if (!authRes.ok || !authBody.localId) {
+          const reason = String((authBody.error && authBody.error.message) || "");
+          if (reason.includes("EMAIL_EXISTS")) return webPairJson(request, env, { error: "This email already has an account — sign in instead" }, 409);
+          if (reason.includes("TOO_MANY_ATTEMPTS") || authRes.status === 429) return webPairJson(request, env, { error: "Too many attempts. Try again a bit later." }, 429);
+          return webPairJson(request, env, { error: "Could not create the account" }, 400);
+        }
+        const uid = String(authBody.localId);
+        const username = email.split("@")[0].replace(/[^a-z0-9._-]/gi, "").slice(0, 30) || `user${String(now).slice(-6)}`;
+        const profile = {
+          uid,
+          name,
+          email,
+          username,
+          profileImageUrl: "",
+          status: "Hey there! I am using Convo Chat.",
+          createdAt: now,
+          updatedAt: now,
+          lastSeenAt: now,
+          isOnline: false,
+          banned: false,
+          disabled: false,
+          friends: [],
+          friendRequests: [],
+          blockedUsers: [],
+          webCompanionVersion: 0
+        };
+        await firestoreSet(env, `users/${uid}`, profile);
+        const sessionToken = randomHex(32);
+        const sessionHash = await sha256Hex(`convo-web-session:${sessionToken}`);
+        const userAgent = String(request.headers.get("User-Agent") || "").slice(0, 160);
+        await fsPatch(env, `web_pair_sessions/${sessionHash}`, {
+          uid,
+          createdAt: now,
+          expiresAt: 0,
+          revokedAt: 0,
+          lastUsedAt: now,
+          userAgent,
+          via: "email",
+          sessionVersion: 0
+        });
+        await fsPatch(env, `web_sessions/${uid}/items/${sessionHash}`, {
+          createdAt: now, expiresAt: 0, userAgent, revokedAt: 0
+        }).catch(() => null);
+        return webPairJson(request, env, { success: true, sessionToken, expiresAt: 0, name, email }, 200);
+      } catch (error) {
+        return webPairJson(request, env, { error: "Sign-up could not be completed" }, 500);
+      }
+    }
+
+    // ---- QR Sign-in: secure phone-approval API (v4.8.0) ------------------------------------
+    // No decorative QR is shown; these routes provide real session creation.
+    if (request.method === "POST" && path === "/web-pair/qr/create") {
+      if (!(await webCompanionOriginMatches(request, env))) return webPairJson(request, env, { error: "Unapproved companion origin" }, 403);
+      try {
+        const qrId = randomHex(16);
+        const now = Date.now();
+        const expiresAt = now + 300_000;
+        const origin = (await webCompanionOrigins(env))[0] || "";
+        // Store in Firestore so phone can approve
+        await fsPatch(env, `web_qr_sessions/${qrId}`, {
+          qrId,
+          status: "pending",
+          createdAt: now,
+          expiresAt,
+          origin,
+          scannedBy: "",
+          scannedAt: 0
+        });
+        // QR data is a URL that encodes the qrId for the phone scanner
+        const qrData = `convo-qr://${qrId}`;
+        return webPairJson(request, env, { success: true, qrId, qrData, expiresAt }, 200);
+      } catch (e) {
+        return webPairJson(request, env, { error: "Could not create QR session" }, 500);
+      }
+    }
+
+    if (request.method === "POST" && path === "/web-pair/qr/poll") {
+      if (!(await webCompanionOriginMatches(request, env))) return webPairJson(request, env, { error: "Unapproved companion origin" }, 403);
+      const body = await request.json().catch(() => ({}));
+      const qrId = String(body.qrId || "").trim().slice(0, 64);
+      if (!qrId) return webPairJson(request, env, { error: "Missing qrId" }, 400);
+      try {
+        const doc = await firestoreGet(env, `web_qr_sessions/${qrId}`).catch(() => null);
+        if (!doc) return webPairJson(request, env, { status: "expired", error: "QR expired" }, 410);
+        const now = Date.now();
+        if (Number(doc.expiresAt || 0) <= now && doc.status !== "authenticated") {
+          return webPairJson(request, env, { status: "expired", error: "QR expired" }, 410);
+        }
+        if (doc.status === "authenticated" && doc.sessionToken) {
+          return webPairJson(request, env, { status: "authenticated", sessionToken: doc.sessionToken, expiresAt: doc.expiresAt, uid: doc.uid }, 200);
+        }
+        return webPairJson(request, env, { status: doc.status || "pending" }, 200);
+      } catch (e) {
+        return webPairJson(request, env, { error: "Could not check QR status" }, 500);
+      }
+    }
+
+    if (request.method === "POST" && path === "/web-pair/qr/approve") {
+      const auth = await authenticateCaller(request, env);
+      if (!auth.ok) return auth.response;
+      const body = await request.json().catch(() => ({}));
+      const qrId = String(body.qrId || "").trim().slice(0, 64);
+      if (!qrId) return webPairJson(request, env, { error: "Missing qrId" }, 400);
+      try {
+        const doc = await firestoreGet(env, `web_qr_sessions/${qrId}`).catch(() => null);
+        if (!doc) return webPairJson(request, env, { error: "QR not found or expired" }, 404);
+        const now = Date.now();
+        if (Number(doc.expiresAt || 0) <= now) return webPairJson(request, env, { error: "QR expired" }, 410);
+        const uid = auth.caller.sub;
+        const profile = await firestoreGet(env, `users/${uid}`).catch(() => null);
+        if (!profile || profile.banned === true) return webPairJson(request, env, { error: "Account not eligible" }, 403);
+        // Create a real web session for the phone's account, so web logs in as that user
+        const sessionToken = randomHex(32);
+        const sessionHash = await sha256Hex(`convo-web-session:${sessionToken}`);
+        const userAgent = String(request.headers.get("User-Agent") || "Phone QR").slice(0, 160);
+        await fsPatch(env, `web_pair_sessions/${sessionHash}`, {
+          uid,
+          createdAt: now,
+          expiresAt: 0,
+          revokedAt: 0,
+          lastUsedAt: now,
+          userAgent,
+          via: "qr",
+          sessionVersion: Number(profile.webCompanionVersion || 0)
+        });
+        await fsPatch(env, `web_sessions/${uid}/items/${sessionHash}`, {
+          createdAt: now, expiresAt: 0, userAgent, revokedAt: 0
+        }).catch(() => null);
+        // Mark QR as authenticated with the new session
+        await fsPatch(env, `web_qr_sessions/${qrId}`, {
+          status: "authenticated",
+          authenticatedAt: now,
+          uid,
+          scannedBy: uid,
+          scannedAt: now,
+          sessionToken,
+          expiresAt: 0
+        });
+        return webPairJson(request, env, { success: true, status: "authenticated", sessionToken, expiresAt: 0 }, 200);
+      } catch (e) {
+        return webPairJson(request, env, { error: "Could not approve QR" }, 500);
+      }
+    }
 
     // ---- Web companion v5: full browser client ------------------------------------
     // Every route below is origin-checked, session-authenticated and proxy-only. The browser
@@ -227,7 +470,7 @@ export default {
         return webPairJson(request, env, { success: true, webCompanionVersion: nextVersion }, 200);
       }
 
-      const db = () => webPairDb(env);
+      const db = () => webPairDb(env, meUid);
       const friendIds = [...new Set((Array.isArray(me.friends) ? me.friends : []).map(String).filter(id => id && id !== meUid))];
       const requireFriend = async (peerUid) => {
         if (!peerUid || peerUid === meUid) return { ok: false, response: webPairJson(request, env, { error: "Choose a valid friend" }, 400) };
@@ -247,7 +490,7 @@ export default {
           const [unread, statuses, typing] = await Promise.all([
             webPairDbGet(runtime, `unread_counts/${meUid}`).catch(() => ({})),
             webPairDbGet(runtime, "status").catch(() => ({})),
-            webPairDbGet(runtime, "typing").catch(() => ({}))
+            webPairReadTyping(runtime, meUid, friendIds)
           ]);
           const presence = webPairPresenceMap(statuses);
           const people = (await Promise.all(friendIds.slice(0, WEB_CHAT_LIMIT).map(uid => firestoreGet(env, `users/${uid}`).catch(() => null))))
@@ -279,7 +522,7 @@ export default {
           const [unread, statuses, typing] = await Promise.all([
             webPairDbGet(runtime, `unread_counts/${meUid}`).catch(() => ({})),
             webPairDbGet(runtime, "status").catch(() => ({})),
-            webPairDbGet(runtime, "typing").catch(() => ({}))
+            webPairReadTyping(runtime, meUid, friendIds)
           ]);
           const chats = await webPairBuildChats(env, runtime, meUid, friendIds, webPairPresenceMap(statuses), unread, typing);
           return webPairJson(request, env, { success: true, me: webPairMe(me, meUid), chats }, 200);
@@ -328,11 +571,10 @@ export default {
           const runtime = await db();
           const chatId = webPairChatId(meUid, peerUid);
           if (deleteMessageId) {
-            await fetch(`${runtime.url}/chats/${encodeURIComponent(chatId)}/messages/${encodeURIComponent(deleteMessageId)}.json`,
-              { method: "DELETE", headers: runtime.headers }).catch(() => null);
+            await webPairFetch(runtime, `chats/${encodeURIComponent(chatId)}/messages/${encodeURIComponent(deleteMessageId)}`,
+              { method: "DELETE" }).catch(() => null);
             return webPairJson(request, env, { success: true, deleted: deleteMessageId }, 200);
           }
-          const previous = await webPairDbGet(runtime, `web_pair_send_rate/${meUid}`).catch(() => null) || {};
           const now = Date.now();
           const firestoreRate = await firestoreGet(env, `web_pair_send_rate/${meUid}`).catch(() => null) || {};
           if (text && now - Number(firestoreRate.lastAt || 0) < 250) return webPairJson(request, env, { error: "Please wait before sending another message" }, 429);
@@ -364,14 +606,14 @@ export default {
             message.replyToText = String(body.replyToText || "").slice(0, 400);
             message.replyToSenderName = String(body.replyToSenderName || "").slice(0, 80);
           }
-          const write = await fetch(`${runtime.url}/chats/${encodeURIComponent(chatId)}/messages/${encodeURIComponent(messageId)}.json`,
+          const write = await webPairFetch(runtime, `chats/${encodeURIComponent(chatId)}/messages/${encodeURIComponent(messageId)}`,
             { method: "PUT", headers: runtime.headers, body: JSON.stringify(message) });
           if (!write.ok) return webPairJson(request, env, { error: `Message send failed (${write.status})` }, 502);
-          await Promise.all([meUid, peerUid].map(uid => fetch(`${runtime.url}/chats/${encodeURIComponent(chatId)}/members/${encodeURIComponent(uid)}.json`,
+          await Promise.all([meUid, peerUid].map(uid => webPairFetch(runtime, `chats/${encodeURIComponent(chatId)}/members/${encodeURIComponent(uid)}`,
             { method: "PUT", headers: runtime.headers, body: "true" }).catch(() => null)));
           await webPairBumpUnread(runtime, peerUid, meUid);
           await Promise.all([
-            fetch(`${runtime.url}/typing/${encodeURIComponent(chatId)}/${encodeURIComponent(meUid)}.json`, { method: "DELETE", headers: runtime.headers }).catch(() => null),
+            webPairFetch(runtime, `typing/${encodeURIComponent(chatId)}/${encodeURIComponent(meUid)}`, { method: "DELETE" }).catch(() => null),
             webPairTouchSession(env, session)
           ]);
           if (peer.fcmToken) {
@@ -403,10 +645,10 @@ export default {
         try {
           const runtime = await db();
           const chatId = webPairChatId(meUid, String(body.peerUid));
-          const target = `${runtime.url}/chat_settings/${encodeURIComponent(chatId)}/reactions/${encodeURIComponent(messageId)}/${encodeURIComponent(meUid)}.json`;
-          const response = await fetch(target, reaction
-            ? { method: "PUT", headers: runtime.headers, body: JSON.stringify(reaction) }
-            : { method: "DELETE", headers: runtime.headers });
+          const target = `chat_settings/${encodeURIComponent(chatId)}/reactions/${encodeURIComponent(messageId)}/${encodeURIComponent(meUid)}`;
+          const response = await webPairFetch(runtime, target, reaction
+            ? { method: "PUT", body: JSON.stringify(reaction) }
+            : { method: "DELETE" });
           if (!response.ok) return webPairJson(request, env, { error: `Reaction failed (${response.status})` }, 502);
           return webPairJson(request, env, { success: true, messageId, reaction }, 200);
         } catch (error) {
@@ -425,12 +667,12 @@ export default {
           const chatId = webPairChatId(meUid, peerUid);
           const raw = await webPairDbGet(runtime, `chats/${chatId}/messages?orderBy=${encodeURIComponent('"timestamp"')}&endAt=${upTo}&limitToLast=40`).catch(() => ({}));
           const patches = Object.entries(raw || {}).filter(([, value]) => value && value.senderId === peerUid && value.seenByRecipient !== true);
-          await Promise.all(patches.slice(0, 25).map(([key]) => fetch(
-            `${runtime.url}/chats/${encodeURIComponent(chatId)}/messages/${encodeURIComponent(key)}/seenByRecipient.json`,
+          await Promise.all(patches.slice(0, 25).map(([key]) => webPairFetch(runtime,
+            `chats/${encodeURIComponent(chatId)}/messages/${encodeURIComponent(key)}/seenByRecipient`,
             { method: "PUT", headers: runtime.headers, body: "true" }).catch(() => null)));
-          await fetch(`${runtime.url}/delivery_receipts/${encodeURIComponent(peerUid)}/${encodeURIComponent(chatId)}.json`,
+          await webPairFetch(runtime, `delivery_receipts/${encodeURIComponent(peerUid)}/${encodeURIComponent(chatId)}`,
             { method: "PATCH", headers: runtime.headers, body: JSON.stringify({ seenAt: Date.now(), seenBy: meUid, web: true }) }).catch(() => null);
-          await fetch(`${runtime.url}/unread_counts/${encodeURIComponent(meUid)}/${encodeURIComponent(peerUid)}.json`,
+          await webPairFetch(runtime, `unread_counts/${encodeURIComponent(meUid)}/${encodeURIComponent(peerUid)}`,
             { method: "PUT", headers: runtime.headers, body: "0" }).catch(() => null);
           return webPairJson(request, env, { success: true, marked: patches.length }, 200);
         } catch (error) {
@@ -446,7 +688,7 @@ export default {
         try {
           const runtime = await db();
           const chatId = webPairChatId(meUid, String(body.peerUid));
-          await fetch(`${runtime.url}/typing/${encodeURIComponent(chatId)}/${encodeURIComponent(meUid)}.json`, {
+          await webPairFetch(runtime, `typing/${encodeURIComponent(chatId)}/${encodeURIComponent(meUid)}`, {
             method: "PUT", headers: runtime.headers,
             body: JSON.stringify({ active: true, updatedAt: Date.now(), web: true })
           });
@@ -462,7 +704,7 @@ export default {
           const runtime = await db();
           const [statuses, typing] = await Promise.all([
             webPairDbGet(runtime, "status").catch(() => ({})),
-            webPairDbGet(runtime, "typing").catch(() => ({}))
+            webPairReadTyping(runtime, meUid, friendIds)
           ]);
           const presence = webPairPresenceMap(statuses);
           const people = friendIds.slice(0, WEB_CHAT_LIMIT).map(uid => ({
@@ -486,6 +728,91 @@ export default {
       }
 
       /* ---------------------------------------------------------------- profile */
+      /* ------------------------------------------------ friends (web, v4.9.0) */
+      const publicPerson = (uid, p) => ({
+        uid, name: String(p?.name || "Convo user"), username: String(p?.username || ""),
+        profileImageUrl: String(p?.profileImageUrl || ""), status: String(p?.status || "").slice(0, 140)
+      });
+      if (route === "find") {
+        const q = String(body.query || "").trim().replace(/^@/, "").toLowerCase().slice(0, 120);
+        if (q.length < 3) return webPairJson(request, env, { success: true, people: [] }, 200);
+        try {
+          const field = q.includes("@") ? "email" : "username";
+          let hits = await firestoreQueryEq(env, "users", field, q, 10);
+          if (!hits.length && field === "username") {
+            const original = String(body.query || "").trim().replace(/^@/, "");
+            if (original !== q) hits = await firestoreQueryEq(env, "users", "username", original, 10);
+          }
+          const sent = new Set((await firestoreQueryEq(env, "friend_requests", "senderId", meUid, 100).catch(() => []))
+            .filter(r => (r.data.status || "pending") === "pending").map(r => r.data.receiverId));
+          const people = hits
+            .filter(h => h.id !== meUid && h.data.banned !== true && h.data.disabled !== true)
+            .map(h => ({ ...publicPerson(h.id, h.data), friend: friendIds.includes(h.id), requested: sent.has(h.id) }));
+          return webPairJson(request, env, { success: true, people }, 200);
+        } catch (error) {
+          return webPairJson(request, env, { error: "Search failed — try again" }, 502);
+        }
+      }
+      if (route === "friend-requests") {
+        try {
+          const incoming = (await firestoreQueryEq(env, "friend_requests", "receiverId", meUid, 100))
+            .filter(r => (r.data.status || "pending") === "pending")
+            .map(r => ({ id: r.id, uid: String(r.data.senderId || ""), name: String(r.data.senderName || "User"),
+              profileImageUrl: String(r.data.senderImageUrl || ""), timestamp: Number(r.data.timestamp || 0) }))
+            .sort((a, b) => b.timestamp - a.timestamp);
+          return webPairJson(request, env, { success: true, incoming }, 200);
+        } catch (error) {
+          return webPairJson(request, env, { error: "Could not load friend requests" }, 502);
+        }
+      }
+      if (route === "friend-request") {
+        const targetUid = String(body.targetUid || "").slice(0, 128);
+        if (!targetUid || targetUid === meUid) return webPairJson(request, env, { error: "Choose someone else" }, 400);
+        if (friendIds.includes(targetUid)) return webPairJson(request, env, { error: "You are already friends" }, 409);
+        try {
+          const target = await firestoreGet(env, `users/${targetUid}`);
+          if (!target || target.banned === true || target.disabled === true) return webPairJson(request, env, { error: "This account is not available" }, 404);
+          if (Array.isArray(target.blockedUsers) && target.blockedUsers.includes(meUid)) return webPairJson(request, env, { error: "This account is not available" }, 404);
+          const now = Date.now();
+          const reverse = await firestoreGet(env, `friend_requests/${targetUid}_${meUid}`).catch(() => null);
+          if (reverse && (reverse.status || "pending") === "pending") {
+            await webPairBefriend(env, meUid, targetUid, `${targetUid}_${meUid}`);
+            await webPairActivity(env, targetUid, meUid, me, "friend_accepted", meUid, "accepted your friend request");
+            return webPairJson(request, env, { success: true, friend: true }, 200);
+          }
+          const requestId = `${meUid}_${targetUid}`;
+          await firestoreSet(env, `friend_requests/${requestId}`, {
+            id: requestId, senderId: meUid, receiverId: targetUid, senderName: String(me.name || "Convo user"),
+            senderImageUrl: String(me.profileImageUrl || ""), status: "pending", timestamp: now
+          });
+          await webPairActivity(env, targetUid, meUid, me, "friend_request", requestId, "sent you a friend request");
+          if (target.fcmToken) await webPairPushData(env, String(target.fcmToken), {
+            title: "Convo Chat", body: `${String(me.name || "Someone")} sent you a friend request`, senderId: meUid,
+            senderName: String(me.name || ""), notificationType: "friend_request", targetId: requestId, sentAt: String(now)
+          }).catch(() => null);
+          return webPairJson(request, env, { success: true, requested: true }, 200);
+        } catch (error) {
+          return webPairJson(request, env, { error: "Could not send the request" }, 502);
+        }
+      }
+      if (route === "friend-respond") {
+        const requestId = String(body.requestId || "").slice(0, 300);
+        const accept = body.accept === true;
+        try {
+          const req = await firestoreGet(env, `friend_requests/${requestId}`);
+          if (!req || String(req.receiverId) !== meUid) return webPairJson(request, env, { error: "Request not found" }, 404);
+          if (accept) {
+            await webPairBefriend(env, meUid, String(req.senderId), requestId);
+            await webPairActivity(env, String(req.senderId), meUid, me, "friend_accepted", meUid, "accepted your friend request");
+          } else {
+            await firestoreDelete(env, `friend_requests/${requestId}`);
+          }
+          return webPairJson(request, env, { success: true, accepted: accept }, 200);
+        } catch (error) {
+          return webPairJson(request, env, { error: "Could not update the request" }, 502);
+        }
+      }
+
       if (route === "profile") {
         return webPairJson(request, env, { success: true, me: webPairMe(me, meUid) }, 200);
       }
@@ -566,6 +893,32 @@ export default {
       }
 
       /* ---------------------------------------------------------------- devices */
+      if (route === "home/posts") {
+        try {
+          const raw = await firestoreListWithIds(env, "posts").catch(() => []);
+          const posts = raw.map(r => ({ ...(r.data||{}), __id: r.id }));
+          // Sort by createdAt desc, limit 30, filter not banned
+          const sorted = posts.filter(p => p && !p.isDeleted && p.banned !== true).sort((a,b)=>Number(b.createdAt||b.timestamp||0)-Number(a.createdAt||a.timestamp||0)).slice(0,30);
+          // Enrich with author profile
+          const enriched = await Promise.all(sorted.map(async p => {
+            const author = p.uid ? await firestoreGet(env, `users/${p.uid}`).catch(()=>null) : null;
+            return {
+              id: p.__id || p.id || "",
+              text: p.text || p.caption || "",
+              imageUrl: p.imageUrl || (Array.isArray(p.imageUrls)?p.imageUrls[0]:"") || "",
+              videoUrl: p.videoUrl || "",
+              createdAt: Number(p.createdAt||p.timestamp||0),
+              likes: Number(p.likes||p.likeCount||0),
+              comments: Number(p.comments||p.commentCount||0),
+              author: author ? { uid: author.__uid||p.uid, name: author.name||"Convo user", username: author.username||"", profileImageUrl: author.profileImageUrl||"" } : { uid: p.uid||"", name: p.senderName||"Convo user", username: "", profileImageUrl: "" }
+            };
+          }));
+          return webPairJson(request, env, { success: true, posts: enriched }, 200);
+        } catch (error) {
+          return webPairJson(request, env, { error: "Could not load home feed" }, 502);
+        }
+      }
+
       if (route === "devices") {
         try {
           return webPairJson(request, env, { success: true, devices: await webPairDevices(env, meUid), browser: {
@@ -600,6 +953,26 @@ export default {
       }
 
       return webPairJson(request, env, { error: "Unknown companion route" }, 404);
+    }
+
+    /* Public media delivery. Object keys are unguessable (uid + timestamp + UUID), so GET
+       /media/f/<key> streams them straight from R2 — chat images, reels, avatars and app
+       updates load in browsers and the web companion without auth headers. */
+    if (request.method === "GET" && path.startsWith("/media/f/")) {
+      let key = path.slice("/media/f/".length);
+      try { key = decodeURIComponent(key); } catch (error) { return new Response("Not found", { status: 404 }); }
+      const allowedPrefixes = ["posts/", "reels/", "thumbnails/", "updates/", "avatars/", "web_site/"];
+      if (!key || key.includes("..") || !allowedPrefixes.some(prefix => key.startsWith(prefix))) {
+        return new Response("Not found", { status: 404 });
+      }
+      if (!env.MEDIA_BUCKET || typeof env.MEDIA_BUCKET.get !== "function") return new Response("Media storage is not configured", { status: 503 });
+      const object = await env.MEDIA_BUCKET.get(key);
+      if (!object) return new Response("Not found", { status: 404 });
+      const headers = new Headers();
+      headers.set("Content-Type", (object.httpMetadata && object.httpMetadata.contentType) || "application/octet-stream");
+      headers.set("Cache-Control", (object.httpMetadata && object.httpMetadata.cacheControl) || "public, max-age=3600");
+      headers.set("Access-Control-Allow-Origin", "*");
+      return new Response(object.body, { headers });
     }
 
     if ((request.method === "POST" || request.method === "PUT") && path === "/media/upload") {
@@ -843,13 +1216,19 @@ export default {
         projectId = account.project_id || null;
         serviceAccountConfigured = Boolean(account.private_key && account.client_email && projectId);
       } catch (_) {}
+      const cf = request.cf || {};
+      const mailProviders = envMailProviders(env);
       return new Response(JSON.stringify({
         ok: serviceAccountConfigured,
         service: "Convo Chat Direct FCM Gateway",
-        version: "4.6.0",
+        version: WORKER_RELEASE,
         apiVersion: WORKER_API_VERSION,
         routes: WORKER_ROUTES,
-        emailConfigured: true,
+        emailConfigured: mailProviders.length > 0,
+        emailProviders: mailProviders.map(p => p.type),
+        searchConfigured: Boolean(env.TAVILY_API_KEY || env.BRAVE_SEARCH_API_KEY || env.SERPER_API_KEY),
+        webCompanionConfigured: Boolean(env.WEB_COMPANION_ORIGIN),
+        appDownloadConfigured: Boolean(env.APP_DOWNLOAD_URL),
         projectId,
         serviceAccountConfigured,
         turnConfigured: Boolean(env.TURN_TOKEN_ID && env.TURN_API_TOKEN),
@@ -859,6 +1238,8 @@ export default {
         r2Configured: Boolean(env.MEDIA_BUCKET && typeof env.MEDIA_BUCKET.put === "function" && typeof env.MEDIA_BUCKET.list === "function" && env.R2_PUBLIC_BASE_URL),
         mediaRetentionDays: 10,
         authenticatedCallsRequired: true,
+        colo: String(cf.colo || ""),
+        country: String(cf.country || ""),
         timestamp: Date.now()
       }), {
         status: serviceAccountConfigured ? 200 : 503,
@@ -1191,8 +1572,8 @@ export default {
         // Deploy: { accountId, apiToken, projectName, productionUrl? , force? }
         if (path === "/admin/web-deploy/deploy" || path === "/admin/web-deploy/test") {
           const stored = await loadStored();
-          const accountId = String(payload.accountId || stored.accountId || "").trim();
-          const apiToken = String(payload.apiToken || stored.apiToken || "").trim();
+          const accountId = String(payload.accountId || stored.accountId || env.CLOUDFLARE_ACCOUNT_ID || "").trim();
+          const apiToken = String(payload.apiToken || stored.apiToken || env.CLOUDFLARE_API_TOKEN || "").trim();
           if (!/^[a-f0-9]{20,40}$/i.test(accountId)) return jsonResponse({ error: "Cloudflare Account ID looks wrong (it is a 32-character hex id)" }, 400);
           if (apiToken.length < 20) return jsonResponse({ error: "A Cloudflare API token with “Cloudflare Pages: Edit” is required" }, 400);
           const projectName = String(payload.projectName || stored.projectName || "convo-chat-web").toLowerCase()
@@ -1202,11 +1583,16 @@ export default {
             headers: { Authorization: `Bearer ${apiToken}`, "Content-Type": "application/json", ...(init.headers || {}) }
           }).catch(error => ({ ok: false, status: 0, json: async () => ({ errors: [{ message: String(error?.message || "network error") }] }) }));
 
-          // 1 · Verify the token and account.
+          // 1 · Verify the token and account. Newer account-scoped tokens (cfat_…) are
+          // rejected by /user/tokens/verify with "Invalid API Token" even though they work
+          // perfectly on account APIs — so the account endpoint is the authoritative check.
           const verify = await api("/user/tokens/verify");
           const verifyBody = await verify.json().catch(() => ({}));
-          if (!verify.ok || verifyBody.success === false) {
-            return jsonResponse({ error: "Cloudflare rejected the API token", detail: (verifyBody.errors || [])[0]?.message || `HTTP ${verify.status}` }, 403);
+          const accountProbe = await api(`/accounts/${accountId}`);
+          const accountBody = await accountProbe.json().catch(() => ({}));
+          const tokenWorks = (verify.ok && verifyBody.success !== false) || (accountProbe.ok && accountBody.success !== false);
+          if (!tokenWorks) {
+            return jsonResponse({ error: "Cloudflare rejected the API token", detail: (verifyBody.errors || accountBody.errors || [])[0]?.message || `HTTP ${verify.status}` }, 403);
           }
           if (path === "/admin/web-deploy/test") {
             const accounts = await api("/accounts").then(r => r.json()).catch(() => ({}));
@@ -1812,27 +2198,117 @@ function mimeExtension(contentType) {
 }
 
 const WEB_CHAT_LIMIT = 300;
-const WEB_SESSION_HOURS = 12;
+// Web sessions have no time limit (expiresAt === 0); they end only on sign-out/revoke.
 
 /** RTDB REST access for the web companion. Credentials never leave the Worker. */
-async function webPairDb(env) {
+async function webPairDb(env, uid) {
   const dbUrl = String(env.FIREBASE_DATABASE_URL || "").trim().replace(/\/+$/, "");
   if (!/^https:\/\/[a-z0-9-]+(\.[a-z0-9-]+)*\.(firebaseio\.com|firebasedatabase\.app)$/i.test(dbUrl)) {
     throw new Error("Realtime Database is not configured");
   }
   const account = JSON.parse(env.FIREBASE_SERVICE_ACCOUNT || "{}");
-  const token = await getGoogleAccessToken(account.client_email, account.private_key,
-    "https://www.googleapis.com/auth/firebase.database https://www.googleapis.com/auth/userinfo.email");
   return {
     url: dbUrl,
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }
+    uid: String(uid || ""),
+    env,
+    account,
+    creds: null,
+    // kept for any legacy call site; webPairFetch always sets real auth itself
+    headers: { "Content-Type": "application/json" }
   };
 }
 
+/** Which RTDB credential last worked ("oauth" = service account, "id" = user ID token). */
+let __rtdbPreferred = "";
+
+async function webPairCreds(runtime) {
+  if (runtime.creds) return runtime.creds;
+  const list = [];
+  const oauth = async () => {
+    try {
+      const token = await getGoogleAccessToken(runtime.account.client_email, runtime.account.private_key,
+        "https://www.googleapis.com/auth/firebase.database https://www.googleapis.com/auth/userinfo.email");
+      return token ? { kind: "oauth", token } : null;
+    } catch (_) { return null; }
+  };
+  const id = async () => {
+    if (!runtime.uid) return null;
+    try { return { kind: "id", token: await mintUserIdToken(runtime.env, runtime.uid, runtime.account) }; }
+    catch (_) { return null; }
+  };
+  const order = __rtdbPreferred === "id" ? [id, oauth] : [oauth, id];
+  for (const get of order) { const c = await get(); if (c) list.push(c); }
+  runtime.creds = list;
+  return list;
+}
+
+/** Build a correct RTDB REST URL: `<db>/<path>.json?<query>&<auth>`. */
+function webPairDbUrl(runtime, subPath, cred) {
+  const raw = String(subPath || "").replace(/^\/+/, "");
+  const qIndex = raw.indexOf("?");
+  const path = (qIndex >= 0 ? raw.slice(0, qIndex) : raw).replace(/\.json$/, "");
+  const params = [];
+  if (qIndex >= 0 && raw.slice(qIndex + 1)) params.push(raw.slice(qIndex + 1));
+  if (cred && cred.kind === "oauth") params.push(`access_token=${encodeURIComponent(cred.token)}`);
+  if (cred && cred.kind === "id") params.push(`auth=${encodeURIComponent(cred.token)}`);
+  return `${runtime.url}/${path}.json${params.length ? "?" + params.join("&") : ""}`;
+}
+
+/** RTDB REST call with automatic credential fallback on 401/403. */
+async function webPairFetch(runtime, subPath, init = {}) {
+  const creds = await webPairCreds(runtime);
+  let last = null;
+  for (const cred of (creds.length ? creds : [null])) {
+    const headers = { "Content-Type": "application/json" };
+    const response = await fetch(webPairDbUrl(runtime, subPath, cred), { ...init, headers });
+    if (response.status !== 401 && response.status !== 403) {
+      if (cred && response.ok) __rtdbPreferred = cred.kind;
+      return response;
+    }
+    last = response;
+  }
+  return last;
+}
+
+/** Per-uid Firebase ID token cache (custom-token exchange), valid ~1h. */
+const __idTokenCache = new Map();
+async function mintUserIdToken(env, uid, account) {
+  const key = String(uid || "");
+  const cached = __idTokenCache.get(key);
+  if (cached && cached.exp > Date.now() + 60_000) return cached.token;
+  const apiKey = String(env.FIREBASE_WEB_API_KEY || "").trim();
+  if (!apiKey || !account.client_email || !account.private_key) throw new Error("sign-in config missing");
+  const now = Math.floor(Date.now() / 1000);
+  const b64u = (obj) => {
+    const s = JSON.stringify(obj);
+    return btoa(unescape(encodeURIComponent(s))).replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
+  };
+  const header = { alg: "RS256", typ: "JWT" };
+  const claim = {
+    iss: account.client_email,
+    sub: account.client_email,
+    aud: "https://identitytoolkit.googleapis.com/google.identity.identitytoolkit.v1.IdentityToolkit",
+    iat: now,
+    exp: now + 3600,
+    uid: key
+  };
+  const unsigned = `${b64u(header)}.${b64u(claim)}`;
+  const signature = await signRS256(unsigned, account.private_key);
+  const customToken = `${unsigned}.${signature}`;
+  const res = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=${apiKey}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token: customToken, returnSecureToken: true })
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok || !body.idToken) throw new Error(`custom token exchange failed (${res.status})`);
+  __idTokenCache.set(key, { token: body.idToken, exp: Date.now() + 55 * 60_000 });
+  return body.idToken;
+}
+
 async function webPairDbGet(runtime, subPath, shallow = false) {
-  const separator = subPath.includes("?") ? "&" : "?";
-  const url = `${runtime.url}/${subPath}${separator}${shallow ? "shallow=true&" : ""}print=silent`;
-  const response = await fetch(url, { headers: runtime.headers });
+  const sep = String(subPath).includes("?") ? "&" : "?";
+  const response = await webPairFetch(runtime, shallow ? `${subPath}${sep}shallow=true` : subPath);
   if (!response.ok) throw new Error(`RTDB read ${response.status}`);
   return await response.json().catch(() => null);
 }
@@ -2003,12 +2479,72 @@ async function webPairSettings(env, uid) {
   };
 }
 
+/** Typing map keyed by chatId. Root read needs admin; per-chat reads work as the user. */
+async function webPairReadTyping(runtime, meUid, friendIds) {
+  try { const all = await webPairDbGet(runtime, "typing"); if (all && typeof all === "object") return all; } catch (_) {}
+  const out = {};
+  await Promise.all((friendIds || []).slice(0, 40).map(async uid => {
+    const chatId = webPairChatId(meUid, uid);
+    const value = await webPairDbGet(runtime, `typing/${chatId}`).catch(() => null);
+    if (value && typeof value === "object") out[chatId] = value;
+  }));
+  return out;
+}
+
+/** Firestore structured query: documents in `collection` where field == value. */
+async function firestoreQueryEq(env, collection, field, value, limit = 20) {
+  const { a, t } = await fsAuth(env);
+  const r = await fetch(`https://firestore.googleapis.com/v1/projects/${a.project_id}/databases/(default)/documents:runQuery`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${t}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ structuredQuery: {
+      from: [{ collectionId: collection }],
+      where: { fieldFilter: { field: { fieldPath: field }, op: "EQUAL", value: toFV(value) } },
+      limit
+    } })
+  });
+  if (!r.ok) throw Error(`Firestore query ${r.status}`);
+  const rows = await r.json();
+  return (Array.isArray(rows) ? rows : []).filter(x => x.document).map(x => ({
+    id: String(x.document.name || "").split("/").pop(),
+    data: Object.fromEntries(Object.entries(x.document.fields || {}).map(([k, v]) => [k, fromFV(v)]))
+  }));
+}
+
+async function webPairBefriend(env, aUid, bUid, requestId) {
+  const [a, b] = await Promise.all([firestoreGet(env, `users/${aUid}`), firestoreGet(env, `users/${bUid}`)]);
+  const add = (list, uid) => Array.from(new Set([...(Array.isArray(list) ? list : []), uid]));
+  await Promise.all([
+    fsPatch(env, `users/${aUid}`, { friends: add(a?.friends, bUid) }),
+    fsPatch(env, `users/${bUid}`, { friends: add(b?.friends, aUid) })
+  ]);
+  if (requestId) await firestoreDelete(env, `friend_requests/${requestId}`).catch(() => null);
+}
+
+async function webPairActivity(env, ownerId, actorId, actor, type, targetId, text) {
+  if (!ownerId || ownerId === actorId) return;
+  const id = crypto.randomUUID().replace(/-/g, "").slice(0, 20);
+  await firestoreSet(env, `users/${ownerId}/notifications/${id}`, {
+    id, ownerId, actorId, actorName: String(actor?.name || "Convo user"), actorImageUrl: String(actor?.profileImageUrl || ""),
+    type, targetId, text, timestamp: Date.now(), read: false, isRead: false
+  }).catch(() => null);
+}
+
+async function webPairPushData(env, token, data) {
+  const account = JSON.parse(env.FIREBASE_SERVICE_ACCOUNT || "{}");
+  const accessToken = await getGoogleAccessToken(account.client_email, account.private_key);
+  return fetch(`https://fcm.googleapis.com/v1/projects/${account.project_id}/messages:send`, {
+    method: "POST", headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ message: { token, data, android: { priority: "high" } } })
+  });
+}
+
 async function webPairBumpUnread(runtime, recipientUid, senderUid) {
   try {
-    const url = `${runtime.url}/unread_counts/${encodeURIComponent(recipientUid)}/${encodeURIComponent(senderUid)}.json`;
-    const read = await fetch(url, { headers: runtime.headers });
+    const path = `unread_counts/${encodeURIComponent(recipientUid)}/${encodeURIComponent(senderUid)}`;
+    const read = await webPairFetch(runtime, path);
     const current = read.ok ? Number(await read.json().catch(() => 0)) || 0 : 0;
-    await fetch(url, { method: "PUT", headers: runtime.headers, body: JSON.stringify(current + 1) });
+    await webPairFetch(runtime, path, { method: "PUT", body: JSON.stringify(current + 1) });
   } catch (_) {}
 }
 
@@ -2083,7 +2619,13 @@ async function webCompanionOriginMatches(request, env) {
   const origin = request.headers.get("Origin") || "";
   if (!origin) return false;
   const allowed = await webCompanionOrigins(env);
-  return allowed.includes(origin);
+  if (allowed.includes(origin)) return true;
+  // Allow preview deployments of the same Pages project (e.g. https://abc123.convo-chat-companion.pages.dev)
+  try {
+    const url = new URL(origin);
+    if (url.hostname.endsWith(".convo-chat-companion.pages.dev") || url.hostname === "convo-chat-companion.pages.dev") return true;
+  } catch (_) {}
+  return false;
 }
 function webPairJson(request, env, value, status = 200) {
   const origin = request.headers.get("Origin") || "";
@@ -2136,7 +2678,8 @@ async function authenticateWebCompanionSession(request, env) {
   const sessionHash = await sha256Hex(`convo-web-session:${token}`);
   const session = await firestoreGet(env, `web_pair_sessions/${sessionHash}`).catch(() => null);
   const now = Date.now();
-  if (!session || Number(session.expiresAt || 0) <= now || Number(session.revokedAt || 0) > 0) return { ok: false, error: "Companion session expired or revoked" };
+  // expiresAt === 0 means "no time limit" (signed in until sign-out/revoke).
+  if (!session || (Number(session.expiresAt || 0) > 0 && Number(session.expiresAt || 0) <= now) || Number(session.revokedAt || 0) > 0) return { ok: false, error: "Companion session expired or revoked" };
   const uid = String(session.uid || "");
   const profile = uid ? await firestoreGet(env, `users/${uid}`).catch(() => null) : null;
   if (!profile || profile.banned === true || Number(profile.webCompanionVersion || 0) !== Number(session.sessionVersion || 0)) return { ok: false, error: "Companion access was revoked" };

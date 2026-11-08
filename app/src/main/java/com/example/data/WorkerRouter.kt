@@ -141,6 +141,27 @@ object WorkerRouter {
     /** Which node (or null = primary) currently owns [service], ignoring health. */
     fun owner(service: String): WorkerNode? = _nodes.value.firstOrNull { it.enabled && it.valid && service in it.services }
 
+    /** The one canonical primary Worker URL used across the app. */
+    val CANONICAL_PRIMARY: String get() = WorkerHealth.DEFAULT_PRIMARY
+
+    /** True for retired primary URLs that must never stay primary (old script name or typo'd subdomain). */
+    fun isRetired(url: String): Boolean {
+        val host = url.trim().lowercase().removePrefix("https://").removePrefix("http://").substringBefore('/')
+        return host.contains("solitary-hill-dcdc") || host.endsWith(".mr44253990.workers.dev") || host == "mr44253990.workers.dev"
+    }
+
+    /** Normalizes a stored primary URL: blank / invalid / retired -> the canonical new primary. */
+    fun normalizePrimary(url: String?): String {
+        val u = url?.trim()?.trimEnd('/').orEmpty()
+        return if (u.isBlank() || isRetired(u) || !u.startsWith("https://", ignoreCase = true) || u.contains("n8n", ignoreCase = true)) CANONICAL_PRIMARY else u
+    }
+
+    /** Drops retired workers and any node duplicating the primary, so only distinct extra workers remain. */
+    fun cleanPool(nodes: List<WorkerNode>, primary: String): List<WorkerNode> {
+        val p = primary.trim().trimEnd('/')
+        return nodes.filter { it.url.isNotBlank() && !isRetired(it.url) && it.url.trim().trimEnd('/') != p }
+    }
+
     fun isPrimary(url: String): Boolean = url.trim().trimEnd('/') == _primary.value
 
     fun markFailed(url: String, limitReached: Boolean = false) {

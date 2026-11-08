@@ -8,6 +8,7 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -23,6 +24,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -164,22 +166,39 @@ fun CallReactionBar(accent: Color, onPick: (String) -> Unit, modifier: Modifier 
 /** Frosted circular control used in the call dock. */
 @Composable
 fun GlassCallButton(icon: ImageVector, label: String, active: Boolean = false, danger: Boolean = false, accent: Color = Color.White, size: Int = 50, onClick: () -> Unit) {
+    // v4.5.0 skin: frosted glass with accent glow, springy press, active = accent fill.
+    val interaction = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val scale by androidx.compose.animation.core.animateFloatAsState(
+        if (pressed) .88f else 1f,
+        androidx.compose.animation.core.spring(dampingRatio = .5f, stiffness = 650f),
+        label = "glass_call_scale"
+    )
     val background = when {
-        danger -> Brush.linearGradient(listOf(Color(0xFFFF5F6D), Color(0xFFE53935)))
-        active -> Brush.linearGradient(listOf(Color.White, Color.White.copy(alpha = .86f)))
-        else -> Brush.linearGradient(listOf(Color.White.copy(alpha = .22f), accent.copy(alpha = .16f)))
+        danger -> Brush.linearGradient(listOf(Color(0xFFFF6B6B), Color(0xFFE5283A)))
+        active -> Brush.linearGradient(listOf(accent, accent.copy(alpha = .72f)))
+        else -> Brush.linearGradient(listOf(Color.White.copy(alpha = .20f), accent.copy(alpha = .12f)))
     }
+    val glow = when { danger -> Color(0xFFFF4D5E); active -> accent; else -> Color.Transparent }
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Box(
-            Modifier.size(size.dp).clip(CircleShape).background(background)
-                .border(1.dp, Color.White.copy(alpha = if (danger) .0f else .30f), CircleShape)
-                .clickable(onClick = onClick),
+            Modifier.size(size.dp)
+                .graphicsLayer { scaleX = scale; scaleY = scale }
+                .shadow(if (danger || active) 14.dp else 0.dp, CircleShape, ambientColor = glow, spotColor = glow)
+                .clip(CircleShape).background(background)
+                .border(
+                    1.dp,
+                    Brush.verticalGradient(listOf(Color.White.copy(alpha = if (danger) .35f else .55f), Color.White.copy(alpha = .06f))),
+                    CircleShape
+                )
+                .clickable(interactionSource = interaction, indication = null, onClick = onClick),
             contentAlignment = Alignment.Center
         ) {
-            Icon(icon, label, tint = if (active && !danger) Color(0xFF111827) else Color.White, modifier = Modifier.size((size * .45f).dp))
+            Box(Modifier.matchParentSize().background(Brush.verticalGradient(listOf(Color.White.copy(alpha = .20f), Color.Transparent), endY = size * 1.4f)))
+            Icon(icon, label, tint = if (active && !danger) Color(0xFF0B1020) else Color.White, modifier = Modifier.size((size * .44f).dp))
         }
         Spacer(Modifier.height(6.dp))
-        Text(label, color = Color.White.copy(alpha = .9f), style = MaterialTheme.typography.labelSmall, maxLines = 1)
+        Text(label, color = Color.White.copy(alpha = .88f), style = MaterialTheme.typography.labelSmall, maxLines = 1)
     }
 }
 
@@ -197,5 +216,8 @@ fun CallAuroraBackground(accent: Color, modifier: Modifier = Modifier) {
         blob(w * (.25f + .18f * kotlin.math.cos(angle)), h * (.22f + .08f * kotlin.math.sin(angle)), w * .75f, accent.copy(alpha = .32f))
         blob(w * (.78f + .14f * kotlin.math.sin(angle * 1.3f)), h * (.55f + .1f * kotlin.math.cos(angle)), w * .65f, Color(0xFFFF6AD5).copy(alpha = .18f))
         blob(w * (.4f + .2f * kotlin.math.sin(angle * .7f)), h * (.88f + .05f * kotlin.math.cos(angle * 1.6f)), w * .7f, Color(0xFF4DD0FF).copy(alpha = .2f))
+        blob(w * (.6f + .22f * kotlin.math.cos(angle * .5f)), h * (.36f + .12f * kotlin.math.sin(angle * 1.1f)), w * .5f, accent.copy(alpha = .16f))
+        // soft vignette keeps controls readable on every skin
+        drawRect(Brush.verticalGradient(listOf(Color.Black.copy(alpha = .28f), Color.Transparent, Color.Transparent, Color.Black.copy(alpha = .42f))))
     }
 }

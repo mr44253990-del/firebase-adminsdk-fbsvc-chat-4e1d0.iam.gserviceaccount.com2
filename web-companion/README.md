@@ -63,8 +63,7 @@ then to `/admin/web-deploy/deploy`, and prints the resulting URL.
 
 Worker base URL: `https://convo-chat-companion.mr4425390.workers.dev` (compiled into `site/api.js`, every Android caller and the CSP in `_headers` — change it in one `sed` across the repo, not per file).
 
-Worker API version is **49**. Deploy the same source to both `cloudflare-worker.js` and
-`firechat-fcm-worker.js` targets before shipping an app build that requires 49.
+Worker API version is **53** (release **4.9.1**). The current Android client accepts API v52 and newer; v53 is backward-compatible and does not require an APK code change. Deploy the same source to `cloudflare-worker.js`, `firechat-fcm-worker.js`, and the bundled Worker asset so every deployment path stays in sync.
 
 ## How sign-in works
 

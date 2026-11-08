@@ -19,7 +19,7 @@
     var previewText = typing ? "" : S.preview(last ? last.text : (chat.mutual ? "Say hello" : "Start a conversation"));
     var time = S.listLabel(chat.lastAt || 0);
     var mutedIcon = chat.muted ? U.icon("bellOff") : "";
-    return '<button class="chat-row ' + (unread ? "unread " : "") + (state.activePeer === chat.uid ? "active" : "") +
+    var isGroup = chat.isGroup; return '<button type="button" class="chat-row ' + (isGroup ? "group " : "") + (unread ? "unread " : "") + (state.activePeer === chat.uid ? "active" : "") +
       '" data-chat="' + esc(chat.uid) + '" aria-label="Open chat with ' + esc(chat.name) + '">' +
       U.avatar({ name: chat.name, profileImageUrl: chat.profileImageUrl, online: chat.online }, 48) +
       '<span class="chat-row-main">' +
@@ -39,6 +39,39 @@
 
   function activeCount(state) {
     return state.chats.filter(function (chat) { return chat.online; }).length;
+  }
+
+  /* ------------------------------------------------------------- home feed (posts) */
+  function renderHomePane(state){
+    var posts = state.homePosts||[];
+    if(state.homeLoading && !posts.length){
+      return '<div class="pane-single"><div class="page-head"><h1>Home</h1><p>Fresh posts from your community</p></div>' + U.skeleton(3, "post-sk") + '</div>';
+    }
+    if(!posts.length){
+      return '<div class="pane-single"><div class="page-head"><h1>Home</h1><p>Fresh posts from your community</p></div>' +
+        U.emptyState({ icon:"home", title:"No posts yet", body:"Posts from Convo Chat app will appear here. Follow friends to see their updates." }) +
+        '<div style="text-align:center;padding:16px"><button type="button" class="btn ghost" data-action="refresh-home">Refresh</button></div></div>';
+    }
+    var html='<div class="pane-single"><div class="page-head"><h1>Home</h1><p>Fresh posts from your community</p></div>';
+    html+='<div class="home-feed">';
+    posts.forEach(function(post){
+      var author=post.author||{};
+      var time=S.listLabel(post.createdAt);
+      var img=post.imageUrl||"";
+      var video=post.videoUrl||"";
+      html+='<article class="post-card">' +
+        '<div class="post-head">' + U.avatar({name:author.name||post.authorName||"Convo user",profileImageUrl:author.profileImageUrl},36) +
+          '<div class="post-who"><strong>'+esc(author.name||"Convo user")+'</strong><span>'+esc(author.username?"@"+author.username:time)+' · '+esc(time)+'</span></div>' +
+          '<button type="button" class="icon-btn" data-action="post-menu" data-post="'+esc(post.id)+'">'+U.icon("more")+'</button>' +
+        '</div>' +
+        (post.text?'<p class="post-text">'+esc(post.text)+'</p>':"") +
+        (video?'<video class="post-media" controls preload="metadata" poster="'+esc(img)+'"><source src="'+esc(video)+'"></video>': img?'<img class="post-media" src="'+esc(img)+'" alt="Post image" loading="lazy">':"") +
+        '<div class="post-actions"><span class="post-stat">'+U.icon("heart")+' '+ (post.likes||0) +'</span><span class="post-stat">'+U.icon("chats")+' '+(post.comments||0)+'</span><button type="button" class="btn ghost small" data-action="post-open" data-post="'+esc(post.id)+'">Open</button></div>' +
+      '</article>';
+    });
+    html+='</div>';
+    html+='<div style="text-align:center;padding:16px"><button type="button" class="btn ghost" data-action="refresh-home">'+U.icon("refresh")+'<span>Refresh feed</span></button></div>';
+    return html+'</div>';
   }
 
   /* ------------------------------------------------------------- chats list */
@@ -68,7 +101,7 @@
           ? U.emptyState({ icon: "check", title: "All caught up", body: "No unread messages. Your inbox is clear." })
           : filter === "online"
             ? U.emptyState({ icon: "wifi", title: "Nobody online", body: "Your contacts are offline right now. Messages still get delivered." })
-            : U.emptyState({ icon: "chats", title: "No chats yet", body: "Add friends from the Convo Chat app — every accepted friend appears here automatically." });
+            : U.emptyState({ icon: "chats", title: "No chats yet", body: "Add friends from the Convo Chat app — every accepted friend and joined groups appear here automatically." });
     } else {
       var online = list.filter(function (c) { return c.online; });
       var offline = list.filter(function (c) { return !c.online; });
@@ -86,8 +119,8 @@
           (unreadTotal ? unreadTotal + " unread · " : "") + activeCount(state) + " online" +
         '</div></div>' +
         '<div class="pane-actions">' +
-          '<button class="icon-btn" data-action="refresh" title="Refresh" aria-label="Refresh chats">' + U.icon("refresh") + '</button>' +
-          '<button class="icon-btn" data-action="open-search" title="Find people" aria-label="Find people">' + U.icon("search") + '</button>' +
+          '<button type="button" class="icon-btn" data-action="refresh" title="Refresh" aria-label="Refresh chats">' + U.icon("refresh") + '</button>' +
+          '<button type="button" class="icon-btn" data-action="open-search" title="Find people" aria-label="Find people">' + U.icon("search") + '</button>' +
         '</div>' +
       '</div>' +
       '<label class="searchbox">' + U.icon("search") +
@@ -96,7 +129,7 @@
       '</label>' +
       '<div class="chip-row">' +
         [["all", "All"], ["unread", "Unread"], ["online", "Online"]].map(function (pair) {
-          return '<button class="chip ' + (filter === pair[0] ? "active" : "") + '" data-filter="' + pair[0] + '">' + pair[1] + '</button>';
+          return '<button type="button" class="chip ' + (filter === pair[0] ? "active" : "") + '" data-filter="' + pair[0] + '">' + pair[1] + '</button>';
         }).join("") +
       '</div>' +
       '<div class="list-scroll" id="chat-list">' + body + '</div>' +
@@ -122,30 +155,60 @@
   /* --------------------------------------------------------------- discover */
   function renderSearchPane(state) {
     var results = state.searchResults || [];
+    var people = state.people || [];
+    var requests = state.friendRequests || [];
+    var q = (state.searchQuery || "").trim();
     var body = "";
-    if (state.searchLoading) body = U.skeleton(4, "row-sk");
-    else if (!state.searchQuery) {
-      var recents = state.chats.slice(0, 4);
-      body = '<div class="list-section-label">Quick access</div>' + recents.map(function (c) { return chatRow(c, state); }).join("");
-      if (!recents.length) body = U.emptyState({ icon: "search", title: "Find your people", body: "Search a friend by name or @username. Only accepted friends can chat with you." });
-    } else if (!results.length) {
-      body = U.emptyState({ icon: "search", title: "No results", body: "No friend matches “" + state.searchQuery + "”. Friends must accept you in the Convo Chat app first." });
+
+    if (requests.length) {
+      body += '<div class="list-section-label">Friend requests · ' + requests.length + '</div>' +
+        requests.map(function (r) {
+          return '<div class="person-row">' +
+            U.avatar({ name: r.name, profileImageUrl: r.profileImageUrl }, 46) +
+            '<span class="person-main"><strong>' + esc(r.name) + '</strong><span>wants to be your friend</span></span>' +
+            '<span class="person-actions">' +
+              '<button type="button" class="btn primary small" data-action="friend-accept" data-request="' + esc(r.id) + '">' + U.icon("check") + '<span>Accept</span></button>' +
+              '<button type="button" class="btn ghost small" data-action="friend-decline" data-request="' + esc(r.id) + '" aria-label="Decline">' + U.icon("close") + '</button>' +
+            '</span></div>';
+        }).join("");
+    }
+
+    if (!q) {
+      var recents = state.chats.slice(0, 6);
+      if (recents.length) body += '<div class="list-section-label">Quick access</div>' + recents.map(function (c) { return chatRow(c, state); }).join("");
+      body += '<div class="discover-tip">' + U.icon("search") +
+        '<div><strong>Add new friends</strong><span>Type a friend’s exact <b>@username</b> or <b>email</b> to find them on Convo Chat and send a request.</span></div></div>';
     } else {
-      body = results.map(function (person) {
-        return '<button class="chat-row" data-chat="' + esc(person.uid) + '">' +
-          U.avatar({ name: person.name, profileImageUrl: person.profileImageUrl, online: person.online }, 46) +
-          '<span class="chat-row-main"><span class="chat-row-top"><span class="chat-row-name">' + esc(person.name) + '</span></span>' +
-          '<span class="chat-row-bottom"><span class="chat-row-preview">' +
-            (person.username ? "@" + esc(person.username) : (person.online ? "Online now" : "Accepted friend")) +
-          '</span></span></span>' +
-          U.icon("send") +
-        '</button>';
-      }).join("");
+      if (results.length) {
+        body += '<div class="list-section-label">Your friends</div>' + results.map(function (person) {
+          return '<button type="button" class="chat-row" data-chat="' + esc(person.uid) + '">' +
+            U.avatar({ name: person.name, profileImageUrl: person.profileImageUrl, online: person.online }, 46) +
+            '<span class="chat-row-main"><span class="chat-row-top"><span class="chat-row-name">' + esc(person.name) + '</span></span>' +
+            '<span class="chat-row-bottom"><span class="chat-row-preview">' +
+              (person.username ? "@" + esc(person.username) : (person.online ? "Online now" : "Friend")) +
+            '</span></span></span>' + U.icon("send") + '</button>';
+        }).join("");
+      }
+      if (state.peopleLoading) body += '<div class="list-section-label">People on Convo Chat</div>' + U.skeleton(2, "row-sk");
+      else if (people.length) {
+        body += '<div class="list-section-label">People on Convo Chat</div>' + people.map(function (p) {
+          var action = p.requested
+            ? '<span class="chip-soft">' + U.icon("clock") + '<span>Requested</span></span>'
+            : '<button type="button" class="btn primary small" data-action="friend-add" data-uid="' + esc(p.uid) + '">' + U.icon("plus") + '<span>Add friend</span></button>';
+          return '<div class="person-row">' +
+            U.avatar({ name: p.name, profileImageUrl: p.profileImageUrl }, 46) +
+            '<span class="person-main"><strong>' + esc(p.name) + '</strong><span>' + (p.username ? "@" + esc(p.username) : esc(p.status || "")) + '</span></span>' +
+            '<span class="person-actions">' + action + '</span></div>';
+        }).join("");
+      }
+      if (!results.length && !people.length && !state.peopleLoading) {
+        body += U.emptyState({ icon: "search", title: "No one found", body: "No match for “" + q + "”. Try the exact @username or email address." });
+      }
     }
     return '<div class="pane-single">' +
-      '<div class="page-head"><h1>Discover</h1><p>Search the friends on your Convo Chat account.</p></div>' +
+      '<div class="page-head"><h1>Discover</h1><p>Find friends by @username or email, and manage friend requests.</p></div>' +
       '<label class="searchbox">' + U.icon("search") +
-        '<input id="people-search" type="search" placeholder="Name or @username" value="' + esc(state.searchQuery || "") + '" aria-label="Search people">' +
+        '<input id="people-search" type="search" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="@username or email" value="' + esc(state.searchQuery || "") + '" aria-label="Search people">' +
         (state.searchQuery ? '<button type="button" data-action="clear-search" aria-label="Clear search">' + U.icon("close") + '</button>' : "") +
       '</label>' +
       '<div class="list-scroll">' + body + '</div>' +
@@ -154,7 +217,7 @@
 
   /* --------------------------------------------------------------- settings */
   function themeCard(preview, selected) {
-    return '<button class="theme-card ' + (selected ? "selected" : "") + '" data-theme-id="' + preview.id + '">' +
+    return '<button type="button" class="theme-card ' + (selected ? "selected" : "") + '" data-theme-id="' + preview.id + '">' +
       '<span class="theme-preview" style="background:' + preview.bg + '">' +
         '<i style="left:8%;top:16%;width:52%;background:' + preview.inBubble + '"></i>' +
         '<i style="right:8%;bottom:22%;width:44%;background:' + preview.outBubble + '"></i>' +
@@ -174,7 +237,7 @@
       return '<label class="row">' + inner.replace(U.icon("back"), "") +
         '<span class="switch"><input type="checkbox" data-toggle="' + esc(opts.toggle) + '" ' + (opts.checked ? "checked" : "") + '><span></span></span></label>';
     }
-    if (opts.onClickAttr) return '<button class="row clickable ' + (opts.danger ? "danger" : "") + '" ' + opts.onClickAttr + '>' + inner + '</button>';
+    if (opts.onClickAttr) return '<button type="button" class="row clickable ' + (opts.danger ? "danger" : "") + '" ' + opts.onClickAttr + '>' + inner + '</button>';
     return '<div class="row ' + (opts.danger ? "danger" : "") + '">' + inner + '</div>';
   }
 
@@ -191,7 +254,7 @@
           U.avatar({ name: me.name, profileImageUrl: me.profileImageUrl }, 62) +
           '<div class="who"><h2>' + esc(me.name || "Convo user") + '</h2>' +
           '<p>' + (me.username ? "@" + esc(me.username) : esc(me.email || "Paired browser session")) + '</p></div>' +
-          '<button class="btn ghost small" data-nav="profile">Edit</button>' +
+          '<button type="button" class="btn ghost small" data-nav="profile">Edit</button>' +
         '</div>' +
 
         group("Your account", [
@@ -231,13 +294,13 @@
           row({ icon: "logout", title: "Log out of this browser", subtitle: "End this web session only", onClickAttr: 'data-nav="logout"', danger: false }),
           row({ icon: "lock", title: "Log out everywhere", subtitle: "Invalidate every paired browser at once", onClickAttr: 'data-nav="logoutall"', danger: true })
         ].join("")) +
-        '<p class="tiny dim center" style="padding:18px 24px 6px">Convo Chat Web · this browser is paired through your phone. ' +
-        'No password is stored here, and the session ends automatically after 12 hours.</p>';
+        '<p class="tiny dim center" style="padding:18px 24px 6px">Convo Chat Web · this browser is signed in to your account. ' +
+        'No password is stored here, and the session has no time limit — sign out whenever you like.</p>';
       return html + "</div>";
     }
 
     var back = '<div class="page-head" style="display:flex;align-items:center;gap:8px;padding-bottom:2px">' +
-      '<button class="icon-btn" data-nav="settings" aria-label="Back to settings">' + U.icon("back") + '</button>' +
+      '<button type="button" class="icon-btn" data-nav="settings" aria-label="Back to settings">' + U.icon("back") + '</button>' +
       '<div><h1>' + esc(title) + '</h1><p>' + esc(sub) + '</p></div></div>';
 
     if (section === "appearance") {
@@ -249,7 +312,7 @@
         { id: "amoled", label: "AMOLED", bg: "#000", inBubble: "rgba(255,255,255,.16)", outBubble: "linear-gradient(120deg,#6b5bff,#8b7bff)" }
       ];
       html += '<div class="page-head" style="display:flex;align-items:center;gap:8px;padding-bottom:2px">' +
-        '<button class="icon-btn" data-nav="settings" aria-label="Back to settings">' + U.icon("back") + '</button>' +
+        '<button type="button" class="icon-btn" data-nav="settings" aria-label="Back to settings">' + U.icon("back") + '</button>' +
         '<div><h1>Theme</h1><p>Pick the mood of your workspace</p></div></div>';
       html += group("Colour theme", '<div class="theme-grid">' + themes.map(function (t) { return themeCard(t, s.theme === t.id); }).join("") + '</div>');
       html += group("Comfort", [
@@ -262,7 +325,7 @@
     if (section === "bubbles") {
       title = "Chat bubbles"; sub = "Choose how your messages look";
       html += '<div class="page-head" style="display:flex;align-items:center;gap:8px;padding-bottom:2px">' +
-        '<button class="icon-btn" data-nav="settings" aria-label="Back to settings">' + U.icon("back") + '</button>' +
+        '<button type="button" class="icon-btn" data-nav="settings" aria-label="Back to settings">' + U.icon("back") + '</button>' +
         '<div><h1>Chat bubbles</h1><p>Choose how your messages look</p></div></div>';
       html += '<div class="bubble-preview" data-bubble-preview>' +
         '<div class="b in">Hey! This is how a received message looks.</div>' +
@@ -270,16 +333,16 @@
       '</div>';
       html += group("Style", '<div class="swatch-row" style="padding-top:12px">' +
         [["gradient", "Gradient"], ["glass", "Glass"], ["solid", "Solid"], ["outline", "Outline"]].map(function (pair) {
-          return '<button class="chip ' + (s.bubbleStyle === pair[0] ? "active" : "") + '" data-bubble-style="' + pair[0] + '">' + pair[1] + '</button>';
+          return '<button type="button" class="chip ' + (s.bubbleStyle === pair[0] ? "active" : "") + '" data-bubble-style="' + pair[0] + '">' + pair[1] + '</button>';
         }).join("") + '</div>');
       html += group("Colour", '<div class="swatch-row">' +
         [["violet", "#7b6bff"], ["ocean", "#2f8bd6"], ["sunset", "#f2653f"], ["mint", "#17b487"], ["graphite", "#4a5064"]].map(function (pair) {
-          return '<button class="swatch ' + (s.bubbleTint === pair[0] ? "selected" : "") + '" data-bubble-tint="' + pair[0] +
+          return '<button type="button" class="swatch ' + (s.bubbleTint === pair[0] ? "selected" : "") + '" data-bubble-tint="' + pair[0] +
             '" style="background:' + pair[1] + '" aria-label="' + pair[0] + '"></button>';
         }).join("") + '</div>');
       html += group("Shape", '<div class="swatch-row" style="padding-top:12px">' +
         [["rounded", "Rounded"], ["soft", "Soft"], ["bubble", "Round"]].map(function (pair) {
-          return '<button class="chip ' + (s.cornerStyle === pair[0] ? "active" : "") + '" data-corners="' + pair[0] + '">' + pair[1] + '</button>';
+          return '<button type="button" class="chip ' + (s.cornerStyle === pair[0] ? "active" : "") + '" data-corners="' + pair[0] + '">' + pair[1] + '</button>';
         }).join("") + '</div>');
       html += group("Layout", [
         row({ icon: "keyboard", title: "Compact density", subtitle: "Tighter rows, more messages on screen", toggle: "compact", checked: s.density === "compact" })
@@ -290,11 +353,11 @@
     if (section === "wallpaper") {
       title = "Chat wallpaper"; sub = "Give your conversations personality";
       html += '<div class="page-head" style="display:flex;align-items:center;gap:8px;padding-bottom:2px">' +
-        '<button class="icon-btn" data-nav="settings" aria-label="Back to settings">' + U.icon("back") + '</button>' +
+        '<button type="button" class="icon-btn" data-nav="settings" aria-label="Back to settings">' + U.icon("back") + '</button>' +
         '<div><h1>Chat wallpaper</h1><p>Give your conversations personality</p></div></div>';
       html += '<div class="group"><div class="theme-grid">' +
         [["aurora", "Aurora"], ["mesh", "Mesh"], ["dunes", "Dunes"], ["graphite", "Graphite"], ["none", "None"]].map(function (pair) {
-          return '<button class="theme-card ' + (s.wallpaper === pair[0] && !s.wallpaperUrl ? "selected" : "") + '" data-wallpaper="' + pair[0] + '">' +
+          return '<button type="button" class="theme-card ' + (s.wallpaper === pair[0] && !s.wallpaperUrl ? "selected" : "") + '" data-wallpaper="' + pair[0] + '">' +
             '<span class="theme-preview wp-' + pair[0] + '" style="background-color:var(--panel-2)"></span>' +
             '<span>' + pair[1] + '</span></button>';
         }).join("") + '</div></div>';
@@ -308,15 +371,15 @@
     if (section === "text") {
       title = "Text size & density"; sub = "Comfort for long conversations";
       html += '<div class="page-head" style="display:flex;align-items:center;gap:8px;padding-bottom:2px">' +
-        '<button class="icon-btn" data-nav="settings" aria-label="Back to settings">' + U.icon("back") + '</button>' +
+        '<button type="button" class="icon-btn" data-nav="settings" aria-label="Back to settings">' + U.icon("back") + '</button>' +
         '<div><h1>Text size</h1><p>Comfort for long conversations</p></div></div>';
       html += group("Scale", '<div class="slider-row"><label class="tiny dim" for="font-range">Small</label>' +
         '<input id="font-range" type="range" min="0.85" max="1.35" step="0.05" value="' + Number(s.fontScale || 1) + '" data-setting-range="fontScale">' +
         '<output>' + Math.round((Number(s.fontScale || 1)) * 100) + '%</output></div>' +
         '<div class="slider-row"><label class="tiny dim" for="density-toggle">Density</label>' +
         '<span class="grow"></span><span class="segmented" style="flex:none">' +
-          '<button data-density="comfortable" class="' + (s.density !== "compact" ? "active" : "") + '">Comfortable</button>' +
-          '<button data-density="compact" class="' + (s.density === "compact" ? "active" : "") + '">Compact</button>' +
+          '<button type="button" data-density="comfortable" class="' + (s.density !== "compact" ? "active" : "") + '">Comfortable</button>' +
+          '<button type="button" data-density="compact" class="' + (s.density === "compact" ? "active" : "") + '">Compact</button>' +
         '</span></div>');
       return html + "</div>";
     }
@@ -324,7 +387,7 @@
     if (section === "privacy") {
       title = "Privacy & security"; sub = "You decide what this browser shares";
       html += '<div class="page-head" style="display:flex;align-items:center;gap:8px;padding-bottom:2px">' +
-        '<button class="icon-btn" data-nav="settings" aria-label="Back to settings">' + U.icon("back") + '</button>' +
+        '<button type="button" class="icon-btn" data-nav="settings" aria-label="Back to settings">' + U.icon("back") + '</button>' +
         '<div><h1>Privacy & security</h1><p>You decide what this browser shares</p></div></div>';
       html += group("Visibility", [
         row({ icon: "wifi", title: "Show online status", subtitle: "Friends see when this browser is active", toggle: "showOnline", checked: s.showOnline }),
@@ -346,7 +409,7 @@
     if (section === "devices") {
       title = "Devices & web sessions"; sub = "Everything currently signed in to your account";
       html += '<div class="page-head" style="display:flex;align-items:center;gap:8px;padding-bottom:2px">' +
-        '<button class="icon-btn" data-nav="settings" aria-label="Back to settings">' + U.icon("back") + '</button>' +
+        '<button type="button" class="icon-btn" data-nav="settings" aria-label="Back to settings">' + U.icon("back") + '</button>' +
         '<div><h1>Devices</h1><p>Everything currently signed in to your account</p></div></div>';
       var deviceRows = (state.devices || []).map(function (device) {
         var active = device.active !== false;
@@ -361,7 +424,9 @@
       html += '<div class="group"><div class="group-title">Signed in</div>' +
         '<div class="device-card"><span class="row-ic">' + U.icon("globe") + '</span>' +
         '<span class="meta"><strong>This browser (Convo Chat Web)</strong>' +
-        '<span>Paired session · ends ' + esc(new Date(window.ConvoApi.sessionExpiry()).toLocaleString()) + '</span></span>' +
+        '<span>' + (window.ConvoApi.sessionExpiry() > 0
+          ? 'Signed in · ends ' + esc(new Date(window.ConvoApi.sessionExpiry()).toLocaleString())
+          : 'Signed in · no time limit (stays until you sign out)') + '</span></span>' +
         '<span class="pill">This device</span></div>' + deviceRows + '</div>';
       if (!(state.devices || []).length) {
         html += '<div class="group"><div class="row"><span class="row-main"><strong>No other devices reported</strong>' +
@@ -376,7 +441,7 @@
 
     if (section === "about") {
       html += '<div class="page-head" style="display:flex;align-items:center;gap:8px;padding-bottom:2px">' +
-        '<button class="icon-btn" data-nav="settings" aria-label="Back to settings">' + U.icon("back") + '</button>' +
+        '<button type="button" class="icon-btn" data-nav="settings" aria-label="Back to settings">' + U.icon("back") + '</button>' +
         '<div><h1>About</h1><p>Convo Chat Web</p></div></div>';
       html += '<div class="group"><div class="row"><span class="row-main"><strong>Convo Chat Web</strong>' +
         '<span>Version 5.0 · the browser companion for the Convo Chat Android app.</span></span></div>' +
@@ -391,8 +456,6 @@
   }
 
   /* ---------------------------------------------------------------- profile */
-  // A real profile page: cover art, avatar you can change right here, editable details,
-  // a shareable public link and the account actions that make sense on the web.
   function renderProfilePane(state) {
     var me = state.me || {};
     var s = S.settings();
@@ -414,10 +477,10 @@
       '<div class="pf-cover" ' + (me.coverImageUrl ? 'style="background-image:url(\'' + esc(me.coverImageUrl) + '\')"' : "") + '>' +
         '<div class="pf-cover-glow"></div>' +
         '<div class="pf-cover-top"><span class="pf-chip">' + U.icon("globe") + 'Convo Web</span>' +
-          '<button class="pf-edit-btn" data-action="edit-profile" aria-label="Edit profile">' + U.icon("edit") + '</button></div>' +
+          '<button type="button" class="pf-edit-btn" data-action="edit-profile" aria-label="Edit profile">' + U.icon("edit") + '</button></div>' +
       '</div>' +
       '<div class="pf-head">' +
-        '<button class="pf-avatar" data-action="change-avatar" aria-label="Change profile photo">' +
+        '<button type="button" class="pf-avatar" data-action="change-avatar" aria-label="Change profile photo">' +
           U.avatar({ name: me.name, profileImageUrl: me.profileImageUrl }, 104) +
           '<span class="pf-avatar-pick">' + U.icon("camera") + '</span>' +
         '</button>' +
@@ -430,11 +493,11 @@
       (me.bio ? '<p class="pf-bio">' + esc(me.bio) + '</p>' : '<p class="pf-bio dim">Add a short bio so friends know it is you.</p>') +
       '<div class="pf-stats">' + stats + '</div>' +
       '<div class="pf-actions">' +
-        '<button class="btn primary" data-action="edit-profile">' + U.icon("edit") + '<span>Edit profile</span></button>' +
-        '<button class="btn ghost" data-action="share-profile">' + U.icon("share") + '<span>Share</span></button>' +
+        '<button type="button" class="btn primary" data-action="edit-profile">' + U.icon("edit") + '<span>Edit profile</span></button>' +
+        '<button type="button" class="btn ghost" data-action="share-profile">' + U.icon("share") + '<span>Share</span></button>' +
       '</div>' +
       '<div class="pf-link"><span class="pf-link-label">Public profile link</span>' +
-        '<button class="pf-link-value" data-action="copy-profile-link" title="Copy link">' + U.icon("link") +
+        '<button type="button" class="pf-link-value" data-action="copy-profile-link" title="Copy link">' + U.icon("link") +
           '<span>' + esc(state.profileLink || "Loading…") + '</span>' + U.icon("copy") + '</button>' +
       '</div>' +
       group("Profile details", [
@@ -465,53 +528,95 @@
       '<span class="pair-mark">' + U.icon("lock") + '</span></div>' +
       '<h1>Locked for your privacy</h1>' +
       '<p class="lead">Convo Chat Web locked itself after a few quiet minutes. Your messages are still here — unlock to continue.</p>' +
-      '<button class="btn primary wide" data-action="unlock">' + U.icon("lock") + '<span>Unlock</span></button>' +
+      '<button type="button" class="btn primary wide" data-action="unlock">' + U.icon("lock") + '<span>Unlock</span></button>' +
       '<p class="pair-fine">Tip: turn off auto-lock in Settings → Privacy & security on a trusted computer.</p>' +
     '</div></div>';
   }
 
   /* --------------------------------------------------------------- pairing */
-  function renderPairing(state) {
-    var code = state.pairCode || "";
-    var showCode = state.showPairCode !== false;
-    var isDesktop = !isMobileWeb();
-    var qrPayload = "convochat://pair?code=" + encodeURIComponent(code) + "&t=" + Date.now();
-    var qrSize = isDesktop ? 220 : 180;
-    return '<div class="pair-wrap"><div class="pair-card">' +
-      '<div class="pair-art"><span class="pulse"></span><span class="pulse"></span><span class="pulse"></span>' +
-      '<span class="pair-mark">' + U.icon("qr") + '</span></div>' +
-      '<h1>Connect this browser</h1>' +
-      '<p class="lead">Scan the QR code below with the Convo Chat app on your phone, or enter the 10-digit code manually.</p>' +
-      '<div class="pair-login-modes">' +
-        '<button class="mode-btn' + (state.loginMode !== "code" ? " active" : "") + '" data-login-mode="qr" title="Scan QR code">' +
-          '<div class="mode-ic">' + U.icon("qr") + '</div><span>Scan QR code</span></button>' +
-        '<button class="mode-btn' + (state.loginMode === "code" ? " active" : "") + '" data-login-mode="code" title="Enter 10-digit code">' +
-          '<div class="mode-ic">' + U.icon("keyboard") + '</div><span>Enter code</span></button>' +
-      '</div>' +
-      '<div class="pair-qr">' +
-        '<canvas id="login-qr" width="' + qrSize + '" height="' + qrSize + '" role="img" aria-label="Login QR code"></canvas>' +
-        '<div class="pair-qr-note">Open Convo Chat → Profile &amp; settings → Link my browser → Scan this QR</div>' +
-        (showCode ? '<div class="pair-code-value">' + esc(code) + '</div>' : '') +
-        '<button class="icon-btn" data-action="refresh-qr" title="Refresh QR code" aria-label="Refresh QR code">' + U.icon("refresh") + '</button>' +
-      '</div>' +
-      (state.loginMode !== "qr" ? '' : '') +
-      '<div class="pair-code-section' + (state.loginMode === "code" ? "" : " hidden") + '">' +
-      '<input class="pair-code-input" id="pair-code" inputmode="numeric" autocomplete="one-time-code" maxlength="10" pattern="[0-9]*" placeholder="0000000000" aria-label="10-digit pairing code">' +
-      '<button class="btn primary wide" data-action="pair">' + U.icon("check") + '<span>Connect browser</span></button>' +
-      '</div>' +
-      '<p class="pair-error" id="pair-error" role="alert"></p>' +
-      '<div class="pair-steps">' +
-        '<div class="pair-step"><b>1</b><span>QR code and code change every 30 seconds for security.</span></div>' +
-        '<div class="pair-step"><b>2</b><span>Scan or enter the code — this session lasts 12 hours and can be revoked from your phone.</span></div>' +
-        '<div class="pair-step"><b>3</b><span>No password is stored — your phone stays in control.</span></div>' +
-      '</div>' +
-      '<p class="pair-fine">Convo Chat Web is a private companion: it shows accepted friend chats only. ' +
-      'Media, calls and group chats stay on your phone.</p>' +
+  function isDesktop() { return window.matchMedia("(min-width: 860px)").matches; }
+
+  function renderPairing() {
+    // Exact match to provided design image - desktop + mobile
+    var mode = (window.ConvoApp && window.ConvoApp.state && window.ConvoApp.state.authMode) || "code";
+    var qrHtml = '<div class="login-qr-panel">' +
+      '<div class="login-qr-header"><span class="login-qr-badge">' + U.icon("qr") + ' QR sign-in</span><span class="login-qr-timer" id="qr-timer">' + U.icon("clock") + '<span id="qr-timer-text">30s</span></span></div>' +
+      '<div class="login-qr-code" style="position:relative"><canvas id="qr-canvas" width="180" height="180"></canvas><div class="login-qr-corners"><span></span><span></span><span></span><span></span></div><div id="qr-overlay" style="position:absolute;inset:12px;display:none;place-items:center;background:rgba(2,6,23,0.92);border-radius:16px;color:#fff;font-size:13px;font-weight:700;z-index:2"></div></div>' +
+      '<div class="login-qr-status"><span class="dot" id="qr-dot"></span><span id="qr-status-text">Scan with Convo Chat app → Device Login</span></div>' +
+      '<button type="button" class="login-qr-refresh" data-action="qr-refresh">' + U.icon("refresh") + '<span>Refresh QR</span></button>' +
+      '<div class="login-qr-foot">' + U.icon("shield") + '<span>QR expires in 5 min • Secure phone approval via Worker</span></div>' +
+    '</div>';
+
+    var tabsHtml = '<div class="login-tabs">' +
+      '<button type="button" class="login-tab ' + (mode==="code"?"active":"") + '" data-action="auth-mode" data-mode="code">' + U.icon("code") + '<span>Pair<br>code</span></button>' +
+      '<button type="button" class="login-tab ' + (mode==="signin"?"active":"") + '" data-action="auth-mode" data-mode="signin">' + U.icon("user") + '<span>Sign<br>in</span></button>' +
+      '<button type="button" class="login-tab ' + (mode==="signup"?"active":"") + '" data-action="auth-mode" data-mode="signup">' + U.icon("userPlus") + '<span>Create<br>account</span></button>' +
+      '<button type="button" class="login-tab ' + (mode==="qr"?"active":"") + '" data-action="auth-mode" data-mode="qr">' + U.icon("qr") + '<span>QR</span></button>' +
+    '</div>';
+
+    // Pair code pane
+    var codePane = '<div class="auth-pane ' + (mode==="code"?"active":"") + '" data-pane="code" style="' + (mode==="code"?"display:grid":"display:none") + ';gap:12px">' +
+      '<p style="font-size:13px;color:#94a3b8;line-height:1.5;margin:0">Open <strong style="color:#e2e8f0">Convo Chat</strong> on your phone → <strong style="color:#e2e8f0">Account security</strong> → <strong style="color:#e2e8f0">Link my browser</strong>, then type the 10-digit code here.</p>' +
+      '<div class="login-input-group"><input id="pair-code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="10" pattern="[0-9]*" placeholder="0000000000" aria-label="Pairing code" style="text-align:center;letter-spacing:0.2em;font-weight:700"></div>' +
+      '<button type="button" class="login-btn-primary" data-action="pair">' + U.icon("check") + '<span>Connect browser</span></button>' +
+      '<p class="pair-error" id="pair-error" role="alert" style="min-height:16px;font-size:12px;color:#f87171;text-align:center;margin:0"></p>' +
+    '</div>';
+
+    // Sign in pane - Exact to image
+    var signinPane = '<div class="auth-pane ' + (mode==="signin"?"active":"") + '" data-pane="signin" style="' + (mode==="signin"?"display:grid":"display:none") + ';gap:12px">' +
+      '<div class="login-input-group">' + U.icon("mail") + '<input id="login-email" type="email" autocomplete="email" placeholder="Email address" aria-label="Email address" name="email"></div>' +
+      '<div class="login-input-group">' + U.icon("lock") + '<input id="login-password" type="password" autocomplete="current-password" placeholder="Password" aria-label="Password" name="password"></div>' +
+      '<button type="button" class="login-btn-primary" data-action="email-login">' + U.icon("login") + '<span>Sign in &amp; save this browser</span></button>' +
+      '<div class="login-forgot"><button type="button" data-action="forgot-password">Forgot password?</button></div>' +
+      '<p class="pair-error" id="login-error" role="alert" style="min-height:16px;font-size:12px;color:#f87171;text-align:center;margin:0"></p>' +
+      '<div class="login-info">' + U.icon("info") + '<span>Your login is saved in this browser and stays until you sign out.</span></div>' +
+    '</div>';
+
+    // Create account pane
+    var signupPane = '<div class="auth-pane ' + (mode==="signup"?"active":"") + '" data-pane="signup" style="' + (mode==="signup"?"display:grid":"display:none") + ';gap:12px">' +
+      '<div class="login-input-group">' + U.icon("user") + '<input id="signup-name" type="text" autocomplete="name" placeholder="Your name" aria-label="Your name" name="name"></div>' +
+      '<div class="login-input-group">' + U.icon("mail") + '<input id="signup-email" type="email" autocomplete="email" placeholder="Email address" aria-label="Email address" name="email"></div>' +
+      '<div class="login-input-group">' + U.icon("lock") + '<input id="signup-password" type="password" autocomplete="new-password" placeholder="Password (min 6 characters)" aria-label="Password" name="new-password"></div>' +
+      '<button type="button" class="login-btn-primary" data-action="email-signup">' + U.icon("check") + '<span>Create account &amp; sign in</span></button>' +
+      '<p class="pair-error" id="signup-error" role="alert" style="min-height:16px;font-size:12px;color:#f87171;text-align:center;margin:0"></p>' +
+    '</div>';
+
+    // QR tab pane (mobile only shows QR here, desktop already has QR left)
+    var qrPaneTab = '<div class="auth-pane ' + (mode==="qr"?"active":"") + '" data-pane="qr" style="' + (mode==="qr"?"display:grid":"display:none") + ';gap:12px"><div class="login-qr-panel">' +
+      '<div class="login-qr-header"><span class="login-qr-badge">' + U.icon("qr") + ' QR sign-in</span><span class="login-qr-timer" id="qr-timer-m">' + U.icon("clock") + '<span id="qr-timer-text-m">30s</span></span></div>' +
+      '<div class="login-qr-code" style="position:relative"><canvas id="qr-canvas-m" width="180" height="180"></canvas><div class="login-qr-corners"><span></span><span></span><span></span><span></span></div><div id="qr-overlay-m" style="position:absolute;inset:12px;display:none;place-items:center;background:rgba(2,6,23,0.92);border-radius:16px;color:#fff;font-size:13px;font-weight:700"></div></div>' +
+      '<div class="login-qr-status"><span class="dot" id="qr-dot-m"></span><span id="qr-status-text-m">Scan with Convo Chat app → Device Login</span></div>' +
+      '<button type="button" class="login-qr-refresh" data-action="qr-refresh">' + U.icon("refresh") + '<span>Refresh QR</span></button>' +
     '</div></div>';
+
+    var isDesk = isDesktop();
+    var mainCard = "";
+    if(isDesk){
+      mainCard = '<div class="login-card"><div class="login-grid">' +
+        qrHtml +
+        '<div class="login-form-panel">' + tabsHtml + codePane + signinPane + signupPane + '</div>' +
+      '</div></div>';
+    } else {
+      mainCard = '<div class="login-card">' + tabsHtml + codePane + signinPane + signupPane + qrPaneTab + '</div>';
+      // On mobile, also show QR panel outside tabs when in code/signin mode? No - only when QR tab active
+    }
+
+    // Important notes + footer
+    var notes = '<div class="login-notes"><div class="login-notes-icon">' + U.icon("shieldCheck") + '</div><div style="flex:1"><h3>Important Notes</h3>' +
+      '<div class="login-notes-item"><span class="login-notes-num n1">1</span><span>QR expires in 5 min and requires phone authentication.</span></div>' +
+      '<div class="login-notes-item"><span class="login-notes-num n2">2</span><span>This browser stay signed in in with no time limit — sign out whenever you like.</span></div>' +
+      '<div class="login-notes-item"><span class="login-notes-num n3">3</span><span>Your phone stays in control and can revoke any browser.</span></div>' +
+    '</div></div>';
+
+    var footer = '<div class="login-footer"><div class="login-footer-brand">' + U.icon("chatBubble") + '<span>Convo Chat</span></div><div class="login-footer-tagline"><span>Chat</span><span>•</span><span>Connect</span><span>•</span><span>Stay Together</span></div></div>';
+
+    return '<div class="pair-wrap" id="login-wrap">' +
+      '<div class="login-brand"><div class="login-brand-icon">' + U.icon("chatBubble") + '</div></div>' +
+      '<h1 class="login-title">Connect <span>Convo Chat</span></h1>' +
+      '<p class="login-subtitle">Scan with your phone for instant login, or use code / email.</p>' +
+      mainCard + notes + footer +
+    '</div>';
   }
-
-  function isMobileWeb() { return window.matchMedia("(max-width: 860px)").matches; }
-
   window.ConvoScreens = {
     renderChatsPane: renderChatsPane,
     renderChatPlaceholder: renderChatPlaceholder,

@@ -35,6 +35,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.Build
 import com.example.data.User
 import java.text.SimpleDateFormat
 import java.util.*
@@ -506,4 +509,14 @@ private fun PremiumMemberCard(me: User?) {
             }
         }
     }
+}
+
+
+private fun celebratePremium(context: Context) {
+    try {
+        val vib = context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            vib.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 100, 80, 100, 150), -1))
+        } else vib.vibrate(longArrayOf(0, 100, 80, 100), -1)
+    } catch(_: Exception) {}
 }

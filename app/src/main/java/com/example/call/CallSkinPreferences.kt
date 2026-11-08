@@ -19,11 +19,19 @@ data class CallSkinOption(
 
 /** A lightweight, local-only preference shared by private and group call screens. */
 object CallSkinPreferences {
-    const val DEFAULT_ID = "aurora"
+    const val DEFAULT_ID = "liquid_glass"
     private const val PREFS_NAME = "firechat_prefs"
     private const val PREF_KEY = "call_skin"
 
     val options = listOf(
+        // Premium (v4.5.0 call skin refresh)
+        CallSkinOption("liquid_glass", "Liquid Glass", listOf(Color(0xFF070B1A), Color(0xFF1B2A5C), Color(0xFF0A1F2E)), Color(0xFF8FB8FF), Color(0xEE101A33), "aurora", "Premium"),
+        CallSkinOption("midnight_pro", "Midnight Pro", listOf(Color(0xFF05060C), Color(0xFF151B33), Color(0xFF060810)), Color(0xFF7C9CFF), Color(0xEE0C1020), "stars", "Premium"),
+        CallSkinOption("emerald_pro", "Emerald Pro", listOf(Color(0xFF02110C), Color(0xFF0B4634), Color(0xFF03140F)), Color(0xFF4CF0B0), Color(0xEE062B20), "waves", "Premium"),
+        CallSkinOption("sakura", "Sakura Night", listOf(Color(0xFF14070F), Color(0xFF4B1A3A), Color(0xFF1A0A18)), Color(0xFFFFA6D1), Color(0xEE2A1024), "petals", "Premium"),
+        CallSkinOption("cosmic_violet", "Cosmic Violet", listOf(Color(0xFF07031A), Color(0xFF34106B), Color(0xFF0B0424)), Color(0xFFC79BFF), Color(0xEE180A36), "sparkle", "Premium"),
+        CallSkinOption("bangla_green", "Bangla Green", listOf(Color(0xFF02130A), Color(0xFF006A4E), Color(0xFF03150C)), Color(0xFFF42A41), Color(0xEE053A28), "rings", "Premium"),
+        CallSkinOption("sunrise_glow", "Sunrise Glow", listOf(Color(0xFF1A0A06), Color(0xFF6B2A12), Color(0xFF1C0D08)), Color(0xFFFFB86B), Color(0xEE3A180C), "bokeh", "Premium"),
         // Classic
         CallSkinOption("aurora", "Aurora", listOf(Color(0xFF080A12), Color(0xFF28204B), Color(0xFF071B26)), Color(0xFF9E8BFF), Color(0xEE121421), "aurora"),
         CallSkinOption("ocean", "Deep Ocean", listOf(Color(0xFF00131F), Color(0xFF004357), Color(0xFF031923)), Color(0xFF5DE7F4), Color(0xEE062433), "waves"),
@@ -32,6 +40,10 @@ object CallSkinPreferences {
         CallSkinOption("rose", "Rose", listOf(Color(0xFF1A0A17), Color(0xFF541D3C), Color(0xFF201225)), Color(0xFFFF81C4), Color(0xEE301629), "petals"),
         CallSkinOption("amoled", "AMOLED", listOf(Color.Black, Color(0xFF07070A), Color(0xFF0D1018)), Color(0xFFA6B6FF), Color(0xEE090A0F)),
         // Textured
+        // Call Received Skin — more future
+        CallSkinOption("neon_storm", "Neon Storm", listOf(Color(0xFF0A0018), Color(0xFF3A0A6B), Color(0xFF050010)), Color(0xFFFF3BFF), Color(0xEE1A0030), "grid", "Premium"),
+        CallSkinOption("aurora_pulse", "Aurora Pulse", listOf(Color(0xFF001A14), Color(0xFF00B896), Color(0xFF002B1F)), Color(0xFF4CFFD0), Color(0xEE003328), "aurora", "Premium"),
+        CallSkinOption("midnight_bloom", "Midnight Bloom", listOf(Color(0xFF0F001A), Color(0xFF5B0A4A), Color(0xFF120018)), Color(0xFFFF8AC6), Color(0xEE2A001F), "petals", "Premium"),
         CallSkinOption("galaxy", "Galaxy", listOf(Color(0xFF03040B), Color(0xFF1B1240), Color(0xFF05030F)), Color(0xFFB69CFF), Color(0xEE100C24), "stars", "Textured"),
         CallSkinOption("neon_grid", "Neon Grid", listOf(Color(0xFF05010F), Color(0xFF1A0838), Color(0xFF02101C)), Color(0xFFFF4FD8), Color(0xEE140826), "grid", "Textured"),
         CallSkinOption("bokeh", "Bokeh Lights", listOf(Color(0xFF120A00), Color(0xFF3D2405), Color(0xFF140B02)), Color(0xFFFFC46B), Color(0xEE24170A), "bokeh", "Textured"),

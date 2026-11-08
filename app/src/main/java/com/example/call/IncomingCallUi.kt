@@ -27,6 +27,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -220,9 +221,11 @@ fun IncomingAnswerControls(
                     modifier = Modifier.offset { IntOffset(0, (dragY.value + with(density) { hop.dp.toPx() }).roundToInt()) }
                 ) {
                     Box(
-                        Modifier.size(74.dp).scale(1f + .1f * progress + .05f * buzz).clip(CircleShape)
-                            .background(Brush.linearGradient(listOf(Color(0xFF43E97B), Color(0xFF1FB45A))))
-                            .border(2.dp, Color.White.copy(alpha = .55f), CircleShape)
+                        Modifier.size(76.dp).scale(1f + .1f * progress + .05f * buzz)
+                            .shadow(18.dp, CircleShape, ambientColor = Color(0xFF2EE86F), spotColor = Color(0xFF2EE86F))
+                            .clip(CircleShape)
+                            .background(Brush.linearGradient(listOf(Color(0xFF5BF29A), Color(0xFF16A34A))))
+                            .border(2.dp, Brush.verticalGradient(listOf(Color.White.copy(alpha = .75f), Color.White.copy(alpha = .12f))), CircleShape)
                             .clickable { accept() },
                         contentAlignment = Alignment.Center
                     ) {
@@ -241,7 +244,10 @@ fun IncomingAnswerControls(
 private fun RoundAction(color: Color, icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, alpha: Float, onClick: () -> Unit) {
     Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(bottom = 2.dp)) {
         Box(
-            Modifier.size(62.dp).clip(CircleShape).background(color.copy(alpha = color.alpha * alpha.coerceIn(.25f, 1f))).clickable(onClick = onClick),
+            Modifier.size(62.dp).clip(CircleShape)
+                .background(Brush.linearGradient(listOf(color.copy(alpha = color.alpha * alpha.coerceIn(.25f, 1f)), color.copy(alpha = color.alpha * .78f * alpha.coerceIn(.25f, 1f)))))
+                .border(1.dp, Brush.verticalGradient(listOf(Color.White.copy(alpha = .5f * alpha.coerceIn(.2f, 1f)), Color.Transparent)), CircleShape)
+                .clickable(onClick = onClick),
             contentAlignment = Alignment.Center
         ) { Icon(icon, label, tint = Color.White.copy(alpha = alpha.coerceIn(.3f, 1f)), modifier = Modifier.size(28.dp)) }
         Spacer(Modifier.height(8.dp))

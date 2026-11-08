@@ -59,7 +59,13 @@
     upload: '<path d="M12 20V8.5M7.5 13 12 8.5 16.5 13"/><path d="M4.5 4.5h15"/>',
     share: '<circle cx="17.5" cy="6" r="2.6"/><circle cx="6.5" cy="12" r="2.6"/><circle cx="17.5" cy="18" r="2.6"/><path d="M8.8 10.8 15.2 7.2M8.8 13.2l6.4 3.6"/>',
     link: '<path d="M10.2 13.8a4 4 0 0 0 5.7 0l2.6-2.6a4 4 0 0 0-5.7-5.7L11.6 6.7"/><path d="M13.8 10.2a4 4 0 0 0-5.7 0l-2.6 2.6a4 4 0 0 0 5.7 5.7l1.2-1.2"/>',
-    calendar: '<rect x="3.5" y="5.5" width="17" height="15" rx="3"/><path d="M3.5 10h17M8.5 3.5v4M15.5 3.5v4"/>'
+    calendar: '<rect x="3.5" y="5.5" width="17" height="15" rx="3"/><path d="M3.5 10h17M8.5 3.5v4M15.5 3.5v4"/>',
+    code: '<path d="M8.5 8.5l-4 4 4 4"/><path d="M15.5 8.5l4 4-4 4"/><path d="M14 4.5l-4 15"/>',
+    userPlus: '<circle cx="9" cy="8" r="3.4"/><path d="M2.8 20a6.2 6.2 0 0 1 12.4 0"/><circle cx="17" cy="7" r="2.6"/><path d="M14.5 7h2.5M17 4.5v7"/>',
+    mail: '<rect x="3" y="6.5" width="18" height="11" rx="2.6"/><path d="M3.5 7.5l9 6 9-6"/>',
+    login: '<path d="M14 8V5.5a2 2 0 0 0-2-2h-7a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h7a2 2 0 0 0 2-2V16"/><path d="M9.5 12h11M17 8.5l3.5 3.5L17 15.5"/>',
+    chatBubble: '<path d="M12 3a8.5 8.5 0 0 0-8.5 8.5c0 2.4 1.1 4.6 2.9 6-.2 1.2-.6 2.4-1.4 3.4-.2.2 0 .6.3.5 1.7-.5 3-1.3 4-2 .8.2 1.6.3 2.7.3a8.5 8.5 0 0 0 0-17Z"/><circle cx="9" cy="11" r="1.1"/><circle cx="12" cy="11" r="1.1"/><circle cx="15" cy="11" r="1.1"/>',
+    shieldCheck: '<path d="M12 3.5 20 6v5.5c0 5-3.4 8-8 9.5-4.6-1.5-8-4.5-8-9.5V6Z"/><path d="m8.8 12 2.4 2.4 4.4-4.6"/>'
   };
 
   function icon(name, cls) {
