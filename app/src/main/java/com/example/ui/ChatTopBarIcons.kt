@@ -31,26 +31,26 @@ import androidx.compose.ui.unit.dp
 fun ChatCallPill(onVideo: () -> Unit, onAudio: () -> Unit, modifier: Modifier = Modifier) {
     Row(
         modifier
-            .height(36.dp)
-            .clip(RoundedCornerShape(18.dp))
-            .border(1.dp, Color.White.copy(alpha = .18f), RoundedCornerShape(18.dp)),
+            .height(32.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .border(1.dp, Color.White.copy(alpha = .18f), RoundedCornerShape(16.dp)),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(
-            Modifier.fillMaxHeight().width(44.dp)
-                .background(Brush.linearGradient(listOf(Color(0xFF2F80ED), Color(0xFF56CCF2))))
+            Modifier.fillMaxHeight().width(36.dp)
+                .background(Brush.linearGradient(listOf(Color(0xFF6B46C1), Color(0xFF9F7AEA))))
                 .clickable(onClick = onVideo)
                 .semantics { contentDescription = "Video call" },
             contentAlignment = Alignment.Center
-        ) { Icon(Icons.Default.Videocam, null, tint = Color.White, modifier = Modifier.size(20.dp)) }
+        ) { Icon(Icons.Default.Videocam, null, tint = Color.White, modifier = Modifier.size(16.dp)) }
         Box(Modifier.fillMaxHeight().width(1.dp).background(Color.White.copy(alpha = .35f)))
         Box(
-            Modifier.fillMaxHeight().width(44.dp)
-                .background(Brush.linearGradient(listOf(Color(0xFF11998E), Color(0xFF38EF7D))))
+            Modifier.fillMaxHeight().width(36.dp)
+                .background(Brush.linearGradient(listOf(Color(0xFFEC4899), Color(0xFFF472B6))))
                 .clickable(onClick = onAudio)
                 .semantics { contentDescription = "Audio call" },
             contentAlignment = Alignment.Center
-        ) { Icon(Icons.Default.Call, null, tint = Color.White, modifier = Modifier.size(18.dp)) }
+        ) { Icon(Icons.Default.Call, null, tint = Color.White, modifier = Modifier.size(14.dp)) }
     }
 }
 
@@ -60,10 +60,10 @@ fun ChatThemeOrb(onClick: () -> Unit, accent: Color, modifier: Modifier = Modifi
     val t = rememberInfiniteTransition(label = "orb")
     val angle by t.animateFloat(0f, 360f, infiniteRepeatable(tween(9000, easing = LinearEasing)), label = "orb_angle")
     Box(
-        modifier.size(40.dp).clip(CircleShape).clickable(onClick = onClick).semantics { contentDescription = "Chat theme" },
+        modifier.size(32.dp).clip(CircleShape).clickable(onClick = onClick).semantics { contentDescription = "Chat theme" },
         contentAlignment = Alignment.Center
     ) {
-        Canvas(Modifier.size(26.dp).rotate(angle)) {
+        Canvas(Modifier.size(20.dp).rotate(angle)) {
             val r = size.minDimension / 2
             drawCircle(
                 Brush.sweepGradient(listOf(Color(0xFFFF5F6D), Color(0xFFFFC371), Color(0xFF38EF7D), Color(0xFF56CCF2), Color(0xFFB06AB3), Color(0xFFFF5F6D))),

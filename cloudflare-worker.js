@@ -611,7 +611,7 @@ export default {
       }
       const contentType = request.headers.get("Content-Type") || "application/octet-stream";
       const contentLength = Number(request.headers.get("Content-Length") || 0);
-      if (contentLength > 95 * 1024 * 1024) return jsonResponse({ error: "Media exceeds 95 MB limit" }, 413);
+      if (contentLength > 2 * 1024 * 1024 * 1024) return jsonResponse({ error: "Media exceeds 2 GB limit" }, 413);
       const requestedKind = url.searchParams.get("kind");
       const isAdmin = auth.caller.email?.toLowerCase().replace(/\.+$/, "") === "mr4425390@gmail.com";
       if (requestedKind === "update" && !isAdmin) return jsonResponse({ error: "Only the admin can upload app updates" }, 403);

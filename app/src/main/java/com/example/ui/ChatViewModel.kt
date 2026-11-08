@@ -387,6 +387,13 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private val _activeRecipientUser = MutableStateFlow<User?>(null)
     val activeRecipientUser: StateFlow<User?> = _activeRecipientUser.asStateFlow()
 
+    /** Holds a 10-digit pairing code arriving from a QR deep link (convochat://pair?code=…). */
+    var pendingQrPairCode: String? = null
+        private set
+
+    fun setPendingQrPairCode(code: String?) { pendingQrPairCode = code }
+
+
     private val _usersState = MutableStateFlow<List<User>>(emptyList())
     val usersState: StateFlow<List<User>> = _usersState.asStateFlow()
     private val _adminDirectoryUsers = MutableStateFlow<List<User>>(emptyList())

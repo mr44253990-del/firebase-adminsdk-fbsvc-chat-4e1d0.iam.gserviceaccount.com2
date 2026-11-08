@@ -222,6 +222,8 @@ class MainActivity : FragmentActivity() {
         viewModel.syncPresenceToWorker(active = true, foreground = false)
     }
 
+    private val pendingPairCode = MutableStateFlow<String?>(null)
+
     private fun captureDeepLink(intent: Intent?) {
         val data = intent?.data
         pendingPostId.value = data?.takeIf { it.host == "post" || it.path?.startsWith("/post/") == true }?.pathSegments?.lastOrNull()
@@ -229,6 +231,10 @@ class MainActivity : FragmentActivity() {
             (uri.scheme.equals("convochat", true) && uri.host.equals("profile", true)) ||
                 (uri.pathSegments.any { it.equals("profile", true) } && uri.getQueryParameter("uid") != null)
         }?.getQueryParameter("uid")?.takeIf { it.isNotBlank() }
+        // QR login: convochat://pair?code=XXXXXXXXXX  → open the device-login flow.
+        pendingPairCode.value = data?.takeIf { uri ->
+            uri.scheme.equals("convochat", true) && uri.host.equals("pair", true)
+        }?.getQueryParameter("code")?.takeIf { it.isNotBlank() }
     }
 
     private fun captureActiveGroupCall(intent: Intent?) {
@@ -401,6 +407,14 @@ class MainActivity : FragmentActivity() {
                         }
                     }
                 }
+                // QR login deep link: convochat://pair?code=XXXXXXXXXX
+                LaunchedEffect(pendingPairCode.value, knownUsers, splashFinished, currentUser?.uid) {
+                    val code = pendingPairCode.value ?: return@LaunchedEffect
+                    if (!splashFinished || currentUser == null) return@LaunchedEffect
+                    pendingPairCode.value = null
+                    viewModel.pendingQrPairCode = code
+                    navController.navigate("device_login") { launchSingleTop = true }
+                }
                 LaunchedEffect(activeGroupRoomId) {
                     if (!activeGroupRoomId.isNullOrBlank() && FirebaseAuth.getInstance().currentUser != null) {
                         viewModel.selectGroup(com.example.data.Group(
@@ -536,6 +550,7 @@ class MainActivity : FragmentActivity() {
                                 onAssistant = { navController.navigate("assistant") },
                                 onQrContacts = { navController.navigate("qr_contacts") },
                                 onPremium = { navController.navigate("premium") },
+                                onDeviceLogin = { navController.navigate("device_login") },
                                 onSignOut = {
                                     navController.navigate("auth") {
                                         popUpTo("home") { inclusive = true }
@@ -563,6 +578,18 @@ class MainActivity : FragmentActivity() {
                                             }
                                         }
                                     }
+                                }
+                            )
+                        }
+
+                        // Device login: scan the web login QR to link this phone to a browser session.
+                        composable("device_login") {
+                            QrDeviceLoginScreen(
+                                viewModel = viewModel,
+                                onBack = { navController.popBackStack() },
+                                onLinked = {
+                                    navController.popBackStack()
+                                    Toast.makeText(this@MainActivity, "Browser linked — open Convo Chat Web", Toast.LENGTH_SHORT).show()
                                 }
                             )
                         }

@@ -330,3 +330,101 @@ internal fun createQrBitmap(content: String, size: Int): Bitmap {
         for (x in 0 until size) for (y in 0 until size) bitmap.setPixel(x, y, if (matrix[x, y]) Color.BLACK else Color.WHITE)
     }
 }
+
+/** Extract a 10-digit pairing code from a login QR: convochat://pair?code=XXXXXXXXXX */
+private fun extractPairCode(raw: String): String? {
+    val value = raw.trim()
+    runCatching {
+        val uri = Uri.parse(value)
+        if (uri.scheme.equals("convochat", true) && uri.host.equals("pair", true)) {
+            return uri.getQueryParameter("code")?.trim()?.takeIf { it.length == 10 }
+        }
+    }
+    return null
+}
+
+/** Device login screen: scans the Convo Chat Web login QR and links this phone to the browser session. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun QrDeviceLoginScreen(
+    viewModel: ChatViewModel,
+    onBack: () -> Unit,
+    onLinked: () -> Unit
+) {
+    val context = LocalContext.current
+    var scannerMode by remember { mutableStateOf(false) }
+    val pairCode = viewModel.pendingQrPairCode
+
+    Scaffold(
+        modifier = Modifier.modernBackdrop(),
+        containerColor = androidx.compose.ui.graphics.Color.Transparent,
+        topBar = {
+            TopAppBar(
+                colors = modernTopBarColors(),
+                title = { ModernTitle("Device login", "Scan the Convo Chat Web login QR") },
+                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } }
+            )
+        }
+    ) { padding ->
+        if (scannerMode) {
+            Column(Modifier.fillMaxSize().padding(padding)) {
+                QrScannerView(
+                    modifier = Modifier.fillMaxWidth().weight(1f),
+                    onScanned = { raw ->
+                        extractPairCode(raw)?.let { code ->
+                            viewModel.setPendingQrPairCode(code)
+                            scannerMode = false
+                            onLinked()
+                        } ?: run {
+                            Toast.makeText(context, "No valid login QR found. Scan the QR shown on Convo Chat Web.", Toast.LENGTH_LONG).show()
+                            scannerMode = false
+                        }
+                    },
+                    onClose = { scannerMode = false }
+                )
+            }
+            return@Scaffold
+        }
+
+        Column(
+            Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(horizontal = 18.dp, vertical = 10.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Card(shape = RoundedCornerShape(28.dp), modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = .55f))
+            ) {
+                Column(Modifier.fillMaxWidth().padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Box(
+                        Modifier.size(78.dp).clip(RoundedCornerShape(24.dp))
+                            .background(Brush.linearGradient(listOf(androidx.compose.ui.graphics.Color(0xFF6C63FF), androidx.compose.ui.graphics.Color(0xFF00B4D8)))),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(Icons.Default.QrCodeScanner, null, tint = androidx.compose.ui.graphics.Color.White, modifier = Modifier.size(42.dp))
+                    }
+                    Spacer(Modifier.height(12.dp))
+                    Text("Link this phone to a browser", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold)
+                    Text("Scan the QR code shown on Convo Chat Web (desktop), then confirm to log in automatically.", textAlign = TextAlign.Center, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.height(16.dp))
+                    pairCode?.let { code ->
+                        Column(Modifier.fillMaxWidth()) {
+                            Text("Code from deep link", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Spacer(Modifier.height(6.dp))
+                            Text(code, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
+                            Spacer(Modifier.height(12.dp))
+                            Button(onClick = { scannerMode = true }, modifier = Modifier.fillMaxWidth().height(50.dp), shape = RoundedCornerShape(16.dp)) {
+                                Text("Scan another QR", fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    } ?: run {
+                        Button(onClick = { scannerMode = true }, modifier = Modifier.fillMaxWidth().height(50.dp), shape = RoundedCornerShape(16.dp)) {
+                            Icon(Icons.Default.QrCodeScanner, null)
+                            Spacer(Modifier.size(8.dp))
+                            Text("Scan web login QR", fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

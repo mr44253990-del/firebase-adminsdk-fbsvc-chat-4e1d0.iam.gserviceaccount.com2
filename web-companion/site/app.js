@@ -36,7 +36,10 @@
     launchProgress: 0,
     profileLink: "",
     unreadTotal: 0,
-    online: navigator.onLine
+    online: navigator.onLine,
+    pairCode: "",
+    pairCodeExpiresAt: 0,
+    loginMode: "qr"            // "qr" | "code"
   };
 
   var timers = { chats: 0, messages: 0, presence: 0, typing: 0, lock: 0 };
@@ -176,9 +179,11 @@
       return;
     }
     if (!session()) {
-      pane.innerHTML = Screens.renderPairing();
+      if (!state.pairCode || Date.now() > state.pairCodeExpiresAt) generatePairCode();
+      pane.innerHTML = Screens.renderPairing(state);
       document.getElementById("tabbar").hidden = true;
       document.getElementById("rail-nav").innerHTML = "";
+      requestAnimationFrame(renderLoginQr);
       return;
     }
     document.getElementById("tabbar").hidden = false;
@@ -191,7 +196,7 @@
         var scroller = document.getElementById("msg-scroll");
         if (scroller) scroller.scrollTop = scroller.scrollHeight;
         var input = document.getElementById("composer-input");
-        if (input && !isMobile()) input.focus({ preventScroll: true });
+        if (input) input.focus({ preventScroll: true });
         var back = document.getElementById("chat-back");
         if (back) back.style.display = isMobile() ? "inline-flex" : "none";
       });
@@ -432,7 +437,7 @@
     holder.innerHTML = Chat.renderComposer(state);
     host.replaceWith(holder.firstElementChild);
     var input = document.getElementById("composer-input");
-    if (input && !isMobile()) { input.focus({ preventScroll: true }); autosize(input); }
+    if (input) { input.focus({ preventScroll: true }); autosize(input); }
   }
 
   async function react(messageId, value) {
@@ -513,6 +518,47 @@
     Object.keys(timers).forEach(function (key) { if (timers[key]) { clearInterval(timers[key]); timers[key] = 0; } });
   }
 
+  /* ---------------------------------------------------------------- pairing QR */
+  var pairingTimer = 0;
+  function stopPairRotation() { if (pairingTimer) { clearInterval(pairingTimer); pairingTimer = 0; } }
+
+  function generatePairCode() {
+    var code = "";
+    for (var i = 0; i < 10; i++) code += String(Math.floor(Math.random() * 10));
+    state.pairCode = code;
+    state.pairCodeExpiresAt = Date.now() + 30 * 1000;
+    return code;
+  }
+
+  function startPairRotation() {
+    stopPairRotation();
+    generatePairCode();
+    pairingTimer = setInterval(function () {
+      generatePairCode();
+      if (state.tab === "chats" && !Api.session()) {
+        renderPane();
+        renderLoginQr();
+      }
+    }, 30000);
+  }
+
+  function renderLoginQr() {
+    var canvas = document.getElementById("login-qr");
+    if (!canvas || !window.QRious) return;
+    var code = state.pairCode || "";
+    var payload = "convochat://pair?code=" + encodeURIComponent(code) + "&t=" + Date.now();
+    try {
+      new QRious({
+        element: canvas,
+        value: payload,
+        size: Math.max(canvas.width, canvas.height),
+        level: "H",
+        background: "transparent",
+        foreground: "#8b7bff"
+      });
+    } catch (_) {}
+  }
+
   /* ------------------------------------------------------------- interactions */
   function openEmojiPicker(button) {
     closeOverlay();
@@ -552,12 +598,87 @@
   function openAttachMenu(button) {
     closeOverlay();
     U.sheetMenu([
-      { icon: "image", label: "Send an image link", onClick: function () { promptImageLink(); } },
-      { icon: "file", label: "Send a file link", onClick: function () { promptFileLink(); } },
+      { icon: "image", label: "Choose image from device", onClick: function () { pickAndSendFile("image"); } },
+      { icon: "file", label: "Choose any file from device", onClick: function () { pickAndSendFile("file"); } },
+      { icon: "link", label: "Send an image link", onClick: function () { promptImageLink(); } },
+      { icon: "link", label: "Send a file link", onClick: function () { promptFileLink(); } },
       { icon: "copy", label: "Paste from clipboard", onClick: function () { pasteIntoComposer(); } },
       { separator: true },
-      { icon: "info", label: "Media and calls stay in the app", hint: "Android", onClick: function () { toast("Photos, files and calls are sent from the Convo Chat app on your phone.", "info"); } }
+      { icon: "info", label: "Photos, files and calls are sent from the Convo Chat app on your phone.", hint: "Android", onClick: function () { toast("Media, calls and group chats stay in the Convo Chat app.", "info"); } }
     ], "Attach");
+  }
+
+  /** Open a native file picker and upload the chosen file with no size cap. */
+  function pickAndSendFile(kind) {
+    var accept = kind === "image" ? "image/*,video/*" : "*/*";
+    var input = document.getElementById("web-file-picker");
+    if (!input) {
+      input = document.createElement("input");
+      input.type = "file";
+      input.id = "web-file-picker";
+      input.style.display = "none";
+      input.multiple = false;
+      document.getElementById("file-inputs").appendChild(input);
+    }
+    input.accept = accept;
+    input.value = "";
+    input.onchange = function () {
+      var file = input.files && input.files[0];
+      input.value = "";
+      if (!file) return;
+      uploadAndSend(file, kind);
+    };
+    input.click();
+  }
+
+  async function uploadAndSend(file, kind) {
+    if (!state.activePeer) { toast("Open a conversation first", "error"); return; }
+    var session = Api.session();
+    if (!session) { toast("Please pair this browser first", "error"); return; }
+    var ext = (file.name.split(".").pop() || "bin").slice(0, 8).replace(/[^a-z0-9]/gi, "") || "bin";
+    var kindParam = kind === "image" ? "posts" : "posts";
+    var url = Api.workerUrl + "/media/upload?kind=" + encodeURIComponent(kindParam) + "&extension=" + encodeURIComponent(ext);
+    toast("Uploading " + file.name + "…", "info");
+    try {
+      var res = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Authorization": "Bearer " + session.token,
+          "Content-Type": file.type || "application/octet-stream",
+          "X-Media-Title": file.name,
+          "X-Media-Tags": "convo-web"
+        },
+        body: file
+      });
+      var payload = await res.json().catch(function () { return {}; });
+      if (!res.ok || payload.success === false) {
+        throw new Error(payload.error || "Upload failed (" + res.status + ").");
+      }
+      var publicUrl = payload.publicUrl;
+      var mime = file.type || "application/octet-stream";
+      var isImage = /^image\//i.test(mime);
+      var isVideo = /^video\//i.test(mime);
+      if (isImage || isVideo) {
+        await Api.send(state.activePeer, isImage ? "Photo" : "Video", {
+          imageUrl: isImage ? publicUrl : "",
+          fileUrl: isVideo ? publicUrl : "",
+          fileName: file.name,
+          fileMimeType: mime,
+          fileSize: file.size
+        });
+      } else {
+        await Api.send(state.activePeer, "File", {
+          fileUrl: publicUrl,
+          fileName: file.name,
+          fileMimeType: mime,
+          fileSize: file.size
+        });
+      }
+      loadMessages();
+      toast("Sent " + file.name, "success");
+    } catch (error) {
+      toast(error.message || "Could not upload that file", "error");
+    }
   }
 
   async function promptImageLink() {
@@ -844,6 +965,7 @@
     if (button) { button.disabled = true; button.innerHTML = U.icon("refresh") + "<span>Connecting…</span>"; }
     try {
       await Api.redeem(code);
+      stopPairRotation();
       if (errorNode) errorNode.textContent = "";
       state.tab = "chats";
       await bootAfterSession();
@@ -908,6 +1030,9 @@
 
       var actionButton = target.closest("[data-action]");
       if (actionButton) { handleAction(actionButton); return; }
+
+      var modeButton = target.closest("[data-login-mode]");
+      if (modeButton) { state.loginMode = modeButton.dataset.loginMode; renderPane(); return; }
 
       var themeButton = target.closest("[data-theme-id]");
       if (themeButton) { S.setSetting("theme", themeButton.dataset.themeId); renderPane(); return; }
@@ -1086,6 +1211,7 @@
   function handleAction(button) {
     var action = button.dataset.action;
     if (action === "refresh") { refreshChats(); toast("Refreshed", "success"); return; }
+    if (action === "refresh-qr") { stopPairRotation(); generatePairCode(); renderPane(); renderLoginQr(); toast("QR code refreshed", "success"); return; }
     if (action === "clear-search") {
       state.searchQuery = ""; state.searchResults = [];
       renderPane(); return;
@@ -1177,6 +1303,7 @@
       await new Promise(function (r) { setTimeout(r, Math.max(0, LAUNCH_MIN_MS - (Date.now() - launchStartedAt))); });
       finishLaunch();
       stopParticles();
+      startPairRotation();
       renderPane();
       toast("Connect this browser from your Convo Chat app", "info");
       return;

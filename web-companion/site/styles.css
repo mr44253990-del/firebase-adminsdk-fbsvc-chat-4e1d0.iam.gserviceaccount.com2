@@ -1026,11 +1026,44 @@ h1, h2, h3, h4 { margin: 0; letter-spacing: -.02em; }
   transition: border-color var(--speed) var(--ease), box-shadow var(--speed) var(--ease);
 }
 .pair-code-input:focus { outline: none; border-color: var(--accent-b); box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent-b) 18%, transparent); }
-.pair-steps { display: grid; gap: 9px; text-align: left; }
+/* QR login modes (desktop: side by side; mobile: stacked) */
+.pair-login-modes {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 0 16px 14px;
+}
+.mode-btn {
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+  padding: 16px 10px; border-radius: 18px;
+  border: 1px solid var(--line); background: color-mix(in srgb, var(--bg) 50%, transparent);
+  color: var(--text-soft); font-size: 12px; font-weight: 700;
+  transition: all var(--speed) var(--ease);
+}
+.mode-btn .mode-ic { width: 30px; height: 30px; }
+.mode-btn:hover { background: var(--hover); color: var(--text); border-color: var(--line-strong); }
+.mode-btn.active { background: linear-gradient(120deg, var(--accent-a), var(--accent-b)); color: #fff; border-color: transparent; box-shadow: 0 8px 24px -12px var(--accent-a); }
+@media (max-width: 860px) {
+  .pair-login-modes { grid-template-columns: 1fr; }
+}
+/* QR code container */
+.pair-qr {
+  position: relative; display: flex; flex-direction: column; align-items: center; gap: 10px;
+  margin: 0 16px 16px; padding: 18px 14px;
+  border-radius: 22px; border: 1px solid var(--line-strong);
+  background: color-mix(in srgb, var(--bg) 48%, transparent);
+}
+.pair-qr canvas { width: 100%; height: auto; max-width: 260px; border-radius: 14px; background: #fff; box-shadow: var(--shadow-1); }
+.pair-qr-note { font-size: 11.5px; color: var(--text-soft); text-align: center; line-height: 1.5; }
+.pair-code-value {
+  margin-top: 10px; font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: clamp(18px, 4.5vw, 24px); font-weight: 800; letter-spacing: .25em;
+  color: var(--accent-b); text-align: center;
+}
+.pair-code-section { margin: 0 16px 14px; }
+.pair-code-section.hidden { display: none !important; }
+.pair-steps { display: grid; gap: 9px; text-align: left; margin: 0 16px 10px; }
 .pair-step { display: flex; gap: 10px; align-items: flex-start; font-size: 12.5px; color: var(--text-soft); line-height: 1.55; }
 .pair-step b { flex: none; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; background: color-mix(in srgb, var(--accent) 22%, transparent); color: var(--accent-b); font-size: 11px; font-weight: 800; }
-.pair-error { min-height: 16px; font-size: 12px; color: var(--danger); font-weight: 600; }
-.pair-fine { font-size: 11px; color: var(--text-dim); line-height: 1.6; }
+.pair-error { min-height: 16px; font-size: 12px; color: var(--danger); font-weight: 600; margin: 0 16px 8px; }
+.pair-fine { font-size: 11px; color: var(--text-dim); line-height: 1.6; margin: 0 16px 4px; }
 
 /* ============================================================== empty/skel */
 .empty { display: grid; justify-items: center; gap: 10px; padding: 44px 24px; text-align: center; color: var(--text-soft); }

@@ -471,25 +471,46 @@
   }
 
   /* --------------------------------------------------------------- pairing */
-  function renderPairing() {
+  function renderPairing(state) {
+    var code = state.pairCode || "";
+    var showCode = state.showPairCode !== false;
+    var isDesktop = !isMobileWeb();
+    var qrPayload = "convochat://pair?code=" + encodeURIComponent(code) + "&t=" + Date.now();
+    var qrSize = isDesktop ? 220 : 180;
     return '<div class="pair-wrap"><div class="pair-card">' +
       '<div class="pair-art"><span class="pulse"></span><span class="pulse"></span><span class="pulse"></span>' +
       '<span class="pair-mark">' + U.icon("qr") + '</span></div>' +
       '<h1>Connect this browser</h1>' +
-      '<p class="lead">Open <strong>Convo Chat</strong> on your phone → <strong>Profile &amp; settings</strong> → ' +
-      '<strong>Account security</strong> → <strong>Link my browser</strong>, then type the 10-digit code here.</p>' +
+      '<p class="lead">Scan the QR code below with the Convo Chat app on your phone, or enter the 10-digit code manually.</p>' +
+      '<div class="pair-login-modes">' +
+        '<button class="mode-btn' + (state.loginMode !== "code" ? " active" : "") + '" data-login-mode="qr" title="Scan QR code">' +
+          '<div class="mode-ic">' + U.icon("qr") + '</div><span>Scan QR code</span></button>' +
+        '<button class="mode-btn' + (state.loginMode === "code" ? " active" : "") + '" data-login-mode="code" title="Enter 10-digit code">' +
+          '<div class="mode-ic">' + U.icon("keyboard") + '</div><span>Enter code</span></button>' +
+      '</div>' +
+      '<div class="pair-qr">' +
+        '<canvas id="login-qr" width="' + qrSize + '" height="' + qrSize + '" role="img" aria-label="Login QR code"></canvas>' +
+        '<div class="pair-qr-note">Open Convo Chat → Profile &amp; settings → Link my browser → Scan this QR</div>' +
+        (showCode ? '<div class="pair-code-value">' + esc(code) + '</div>' : '') +
+        '<button class="icon-btn" data-action="refresh-qr" title="Refresh QR code" aria-label="Refresh QR code">' + U.icon("refresh") + '</button>' +
+      '</div>' +
+      (state.loginMode !== "qr" ? '' : '') +
+      '<div class="pair-code-section' + (state.loginMode === "code" ? "" : " hidden") + '">' +
       '<input class="pair-code-input" id="pair-code" inputmode="numeric" autocomplete="one-time-code" maxlength="10" pattern="[0-9]*" placeholder="0000000000" aria-label="10-digit pairing code">' +
       '<button class="btn primary wide" data-action="pair">' + U.icon("check") + '<span>Connect browser</span></button>' +
+      '</div>' +
       '<p class="pair-error" id="pair-error" role="alert"></p>' +
       '<div class="pair-steps">' +
-        '<div class="pair-step"><b>1</b><span>Code is single-use and expires in 90 seconds.</span></div>' +
-        '<div class="pair-step"><b>2</b><span>This session lasts 12 hours and can be revoked from your phone any time.</span></div>' +
+        '<div class="pair-step"><b>1</b><span>QR code and code change every 30 seconds for security.</span></div>' +
+        '<div class="pair-step"><b>2</b><span>Scan or enter the code — this session lasts 12 hours and can be revoked from your phone.</span></div>' +
         '<div class="pair-step"><b>3</b><span>No password is stored — your phone stays in control.</span></div>' +
       '</div>' +
       '<p class="pair-fine">Convo Chat Web is a private companion: it shows accepted friend chats only. ' +
       'Media, calls and group chats stay on your phone.</p>' +
     '</div></div>';
   }
+
+  function isMobileWeb() { return window.matchMedia("(max-width: 860px)").matches; }
 
   window.ConvoScreens = {
     renderChatsPane: renderChatsPane,

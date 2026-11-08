@@ -28,13 +28,23 @@
       out += '<img class="media" src="' + esc(img) + '" alt="Photo attachment" loading="lazy" decoding="async" ' +
         'referrerpolicy="no-referrer" data-zoom="' + esc(img) + '">';
     }
-    if (message.fileUrl) {
+    var vid = message.fileUrl || message.videoUrl || "";
+    if (vid && /^https:\/\//i.test(vid) && /^video\//.test(message.fileMimeType || "")) {
+      out += '<video class="media" controls preload="metadata" poster="' + esc(img || "") + '" ' +
+        'src="' + esc(vid) + '" referrerpolicy="no-referrer"></video>';
+    }
+    if (message.fileUrl && !/^video\//.test(message.fileMimeType || "")) {
       var name = message.fileName || "Attachment";
-      out += '<a class="file-card" href="' + esc(message.fileUrl) + '" target="_blank" rel="noopener noreferrer" download>' +
-        '<span class="file-ic">' + U.icon(/^image\//.test(message.fileMimeType || "") ? "image" : "file") + '</span>' +
+      var mime = message.fileMimeType || "";
+      var isAudio = /^audio\//i.test(mime);
+      var ic = /^image\//i.test(mime) ? "image" : (isAudio ? "music" : "file");
+      out += '<div class="file-card">' +
+        '<span class="file-ic">' + U.icon(ic) + '</span>' +
         '<span class="file-meta"><strong>' + esc(name) + '</strong>' +
         '<span>' + esc(U.fmtSize(message.fileSize) || "Open file") + '</span></span>' +
-        '<span class="file-dl">' + U.icon("download") + '</span></a>';
+        (isAudio ? '<audio controls src="' + esc(message.fileUrl) + '" style="margin-left:10px;width:150px"></audio>' : '') +
+        '<a class="file-dl" href="' + esc(message.fileUrl) + '" target="_blank" rel="noopener noreferrer" download>' +
+          U.icon("download") + '</a></div>';
     }
     if (message.voiceUrl) {
       out += '<div class="file-card"><span class="file-ic">' + U.icon("mic") + '</span>' +
@@ -181,16 +191,30 @@
     '</div>';
   }
 
-  /** Re-render only the message stream (keeps composer focus and caret). */
+  /** Re-render only the message stream without losing scroll position or focus. */
   function updateStream(state, autoscroll) {
     var host = document.getElementById("stream-host");
     if (!host) return;
     var scroller = document.getElementById("msg-scroll");
-    var stick = !scroller || (scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight) < 120;
+    var atBottom = !scroller || (scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight) < 120;
+    var savedTop = scroller ? scroller.scrollTop : 0;
+    var savedHeight = scroller ? scroller.scrollHeight : 0;
+    var input = document.getElementById("composer-input");
+    var hadFocus = document.activeElement === input;
     host.innerHTML = renderStream(state);
     var next = document.getElementById("msg-scroll");
-    if (next && (autoscroll || stick)) {
-      requestAnimationFrame(function () { next.scrollTop = next.scrollHeight; });
+    if (next) {
+      if (autoscroll || atBottom) {
+        requestAnimationFrame(function () { next.scrollTop = next.scrollHeight; });
+      } else {
+        // Keep the user's scroll position so messages do not jump up/down.
+        var delta = next.scrollHeight - savedHeight;
+        next.scrollTop = Math.max(0, savedTop + delta);
+      }
+    }
+    // Restore composer focus so the keyboard does not disappear on web/desktop.
+    if (hadFocus && input) {
+      requestAnimationFrame(function () { input.focus({ preventScroll: true }); });
     }
   }
 
