@@ -217,6 +217,16 @@ fun HomeScreen(
     val isOnlineState by viewModel.isNetworkAvailable.collectAsState()
     val currentUser by viewModel.currentUserState.collectAsState()
     val appLanguage by AppLanguage.code.collectAsState()
+
+    // 14-day trial welcome dialog — shown once on first login with vibration.
+    val showTrialWelcome by remember(currentUser?.uid) {
+        val isTrial = currentUser?.isPremium == true &&
+            currentUser?.premiumPlan == "trial" &&
+            currentUser?.premiumTrialClaimed == true
+        val key = "trial_welcome_shown_${currentUser?.uid}"
+        val alreadyShown = context.getSharedPreferences("convo_trial_welcome", Context.MODE_PRIVATE).getBoolean(key, false)
+        mutableStateOf(isTrial && !alreadyShown)
+    }
     val users by viewModel.filteredUsersState.collectAsState()
     val groups by viewModel.groupsState.collectAsState()
     val stories by viewModel.storiesState.collectAsState()
@@ -540,6 +550,48 @@ fun HomeScreen(
                                                         color = Color(0xFF3A2B00), fontWeight = FontWeight.ExtraBold, fontSize = 12.5.sp
                                                     )
                                                     Icon(Icons.Default.KeyboardArrowRight, null, tint = Color(0xFF3A2B00), modifier = Modifier.size(15.dp))
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    // ── Web version promotion banner ──
+                                    Box(
+                                        Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(18.dp))
+                                            .background(Brush.linearGradient(listOf(Color(0xFF1A237E), Color(0xFF3949AB))))
+                                            .border(1.4.dp, Brush.linearGradient(listOf(Color(0xFF5C6BC0), Color(0xFF7986CB))), RoundedCornerShape(18.dp))
+                                    ) {
+                                        Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                                            Box(
+                                                Modifier.size(52.dp).clip(CircleShape)
+                                                    .background(Brush.linearGradient(listOf(Color(0xFF5C6BC0), Color(0xFF7986CB)))),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Icon(Icons.Default.LaptopChromebook, null, tint = Color(0xFF1A237E), modifier = Modifier.size(30.dp))
+                                            }
+                                            Spacer(Modifier.width(12.dp))
+                                            Column(Modifier.weight(1f)) {
+                                                Text("Convo Chat Web", color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 16.sp)
+                                                Text(
+                                                    if (appLanguage == "bn") "এখন পিসি এবং ব্রাউজারেও চালু করুন" else "Now use on PC and browser",
+                                                    color = Color(0xFFC5CAE9), fontSize = 11.5.sp, fontWeight = FontWeight.Medium
+                                                )
+                                                Spacer(Modifier.height(9.dp))
+                                                Row(
+                                                    Modifier
+                                                        .clip(RoundedCornerShape(50))
+                                                        .background(Brush.linearGradient(listOf(Color(0xFF5C6BC0), Color(0xFF7986CB))))
+                                                        .clickable { showAccountMenu = false; Toast.makeText(context, "Open https://convo-chat-companion.pages.dev in your browser", Toast.LENGTH_LONG).show() }
+                                                        .padding(horizontal = 16.dp, vertical = 6.dp),
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    Text(
+                                                        if (appLanguage == "bn") "ওয়েব ভার্সন খুলুন" else "Open Web Version",
+                                                        color = Color(0xFF1A237E), fontWeight = FontWeight.ExtraBold, fontSize = 12.5.sp
+                                                    )
+                                                    Icon(Icons.Default.OpenInNew, null, tint = Color(0xFF1A237E), modifier = Modifier.size(15.dp))
                                                 }
                                             }
                                         }
@@ -3193,6 +3245,26 @@ fun HomeScreen(
             title = { Text("Congratulations!", fontWeight = FontWeight.Black, textAlign = TextAlign.Center) },
             text = { Column(horizontalAlignment = Alignment.CenterHorizontally) { Text("${premiumUser.name}, Convo Chat Premium is active!", textAlign = TextAlign.Center); Spacer(Modifier.height(10.dp)); val days = if (premiumUser.premiumPlan == "lifetime") "Lifetime" else "${((premiumUser.premiumUntil - System.currentTimeMillis()).coerceAtLeast(0) / 86_400_000L) + 1} days remaining"; Text(days, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.ExtraBold); if (premiumUser.premiumPlan == "trial") { Spacer(Modifier.height(8.dp)); Text("Your one-time 14-day free trial has started.", textAlign = TextAlign.Center) } } },
             confirmButton = { Button(onClick = { premiumWelcomeKey?.let { context.getSharedPreferences("convo_premium_welcome", Context.MODE_PRIVATE).edit().putBoolean(it, true).apply() }; showPremiumWelcome = false }) { Text(tr("Explore Premium")) } }
+        )
+    }
+
+    // 14-day trial welcome — beautiful + vibration, shown once on first login.
+    if (showTrialWelcome) currentUser?.let { trialUser ->
+        TrialWelcomeDialog(
+            userName = trialUser.name.ifBlank { "Convo user" },
+            onStartTrial = {
+                showTrialWelcome = false
+                context.getSharedPreferences("convo_trial_welcome", Context.MODE_PRIVATE).edit().putBoolean("trial_welcome_shown_${trialUser.uid}", true).apply()
+                onPremium()
+            },
+            onMaybeLater = {
+                showTrialWelcome = false
+                context.getSharedPreferences("convo_trial_welcome", Context.MODE_PRIVATE).edit().putBoolean("trial_welcome_shown_${trialUser.uid}", true).apply()
+            },
+            onDismiss = {
+                showTrialWelcome = false
+                context.getSharedPreferences("convo_trial_welcome", Context.MODE_PRIVATE).edit().putBoolean("trial_welcome_shown_${trialUser.uid}", true).apply()
+            }
         )
     }
 

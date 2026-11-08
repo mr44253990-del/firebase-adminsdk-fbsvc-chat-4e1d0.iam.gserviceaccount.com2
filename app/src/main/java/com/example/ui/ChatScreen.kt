@@ -437,8 +437,8 @@ fun ChatScreen(
     var albumProgress by remember { mutableStateOf<Pair<Int, Int>?>(null) }
     val multiPhotoLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetMultipleContents()) { uris ->
         if (uris.isNotEmpty()) {
-            if (uris.size > MAX_BATCH_IMAGES) Toast.makeText(context, "Only the first $MAX_BATCH_IMAGES photos will be sent", Toast.LENGTH_SHORT).show()
-            pendingImages = uris.take(MAX_BATCH_IMAGES)
+            // No MB / batch limit: send every selected photo.
+            pendingImages = uris
         }
     }
     val sendAlbum: (List<Uri>, String, Boolean) -> Unit = { images, caption, hd ->
