@@ -3626,6 +3626,13 @@ fun FullScreenStoryViewer(
                 }
             } else {
                 val story = stories[storyIndex]
+                // Story music: starts with the story and stops when it closes or changes.
+                if (story.audioUrl.startsWith("http") && story.videoUrl.isBlank()) {
+                    DisposableEffect(story.id) {
+                        com.example.data.AudioStreamPlayer.play(story.audioUrl)
+                        onDispose { com.example.data.AudioStreamPlayer.stop() }
+                    }
+                }
                 key(story.id) {
                     when {
                         story.videoUrl.isNotBlank() -> AndroidView(
@@ -4762,6 +4769,11 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
                 Spacer(modifier = Modifier.height(10.dp))
             }
 
+            // Music attached from the audio library.
+            if (post.audioUrl.startsWith("http")) {
+                AudioTrackChip(post.audioTitle, post.audioArtist, post.audioArtwork, post.audioUrl, post.audioSource, modifier = Modifier.padding(vertical = 6.dp))
+            }
+
             // 1. Reactions & Comments Summary Row (Facebook style)
             val reactionCount = post.reactions.size + post.mediaReactions.values.sumOf { it.size }
             val uniqueReactions = post.reactions.values.distinct().take(3)
@@ -4781,10 +4793,8 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
                         horizontalArrangement = Arrangement.spacedBy((-4).dp),
                         modifier = Modifier.clickable { showLikers = true }
                     ) {
-                        uniqueReactions.forEach { emoji ->
-                            Text(text = emoji, fontSize = 14.sp)
-                        }
-                        Spacer(modifier = Modifier.width(8.dp))
+                        RealReactionStack(uniqueReactions)
+                        Spacer(modifier = Modifier.width(12.dp))
                         Text(
                             text = if (reactionCount == 1) "1 person" else "$reactionCount people",
                             fontSize = 11.sp,
@@ -4851,19 +4861,11 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
                             .padding(horizontal = 12.dp, vertical = 8.dp)
                     ) {
                         if (myReaction != null) {
-                            Text(text = myReaction, fontSize = 16.sp)
+                            RealReaction(myReaction, 22.dp)
                             Spacer(modifier = Modifier.width(6.dp))
                             Text(
-                                text = when (myReaction) {
-                                    "👍" -> "Like"
-                                    "❤️" -> "Love"
-                                    "😂" -> "Haha"
-                                    "😮" -> "Wow"
-                                    "😢" -> "Sad"
-                                    "😡" -> "Angry"
-                                    else -> "Reacted"
-                                },
-                                color = MaterialTheme.colorScheme.primary,
+                                text = reactionLabel(myReaction),
+                                color = reactionTint(myReaction),
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 12.sp
                             )
@@ -4897,12 +4899,12 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
                                     .padding(horizontal = 12.dp, vertical = 6.dp)
                             ) {
                                 Row(
-                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                    verticalAlignment = Alignment.CenterVertically
+                                    horizontalArrangement = Arrangement.spacedBy(9.dp),
+                                    verticalAlignment = Alignment.Bottom
                                 ) {
                                     val emojis = listOf("👍", "❤️", "😂", "😮", "😢", "😡")
                                     emojis.forEachIndexed { index, emoji ->
-                                        ReactionOrb(emoji,index) { viewModel.reactToPost(post.id,emoji);showReactionPicker=false }
+                                        RealReactionChoice(emoji, index) { viewModel.playLikeSound(); viewModel.reactToPost(post.id,emoji);showReactionPicker=false }
                                     }
                                 }
                             }

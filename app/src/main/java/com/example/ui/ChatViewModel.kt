@@ -5041,7 +5041,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             }
     }
 
-    fun uploadStory(text: String, imageUrl: String, videoUrl: String, onComplete: () -> Unit) {
+    fun uploadStory(text: String, imageUrl: String, videoUrl: String, audio: com.example.data.AudioTrack? = null, onComplete: () -> Unit) {
         val user = getCurrentUserOrFallback() ?: return
         val storyId = UUID.randomUUID().toString()
         val story = Story(
@@ -5052,7 +5052,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             imageUrl = imageUrl,
             videoUrl = videoUrl,
             text = text,
-            timestamp = System.currentTimeMillis()
+            timestamp = System.currentTimeMillis(),
+            audioUrl = audio?.url.orEmpty(), audioTitle = audio?.title.orEmpty(), audioArtist = audio?.artist.orEmpty()
         )
 
         FirebaseFirestore.getInstance().collection("stories").document(storyId)
@@ -5483,7 +5484,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         r2ObjectKeys: List<String> = emptyList(),
         isReel: Boolean = false,
         expiresAt: Long = 0L,
-        imageUrls: List<String> = emptyList()
+        imageUrls: List<String> = emptyList(),
+        audio: com.example.data.AudioTrack? = null
     ) {
         val user = getCurrentUserOrFallback() ?: return
         val postId = UUID.randomUUID().toString()
@@ -5494,7 +5496,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             senderProfilePic = user.profileImageUrl,
             text = text,
             imageUrl = imageUrl,
-            audioUrl = "",
+            // Only tracks picked from the admin-enabled audio library are attached.
+            audioUrl = audio?.url.orEmpty(),
+            audioTitle = audio?.title.orEmpty(), audioArtist = audio?.artist.orEmpty(), audioArtwork = audio?.artwork.orEmpty(), audioSource = audio?.source.orEmpty(),
             videoUrl = videoUrl,
             timestamp = System.currentTimeMillis(),
             isPrivate = isPrivate,

@@ -941,6 +941,8 @@ fun ChatScreen(
         )
     }
 
+    // Chat screens size themselves to the keyboard instead of depending on window panning.
+    KeyboardResizeMode()
     Box(Modifier.fillMaxSize()) {
     ChatBackdrop(chatThemeSpec, chatImageBackground, chatGradientBg, chatAppearance.backgroundDim)
     Scaffold(
@@ -1546,7 +1548,9 @@ fun ChatScreen(
                 color = Color.Transparent,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .windowInsetsPadding(WindowInsets.navigationBars)
+                    // The composer rides exactly on top of the keyboard (or the navigation bar when
+                    // the keyboard is closed), so what you type is always visible.
+                    .windowInsetsPadding(WindowInsets.navigationBars.union(WindowInsets.ime))
                     .glassmorphic(
                         isDark = isDark,
                         backgroundColor = barColors?.container,
@@ -1672,6 +1676,7 @@ fun ChatScreen(
                                     modifier = Modifier
                                         .size(46.dp)
                                         .graphicsLayer { scaleX = reactionScale.value; scaleY = reactionScale.value }
+                                        .quickReactionGlow(composerAccent)
                                         .clip(CircleShape)
                                         .combinedClickable(
                                             enabled = !composerLocked,
@@ -1697,9 +1702,16 @@ fun ChatScreen(
                                     contentAlignment = Alignment.Center
                                 ) {
                                     if (ConvoStickers.isSticker(quickReaction)) ConvoStickerView(quickReaction, 40.dp, animate = chatAppearance.animateReactions)
-                                    else Text(quickReaction, fontSize = 27.sp)
+                                    else if (chatAppearance.animateReactions) WobbleEmoji(quickReaction) else Text(quickReaction, fontSize = 27.sp)
                                 }
                                 DropdownMenu(showReactionPicker, { showReactionPicker = false }) {
+                                    // Send another reaction just this once (the chat's emoji stays the same).
+                                    QuickSendOnceRow { once ->
+                                        showReactionPicker = false
+                                        viewModel.playLikeSound()
+                                        if (chatAppearance.animateReactions) ReactionFx.fire(once)
+                                        viewModel.sendMessage(recipientUser = recipient, text = once)
+                                    }
                                     Text(tr("Chat emoji · changes for both of you"), style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp))
                                     ChatPreferences.reactionChoices.chunked(4).forEach { row ->
                                         Row(Modifier.padding(horizontal = 8.dp)) {

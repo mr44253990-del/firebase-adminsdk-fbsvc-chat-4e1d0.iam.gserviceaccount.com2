@@ -29,6 +29,11 @@ fun CreateHubSheet(viewModel: ChatViewModel, onDismiss: () -> Unit, onCreatePost
     var progress by remember { mutableIntStateOf(0) }
     var label by remember { mutableStateOf("") }
 
+    val hubAudioConfig by viewModel.flagshipConfig.collectAsState()
+    var storyAudio by remember { mutableStateOf<com.example.data.AudioTrack?>(null) }
+    var showStoryAudio by remember { mutableStateOf(false) }
+    if (showStoryAudio) AudioLibrarySheet(hubAudioConfig, onPick = { storyAudio = it }, onDismiss = { showStoryAudio = false })
+
     fun uploadStory(uri: Uri, video: Boolean) {
         uploading = true; progress = 0; label = if (video) "Video story" else "Photo story"
         val mime = context.contentResolver.getType(uri) ?: if (video) "video/mp4" else "image/jpeg"
@@ -36,7 +41,7 @@ fun CreateHubSheet(viewModel: ChatViewModel, onDismiss: () -> Unit, onCreatePost
         viewModel.uploadUriToSupabase(uri, "story_${System.currentTimeMillis()}.${if (video) "mp4" else "jpg"}", mime, size,
             onProgress = { p, _ -> progress = p },
             onSuccess = { url ->
-                viewModel.uploadStory("My Story", if (video) "" else url, if (video) url else "") {
+                viewModel.uploadStory("My Story", if (video) "" else url, if (video) url else "", audio = storyAudio.takeIf { !video }) {
                     uploading = false; Toast.makeText(context, "Story published", Toast.LENGTH_SHORT).show(); onDismiss()
                 }
             },
@@ -61,6 +66,14 @@ fun CreateHubSheet(viewModel: ChatViewModel, onDismiss: () -> Unit, onCreatePost
                 val hubConfig by viewModel.flagshipConfig.collectAsState()
                 val hubAdmin = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.email?.lowercase()?.trim() == "mr4425390@gmail.com"
                 if (hubConfig.reelsEnabled || hubAdmin) CreateHubAction(Icons.Default.SmartDisplay, "Create Reel", "Upload directly as a vertical Reel") { viewModel.prepareComposer("reel"); onDismiss(); onCreatePost() }
+                if (hubAudioConfig.audioLibraryEnabled) {
+                    val chosen = storyAudio
+                    if (chosen != null) AudioTrackChip(chosen.title, chosen.artist, chosen.artwork, chosen.url, chosen.source, onRemove = { storyAudio = null })
+                    OutlinedButton(onClick = { showStoryAudio = true }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp)) {
+                        Icon(Icons.Default.LibraryMusic, null); Spacer(Modifier.width(6.dp))
+                        Text(if (chosen == null) "Add music to your photo story" else "Change story music")
+                    }
+                }
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     OutlinedButton(onClick = { photoStory.launch("image/*") }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(18.dp)) { Icon(Icons.Default.AutoStories, null); Spacer(Modifier.width(6.dp)); Text(tr("Photo story")) }
                     OutlinedButton(onClick = { videoStory.launch("video/*") }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(18.dp)) { Icon(Icons.Default.Movie, null); Spacer(Modifier.width(6.dp)); Text(tr("Video story")) }

@@ -77,9 +77,42 @@ fun KeyboardResizeMode() {
     val view = LocalView.current
     DisposableEffect(view) {
         val window = (view.context as? Activity)?.window
-        val previous = window?.attributes?.softInputMode
+        val token = Any()
+        if (window != null) KeyboardModeStack.push(window, token)
+        onDispose { if (window != null) KeyboardModeStack.pop(window, token) }
+    }
+}
+
+/**
+ * Keeps track of which screens currently want "resize" keyboard behaviour.
+ *
+ * v5.2.1 fix: the first version restored the old mode with `Window.setSoftInputMode(0)`, but
+ * Android ignores the value 0 there — so after opening the AI chat once, the whole app stayed in
+ * resize mode and the normal chat / group chat composer ended up hidden behind the keyboard.
+ * The original mode is now written back directly to the window attributes, and nested screens
+ * are counted so the mode is only restored when the last one leaves.
+ */
+private object KeyboardModeStack {
+    private val holders = ArrayList<Any>()
+    private var original: Int? = null
+
+    fun push(window: android.view.Window, token: Any) {
+        if (holders.isEmpty()) original = window.attributes.softInputMode
+        holders += token
         @Suppress("DEPRECATION")
-        window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
-        onDispose { if (previous != null) window.setSoftInputMode(previous) }
+        window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+    }
+
+    fun pop(window: android.view.Window, token: Any) {
+        holders -= token
+        if (holders.isEmpty()) {
+            val restore = original ?: WindowManager.LayoutParams.SOFT_INPUT_ADJUST_UNSPECIFIED
+            original = null
+            // setSoftInputMode() ignores "unspecified", so assign the attribute itself.
+            window.attributes = window.attributes.apply {
+                softInputMode = (restore and WindowManager.LayoutParams.SOFT_INPUT_MASK_ADJUST.inv()) or
+                    (restore and WindowManager.LayoutParams.SOFT_INPUT_MASK_ADJUST)
+            }
+        }
     }
 }

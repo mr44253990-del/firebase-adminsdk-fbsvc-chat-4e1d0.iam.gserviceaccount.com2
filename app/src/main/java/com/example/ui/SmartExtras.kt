@@ -28,6 +28,9 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.composed
+import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -323,5 +326,56 @@ fun PremiumPromoToast(eligible: Boolean, userKey: String, onOpen: () -> Unit, mo
             Text("See plans", color = Color(0xFF3A2A06), fontWeight = FontWeight.Bold, fontSize = 12.sp, modifier = Modifier.clip(CircleShape).background(Color(0xFFFFD36E)).padding(horizontal = 12.dp, vertical = 7.dp))
             IconButton(onClick = { visible = false }, modifier = Modifier.size(34.dp)) { Icon(Icons.Default.Close, "Dismiss", tint = Color.White.copy(alpha = .8f), modifier = Modifier.size(16.dp)) }
         }
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Quick-reaction button polish: a breathing halo behind the emoji and a gentle idle wobble.
+// ---------------------------------------------------------------------------------------------
+
+fun Modifier.quickReactionGlow(accent: Color): Modifier = composed {
+    val motion = androidx.compose.animation.core.rememberInfiniteTransition(label = "quick_glow")
+    val pulse by motion.animateFloat(0f, 1f, androidx.compose.animation.core.infiniteRepeatable(tween(1800, easing = androidx.compose.animation.core.LinearEasing)), label = "pulse")
+    val spin by motion.animateFloat(0f, 360f, androidx.compose.animation.core.infiniteRepeatable(tween(5200, easing = androidx.compose.animation.core.LinearEasing)), label = "spin")
+    this.then(
+        Modifier.drawBehind {
+            val r = size.minDimension / 2f
+            // Expanding soft ring.
+            drawCircle(accent.copy(alpha = (1f - pulse) * .35f), radius = r * (.9f + .55f * pulse), style = androidx.compose.ui.graphics.drawscope.Stroke(width = 3f + 4f * (1f - pulse)))
+            // Glass disc with a slowly turning light edge.
+            drawCircle(Brush.radialGradient(listOf(accent.copy(alpha = .30f), accent.copy(alpha = .08f)), center, r), radius = r)
+            rotate(spin) {
+                drawArc(
+                    Brush.sweepGradient(listOf(Color.Transparent, Color.White.copy(alpha = .85f), accent, Color.Transparent), center),
+                    startAngle = 0f, sweepAngle = 140f, useCenter = false,
+                    topLeft = androidx.compose.ui.geometry.Offset(center.x - r + 2f, center.y - r + 2f), size = androidx.compose.ui.geometry.Size((r - 2f) * 2, (r - 2f) * 2),
+                    style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2.2f, cap = androidx.compose.ui.graphics.StrokeCap.Round)
+                )
+            }
+        }
+    )
+}
+
+@Composable
+fun WobbleEmoji(emoji: String, sizeSp: Int = 27) {
+    val motion = androidx.compose.animation.core.rememberInfiniteTransition(label = "wobble")
+    val tilt by motion.animateFloat(-9f, 9f, androidx.compose.animation.core.infiniteRepeatable(tween(1300, easing = FastOutSlowInEasing), androidx.compose.animation.core.RepeatMode.Reverse), label = "tilt")
+    val bob by motion.animateFloat(.94f, 1.08f, androidx.compose.animation.core.infiniteRepeatable(tween(900, easing = FastOutSlowInEasing), androidx.compose.animation.core.RepeatMode.Reverse), label = "bob")
+    Text(emoji, fontSize = sizeSp.sp, modifier = Modifier.graphicsLayer { rotationZ = tilt; scaleX = bob; scaleY = bob })
+}
+
+/** "Send once" emoji tray: sends a different reaction without changing the chat's default one. */
+@Composable
+fun QuickSendOnceRow(onSend: (String) -> Unit) {
+    Column(Modifier.padding(horizontal = 8.dp, vertical = 2.dp)) {
+        Text("Send once", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp))
+        listOf(listOf("❤️", "😂", "😮", "😢", "😡"), listOf("🔥", "🎉", "🙏", "💯", "😍")).forEach { row ->
+            Row {
+                row.forEach { emoji ->
+                    Box(Modifier.size(42.dp).clip(CircleShape).clickable { onSend(emoji) }, contentAlignment = Alignment.Center) { Text(emoji, fontSize = 23.sp) }
+                }
+            }
+        }
+        HorizontalDivider(Modifier.padding(vertical = 4.dp))
     }
 }

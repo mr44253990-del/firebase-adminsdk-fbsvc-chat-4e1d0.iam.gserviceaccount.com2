@@ -327,6 +327,7 @@ fun GroupChatScreen(
     )
 
     val barColors = chatBarColors(groupThemeSpec, false)
+    KeyboardResizeMode()
     Box(Modifier.fillMaxSize()) {
     ChatBackdrop(groupThemeSpec, null, chatGradientBg, chatAppearance.backgroundDim)
     Scaffold(
@@ -614,10 +615,10 @@ fun GroupChatScreen(
                 tonalElevation = 8.dp,
                 modifier = Modifier
                     .fillMaxWidth()
-                    // Keep the composer above the gesture/navigation bar. The keyboard is handled by
-                    // the window itself (same as direct chats); adding an extra IME inset here made
-                    // the box jump far above the keyboard while typing.
-                    .windowInsetsPadding(WindowInsets.navigationBars.only(WindowInsetsSides.Bottom))
+                    // The composer rides exactly on top of the keyboard (or the navigation bar when
+                    // the keyboard is closed). The screen is in resize mode, so this is the only
+                    // keyboard offset that applies — no double jump, and never hidden.
+                    .windowInsetsPadding(WindowInsets.navigationBars.only(WindowInsetsSides.Bottom).union(WindowInsets.ime))
                     .glassmorphic(
                         isDark = isDark,
                         shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
@@ -750,6 +751,7 @@ fun GroupChatScreen(
                                 Modifier
                                     .size(46.dp)
                                     .graphicsLayer { scaleX = reactionScale.value; scaleY = reactionScale.value }
+                                    .quickReactionGlow(MaterialTheme.colorScheme.primary)
                                     .clip(CircleShape)
                                     .clickable {
                                         viewModel.playLikeSound()
@@ -765,7 +767,7 @@ fun GroupChatScreen(
                                 contentAlignment = Alignment.Center
                             ) {
                                 if (ConvoStickers.isSticker(quickReaction)) ConvoStickerView(quickReaction, 40.dp, animate = chatAppearance.animateReactions)
-                                else Text(quickReaction, fontSize = 27.sp)
+                                else if (chatAppearance.animateReactions) WobbleEmoji(quickReaction) else Text(quickReaction, fontSize = 27.sp)
                             }
                         }
                     }

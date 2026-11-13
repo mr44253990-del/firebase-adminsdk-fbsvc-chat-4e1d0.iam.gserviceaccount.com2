@@ -93,6 +93,14 @@ Legend: ✅ done in this branch · 🔧 needs a one-time server step by the admi
 - ✅ O15. Web: login tab switching fixed, QR on phones fixed, chat header opens profile info, motion/glass CSS layer. 🔧 Needs the web site to be re-uploaded (`deploy-web-companion.sh`, then Admin → Web app deploy).
 - ⏳ Not done in 5.2: story editor tools/filters, a full redesign of the post composer and post cards, voice-message changes, deeper Settings features.
 
+## P. Version 5.3
+- ✅ P1. **Keyboard regression fixed**: `KeyboardResizeMode` restored the old mode with `setSoftInputMode(0)`, which Android ignores, so after one visit to the AI chat every screen stayed in resize mode and the chat composer was covered. The mode is now restored through the window attributes with a holder count; chat and group chat handle the keyboard themselves (resize mode + navigation/IME inset on the composer).
+- ✅ P2. Realistic, animated reaction faces (tray, Like button, summary).
+- ✅ P3. Quick-reaction button: halo, wobble, "Send once" tray.
+- ✅ P4. **Audio library** (Audius, iTunes Search, Radio Browser) for posts and photo stories, with mini player.
+- ✅ P5. Admin → Audio library page (master switch, catalogues, API configuration, test, preview) + Copilot switch.
+- ❌ P6. Web deploy: the Cloudflare token supplied on 13 Nov had already expired (12 Nov 17:59 UTC), so nothing was published. The web changes are in the repo.
+
 ## N. Ideas for the next rounds (not built yet)
 - Voice-message transcription and translation (needs a speech-to-text provider key on the Worker).
 - SFU-based group calls for more than 8 people (the Worker already lists an `sfu` route).

@@ -1,3 +1,8 @@
+• FIXED 5.3: in chats and group chats the message box is no longer hidden behind the keyboard — it now sits right on top of the keyboard while you type (the 5.0 AI-chat keyboard fix had left the whole app in the wrong keyboard mode after the AI screen was opened once). Comment boxes are back to normal too.
+• Reactions redrawn: Like, Love, Haha, Wow, Sad and Angry are now hand-drawn, animated faces — in the reaction tray, on the Like button and in the "who reacted" summary.
+• Chat quick-reaction button: glowing halo, gentle wobble, and a "Send once" tray (long-press) for a different emoji without changing the chat's default.
+• NEW audio library for posts and photo stories: Audius (full indie tracks), iTunes (30-second song previews) and Radio Browser (live radio). Search, preview, then "Use". Posts show a mini player; story music plays while the story is open.
+• Admin → Audio library: one master switch (on = on for everyone, off = off for everyone), per-catalogue switches, API settings (Audius app name and host, iTunes country), Save, Test APIs and Preview. The Admin Copilot also understands "audio library on / off".
 • NEW 5.2: Permission Center — one page right after sign-in for every permission, with a progress ring; everything can be skipped and is asked again only when a feature needs it. Home no longer opens permission pop-ups. Reopen it from Settings → Permission manager.
 • Chat backup fixed: the backup is now one single file with chats only (no more new files each time). Choose a backup folder once and the file stays readable after the app is removed and installed again. Settings → Chat backup.
 • Profile pictures no longer "load" in front of you: the saved picture stays on screen and a new one is swapped in quietly once it has downloaded.

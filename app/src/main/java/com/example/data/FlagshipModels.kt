@@ -43,6 +43,19 @@ data class StorageRoutingConfig(
     val bucketThumbnails: String = "thumbnails",
     val bucketUpdates: String = "updates",
     val autoCreateBuckets: Boolean = true,
+    /**
+     * v5.3 audio library (music for posts and stories). The master switch turns every
+     * catalogue on or off together; the per-catalogue switches fine-tune it.
+     */
+    val audioLibraryEnabled: Boolean = false,
+    val audioAudiusEnabled: Boolean = true,
+    val audioItunesEnabled: Boolean = true,
+    val audioRadioEnabled: Boolean = true,
+    /** Audius asks every app to identify itself with a name (no key needed). */
+    val audioAudiusAppName: String = "ConvoChat",
+    val audioAudiusHost: String = "https://discoveryprovider.audius.co",
+    /** Two-letter iTunes Store country for song search (US, GB, IN, BD…). */
+    val audioItunesCountry: String = "US",
     val updatedAt: Long = 0L,
     val updatedBy: String = ""
 )
@@ -120,6 +133,19 @@ data class FlagshipConfig(
     val funCampaignId: String = "",
     val funCampaignTitle: String = "শুক্রবারের মজার হিসাব 😄",
     val funCampaignBody: String = "আর কত শুক্রবার বউ ছাড়া থাকবেন? একটা বিয়ে করে নেন! 😄",
+    /**
+     * v5.3 audio library (music for posts and stories). The master switch turns every
+     * catalogue on or off together; the per-catalogue switches fine-tune it.
+     */
+    val audioLibraryEnabled: Boolean = false,
+    val audioAudiusEnabled: Boolean = true,
+    val audioItunesEnabled: Boolean = true,
+    val audioRadioEnabled: Boolean = true,
+    /** Audius asks every app to identify itself with a name (no key needed). */
+    val audioAudiusAppName: String = "ConvoChat",
+    val audioAudiusHost: String = "https://discoveryprovider.audius.co",
+    /** Two-letter iTunes Store country for song search (US, GB, IN, BD…). */
+    val audioItunesCountry: String = "US",
     val updatedAt: Long = 0L,
     val updatedBy: String = ""
 )

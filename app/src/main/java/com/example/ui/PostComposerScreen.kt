@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.outlined.AlternateEmail
+import androidx.compose.material.icons.outlined.LibraryMusic
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.AddPhotoAlternate
@@ -201,6 +202,13 @@ fun PostComposerScreen(viewModel: ChatViewModel, onBack: () -> Unit, onPublished
         }
     }
 
+    // v5.3 audio library (shown only while the admin has it switched on).
+    val composerConfig by viewModel.flagshipConfig.collectAsState()
+    var pickedAudio by remember { mutableStateOf<com.example.data.AudioTrack?>(null) }
+    var showAudioLibrary by remember { mutableStateOf(false) }
+    if (showAudioLibrary) AudioLibrarySheet(composerConfig, onPick = { pickedAudio = it }, onDismiss = { showAudioLibrary = false })
+    DisposableEffect(Unit) { onDispose { com.example.data.AudioStreamPlayer.stop() } }
+
     Scaffold(
         modifier = Modifier.modernBackdrop(),
         containerColor = Color.Transparent,
@@ -211,7 +219,7 @@ fun PostComposerScreen(viewModel: ChatViewModel, onBack: () -> Unit, onPublished
                 actions = {
                     Button(
                         onClick = {
-                            if (text.isBlank() && imageMedia.isEmpty() && videoMedia == null) return@Button
+                            if (text.isBlank() && imageMedia.isEmpty() && videoMedia == null && pickedAudio == null) return@Button
                             publishing = true
                             val expiry = (imageMedia.map { it.expiresAt } + listOfNotNull(videoMedia?.expiresAt)).maxOrNull() ?: 0L
                             viewModel.createPost(
@@ -225,10 +233,11 @@ fun PostComposerScreen(viewModel: ChatViewModel, onBack: () -> Unit, onPublished
                                 r2ObjectKeys = imageMedia.map { it.key } + listOfNotNull(videoMedia?.key),
                                 isReel = isReel && videoMedia != null,
                                 expiresAt = expiry,
-                                imageUrls = imageMedia.map { it.publicUrl }
+                                imageUrls = imageMedia.map { it.publicUrl },
+                                audio = pickedAudio.takeIf { composerConfig.audioLibraryEnabled }
                             )
                         },
-                        enabled = (text.isNotBlank() || imageMedia.isNotEmpty() || videoMedia != null) && !publishing && !uploading,
+                        enabled = (text.isNotBlank() || imageMedia.isNotEmpty() || videoMedia != null || pickedAudio != null) && !publishing && !uploading,
                         colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent, contentColor = Color.White, disabledContainerColor = Color.Transparent, disabledContentColor = Color.White.copy(alpha = .7f)),
                         modifier = Modifier.padding(end = 8.dp).clip(RoundedCornerShape(50))
                             .background(Brush.horizontalGradient(listOf(Color(0xFF6B4EFF), Color(0xFFE64DAB))))
@@ -370,7 +379,7 @@ fun PostComposerScreen(viewModel: ChatViewModel, onBack: () -> Unit, onPublished
             val toolTabs = listOf(
                 "media" to "Media", "background" to "Background", "feeling" to "Feeling",
                 "people" to "People", "hashtags" to "Hashtags", "animation" to "Animation", "ai" to "AI studio"
-            )
+            ) + if (composerConfig.audioLibraryEnabled) listOf("music" to "Music") else emptyList()
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(toolTabs, key = { it.first }) { (id, label) ->
                     FilterChip(
@@ -386,6 +395,7 @@ fun PostComposerScreen(viewModel: ChatViewModel, onBack: () -> Unit, onPublished
                                     "people" -> Icons.Outlined.AlternateEmail
                                     "hashtags" -> Icons.Outlined.Tag
                                     "animation" -> Icons.Outlined.Animation
+                                    "music" -> Icons.Outlined.LibraryMusic
                                     else -> Icons.Outlined.AutoAwesome
                                 },
                                 null, Modifier.size(16.dp)
@@ -397,6 +407,16 @@ fun PostComposerScreen(viewModel: ChatViewModel, onBack: () -> Unit, onPublished
             }
             Card(shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(.45f))) {
                 Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    if (toolTab == "music") {
+                        Text("Add music from the audio library", fontWeight = FontWeight.Bold)
+                        val track = pickedAudio
+                        if (track != null) AudioTrackChip(track.title, track.artist, track.artwork, track.url, track.source, onRemove = { pickedAudio = null })
+                        Button(onClick = { showAudioLibrary = true }, shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()) {
+                            Icon(Icons.Outlined.LibraryMusic, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp))
+                            Text(if (track == null) "Open audio library" else "Choose a different track")
+                        }
+                        Text("Songs (iTunes previews), independent artists (Audius) and live radio.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                     when (toolTab) {
                         "media" -> {
                             Text("Add up to 5 photos or one video. Text backgrounds are used only for posts without media.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
