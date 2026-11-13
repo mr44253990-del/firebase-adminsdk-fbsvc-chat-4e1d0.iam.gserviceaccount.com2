@@ -300,7 +300,7 @@ fun TalkingBar(modifier: Modifier = Modifier, active: Boolean = true) {
                     startX = phase * w,
                     endX = phase * w + w * 0.5f
                 )
-                drawRect(if (active) activeBrush else Color(0xFF3A3D4A))
+                if (active) drawRect(activeBrush) else drawRect(Color(0xFF3A3D4A))
             }
     )
 }
