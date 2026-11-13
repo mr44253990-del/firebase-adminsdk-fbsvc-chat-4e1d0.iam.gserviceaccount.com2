@@ -1019,12 +1019,6 @@ fun ChatScreen(
                     }
                 },
                 actions = {
-                    IconButton(onClick = {
-                        showMessageSearch = !showMessageSearch
-                        if (!showMessageSearch) messageSearchQuery = ""
-                    }) {
-                        Icon(Icons.Default.Search, contentDescription = "Search messages", tint = MaterialTheme.colorScheme.primary)
-                    }
                     ChatCallPill(
                         onVideo = {
                             val cameraGranted = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
@@ -1036,9 +1030,8 @@ fun ChatScreen(
                             else { pendingCall = true; permissionLauncher.launch(Manifest.permission.RECORD_AUDIO) }
                         }
                     )
-                    ChatThemeOrb(onClick = { showThemePicker = true }, accent = MaterialTheme.colorScheme.primary)
                     IconButton(onClick = { showChatSettings = true }) {
-                        Icon(Icons.Default.MoreVert, contentDescription = "Chat settings")
+                        Icon(Icons.Default.MoreVert, contentDescription = "Chat settings", tint = MaterialTheme.colorScheme.primary)
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -2268,17 +2261,24 @@ fun MessageBubbleItem(
 
                     // Render Chat image if present
                     if (!message.imageUrl.isNullOrBlank()) {
-                        AsyncImage(
-                            model = message.imageUrl,
-                            contentDescription = "Image attachment",
-                            contentScale = ContentScale.Crop,
+                        Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(180.dp)
+                                .heightIn(min = 120.dp, max = 340.dp)
                                 .clip(RoundedCornerShape(18.dp))
                                 .clickable { showImageViewer = true }
-                                .background(MaterialTheme.colorScheme.surface)
-                        )
+                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            AsyncImage(
+                                model = message.imageUrl,
+                                contentDescription = "Image attachment",
+                                contentScale = ContentScale.Fit,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(min = 120.dp, max = 340.dp)
+                            )
+                        }
                         Spacer(modifier = Modifier.height(6.dp))
                     }
 

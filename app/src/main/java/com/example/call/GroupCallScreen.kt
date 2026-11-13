@@ -76,6 +76,7 @@ fun GroupCallScreen(
     var joinRequested by remember { mutableStateOf(autoStart) }
     var showDiagnostics by remember { mutableStateOf(false) }
     var showMoreControls by remember { mutableStateOf(false) }
+    var showAddMemberDialog by remember { mutableStateOf(false) }
     BackHandler(enabled = started && state.status !in listOf("idle", "ended", "failed")) { onMinimize() }
     val localUid = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid.orEmpty()
     val isHost = state.hostId.isNotBlank() && state.hostId == localUid
@@ -233,8 +234,10 @@ fun GroupCallScreen(
                             Text("REC", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
                         }
                     }
-                                                Text("${state.participants.size}/6", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(end = 10.dp))
-
+                    IconButton(onClick = { showAddMemberDialog = true }) {
+                        Icon(Icons.Default.PersonAdd, "Add Member", tint = Color.White)
+                    }
+                    Text("${state.participants.size}/6", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(end = 10.dp))
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = callPalette.surface,
@@ -258,7 +261,11 @@ fun GroupCallScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     GroupDockButton(if (state.muted) Icons.Default.MicOff else Icons.Default.Mic, if (state.muted) "Unmute" else "Mute", state.muted, callPalette.accent) { GroupCallEngine.toggleMute() }
-                    if (state.video) GroupDockButton(if (state.cameraOff) Icons.Default.VideocamOff else Icons.Default.Videocam, "Camera", state.cameraOff, callPalette.accent) { GroupCallEngine.toggleCamera() }
+                    if (state.video) {
+                        GroupDockButton(if (state.cameraOff) Icons.Default.VideocamOff else Icons.Default.Videocam, "Camera", state.cameraOff, callPalette.accent) { GroupCallEngine.toggleCamera() }
+                    } else {
+                        GroupDockButton(Icons.Default.Videocam, "Turn on Video", false, callPalette.accent) { GroupCallEngine.switchToVideo(context) }
+                    }
                     GroupDockButton(if (state.speaker) Icons.Default.VolumeUp else Icons.Default.Hearing, if (state.speaker) "Speaker" else "Earpiece", state.speaker, callPalette.accent) { GroupCallEngine.toggleSpeaker() }
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         FilledIconButton(
@@ -283,6 +290,11 @@ fun GroupCallScreen(
                                 onClick = { GroupCallEngine.toggleSpeaker(); showMoreControls = false }
                             )
                             if (state.video) {
+                                DropdownMenuItem(
+                                    text = { Text("Switch to audio only") },
+                                    leadingIcon = { Icon(Icons.Default.Call, null) },
+                                    onClick = { GroupCallEngine.switchToAudio(); showMoreControls = false }
+                                )
                                 DropdownMenuItem(
                                     text = { Text("Switch camera") },
                                     leadingIcon = { Icon(Icons.Default.Cameraswitch, null) },
@@ -557,8 +569,59 @@ fun GroupCallScreen(
                         }
                     }
                 }
-            }
         }
+    }
+
+    if (showAddMemberDialog) {
+        val existingUids = remember(state.participants, localUid) {
+            state.participants.map { it.uid }.toSet() + localUid
+        }
+        val invitable = remember(group.members, existingUids) {
+            group.members.filter { it !in existingUids }
+        }
+        AlertDialog(
+            onDismissRequest = { showAddMemberDialog = false },
+            title = { Text("Add Participant to Call", fontWeight = FontWeight.Bold) },
+            text = {
+                if (invitable.isEmpty()) {
+                    Text("All group members are already in the call.")
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxWidth().heightIn(max = 280.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(invitable) { memberUid ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+                                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = memberUid.take(10) + "…",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Medium
+                                )
+                                Button(
+                                    onClick = {
+                                        GroupCallEngine.inviteMember(memberUid)
+                                        Toast.makeText(context, "Invited to call!", Toast.LENGTH_SHORT).show()
+                                    },
+                                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 4.dp),
+                                    shape = RoundedCornerShape(20.dp)
+                                ) {
+                                    Text("Invite", style = MaterialTheme.typography.labelMedium)
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showAddMemberDialog = false }) { Text("Close") }
+            }
+        )
     }
 }
 

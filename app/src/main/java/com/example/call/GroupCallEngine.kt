@@ -219,6 +219,11 @@ object GroupCallEngine {
     private fun watchRoom(ref: DatabaseReference, servers: List<PeerConnection.IceServer>) {
         roomValueListener = ref.addValueEventListener(object : ValueEventListener {
             override fun onDataChange(snapshot: DataSnapshot) {
+                val status = snapshot.child("status").getValue(String::class.java).orEmpty()
+                if (status == "ended") {
+                    cleanup("ended")
+                    return
+                }
                 val remoteHostId = snapshot.child("hostId").getValue(String::class.java).orEmpty()
                 if (remoteHostId.isNotBlank()) {
                     hostId = remoteHostId
@@ -570,10 +575,59 @@ object GroupCallEngine {
 
     fun toggleSpeaker() {
         val app = context ?: return
-        val manager = app.getSystemService(Context.AUDIO_SERVICE) as AudioManager
         val enabled = !_state.value.speaker
-        @Suppress("DEPRECATION") manager.isSpeakerphoneOn = enabled
         _state.value = _state.value.copy(speaker = enabled)
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+            runCatching {
+                val manager = app.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+                @Suppress("DEPRECATION") manager.isSpeakerphoneOn = enabled
+            }
+        }
+    }
+
+    fun switchToVideo(app: Context): Boolean {
+        if (_state.value.video) return true
+        val source = factory?.createVideoSource(false) ?: return false
+        val sth = SurfaceTextureHelper.create("GroupVideoCapturerHelper", eglBase?.eglBaseContext)
+        val capturer = createCameraCapturer(app) ?: return false
+        capturer.initialize(sth, app, source.capturerObserver)
+        capturer.startCapture(640, 480, 24)
+        val track = factory?.createVideoTrack("GROUP_LOCAL_VIDEO_" + UUID.randomUUID(), source)?.apply { setEnabled(true) } ?: return false
+
+        videoCapturer = capturer
+        surfaceTextureHelper = sth
+        videoSource = source
+        localVideo = track
+
+        replacePublishedVideoTrack(track)
+        _state.value = _state.value.copy(video = true, cameraOff = false)
+        roomRef?.child("participants")?.child(myUid)?.child("video")?.setValue(true)
+        localRenderer?.let { track.addSink(it) }
+        return true
+    }
+
+    fun switchToAudio() {
+        if (!_state.value.video) return
+        runCatching { videoCapturer?.stopCapture() }
+        runCatching { videoCapturer?.dispose() }
+        videoCapturer = null
+        runCatching { surfaceTextureHelper?.dispose() }
+        surfaceTextureHelper = null
+        runCatching { localVideo?.dispose() }
+        localVideo = null
+        runCatching { videoSource?.dispose() }
+        videoSource = null
+
+        _state.value = _state.value.copy(video = false, cameraOff = true)
+        roomRef?.child("participants")?.child(myUid)?.child("video")?.setValue(false)
+    }
+
+    fun inviteMember(targetUid: String) {
+        val rid = _state.value.roomId
+        val gid = _state.value.groupId
+        if (rid.isBlank() || gid.isBlank() || targetUid.isBlank()) return
+        roomRef?.child("memberIds")?.child(targetUid)?.setValue(true)
+        FirebaseDatabase.getInstance().getReference("groups").child(gid).child("activeCall").child("memberIds").child(targetUid).setValue(true)
     }
 
     fun startScreenShare(permissionData: Intent): Boolean {
@@ -755,8 +809,14 @@ object GroupCallEngine {
     }
 
     fun end() {
+        if (isHost()) {
+            roomRef?.child("status")?.setValue("ended")
+            val gid = _state.value.groupId
+            if (gid.isNotBlank()) {
+                FirebaseDatabase.getInstance().getReference("groups").child(gid).child("activeCall").removeValue()
+            }
+        }
         roomRef?.child("participants")?.child(myUid)?.removeValue()
-        roomRef?.child("status")?.setValue("ended")
         cleanup("ended")
     }
 

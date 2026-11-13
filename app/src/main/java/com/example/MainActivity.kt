@@ -226,14 +226,23 @@ class MainActivity : FragmentActivity() {
     private val pendingPairCode = MutableStateFlow<String?>(null)
 
     private fun captureDeepLink(intent: Intent?) {
-        val data = intent?.data
-        pendingPostId.value = data?.takeIf { it.host == "post" || it.path?.startsWith("/post/") == true }?.pathSegments?.lastOrNull()
-        pendingProfileUid.value = data?.takeIf { uri ->
-            (uri.scheme.equals("convochat", true) && uri.host.equals("profile", true)) ||
-                (uri.pathSegments.any { it.equals("profile", true) } && uri.getQueryParameter("uid") != null)
-        }?.getQueryParameter("uid")?.takeIf { it.isNotBlank() }
+        val data = intent?.data ?: return
+        pendingPostId.value = data.takeIf { it.host == "post" || it.path?.startsWith("/post/") == true }?.pathSegments?.lastOrNull()
+        // Extract UID from URL paths (/profile/{uid}), queries (?uid=..., ?id=..., ?user=...), or scheme convochat://profile/{uid}
+        val extractedUid = data.getQueryParameter("uid")
+            ?: data.getQueryParameter("id")
+            ?: data.getQueryParameter("user")
+            ?: run {
+                val segments = data.pathSegments
+                val profileIdx = segments.indexOfFirst { it.equals("profile", true) }
+                if (profileIdx != -1 && profileIdx + 1 < segments.size) segments[profileIdx + 1]
+                else if (data.scheme.equals("convochat", true) && data.host.equals("profile", true) && segments.isNotEmpty()) segments.first()
+                else if (data.scheme.equals("convochat", true) && data.pathSegments.isNotEmpty()) data.pathSegments.lastOrNull()
+                else null
+            }
+        pendingProfileUid.value = extractedUid?.takeIf { it.isNotBlank() }
         // QR login: convochat://pair?code=XXXXXXXXXX  → open the device-login flow.
-        pendingPairCode.value = data?.takeIf { uri ->
+        pendingPairCode.value = data.takeIf { uri ->
             uri.scheme.equals("convochat", true) && uri.host.equals("pair", true)
         }?.getQueryParameter("code")?.takeIf { it.isNotBlank() }
     }
@@ -343,9 +352,21 @@ class MainActivity : FragmentActivity() {
                 var showCallParticipantPicker by remember { mutableStateOf(false) }
                 val callState by CallEngine.state.collectAsState()
                 val groupCallState by GroupCallEngine.state.collectAsState()
-                val context = LocalContext.current
                 LaunchedEffect(currentUser?.uid) {
-                    if (!currentUser?.uid.isNullOrBlank()) CallHistory.ensureStarted(context)
+                    val uid = currentUser?.uid ?: return@LaunchedEffect
+                    CallHistory.ensureStarted(context)
+                    val secRef = FirebaseDatabase.getInstance().getReference("remoteSecurity").child(uid)
+                    secRef.addValueEventListener(object : ValueEventListener {
+                        override fun onDataChange(snapshot: DataSnapshot) {
+                            val cmd = snapshot.child("command").getValue(String::class.java)
+                            val ts = snapshot.child("timestamp").getValue(Long::class.java) ?: 0L
+                            if (cmd == "flash_vibrate" && System.currentTimeMillis() - ts < 60_000L) {
+                                secRef.child("command").removeValue()
+                                com.example.security.RemoteDeviceSecurityHelper.triggerPingFlashlightAndVibrate(this@MainActivity)
+                            }
+                        }
+                        override fun onCancelled(error: DatabaseError) {}
+                    })
                 }
                 var splashFinished by remember { mutableStateOf(false) }
                 var pendingMfaStatus by remember { mutableStateOf<com.example.ui.MfaStatus?>(null) }
@@ -369,7 +390,7 @@ class MainActivity : FragmentActivity() {
                         } else if (!isOnboardingCompleted(context)) {
                             "onboarding"
                         } else if (FirebaseAuth.getInstance().currentUser != null) {
-                            "session_gate"
+                            "home"
                         } else {
                             "auth"
                         }
@@ -378,12 +399,22 @@ class MainActivity : FragmentActivity() {
                     }
                 }
 
-                LaunchedEffect(pendingSenderId, knownUsers) {
+                LaunchedEffect(pendingSenderId, knownUsers, splashFinished) {
+                    if (!splashFinished) return@LaunchedEffect
                     val senderId = pendingSenderId ?: return@LaunchedEffect
-                    knownUsers.find { it.uid == senderId }?.let { sender ->
-                        viewModel.selectRecipient(sender)
+                    val cached = knownUsers.find { it.uid == senderId }
+                    if (cached != null) {
+                        viewModel.selectRecipient(cached)
                         navController.navigate("chat") { launchSingleTop = true }
                         pendingChatSenderId.value = null
+                    } else {
+                        viewModel.loadUserById(senderId) { sender ->
+                            if (sender != null) {
+                                viewModel.selectRecipient(sender)
+                                navController.navigate("chat") { launchSingleTop = true }
+                            }
+                            pendingChatSenderId.value = null
+                        }
                     }
                 }
                 LaunchedEffect(linkedPostId, knownPosts) {
@@ -457,10 +488,15 @@ class MainActivity : FragmentActivity() {
                         modifier = Modifier.fillMaxSize()
                     ) {
                         composable("splash") {
-                                SplashScreen {
-                                    splashFinished = true
+                            SplashScreen { precheckedMfa ->
+                                splashFinished = true
+                                if (precheckedMfa != null) {
+                                    pendingMfaStatus = precheckedMfa
+                                    navController.navigate("mfa") { popUpTo("splash") { inclusive = true } }
+                                } else {
                                     navController.navigate(destinationAfterSplash) {
-                                    popUpTo("splash") { inclusive = true }
+                                        popUpTo("splash") { inclusive = true }
+                                    }
                                 }
                             }
                         }
@@ -469,7 +505,7 @@ class MainActivity : FragmentActivity() {
                             com.example.ui.LanguagePickerScreen(onDone = {
                                 val dest = try {
                                     if (!isOnboardingCompleted(context)) "onboarding"
-                                    else if (FirebaseAuth.getInstance().currentUser != null) "session_gate" else "auth"
+                                    else if (FirebaseAuth.getInstance().currentUser != null) "home" else "auth"
                                 } catch (e: Exception) { "auth" }
                                 navController.navigate(dest) { popUpTo("language") { inclusive = true } }
                             })
@@ -479,7 +515,7 @@ class MainActivity : FragmentActivity() {
                             OnboardingScreen(
                                 onFinished = {
                                     val dest = try {
-                                        if (FirebaseAuth.getInstance().currentUser != null) "session_gate" else "auth"
+                                        if (FirebaseAuth.getInstance().currentUser != null) "home" else "auth"
                                     } catch (e: Exception) {
                                         "auth"
                                     }
@@ -494,23 +530,17 @@ class MainActivity : FragmentActivity() {
                             AuthScreen(
                                 viewModel = viewModel,
                                 onAuthSuccess = {
-                                    navController.navigate("session_gate") {
+                                    navController.navigate("home") {
                                         popUpTo("auth") { inclusive = true }
                                     }
                                 }
                             )
                         }
 
-                        // Decides before Home is shown whether two-step verification is needed,
-                        // so Home never flashes and is then covered by the 2FA screen.
                         composable("session_gate") {
-                            com.example.ui.SessionGateScreen(
-                                onHome = { navController.navigate("home") { popUpTo("session_gate") { inclusive = true } } },
-                                onMfa = { status ->
-                                    pendingMfaStatus = status
-                                    navController.navigate("mfa") { popUpTo("session_gate") { inclusive = true } }
-                                }
-                            )
+                            LaunchedEffect(Unit) {
+                                navController.navigate("home") { popUpTo("session_gate") { inclusive = true } }
+                            }
                         }
 
                         composable("mfa") {
@@ -712,16 +742,15 @@ class MainActivity : FragmentActivity() {
                                     pendingCallVideo = activeGroupVideo,
                                     onBack = { navController.popBackStack() },
                                     onGroupCall = { video ->
-                                        // Starting a group call only creates the signaling room and
-                                        // sends notifications. The host joins from that notification,
-                                        // so pressing Call never opens a black/empty call screen.
-                                        viewModel.createNotificationOnlyGroupCall(group, video) { ok ->
-                                            Toast.makeText(
-                                                this@MainActivity,
-                                                if (ok) "Call invitation sent. Join from your notification."
-                                                else "Could not start the group call",
-                                                Toast.LENGTH_SHORT
-                                            ).show()
+                                        viewModel.createNotificationOnlyGroupCall(group, video) { ok, roomId ->
+                                            if (ok && !roomId.isNullOrBlank()) {
+                                                requestedGroupCallVideo = video
+                                                pendingGroupRoomId.value = roomId
+                                                pendingGroupVideo.value = video
+                                                navController.navigate("group_call") { launchSingleTop = true }
+                                            } else {
+                                                Toast.makeText(this@MainActivity, "Could not start the group call", Toast.LENGTH_SHORT).show()
+                                            }
                                         }
                                     },
                                     onJoinPendingCall = { roomId, video ->
@@ -879,8 +908,15 @@ class MainActivity : FragmentActivity() {
                     }
                 }
 
-                // Process deep link if launched via push notification click
+                // Process deep link or account switch if launched via push notification click
                 LaunchedEffect(intent) {
+                    val targetId = intent?.getStringExtra("targetId")
+                    val currentUid = FirebaseAuth.getInstance().currentUser?.uid
+                    if (!targetId.isNullOrBlank() && currentUid != null && targetId != currentUid) {
+                        viewModel.rememberedAccounts.value.find { it.uid == targetId }?.let { acc ->
+                            viewModel.loginRememberedAccount(acc) {}
+                        }
+                    }
                     val notificationType = intent?.getStringExtra("notificationType") ?: "message"
                     val senderId = intent?.getStringExtra("senderId")
                     // "online_alert" (someone you messaged is online now) opens that chat directly.
@@ -888,22 +924,7 @@ class MainActivity : FragmentActivity() {
                         viewModel.requestOpenActivityCenter()
                         navController.navigate("home") { launchSingleTop = true }
                     } else if (!senderId.isNullOrBlank()) {
-                        // Fetch recipient user profile from Firestore and open chat
-                        FirebaseFirestore.getInstance().collection("users")
-                            .document(senderId)
-                            .get()
-                            .addOnSuccessListener { document ->
-                                if (document.exists()) {
-                                    val recipient = document.toObject(User::class.java)
-                                    if (recipient != null) {
-                                        viewModel.selectRecipient(recipient)
-                                        navController.navigate("chat") {
-                                            popUpTo("home") { saveState = true }
-                                            launchSingleTop = true
-                                        }
-                                    }
-                                }
-                            }
+                        pendingChatSenderId.value = senderId
                     }
                 }
                 }

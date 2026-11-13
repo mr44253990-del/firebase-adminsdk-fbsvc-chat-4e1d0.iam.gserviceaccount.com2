@@ -319,6 +319,30 @@ fun GroupChatScreen(
     )
 
     val barColors = chatBarColors(groupThemeSpec, false)
+    var activeGroupCallData by remember(group.id) { mutableStateOf<Triple<String, Boolean, String>?>(null) }
+    DisposableEffect(group.id) {
+        val ref = com.google.firebase.database.FirebaseDatabase.getInstance().getReference("groups").child(group.id).child("activeCall")
+        val listener = object : com.google.firebase.database.ValueEventListener {
+            override fun onDataChange(snapshot: com.google.firebase.database.DataSnapshot) {
+                val roomId = snapshot.child("roomId").getValue(String::class.java)
+                val isVideo = snapshot.child("video").getValue(Boolean::class.java) ?: false
+                val callerName = snapshot.child("callerName").getValue(String::class.java).orEmpty().ifBlank { group.name }
+                val startedAt = snapshot.child("startedAt").getValue(Long::class.java) ?: 0L
+                if (!roomId.isNullOrBlank() && (System.currentTimeMillis() - startedAt < 3600_000L)) {
+                    activeGroupCallData = Triple(roomId, isVideo, callerName)
+                } else {
+                    activeGroupCallData = null
+                }
+            }
+            override fun onCancelled(error: com.google.firebase.database.DatabaseError) {}
+        }
+        ref.addValueEventListener(listener)
+        onDispose { ref.removeEventListener(listener) }
+    }
+    val effectiveRoomId = activeGroupCallData?.first ?: pendingCallRoomId
+    val effectiveIsVideo = activeGroupCallData?.second ?: pendingCallVideo
+    val effectiveCaller = activeGroupCallData?.third ?: group.name
+
     Box(Modifier.fillMaxSize()) {
     ChatBackdrop(groupThemeSpec, null, chatGradientBg, chatAppearance.backgroundDim)
     Scaffold(
@@ -411,7 +435,7 @@ fun GroupChatScreen(
                 .padding(innerPadding)
         ) {
             AnimatedVisibility(
-                visible = !pendingCallRoomId.isNullOrBlank(),
+                visible = !effectiveRoomId.isNullOrBlank(),
                 enter = fadeIn() + expandVertically(),
                 exit = fadeOut() + shrinkVertically()
             ) {
@@ -419,20 +443,32 @@ fun GroupChatScreen(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
                     shape = RoundedCornerShape(20.dp),
                     color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.94f),
-                    tonalElevation = 4.dp
+                    tonalElevation = 6.dp
                 ) {
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(Icons.Default.Call, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                        Spacer(Modifier.width(10.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text(tr("Group call available"), fontWeight = FontWeight.Bold)
-                            Text("Join ${group.name} when you are ready", style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Box(contentAlignment = Alignment.Center) {
+                            val pulseTransition = rememberInfiniteTransition(label = "pulse_group_call")
+                            val pulseScale by pulseTransition.animateFloat(1f, 1.25f, infiniteRepeatable(tween(900), RepeatMode.Reverse), label = "pulse_scale")
+                            Box(Modifier.size(36.dp).scale(pulseScale).background(Color(0xFF22C55E).copy(alpha = 0.25f), CircleShape))
+                            Box(Modifier.size(28.dp).background(Color(0xFF22C55E), CircleShape), contentAlignment = Alignment.Center) {
+                                Icon(if (effectiveIsVideo) Icons.Default.Videocam else Icons.Default.Call, null, tint = Color.White, modifier = Modifier.size(16.dp))
+                            }
                         }
-                        TextButton(onClick = { pendingCallRoomId?.let { onJoinPendingCall(it, pendingCallVideo) } }) {
-                            Text(tr("Join Call"), fontWeight = FontWeight.Bold)
+                        Spacer(Modifier.width(12.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(if (effectiveIsVideo) "Group Video Call Live" else "Group Audio Call Live", fontWeight = FontWeight.Bold)
+                            Text("Started by $effectiveCaller • Tap to join", style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                        Button(
+                            onClick = { effectiveRoomId?.let { onJoinPendingCall(it, effectiveIsVideo) } },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF16A34A), contentColor = Color.White),
+                            shape = RoundedCornerShape(12.dp),
+                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
+                        ) {
+                            Text(tr("Join Call"), fontWeight = FontWeight.Bold, fontSize = 12.sp)
                         }
                         IconButton(onClick = onDismissPendingCall) {
                             Icon(Icons.Default.Close, contentDescription = "Dismiss call")
@@ -1000,15 +1036,23 @@ fun GroupMessageBubbleItem(
                     }
 
                     if (!msg.imageUrl.isNullOrBlank()) {
-                        AsyncImage(
-                            model = msg.imageUrl,
-                            contentDescription = "Image attachment",
+                        Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(160.dp)
-                                .clip(RoundedCornerShape(14.dp)),
-                            contentScale = ContentScale.Crop
-                        )
+                                .heightIn(min = 120.dp, max = 340.dp)
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            AsyncImage(
+                                model = msg.imageUrl,
+                                contentDescription = "Image attachment",
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(min = 120.dp, max = 340.dp),
+                                contentScale = ContentScale.Fit
+                            )
+                        }
                         Spacer(modifier = Modifier.height(4.dp))
                     }
 

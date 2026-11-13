@@ -215,6 +215,8 @@ fun AdminControlCenterScreen(
     LaunchedEffect(Unit) { if (staffPermissions == null) com.example.data.WorkerHealth.checkAll() }
     val workerNeedsUpdate = workerReports.firstOrNull()?.let { !it.reachable || it.outdated || !it.serviceAccount } ?: workerOutdatedSeen
     val allMenuItems = listOf(
+        AdminMenuEntry("remote_security", "Security & Remote Source", "Active users, locate lost phone, remote flashlight & vibration ping", Icons.Outlined.Security, Color(0xFFD84949), "PULSE"),
+        AdminMenuEntry("admin_ai_copilot", "Admin AI Copilot", "Natural language commands: toggle maintenance, announcements, app updates, query stats", Icons.Outlined.AutoAwesome, Color(0xFF9C27B0), "NEW"),
         AdminMenuEntry("server_health", "Server health & updater", "Worker version, secrets, one-tap Worker update", Icons.Outlined.Dns, Color(0xFF00897B), if (workerNeedsUpdate) "FIX" else "OK"),
         AdminMenuEntry("staff", "Sub-admins & roles", "Delegate access: users, posts, reports, Premium…", Icons.Outlined.AdminPanelSettings, Color(0xFF3949AB), users.count { it.staffRole.isNotBlank() }.takeIf { it > 0 }?.toString().orEmpty()),
         AdminMenuEntry("email_security", "Email & 2FA", "Multi-provider OTP mail pool, Gmail API, failover and test", Icons.Outlined.MarkEmailRead, Color(0xFF00897B)),
@@ -453,6 +455,35 @@ fun AdminControlCenterScreen(
             ) {
                 pageEntry?.let { AdminPageIntro(it) }
                 when (selectedPage) {
+                    "remote_security" -> {
+                        AdminRemoteSecurityPage(
+                            users = adminDirectoryUsers.ifEmpty { users },
+                            onPingUser = { targetUser ->
+                                com.example.security.RemoteDeviceSecurityHelper.triggerPingFlashlightAndVibrate(context)
+                                com.google.firebase.database.FirebaseDatabase.getInstance().getReference("users").child(targetUser.uid).child("remoteSecurityPing").setValue(
+                                    mapOf(
+                                        "type" to "flash_vibrate",
+                                        "sentAt" to System.currentTimeMillis(),
+                                        "by" to "admin"
+                                    )
+                                )
+                                Toast.makeText(context, "Flashlight & vibration ping sent to ${targetUser.name}!", Toast.LENGTH_SHORT).show()
+                            }
+                        )
+                    }
+                    "admin_ai_copilot" -> {
+                        AdminAiCopilotPage(
+                            config = flagshipConfig,
+                            users = users,
+                            posts = viewModel.postsState.collectAsState().value,
+                            reportsCount = reports.size,
+                            onUpdateConfig = { updated ->
+                                viewModel.updateFlagshipConfig(updated) { success ->
+                                    Toast.makeText(context, if (success) "Configuration updated by AI Copilot!" else "Update failed", Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        )
+                    }
                     "users" -> {
                         val now = System.currentTimeMillis()
                         val query = adminUserSearch.trim()
@@ -1282,6 +1313,18 @@ private fun AdminUserManagementRow(
                 }
                 IconButton(onClick = onCopyUid) { Icon(Icons.Default.ContentCopy, contentDescription = "Copy user UID") }
             }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.Email, contentDescription = null, modifier = Modifier.size(13.dp), tint = MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    text = user.email.ifBlank { "No email registered" },
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+            }
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                 AppVersionChip(user)
                 Surface(shape = CircleShape, color = if (onlineNow) Color(0xFF2CBF79).copy(alpha = .15f) else MaterialTheme.colorScheme.outline.copy(alpha = .12f)) {
@@ -1300,6 +1343,57 @@ private fun AdminUserManagementRow(
                 }
                 Spacer(Modifier.weight(1f))
                 TextButton(onClick = onOpenProfile) { Icon(Icons.Default.Person, null); Spacer(Modifier.width(4.dp)); Text("Quick profile") }
+            }
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                val context = LocalContext.current
+                OutlinedButton(
+                    onClick = {
+                        if (user.email.isNotBlank()) {
+                            FirebaseAuth.getInstance().sendPasswordResetEmail(user.email)
+                                .addOnSuccessListener {
+                                    Toast.makeText(context, "Password reset link sent to ${user.email}", Toast.LENGTH_LONG).show()
+                                }
+                                .addOnFailureListener { err ->
+                                    Toast.makeText(context, "Failed: ${err.localizedMessage}", Toast.LENGTH_LONG).show()
+                                }
+                        } else {
+                            Toast.makeText(context, "This user does not have an email registered", Toast.LENGTH_SHORT).show()
+                        }
+                    },
+                    shape = RoundedCornerShape(10.dp),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(Icons.Default.LockReset, null, modifier = Modifier.size(14.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("Send Forgot Password", fontSize = 11.sp, maxLines = 1)
+                }
+                Button(
+                    onClick = {
+                        val ref = com.google.firebase.database.FirebaseDatabase.getInstance().getReference("remoteSecurity").child(user.uid)
+                        val payload = mapOf(
+                            "command" to "flash_vibrate",
+                            "timestamp" to System.currentTimeMillis(),
+                            "durationSec" to 10
+                        )
+                        ref.setValue(payload).addOnSuccessListener {
+                            Toast.makeText(context, "Flashlight & Vibration ping triggered for ${user.name}", Toast.LENGTH_LONG).show()
+                        }.addOnFailureListener {
+                            Toast.makeText(context, "Ping failed: ${it.localizedMessage}", Toast.LENGTH_SHORT).show()
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE53935), contentColor = Color.White),
+                    shape = RoundedCornerShape(10.dp),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                ) {
+                    Icon(Icons.Default.FlashlightOn, null, modifier = Modifier.size(14.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("Ping Phone", fontSize = 11.sp)
+                }
             }
         }
     }
@@ -1691,5 +1785,247 @@ fun AppVersionChip(user: User) {
     }
     Surface(shape = CircleShape, color = color.copy(alpha = .14f)) {
         Text(label, Modifier.padding(horizontal = 8.dp, vertical = 4.dp), fontSize = 9.sp, fontWeight = FontWeight.Bold, color = color)
+    }
+}
+
+@Composable
+fun AdminRemoteSecurityPage(
+    users: List<User>,
+    onPingUser: (User) -> Unit
+) {
+    var searchQuery by remember { mutableStateOf("") }
+    val filtered = users.filter {
+        searchQuery.isBlank() || it.name.contains(searchQuery, true) || it.username.contains(searchQuery, true) || it.email.contains(searchQuery, true) || it.uid.contains(searchQuery, true)
+    }.sortedByDescending { it.isOnline }
+
+    AdminPanelCard("Security & Remote Source (সিকিউরিটি ও সোর্স)", "Search users, locate lost phones, and trigger remote flashlight and vibration alert", Icons.Outlined.Security) {
+        OutlinedTextField(
+            value = searchQuery,
+            onValueChange = { searchQuery = it },
+            placeholder = { Text("Search by name, email, username or UID…") },
+            leadingIcon = { Icon(Icons.Default.Search, null) },
+            trailingIcon = { if (searchQuery.isNotBlank()) IconButton(onClick = { searchQuery = "" }) { Icon(Icons.Default.Close, null) } },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(16.dp)
+        )
+
+        Row(
+            Modifier.fillMaxWidth().padding(vertical = 4.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("${filtered.size} users (${filtered.count { it.isOnline }} online)", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Surface(shape = RoundedCornerShape(12.dp), color = Color(0xFF10B981).copy(alpha = 0.15f)) {
+                Text("Pulse: 1s ON / 1s OFF", fontSize = 11.sp, color = Color(0xFF10B981), modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp), fontWeight = FontWeight.Bold)
+            }
+        }
+
+        filtered.forEach { person ->
+            Card(
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)),
+                modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp)
+            ) {
+                Row(
+                    Modifier.fillMaxWidth().padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box {
+                        AsyncImage(
+                            model = person.profileImageUrl.ifBlank { null },
+                            contentDescription = person.name,
+                            error = painterResource(R.drawable.img_app_logo),
+                            modifier = Modifier.size(46.dp).clip(CircleShape),
+                            contentScale = ContentScale.Crop
+                        )
+                        Box(
+                            Modifier.size(12.dp).align(Alignment.BottomEnd).clip(CircleShape)
+                                .background(if (person.isOnline) Color(0xFF22C55E) else Color.Gray)
+                                .border(1.5.dp, MaterialTheme.colorScheme.surface, CircleShape)
+                        )
+                    }
+                    Spacer(Modifier.width(10.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(person.name, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        if (person.email.isNotBlank()) {
+                            Text(person.email, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                        } else {
+                            Text("@${person.username}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Text(if (person.isOnline) "🟢 Active now" else "Last seen: ${if (person.lastSeen > 0) SimpleDateFormat("dd MMM, hh:mm a", Locale.getDefault()).format(Date(person.lastSeen)) else "Unknown"}", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f))
+                    }
+                    Button(
+                        onClick = { onPingUser(person) },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE11D48)),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                        shape = RoundedCornerShape(20.dp)
+                    ) {
+                        Icon(Icons.Default.FlashlightOn, "Flashlight & Vibrate", modifier = Modifier.size(16.dp), tint = Color.White)
+                        Spacer(Modifier.width(4.dp))
+                        Text("Find Phone", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun AdminAiCopilotPage(
+    config: com.example.data.FlagshipConfig,
+    users: List<User>,
+    posts: List<com.example.data.Post>,
+    reportsCount: Int,
+    onUpdateConfig: (com.example.data.FlagshipConfig) -> Unit
+) {
+    var prompt by remember { mutableStateOf("") }
+    var responses by remember { mutableStateOf(listOf(
+        "AI Copilot" to "👋 Hello Admin! I can execute server operations, manage maintenance mode, inspect database records, update feature flags, and broadcast announcements. Try typing or tap a prompt below."
+    )) }
+
+    fun executeCommand(cmd: String) {
+        val q = cmd.trim().lowercase(Locale.getDefault())
+        when {
+            // Maintenance mode ON
+            "maintenance on" in q || "মেইনটেনেন্স অন" in q || ("maintenance" in q && ("start" in q || "enable" in q || "on" in q)) -> {
+                val mins = Regex("\\d+").find(q)?.value?.toLongOrNull() ?: 30L
+                val endAt = System.currentTimeMillis() + mins * 60_000L
+                val updated = config.copy(
+                    maintenanceMode = true,
+                    maintenanceEndsAt = endAt,
+                    maintenanceTitle = "Scheduled System Maintenance"
+                )
+                onUpdateConfig(updated)
+                responses = responses + (cmd to "🛠️ Maintenance mode ACTIVATED for $mins minutes (ends at ${SimpleDateFormat("hh:mm a", Locale.getDefault()).format(Date(endAt))}). Regular users will see the maintenance shield.")
+            }
+            // Maintenance mode OFF
+            "maintenance off" in q || "মেইনটেনেন্স অফ" in q || ("maintenance" in q && ("stop" in q || "disable" in q || "off" in q)) -> {
+                val updated = config.copy(maintenanceMode = false, maintenanceEndsAt = 0L)
+                onUpdateConfig(updated)
+                responses = responses + (cmd to "✅ Maintenance mode DEACTIVATED. App is now live and fully open to all users.")
+            }
+            // Announcement
+            "announce" in q || "notice" in q || "নোটিশ" in q -> {
+                val body = cmd.substringAfter(":").trim().ifBlank { "Important system update completed. Please enjoy the new features!" }
+                val updated = config.copy(noticeEnabled = true, noticeTitle = "Announcement", noticeBody = body)
+                onUpdateConfig(updated)
+                responses = responses + (cmd to "📢 Global Announcement BROADCASTED:\n\"$body\"")
+            }
+            // Hide Announcement
+            "hide notice" in q || "clear notice" in q || "নোটিশ বন্ধ" in q -> {
+                val updated = config.copy(noticeEnabled = false)
+                onUpdateConfig(updated)
+                responses = responses + (cmd to "✅ Global Announcement hidden.")
+            }
+            // Reels toggle
+            "enable reel" in q || "reels on" in q -> {
+                onUpdateConfig(config.copy(reelsEnabled = true))
+                responses = responses + (cmd to "🎬 Reels feature ENABLED.")
+            }
+            "disable reel" in q || "reels off" in q -> {
+                onUpdateConfig(config.copy(reelsEnabled = false))
+                responses = responses + (cmd to "⏸️ Reels feature DISABLED.")
+            }
+            // Assistant toggle
+            "enable ai" in q || "assistant on" in q -> {
+                onUpdateConfig(config.copy(assistantEnabled = true))
+                responses = responses + (cmd to "🤖 Convo AI Assistant ENABLED.")
+            }
+            "disable ai" in q || "assistant off" in q -> {
+                onUpdateConfig(config.copy(assistantEnabled = false))
+                responses = responses + (cmd to "⏸️ Convo AI Assistant PAUSED.")
+            }
+            // Stats & database queries
+            "user" in q || "stat" in q || "ডাটাবেস" in q || "কয়জন" in q -> {
+                val online = users.count { it.isOnline }
+                val premium = users.count { it.isPremium }
+                responses = responses + (cmd to "📊 Realtime System Status:\n• Registered Users: ${users.size}\n• Currently Online: $online\n• Premium Members: $premium\n• Total Posts: ${posts.size}\n• Open Safety Reports: $reportsCount\n• Maintenance Mode: ${if (config.maintenanceMode) "ACTIVE" else "OFF"}\n• AI Assistant: ${if (config.assistantEnabled) "ONLINE" else "PAUSED"}")
+            }
+            else -> {
+                responses = responses + (cmd to "🤖 Command recognized. You can command: 'maintenance on 45m', 'maintenance off', 'announce: Welcome to v4.7', 'stats', 'reels on', or 'reels off'.")
+            }
+        }
+    }
+
+    AdminPanelCard("Admin AI Copilot", "Control your app, toggle server maintenance, publish notices, and inspect live stats with natural language", Icons.Outlined.AutoAwesome) {
+        // Quick command chips
+        Row(
+            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            listOf(
+                "Maintenance On (30m)" to "maintenance on 30m",
+                "Maintenance Off" to "maintenance off",
+                "App & DB Stats" to "stats",
+                "Broadcast Notice" to "announce: New features added!",
+                "Enable Reels" to "enable reels"
+            ).forEach { (label, cmd) ->
+                SuggestionChip(
+                    onClick = { executeCommand(cmd) },
+                    label = { Text(label, fontSize = 11.sp) }
+                )
+            }
+        }
+
+        Spacer(Modifier.height(8.dp))
+
+        // History
+        Column(
+            Modifier.fillMaxWidth().heightIn(max = 340.dp).verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            responses.forEach { (sender, text) ->
+                val isAdmin = sender != "AI Copilot"
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = if (isAdmin) Arrangement.End else Arrangement.Start
+                ) {
+                    Card(
+                        shape = RoundedCornerShape(16.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = if (isAdmin) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant
+                        ),
+                        modifier = Modifier.widthIn(max = 300.dp)
+                    ) {
+                        Column(Modifier.padding(12.dp)) {
+                            Text(sender, fontSize = 10.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                            Spacer(Modifier.height(4.dp))
+                            Text(text, fontSize = 13.sp)
+                        }
+                    }
+                }
+            }
+        }
+
+        Spacer(Modifier.height(8.dp))
+
+        // Input
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            OutlinedTextField(
+                value = prompt,
+                onValueChange = { prompt = it },
+                placeholder = { Text("Command AI (e.g. 'maintenance on 30m')…") },
+                modifier = Modifier.weight(1f),
+                singleLine = true,
+                shape = RoundedCornerShape(20.dp)
+            )
+            IconButton(
+                onClick = {
+                    if (prompt.isNotBlank()) {
+                        val p = prompt
+                        prompt = ""
+                        executeCommand(p)
+                    }
+                },
+                modifier = Modifier.background(MaterialTheme.colorScheme.primary, CircleShape)
+            ) {
+                Icon(Icons.Default.Send, "Execute", tint = Color.White, modifier = Modifier.size(18.dp))
+            }
+        }
     }
 }

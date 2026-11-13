@@ -356,6 +356,55 @@ fun AuthScreen(
                 }
             }
 
+            if (isLoginMode && rememberedAccounts.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(10.dp))
+                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
+                    Text(tr("One-tap login"), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = lp.textSoft)
+                    Spacer(Modifier.height(8.dp))
+                    LazyRow(
+                        horizontalArrangement = Arrangement.spacedBy(14.dp),
+                        contentPadding = PaddingValues(horizontal = 8.dp)
+                    ) {
+                        items(rememberedAccounts) { account ->
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier.clickable {
+                                    email = account.email
+                                    if (account.provider == "google") {
+                                        scope.launch {
+                                            runCatching { requestGoogleCredential(account.email) }
+                                                .onSuccess { credential ->
+                                                    if (credential is CustomCredential && credential.type == GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
+                                                        val google = GoogleIdTokenCredential.createFrom(credential.data)
+                                                        viewModel.signInWithGoogleCredential(
+                                                            GoogleAuthProvider.getCredential(google.idToken, null),
+                                                            onAuthSuccess
+                                                        )
+                                                    }
+                                                }
+                                        }
+                                    } else {
+                                        viewModel.loginRememberedAccount(account, onAuthSuccess)
+                                    }
+                                }
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    AsyncImage(
+                                        model = account.profileImageUrl.ifBlank { null },
+                                        contentDescription = account.name,
+                                        error = painterResource(R.drawable.img_app_logo),
+                                        modifier = Modifier.size(54.dp).clip(CircleShape).border(2.dp, Brush.linearGradient(listOf(ConvoBrand.Cyan, ConvoBrand.Pink)), CircleShape),
+                                        contentScale = ContentScale.Crop
+                                    )
+                                }
+                                Spacer(Modifier.height(4.dp))
+                                Text(account.name.take(9), fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = lp.text, maxLines = 1)
+                            }
+                        }
+                    }
+                }
+            }
+
             Spacer(modifier = Modifier.height(18.dp))
 
             // Firebase Configuration Warning banner

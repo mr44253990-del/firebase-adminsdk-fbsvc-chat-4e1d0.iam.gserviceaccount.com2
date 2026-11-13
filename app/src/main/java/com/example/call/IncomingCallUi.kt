@@ -140,8 +140,8 @@ fun IncomingCallerAvatar(image: String, name: String, accent: Color) {
 }
 
 /**
- * Incoming-call controls: Decline on the left, a hopping/shaking Answer button that the user
- * can tap or swipe up, with animated chevrons above it, and a quick "Message" decline.
+ * Incoming-call controls: Symmetrical Decline on the left, optional Quick Reply in the center,
+ * and a pulsating Answer button on the right with tap or swipe-up gesture support.
  */
 @Composable
 fun IncomingAnswerControls(
@@ -155,17 +155,10 @@ fun IncomingAnswerControls(
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()
     val dragY = remember { Animatable(0f) }
-    val thresholdPx = with(density) { 120.dp.toPx() }
+    val thresholdPx = with(density) { 100.dp.toPx() }
     var lastAcceptAt by remember { mutableLongStateOf(0L) }
     val buzz = buzzEnvelope(phase)
-    // Gentle haptic tick when the button hops (respects the user's touch-feedback setting).
-    var lastTickCycle by remember { mutableIntStateOf(-1) }
-    LaunchedEffect(phase < .05f) {
-        if (phase < .05f) {
-            val cycle = (System.currentTimeMillis() / CallRingtoneController.VIBRATION_PERIOD_MS).toInt()
-            if (cycle != lastTickCycle) { lastTickCycle = cycle; view.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK) }
-        }
-    }
+
     val progress = (-dragY.value / thresholdPx).coerceIn(0f, 1f)
     fun accept() {
         val now = System.currentTimeMillis()
@@ -173,32 +166,80 @@ fun IncomingAnswerControls(
         lastAcceptAt = now
         view.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY)
         onAccept()
-        // If a permission prompt appears instead, the button springs back so the user can retry.
         scope.launch { dragY.animateTo(0f, spring(dampingRatio = Spring.DampingRatioMediumBouncy)) }
     }
 
-    Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-        // Animated chevrons: "swipe up to answer".
-        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.height(64.dp)) {
-            repeat(3) { i ->
-                val local = ((phase * 2f) - i * .18f).mod(1f)
-                Icon(
-                    Icons.Default.KeyboardArrowUp, null,
-                    tint = Color.White.copy(alpha = (sin(local * PI.toFloat()) * (1f - progress)).coerceIn(0f, 1f) * .9f),
-                    modifier = Modifier.size(26.dp).offset(y = (-6 * local).dp)
-                )
-            }
+    Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        // Animated swipe hint
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            modifier = Modifier.padding(bottom = 24.dp)
+        ) {
+            Icon(
+                Icons.Default.KeyboardArrowUp,
+                contentDescription = null,
+                tint = Color.White.copy(alpha = 0.85f),
+                modifier = Modifier.size(18.dp).offset(y = (-4 * buzz).dp)
+            )
+            Text(
+                if (progress > .05f) "Release to answer" else "Swipe up or tap to answer",
+                color = Color.White.copy(alpha = .85f),
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Medium
+            )
         }
-        Text(
-            if (progress > .05f) "Release to answer" else "Swipe up or tap to answer",
-            color = Color.White.copy(alpha = .78f), fontSize = 12.sp, fontWeight = FontWeight.Medium
-        )
-        Spacer(Modifier.height(18.dp))
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.Bottom) {
-            RoundAction(Color(0xFFE53935), Icons.Default.CallEnd, "Decline", alpha = 1f - progress) { onDecline() }
-            // Drag surface is fixed; only the inner button moves (avoids gesture feedback loops).
+
+        // Symmetrical action row
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceAround,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // Decline button
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Box(
+                    Modifier.size(72.dp)
+                        .shadow(14.dp, CircleShape, ambientColor = Color(0xFFEF4444), spotColor = Color(0xFFEF4444))
+                        .clip(CircleShape)
+                        .background(Brush.linearGradient(listOf(Color(0xFFEF4444), Color(0xFFB91C1C))))
+                        .border(1.5.dp, Color.White.copy(alpha = 0.35f), CircleShape)
+                        .clickable {
+                            view.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY)
+                            onDecline()
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Default.CallEnd, "Decline", tint = Color.White, modifier = Modifier.size(32.dp))
+                }
+                Spacer(Modifier.height(8.dp))
+                Text("Decline", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+            }
+
+            // Message Reply button (if handler provided)
+            if (onDeclineWithMessage != null) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Box(
+                        Modifier.size(54.dp)
+                            .clip(CircleShape)
+                            .background(Color.White.copy(alpha = 0.16f))
+                            .border(1.dp, Color.White.copy(alpha = 0.25f), CircleShape)
+                            .clickable {
+                                view.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY)
+                                onDeclineWithMessage()
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(Icons.Default.Message, "Reply", tint = Color.White, modifier = Modifier.size(22.dp))
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Text("Reply", color = Color.White.copy(alpha = 0.8f), fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                }
+            }
+
+            // Answer button
             Box(
-                Modifier.size(width = 96.dp, height = 110.dp)
+                Modifier.size(width = 84.dp, height = 96.dp)
                     .pointerInput(Unit) {
                         detectVerticalDragGestures(
                             onDragEnd = {
@@ -214,43 +255,30 @@ fun IncomingAnswerControls(
                     },
                 contentAlignment = Alignment.BottomCenter
             ) {
-                val hop = if (progress > 0f) 0f else -14f * buzz
-                val wiggle = if (progress > 0f) 0f else 14f * sin(phase * 2f * PI.toFloat() * 6f) * buzz
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    modifier = Modifier.offset { IntOffset(0, (dragY.value + with(density) { hop.dp.toPx() }).roundToInt()) }
+                    modifier = Modifier.offset { IntOffset(0, dragY.value.roundToInt()) }
                 ) {
                     Box(
-                        Modifier.size(76.dp).scale(1f + .1f * progress + .05f * buzz)
-                            .shadow(18.dp, CircleShape, ambientColor = Color(0xFF2EE86F), spotColor = Color(0xFF2EE86F))
+                        Modifier.size(72.dp).scale(1f + .08f * progress + .04f * buzz)
+                            .shadow(16.dp, CircleShape, ambientColor = Color(0xFF22C55E), spotColor = Color(0xFF22C55E))
                             .clip(CircleShape)
-                            .background(Brush.linearGradient(listOf(Color(0xFF5BF29A), Color(0xFF16A34A))))
-                            .border(2.dp, Brush.verticalGradient(listOf(Color.White.copy(alpha = .75f), Color.White.copy(alpha = .12f))), CircleShape)
+                            .background(Brush.linearGradient(listOf(Color(0xFF4ADE80), Color(0xFF16A34A))))
+                            .border(1.5.dp, Color.White.copy(alpha = 0.5f), CircleShape)
                             .clickable { accept() },
                         contentAlignment = Alignment.Center
                     ) {
-                        Icon(if (video) Icons.Default.Videocam else Icons.Default.Call, "Answer", tint = Color.White, modifier = Modifier.size(34.dp).rotate(wiggle))
+                        Icon(
+                            if (video) Icons.Default.Videocam else Icons.Default.Call,
+                            "Answer",
+                            tint = Color.White,
+                            modifier = Modifier.size(32.dp)
+                        )
                     }
                     Spacer(Modifier.height(8.dp))
-                    Text("Answer", color = Color.White, style = MaterialTheme.typography.labelMedium)
+                    Text("Answer", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                 }
             }
-            if (onDeclineWithMessage != null) RoundAction(Color.White.copy(alpha = .22f), Icons.Default.Message, "Message", alpha = 1f - progress) { onDeclineWithMessage() }
         }
-    }
-}
-
-@Composable
-private fun RoundAction(color: Color, icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, alpha: Float, onClick: () -> Unit) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(bottom = 2.dp)) {
-        Box(
-            Modifier.size(62.dp).clip(CircleShape)
-                .background(Brush.linearGradient(listOf(color.copy(alpha = color.alpha * alpha.coerceIn(.25f, 1f)), color.copy(alpha = color.alpha * .78f * alpha.coerceIn(.25f, 1f)))))
-                .border(1.dp, Brush.verticalGradient(listOf(Color.White.copy(alpha = .5f * alpha.coerceIn(.2f, 1f)), Color.Transparent)), CircleShape)
-                .clickable(onClick = onClick),
-            contentAlignment = Alignment.Center
-        ) { Icon(icon, label, tint = Color.White.copy(alpha = alpha.coerceIn(.3f, 1f)), modifier = Modifier.size(28.dp)) }
-        Spacer(Modifier.height(8.dp))
-        Text(label, color = Color.White.copy(alpha = alpha.coerceIn(.3f, 1f)), style = MaterialTheme.typography.labelMedium)
     }
 }

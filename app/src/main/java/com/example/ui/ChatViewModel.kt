@@ -5717,17 +5717,16 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     /**
      * Creates the signaling room and sends invitations without mounting the host's
      * WebRTC screen. The host joins later from the notification, matching invitees.
-     */
-    fun createNotificationOnlyGroupCall(group: Group, video: Boolean, onComplete: (Boolean) -> Unit = {}) {
+    fun createNotificationOnlyGroupCall(group: Group, video: Boolean, onCompleteWithRoom: (Boolean, String?) -> Unit) {
         val caller = getCurrentUserOrFallback()
         if (caller == null || caller.uid !in group.members) {
-            onComplete(false)
+            onCompleteWithRoom(false, null)
             return
         }
         val roomId = UUID.randomUUID().toString()
         val members = group.members.distinct().take(6)
         if (members.isEmpty()) {
-            onComplete(false)
+            onCompleteWithRoom(false, null)
             return
         }
         val now = System.currentTimeMillis()
@@ -5742,15 +5741,28 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             "createdAt" to now,
             "expiresAt" to now + 60 * 60 * 1000L
         )
+        val activeCallData = mapOf(
+            "roomId" to roomId,
+            "video" to video,
+            "hostId" to caller.uid,
+            "callerName" to caller.name,
+            "groupName" to group.name,
+            "startedAt" to now
+        )
+        getDatabaseInstance().getReference("groups").child(group.id).child("activeCall").setValue(activeCallData)
         getDatabaseInstance().getReference("groupCalls").child(roomId).setValue(roomData)
             .addOnSuccessListener {
                 inviteGroupMembersToCall(group, video, roomId, includeCaller = true)
-                onComplete(true)
+                onCompleteWithRoom(true, roomId)
             }
             .addOnFailureListener {
                 Log.e("GROUP_CALL", "Could not create notification-only room", it)
-                onComplete(false)
+                onCompleteWithRoom(false, null)
             }
+    }
+
+    fun createNotificationOnlyGroupCall(group: Group, video: Boolean, onComplete: (Boolean) -> Unit = {}) {
+        createNotificationOnlyGroupCall(group, video) { ok, _ -> onComplete(ok) }
     }
 
     fun inviteGroupMembersToCall(

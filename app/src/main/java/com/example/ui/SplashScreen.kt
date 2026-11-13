@@ -64,40 +64,40 @@ import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
 
+import androidx.compose.ui.platform.LocalContext
+import com.google.firebase.auth.FirebaseAuth
+
 private val SPLASH_INK = Color(0xFF07070F)
 private val SPLASH_VIOLET = Color(0xFF8B7BFF)
 private val SPLASH_CYAN = Color(0xFF5AC8FA)
 private val SPLASH_PINK = Color(0xFFFF6FB5)
 
 private fun splashGreeting(): String = when (Calendar.getInstance().get(Calendar.HOUR_OF_DAY)) {
-    in 5..11 -> "শুভ সকাল"
-    in 12..16 -> "শুভ দুপুর"
-    in 17..19 -> "শুভ সন্ধ্যা"
-    else -> "শুভ রাত্রি"
+    in 5..11 -> "শুভ সকাল · Good Morning"
+    in 12..16 -> "শুভ দুপুর · Good Afternoon"
+    in 17..19 -> "শুভ সন্ধ্যা · Good Evening"
+    else -> "শুভ রাত্রি · Good Night"
 }
 
 /** Small rotating status line so the wait feels intentional and short. */
 private fun splashStatus(progress: Float): String = when {
-    progress < .22f -> "Waking up your workspace…"
-    progress < .45f -> "Restoring your chats…"
-    progress < .68f -> "Checking secure sign-in…"
-    progress < .86f -> "Syncing friends & stories…"
-    else -> "Almost there…"
+    progress < .25f -> "Waking up your workspace…"
+    progress < .50f -> "Restoring your secure chats…"
+    progress < .75f -> "Checking verified session…"
+    progress < .90f -> "Syncing friends & stories…"
+    else -> "Ready to connect…"
 }
 
 /**
  * Launch screen, rebuilt for a fast, premium first impression:
- *
+ *  - Handles session and MFA verification silently in the background so no secondary "session gate" ever flashes.
  *  - A liquid-glass brand mark that settles in with a spring and keeps breathing.
- *  - Two counter-rotating light arcs plus a thin gradient progress ring = one smooth gesture
- *    instead of a stack of unrelated spinners.
+ *  - Counter-rotating light arcs plus a thin gradient progress ring.
  *  - Floating aurora orbs and a drifting particle field for depth.
- *  - Letter-by-letter wordmark, greeting, and a single changing status line.
- *  - Deliberately quick: the whole sequence completes in ~1.05 s, and it lets the first frame
- *    of the app render underneath so navigation feels instant rather than delayed.
  */
 @Composable
-fun SplashScreen(onFinished: () -> Unit) {
+fun SplashScreen(onFinished: (MfaStatus?) -> Unit) {
+    val context = LocalContext.current
     val motion = rememberInfiniteTransition(label = "splash_motion")
     val orbit by motion.animateFloat(0f, 360f, infiniteRepeatable(tween(7200, easing = LinearEasing)), label = "orbit")
     val counter by motion.animateFloat(360f, 0f, infiniteRepeatable(tween(5200, easing = LinearEasing)), label = "counter")
@@ -114,6 +114,12 @@ fun SplashScreen(onFinished: () -> Unit) {
     val greeting = remember { splashGreeting() }
 
     LaunchedEffect(Unit) {
+        var precheckedMfa: MfaStatus? = null
+        val precheckJob = launch {
+            if (FirebaseAuth.getInstance().currentUser != null) {
+                precheckedMfa = kotlinx.coroutines.withTimeoutOrNull(2200) { MfaClient.precheck(context) }
+            }
+        }
         launch {
             // Everything overlaps: the mark, halo, letters and bar animate at the same time.
             launch { markAlpha.animateTo(1f, tween(260)) }
@@ -121,12 +127,13 @@ fun SplashScreen(onFinished: () -> Unit) {
             launch { delay(90); halo.animateTo(1f, tween(620, easing = FastOutSlowInEasing)) }
             launch {
                 delay(140)
-                for (i in 1..title.length) { lettersShown = i; delay(32) }
+                for (i in 1..title.length) { lettersShown = i; delay(30) }
             }
-            progress.animateTo(1f, tween(820, easing = FastOutSlowInEasing))
+            progress.animateTo(1f, tween(950, easing = FastOutSlowInEasing))
         }
-        delay(1050)
-        onFinished()
+        delay(1150)
+        precheckJob.join()
+        onFinished(precheckedMfa)
     }
 
     val settled by animateFloatAsState(if (markAlpha.value > .5f) 1f else 0f, tween(400), label = "settled")

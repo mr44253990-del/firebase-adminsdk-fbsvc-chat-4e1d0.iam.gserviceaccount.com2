@@ -187,7 +187,8 @@ fun AssistantScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenAiSettin
                 }
             }
             phase = "Thinking"
-            val memory = listOfNotNull(accountContext, webContext, officialReleaseContext) + lines.takeLast(18).map { "${it.role}: ${it.text}" }
+            val dbSummary = "database_sample: total_users=${users.size}, total_posts=${posts.size}, active_users=" + users.take(25).joinToString("; ") { "${it.name} (@${it.username}, email=${it.email.ifBlank { "n/a" }})" }
+            val memory = listOfNotNull(accountContext, dbSummary, webContext, officialReleaseContext) + lines.takeLast(18).map { "${it.role}: ${it.text}" }
             if (config.aiStreamingEnabled) {
                 streamingText = ""
                 viewModel.askAssistantStreaming(prompt, memory, onDelta = { d -> phase = "Writing"; streamingText = (streamingText ?: "") + d }) { error ->
@@ -229,14 +230,19 @@ fun AssistantScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenAiSettin
                 val joined = currentUser?.createdAt?.takeIf { it > 0 }?.let { SimpleDateFormat("dd MMMM yyyy", Locale.getDefault()).format(Date(it)) } ?: "unknown"
                 answer("Account report\n- Posts: ${myPosts.size}\n- Total likes/reactions: $likes\n- Followers: ${currentUser?.followers?.size ?: 0}\n- Friends: ${currentUser?.friends?.size ?: 0}\n- Account created: $joined")
             }
-            normalized.startsWith("find user") || normalized.startsWith("search user") || normalized.contains("ইউজার খুঁজ") -> {
-                val stopWords = setOf("find", "search", "user", "please", "show", "me", "ইউজার", "খুঁজে", "খুঁজ", "বের", "করো", "দাও", "নামে", "নাম", "কে", "আছে")
-                val tokens = normalized.split(Regex("[^\\p{L}\\p{N}_]+")).filter { it.length >= 2 && it !in stopWords }
+            normalized.contains("find user") || normalized.contains("search user") || normalized.contains("search profile") || normalized.contains("ইউজার খুঁজ") || normalized.contains("প্রোফাইল খুঁজ") || normalized.contains("কারো আইডি") -> {
+                val stopWords = setOf("find", "search", "user", "profile", "please", "show", "me", "ইউজার", "খুঁজে", "খুঁজ", "বের", "করো", "দাও", "নামে", "নাম", "কে", "আছে", "প্রোফাইল")
+                val tokens = normalized.split(Regex("[^\\p{L}\\p{N}_@.]+")).filter { it.length >= 2 && it !in stopWords }
                 matches = users.map { user ->
-                    val haystack = "${user.name} ${user.username}".lowercase()
+                    val haystack = "${user.name} ${user.username} ${user.email} ${user.bio}".lowercase()
                     user to tokens.count { token -> haystack.contains(token) }
                 }.filter { it.second > 0 }.sortedWith(compareByDescending<Pair<User, Int>> { it.second }.thenBy { it.first.name }).map { it.first }.take(20)
-                answer(if (matches.isEmpty()) "No users matched. Try a few more letters of the name." else "Found ${matches.size} matching people. Open a profile or start a chat below.")
+                if (matches.isNotEmpty()) {
+                    val summary = matches.take(5).joinToString("\n") { "• ${it.name} (@${it.username})${if (it.email.isNotBlank()) " - ${it.email}" else ""}" }
+                    answer("Found ${matches.size} profile(s) from database:\n$summary\n\nYou can tap below to view profile or start chatting.")
+                } else {
+                    answer("No user profiles matched '$prompt' in the database. Try searching by username, name, or email.")
+                }
             }
             else -> askAi(prompt)
         }
@@ -338,7 +344,7 @@ fun AssistantScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenAiSettin
             }
             // ---- Composer ----------------------------------------------------------------------
             Row(
-                Modifier.fillMaxWidth().navigationBarsPadding().imePadding().padding(horizontal = 12.dp, vertical = 10.dp)
+                Modifier.fillMaxWidth().windowInsetsPadding(WindowInsets.navigationBars).padding(horizontal = 12.dp, vertical = 8.dp)
                     .clip(RoundedCornerShape(28.dp))
                     .background(Color.White.copy(alpha = .08f))
                     .border(BorderStroke(1.dp, Brush.linearGradient(listOf(AiCyan.copy(alpha = .6f), AiPink.copy(alpha = .5f), AiViolet.copy(alpha = .6f)))), RoundedCornerShape(28.dp))

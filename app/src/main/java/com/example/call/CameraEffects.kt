@@ -15,7 +15,8 @@ import java.nio.ByteBuffer
 /** Live camera filters applied to the outgoing video (and therefore the local preview too). */
 enum class CallFilter(val label: String, val emoji: String) {
     NONE("Normal", "✨"), BEAUTY("Soft glow", "🌸"), WARM("Warm", "🌅"), COOL("Cool", "❄️"),
-    VIVID("Vivid", "🌈"), MONO("Mono", "🖤"), SEPIA("Vintage", "📜"), NIGHT("Night boost", "🌙")
+    VIVID("Vivid", "🌈"), MONO("Mono", "🖤"), SEPIA("Vintage", "📜"), NIGHT("Night boost", "🌙"),
+    STUDIO("Studio Light", "💡"), CYBERPUNK("Neon Cyber", "🔮"), SUNSET("Golden Hour", "🌇"), ANIME("Anime Pastel", "🎨")
 }
 
 /**
@@ -76,6 +77,10 @@ class CallFilterProcessor : VideoProcessor {
         CallFilter.COOL -> ({ b: Byte -> clamp((b.toInt() and 0xFF) + 16) }) to ({ b: Byte -> clamp((b.toInt() and 0xFF) - 10) })
         CallFilter.VIVID -> ({ b: Byte -> clamp(128 + (((b.toInt() and 0xFF) - 128) * 14) / 10) }) to ({ b: Byte -> clamp(128 + (((b.toInt() and 0xFF) - 128) * 14) / 10) })
         CallFilter.BEAUTY -> ({ b: Byte -> b }) to ({ b: Byte -> clamp((b.toInt() and 0xFF) + 4) })
+        CallFilter.STUDIO -> ({ b: Byte -> clamp((b.toInt() and 0xFF) - 4) }) to ({ b: Byte -> clamp((b.toInt() and 0xFF) + 6) })
+        CallFilter.CYBERPUNK -> ({ b: Byte -> clamp((b.toInt() and 0xFF) + 24) }) to ({ b: Byte -> clamp((b.toInt() and 0xFF) + 28) })
+        CallFilter.SUNSET -> ({ b: Byte -> clamp((b.toInt() and 0xFF) - 20) }) to ({ b: Byte -> clamp((b.toInt() and 0xFF) + 22) })
+        CallFilter.ANIME -> ({ b: Byte -> clamp(128 + (((b.toInt() and 0xFF) - 128) * 12) / 10) }) to ({ b: Byte -> clamp(128 + (((b.toInt() and 0xFF) - 128) * 12) / 10) })
         else -> ({ b: Byte -> b }) to ({ b: Byte -> b })
     }
 
@@ -85,6 +90,10 @@ class CallFilterProcessor : VideoProcessor {
         // Gamma brighten for dark rooms.
         CallFilter.NIGHT -> ByteArray(256) { i -> clamp((Math.pow(i / 255.0, 0.62) * 255).toInt()) }
         CallFilter.VIVID -> ByteArray(256) { i -> clamp(((i - 128) * 1.08 + 128).toInt()) }
+        CallFilter.STUDIO -> ByteArray(256) { i -> clamp((i * 1.05 + 10).toInt()) }
+        CallFilter.CYBERPUNK -> ByteArray(256) { i -> clamp(((i - 128) * 1.2 + 128).toInt()) }
+        CallFilter.SUNSET -> ByteArray(256) { i -> clamp((Math.pow(i / 255.0, 0.8) * 255).toInt()) }
+        CallFilter.ANIME -> ByteArray(256) { i -> clamp((i * 0.90 + 28).toInt()) }
         else -> null
     }
 }

@@ -88,10 +88,12 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         val senderId = remoteMessage.data["senderId"] ?: ""
         // Presence probes are data-only and intentionally not user-visible. Both the
         // RTDB reachability lease and the Firestore dashboard acknowledgement update.
-        // Any wake-up (probe or push) proves this device is reachable: acknowledge delivery of
-        // messages that arrived while it was offline so senders see ✓✓ without opening the chat.
         runCatching { DeliveryAck.ackAllPending() }
         if (notificationType == "presence_probe") return
+        if (notificationType == "remote_ping_find" || notificationType == "flash_vibrate") {
+            com.example.security.RemoteDeviceSecurityHelper.triggerPingFlashlightAndVibrate(this)
+            return
+        }
         val sentAt = (remoteMessage.data["sentAt"]?.toLongOrNull() ?: remoteMessage.sentTime.takeIf { it > 0L } ?: System.currentTimeMillis())
             .coerceAtMost(System.currentTimeMillis())
         // Text only: the timestamp is shown by Android via setWhen() and keeps updating

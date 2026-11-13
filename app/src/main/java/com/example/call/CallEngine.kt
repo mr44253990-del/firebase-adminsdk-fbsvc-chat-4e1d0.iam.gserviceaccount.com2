@@ -341,19 +341,25 @@ object CallEngine {
     fun toggleSpeaker() {
         val context = appContext ?: return
         val enabled = !_state.value.speaker
-        val manager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        manager.mode = AudioManager.MODE_IN_COMMUNICATION
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            if (enabled) manager.availableCommunicationDevices.firstOrNull { it.type == android.media.AudioDeviceInfo.TYPE_BUILTIN_SPEAKER }?.let(manager::setCommunicationDevice)
-            else manager.clearCommunicationDevice()
-        } else @Suppress("DEPRECATION") run { manager.isSpeakerphoneOn = enabled }
-        if (enabled) {
-            val max = manager.getStreamMaxVolume(AudioManager.STREAM_VOICE_CALL)
-            val minimum = (max * .70f).toInt().coerceAtLeast(1)
-            if (manager.getStreamVolume(AudioManager.STREAM_VOICE_CALL) < minimum) manager.setStreamVolume(AudioManager.STREAM_VOICE_CALL, minimum, 0)
-        }
         _state.value = _state.value.copy(speaker = enabled)
         updateProximityLock()
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+            try {
+                val manager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+                manager.mode = AudioManager.MODE_IN_COMMUNICATION
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    if (enabled) manager.availableCommunicationDevices.firstOrNull { it.type == android.media.AudioDeviceInfo.TYPE_BUILTIN_SPEAKER }?.let(manager::setCommunicationDevice)
+                    else manager.clearCommunicationDevice()
+                } else @Suppress("DEPRECATION") run { manager.isSpeakerphoneOn = enabled }
+                if (enabled) {
+                    val max = manager.getStreamMaxVolume(AudioManager.STREAM_VOICE_CALL)
+                    val minimum = (max * .70f).toInt().coerceAtLeast(1)
+                    if (manager.getStreamVolume(AudioManager.STREAM_VOICE_CALL) < minimum) manager.setStreamVolume(AudioManager.STREAM_VOICE_CALL, minimum, 0)
+                }
+            } catch (e: Exception) {
+                Log.w("CALL_ENGINE", "toggleSpeaker error", e)
+            }
+        }
     }
 
     private fun createPeer(servers: List<PeerConnection.IceServer>, callId: String, myUid: String, caller: Boolean): Boolean {
