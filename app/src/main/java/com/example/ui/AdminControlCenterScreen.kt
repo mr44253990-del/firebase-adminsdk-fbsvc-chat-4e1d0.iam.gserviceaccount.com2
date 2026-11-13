@@ -10,6 +10,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
@@ -41,6 +42,7 @@ import coil.compose.AsyncImage
 import com.example.R
 import com.example.data.User
 import com.example.data.UserReport
+import com.google.firebase.auth.FirebaseAuth
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -1352,13 +1354,14 @@ private fun AdminUserManagementRow(
                 val context = LocalContext.current
                 OutlinedButton(
                     onClick = {
-                        if (user.email.isNotBlank()) {
-                            FirebaseAuth.getInstance().sendPasswordResetEmail(user.email)
+                        val emailToSend = user.email.ifBlank { user.publicContactEmail }
+                        if (emailToSend.isNotBlank()) {
+                            FirebaseAuth.getInstance().sendPasswordResetEmail(emailToSend)
                                 .addOnSuccessListener {
-                                    Toast.makeText(context, "Password reset link sent to ${user.email}", Toast.LENGTH_LONG).show()
+                                    Toast.makeText(context, "Password reset link sent to $emailToSend", Toast.LENGTH_LONG).show()
                                 }
-                                .addOnFailureListener { err ->
-                                    Toast.makeText(context, "Failed: ${err.localizedMessage}", Toast.LENGTH_LONG).show()
+                                .addOnFailureListener { err: Exception ->
+                                    Toast.makeText(context, "Failed: ${err.message ?: "Unknown error"}", Toast.LENGTH_LONG).show()
                                 }
                         } else {
                             Toast.makeText(context, "This user does not have an email registered", Toast.LENGTH_SHORT).show()
@@ -1795,7 +1798,7 @@ fun AdminRemoteSecurityPage(
 ) {
     var searchQuery by remember { mutableStateOf("") }
     val filtered = users.filter {
-        searchQuery.isBlank() || it.name.contains(searchQuery, true) || it.username.contains(searchQuery, true) || it.email.contains(searchQuery, true) || it.uid.contains(searchQuery, true)
+        searchQuery.isBlank() || it.name.contains(searchQuery, true) || it.username.contains(searchQuery, true) || it.email.contains(searchQuery, true) || it.publicContactEmail.contains(searchQuery, true) || it.uid.contains(searchQuery, true)
     }.sortedByDescending { it.isOnline }
 
     AdminPanelCard("Security & Remote Source (সিকিউরিটি ও সোর্স)", "Search users, locate lost phones, and trigger remote flashlight and vibration alert", Icons.Outlined.Security) {
@@ -1853,7 +1856,8 @@ fun AdminRemoteSecurityPage(
                         } else {
                             Text("@${person.username}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
-                        Text(if (person.isOnline) "🟢 Active now" else "Last seen: ${if (person.lastSeen > 0) SimpleDateFormat("dd MMM, hh:mm a", Locale.getDefault()).format(Date(person.lastSeen)) else "Unknown"}", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f))
+                        val lastSeenTime = maxOf(person.lastSeen, person.lastActive, person.offlineSince)
+                        Text(if (person.isOnline) "🟢 Active now" else "Last seen: ${if (lastSeenTime > 0) SimpleDateFormat("dd MMM, hh:mm a", Locale.getDefault()).format(Date(lastSeenTime)) else "Unknown"}", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f))
                     }
                     Button(
                         onClick = { onPingUser(person) },

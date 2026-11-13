@@ -390,7 +390,7 @@ fun AuthScreen(
                             ) {
                                 Box(contentAlignment = Alignment.Center) {
                                     AsyncImage(
-                                        model = account.profileImageUrl.ifBlank { null },
+                                        model = account.photoUrl.ifBlank { null },
                                         contentDescription = account.name,
                                         error = painterResource(R.drawable.img_app_logo),
                                         modifier = Modifier.size(54.dp).clip(CircleShape).border(2.dp, Brush.linearGradient(listOf(ConvoBrand.Cyan, ConvoBrand.Pink)), CircleShape),

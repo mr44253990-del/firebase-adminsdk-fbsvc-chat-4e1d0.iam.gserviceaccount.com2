@@ -187,7 +187,7 @@ fun AssistantScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenAiSettin
                 }
             }
             phase = "Thinking"
-            val dbSummary = "database_sample: total_users=${users.size}, total_posts=${posts.size}, active_users=" + users.take(25).joinToString("; ") { "${it.name} (@${it.username}, email=${it.email.ifBlank { "n/a" }})" }
+            val dbSummary = "database_sample: total_users=${users.size}, total_posts=${posts.size}, active_users=" + users.take(25).joinToString("; ") { "${it.name} (@${it.username}, email=${it.email.ifBlank { it.publicContactEmail }.ifBlank { "n/a" }})" }
             val memory = listOfNotNull(accountContext, dbSummary, webContext, officialReleaseContext) + lines.takeLast(18).map { "${it.role}: ${it.text}" }
             if (config.aiStreamingEnabled) {
                 streamingText = ""
@@ -234,11 +234,14 @@ fun AssistantScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenAiSettin
                 val stopWords = setOf("find", "search", "user", "profile", "please", "show", "me", "ইউজার", "খুঁজে", "খুঁজ", "বের", "করো", "দাও", "নামে", "নাম", "কে", "আছে", "প্রোফাইল")
                 val tokens = normalized.split(Regex("[^\\p{L}\\p{N}_@.]+")).filter { it.length >= 2 && it !in stopWords }
                 matches = users.map { user ->
-                    val haystack = "${user.name} ${user.username} ${user.email} ${user.bio}".lowercase()
+                    val haystack = "${user.name} ${user.username} ${user.email} ${user.publicContactEmail} ${user.bio}".lowercase()
                     user to tokens.count { token -> haystack.contains(token) }
                 }.filter { it.second > 0 }.sortedWith(compareByDescending<Pair<User, Int>> { it.second }.thenBy { it.first.name }).map { it.first }.take(20)
                 if (matches.isNotEmpty()) {
-                    val summary = matches.take(5).joinToString("\n") { "• ${it.name} (@${it.username})${if (it.email.isNotBlank()) " - ${it.email}" else ""}" }
+                    val summary = matches.take(5).joinToString("\n") {
+                        val m = it.email.ifBlank { it.publicContactEmail }
+                        "• ${it.name} (@${it.username})${if (m.isNotBlank()) " - $m" else ""}"
+                    }
                     answer("Found ${matches.size} profile(s) from database:\n$summary\n\nYou can tap below to view profile or start chatting.")
                 } else {
                     answer("No user profiles matched '$prompt' in the database. Try searching by username, name, or email.")
