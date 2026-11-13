@@ -129,7 +129,7 @@ fun AuthScreen(
                 if (credential is PasswordCredential) {
                     email = credential.id
                     password = credential.password
-                    viewModel.login(credential.id, credential.password, onAuthSuccess)
+                    viewModel.login(credential.id, credential.password, onSuccess = onAuthSuccess)
                 }
             }.onFailure {
                 if (!silentIfNone) Toast.makeText(context, "No saved passwords for Convo Chat yet", Toast.LENGTH_SHORT).show()
@@ -281,9 +281,14 @@ fun AuthScreen(
     ) {
         // Calm aurora light-field background (no tilt / 3D).
         LoginAuroraBackground(lp.milk)
+        // v5.0: living constellation + horizon grid on top of the aurora.
+        LoginNovaLayer(lp.milk)
         Column(
             modifier = Modifier
-                .fillMaxSize()
+                // Tablets / foldables: keep the form a comfortable width and centred.
+                .align(Alignment.TopCenter)
+                .widthIn(max = 560.dp)
+                .fillMaxHeight()
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 18.dp, vertical = 14.dp)
                 .alpha(enterAlpha)
@@ -329,7 +334,9 @@ fun AuthScreen(
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
             )
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(6.dp))
+            LoginGreetingTypewriter(lp.text, lp.textSoft)
+            Spacer(modifier = Modifier.height(10.dp))
 
             // Three quiet promise chips: they answer "why this app" before the user types anything.
             Row(
@@ -356,7 +363,10 @@ fun AuthScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(18.dp))
+            Spacer(modifier = Modifier.height(12.dp))
+            // Rotating highlights of what is new inside the app.
+            LoginFeatureCarousel(lp.text, lp.textSoft, Modifier.fillMaxWidth().widthIn(max = 520.dp))
+            Spacer(modifier = Modifier.height(14.dp))
 
             // Firebase Configuration Warning banner
             if (!isFirebaseConfigured) {

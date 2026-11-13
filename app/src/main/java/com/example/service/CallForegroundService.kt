@@ -46,14 +46,24 @@ class CallForegroundService : Service() {
             Intent(this, CallEndReceiver::class.java).putExtra("callId", callId),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-        val notification = NotificationCompat.Builder(this, CHANNEL)
+        // Remember when this call started so the status-bar call chip keeps one continuous timer.
+        if (startedCallId != callId) { startedCallId = callId; startedAt = System.currentTimeMillis() }
+        val builder = NotificationCompat.Builder(this, CHANNEL)
             .setSmallIcon(if (video) android.R.drawable.presence_video_online else android.R.drawable.sym_call_outgoing)
-            .setContentTitle(if (video) "Convo Chat video call" else "Convo Chat audio call")
-            .setContentText("Connected with $name")
+            .setContentTitle(if (groupId.isNotBlank()) name else if (video) "Convo Chat video call" else "Convo Chat audio call")
+            .setContentText(if (groupId.isNotBlank()) "Group call in progress • tap to return" else "On call with $name • tap to return")
             .setCategory(NotificationCompat.CATEGORY_CALL).setOngoing(true).setSilent(true)
+            .setColor(0xFF19C37D.toInt()).setColorized(true)
+            .setWhen(startedAt).setShowWhen(true).setUsesChronometer(true)
             .setContentIntent(content)
-            .addAction(android.R.drawable.sym_call_missed, "End call", endIntent)
-            .build()
+        // Android 12+: "ongoing call" style puts a green call bar/chip with a live timer in the
+        // status bar on top of every app, so it is always obvious that a call is running.
+        val styled = runCatching {
+            val person = androidx.core.app.Person.Builder().setName(name).setImportant(true).build()
+            builder.setStyle(NotificationCompat.CallStyle.forOngoingCall(person, endIntent))
+        }.isSuccess
+        if (!styled) builder.addAction(android.R.drawable.sym_call_missed, "End call", endIntent)
+        val notification = builder.build()
         if (Build.VERSION.SDK_INT >= 29) {
             var type = android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE or android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL
             if (video && !screenShare) type = type or android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
@@ -86,6 +96,8 @@ class CallForegroundService : Service() {
          * mediaProjection is running. The engine waits for this timestamp before capturing.
          */
         @Volatile var projectionForegroundAt: Long = 0L
+        @Volatile private var startedCallId: String = ""
+        @Volatile private var startedAt: Long = 0L
         fun start(
             context: Context,
             callId: String,

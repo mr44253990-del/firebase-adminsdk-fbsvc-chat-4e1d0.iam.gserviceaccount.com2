@@ -160,12 +160,22 @@ fun AssistantScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenAiSettin
         if (count > 0) listState.animateScrollToItem(count - 1)
     }
 
+    val assistantIsAdmin = remember(uid) { FirebaseAuth.getInstance().currentUser?.email?.lowercase()?.trim()?.trimEnd('.') == "mr4425390@gmail.com" }
+
     fun askAi(prompt: String) {
         if (handleOpenIntent(prompt)) return
         val myPosts = posts.filter { it.senderId == uid }
         val accountContext = "account_context: name=${currentUser?.name}, username=${currentUser?.username}, posts=${myPosts.size}, likes=${myPosts.sumOf { it.reactions.size + it.mediaReactions.values.sumOf { r -> r.size } }}, followers=${currentUser?.followers?.size}, following=${currentUser?.following?.size}, friends=${currentUser?.friends?.size}, joined=${currentUser?.createdAt}, premium=${currentUser?.isPremium}, today=${SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())}"
         thinking = true
+        // Database tool: look up profiles / community facts the question is about and hand the
+        // real data to the model (and show tappable profile cards under the answer).
+        val discoverable = viewModel.filteredUsersState.value.ifEmpty { users }
+        val dbMatches = if (AssistantDatabaseTools.looksLikeProfileQuestion(prompt)) AssistantDatabaseTools.searchProfiles(discoverable, prompt) else emptyList()
+        val adminEmails = if (assistantIsAdmin) AdminAccounts.accounts.value.mapValues { it.value.email } else emptyMap()
+        val databaseContext = AssistantDatabaseTools.buildContext(prompt, currentUser, discoverable, posts, dbMatches, adminEmails)
+        if (dbMatches.isNotEmpty()) matches = dbMatches
         scope.launch {
+            if (assistantIsAdmin && dbMatches.isNotEmpty()) runCatching { AdminAccounts.ensure(dbMatches.map { it.uid }) }
             var sources = emptyList<AssistantSource>()
             var webContext: String? = null
             val releaseQuestion = listOf("what changed", "what's new", "whats new", "release notes", "new update", "কি পরিবর্তন", "নতুন কী", "কি নতুন", "আপডেটে কী", "আপডেটের খবর")
@@ -187,7 +197,8 @@ fun AssistantScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenAiSettin
                 }
             }
             phase = "Thinking"
-            val memory = listOfNotNull(accountContext, webContext, officialReleaseContext) + lines.takeLast(18).map { "${it.role}: ${it.text}" }
+            if (databaseContext != null) phase = "Reading the database"
+            val memory = listOfNotNull(accountContext, databaseContext, webContext, officialReleaseContext) + lines.takeLast(18).map { "${it.role}: ${it.text}" }
             if (config.aiStreamingEnabled) {
                 streamingText = ""
                 viewModel.askAssistantStreaming(prompt, memory, onDelta = { d -> phase = "Writing"; streamingText = (streamingText ?: "") + d }) { error ->
@@ -229,6 +240,12 @@ fun AssistantScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenAiSettin
                 val joined = currentUser?.createdAt?.takeIf { it > 0 }?.let { SimpleDateFormat("dd MMMM yyyy", Locale.getDefault()).format(Date(it)) } ?: "unknown"
                 answer("Account report\n- Posts: ${myPosts.size}\n- Total likes/reactions: $likes\n- Followers: ${currentUser?.followers?.size ?: 0}\n- Friends: ${currentUser?.friends?.size ?: 0}\n- Account created: $joined")
             }
+            normalized.startsWith("find ") || normalized.startsWith("search ") || normalized.startsWith("@") || normalized.contains("খুঁজে দাও") || normalized.contains("প্রোফাইল খুঁজ") -> {
+                val found = AssistantDatabaseTools.searchProfiles(viewModel.filteredUsersState.value.ifEmpty { users }, prompt, 20)
+                matches = found
+                if (found.isEmpty()) askAi(prompt)
+                else answer("I searched the Convo database and found ${found.size} matching ${if (found.size == 1) "profile" else "profiles"}:\n" + found.take(6).joinToString("\n") { AssistantDatabaseTools.describe(it, posts, if (assistantIsAdmin) AdminAccounts.accounts.value[it.uid]?.email else null) } + "\nTap a card below to open the chat.")
+            }
             normalized.startsWith("find user") || normalized.startsWith("search user") || normalized.contains("ইউজার খুঁজ") -> {
                 val stopWords = setOf("find", "search", "user", "please", "show", "me", "ইউজার", "খুঁজে", "খুঁজ", "বের", "করো", "দাও", "নামে", "নাম", "কে", "আছে")
                 val tokens = normalized.split(Regex("[^\\p{L}\\p{N}_]+")).filter { it.length >= 2 && it !in stopWords }
@@ -242,6 +259,8 @@ fun AssistantScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenAiSettin
         }
     }
 
+    // Keyboard fix: resize instead of pan, so the composer sits right on top of the keyboard.
+    KeyboardResizeMode()
     val infinite = rememberInfiniteTransition(label = "ai_bg")
     val drift by infinite.animateFloat(0f, 1f, infiniteRepeatable(tween(9000, easing = LinearEasing), RepeatMode.Reverse), label = "drift")
 
@@ -288,6 +307,8 @@ fun AssistantScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenAiSettin
                 if (webAllowed) AiChip(Icons.Default.TravelExplore, if (webOn) "Web search on" else "Web search off", webOn) { webOn = !webOn; prefs.edit().putBoolean("web_on", webOn).apply() }
                 if (config.aiStreamingEnabled) AiChip(Icons.Default.Bolt, "Live answers", true) {}
                 if (config.aiHumanStyle) AiChip(Icons.Default.RecordVoiceOver, "Human style", true) {}
+                AiChip(Icons.Default.AutoFixHigh, "AI Studio", true) { AppNav.open("ai_studio") }
+                AiChip(Icons.Default.PersonSearch, "Profile search", true) { input = "Find " }
                 AiChip(Icons.Default.Lock, "Private memory", true) {}
                 if (config.assistantEnabled) AiChip(Icons.Default.Image, "Create image", true) { showImageGenerator = true }
                 AiChip(Icons.Default.Settings, "AI setup guide", false) { showAiSetupGuide = true }
@@ -338,7 +359,7 @@ fun AssistantScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenAiSettin
             }
             // ---- Composer ----------------------------------------------------------------------
             Row(
-                Modifier.fillMaxWidth().navigationBarsPadding().imePadding().padding(horizontal = 12.dp, vertical = 10.dp)
+                Modifier.fillMaxWidth().windowInsetsPadding(WindowInsets.navigationBars.union(WindowInsets.ime)).padding(horizontal = 12.dp, vertical = 8.dp)
                     .clip(RoundedCornerShape(28.dp))
                     .background(Color.White.copy(alpha = .08f))
                     .border(BorderStroke(1.dp, Brush.linearGradient(listOf(AiCyan.copy(alpha = .6f), AiPink.copy(alpha = .5f), AiViolet.copy(alpha = .6f)))), RoundedCornerShape(28.dp))

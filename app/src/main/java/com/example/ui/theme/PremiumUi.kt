@@ -1,5 +1,6 @@
 package com.example.ui.theme
 
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
@@ -31,13 +32,26 @@ fun PremiumBackground(modifier: Modifier = Modifier, content: @Composable BoxSco
     val orbA = MaterialTheme.colorScheme.primary.copy(alpha = if (dark) .16f else .14f)
     val orbB = MaterialTheme.colorScheme.tertiary.copy(alpha = if (dark) .10f else .12f)
     val orbC = MaterialTheme.colorScheme.secondary.copy(alpha = if (dark) .10f else .10f)
+    // v5.0: the light pools drift very slowly, so the whole app feels alive. Only the draw
+    // phase re-runs (no recomposition, no layout), which keeps it cheap.
+    val drift = androidx.compose.animation.core.rememberInfiniteTransition(label = "premium_bg").animateFloat(
+        0f, 1f,
+        androidx.compose.animation.core.infiniteRepeatable(
+            androidx.compose.animation.core.tween(16000, easing = androidx.compose.animation.core.FastOutSlowInEasing),
+            androidx.compose.animation.core.RepeatMode.Reverse
+        ),
+        label = "premium_bg_drift"
+    )
     Box(
         modifier.fillMaxSize().background(gradient).drawBehind {
-            // Soft liquid-glass light pools; static so they cost nothing per frame.
             val r = size.minDimension
-            drawCircle(Brush.radialGradient(listOf(orbA, Color.Transparent), center = Offset(size.width * .05f, size.height * .12f), radius = r * .75f), radius = r * .75f, center = Offset(size.width * .05f, size.height * .12f))
-            drawCircle(Brush.radialGradient(listOf(orbB, Color.Transparent), center = Offset(size.width * 1.0f, size.height * .45f), radius = r * .7f), radius = r * .7f, center = Offset(size.width * 1.0f, size.height * .45f))
-            drawCircle(Brush.radialGradient(listOf(orbC, Color.Transparent), center = Offset(size.width * .3f, size.height * .95f), radius = r * .8f), radius = r * .8f, center = Offset(size.width * .3f, size.height * .95f))
+            val d = drift.value
+            val a = Offset(size.width * (.05f + .22f * d), size.height * (.12f + .05f * d))
+            val b = Offset(size.width * (1.0f - .25f * d), size.height * (.45f + .08f * d))
+            val c = Offset(size.width * (.3f + .2f * d), size.height * (.95f - .08f * d))
+            drawCircle(Brush.radialGradient(listOf(orbA, Color.Transparent), center = a, radius = r * .75f), radius = r * .75f, center = a)
+            drawCircle(Brush.radialGradient(listOf(orbB, Color.Transparent), center = b, radius = r * .7f), radius = r * .7f, center = b)
+            drawCircle(Brush.radialGradient(listOf(orbC, Color.Transparent), center = c, radius = r * .8f), radius = r * .8f, center = c)
         },
         content = content
     )

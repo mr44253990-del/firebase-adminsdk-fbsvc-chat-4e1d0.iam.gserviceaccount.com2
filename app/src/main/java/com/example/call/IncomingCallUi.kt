@@ -32,6 +32,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
@@ -140,8 +141,14 @@ fun IncomingCallerAvatar(image: String, name: String, accent: Color) {
 }
 
 /**
- * Incoming-call controls: Decline on the left, a hopping/shaking Answer button that the user
- * can tap or swipe up, with animated chevrons above it, and a quick "Message" decline.
+ * Incoming-call controls, rebuilt on a strict three-slot grid so nothing floats out of place:
+ *
+ *   [ Decline ]   [ Message ]   [ Answer ]
+ *
+ * Decline and Answer are the same size and sit on the same baseline with their labels directly
+ * underneath. Answer can be tapped or dragged up; a glass track above it shows the swipe.
+ * The quick "Message" reply lives in the centre slot (the slot stays empty when unavailable,
+ * which keeps the two main buttons perfectly symmetric).
  */
 @Composable
 fun IncomingAnswerControls(
@@ -155,10 +162,9 @@ fun IncomingAnswerControls(
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()
     val dragY = remember { Animatable(0f) }
-    val thresholdPx = with(density) { 120.dp.toPx() }
+    val thresholdPx = with(density) { 96.dp.toPx() }
     var lastAcceptAt by remember { mutableLongStateOf(0L) }
     val buzz = buzzEnvelope(phase)
-    // Gentle haptic tick when the button hops (respects the user's touch-feedback setting).
     var lastTickCycle by remember { mutableIntStateOf(-1) }
     LaunchedEffect(phase < .05f) {
         if (phase < .05f) {
@@ -176,29 +182,40 @@ fun IncomingAnswerControls(
         // If a permission prompt appears instead, the button springs back so the user can retry.
         scope.launch { dragY.animateTo(0f, spring(dampingRatio = Spring.DampingRatioMediumBouncy)) }
     }
+    val buttonSize = 74.dp
+    val slotHeight = 214.dp
 
     Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-        // Animated chevrons: "swipe up to answer".
-        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.height(64.dp)) {
-            repeat(3) { i ->
-                val local = ((phase * 2f) - i * .18f).mod(1f)
-                Icon(
-                    Icons.Default.KeyboardArrowUp, null,
-                    tint = Color.White.copy(alpha = (sin(local * PI.toFloat()) * (1f - progress)).coerceIn(0f, 1f) * .9f),
-                    modifier = Modifier.size(26.dp).offset(y = (-6 * local).dp)
+        Text(
+            if (progress > .05f) "Release to answer" else "Tap or swipe up to answer",
+            color = Color.White.copy(alpha = .8f), fontSize = 12.sp, fontWeight = FontWeight.Medium, letterSpacing = .3.sp
+        )
+        Spacer(Modifier.height(6.dp))
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 18.dp).height(slotHeight),
+            verticalAlignment = Alignment.Bottom
+        ) {
+            // ---- Decline -------------------------------------------------------------
+            Box(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.BottomCenter) {
+                CallSlotButton(
+                    size = buttonSize, label = "Decline", alpha = 1f - progress * .7f,
+                    colors = listOf(Color(0xFFFF6B6B), Color(0xFFD92D3A)), glow = Color(0xFFFF4D5E),
+                    icon = Icons.Default.CallEnd, onClick = onDecline
                 )
             }
-        }
-        Text(
-            if (progress > .05f) "Release to answer" else "Swipe up or tap to answer",
-            color = Color.White.copy(alpha = .78f), fontSize = 12.sp, fontWeight = FontWeight.Medium
-        )
-        Spacer(Modifier.height(18.dp))
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.Bottom) {
-            RoundAction(Color(0xFFE53935), Icons.Default.CallEnd, "Decline", alpha = 1f - progress) { onDecline() }
-            // Drag surface is fixed; only the inner button moves (avoids gesture feedback loops).
+            // ---- Quick message (centre) ---------------------------------------------
+            Box(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.BottomCenter) {
+                if (onDeclineWithMessage != null) {
+                    CallSlotButton(
+                        size = 54.dp, label = "Message", alpha = 1f - progress * .7f,
+                        colors = listOf(Color.White.copy(alpha = .26f), Color.White.copy(alpha = .12f)), glow = Color.Transparent,
+                        icon = Icons.Default.Message, onClick = onDeclineWithMessage, iconSize = 24.dp, bottomInset = 10.dp
+                    )
+                }
+            }
+            // ---- Answer (tap or swipe up) -------------------------------------------
             Box(
-                Modifier.size(width = 96.dp, height = 110.dp)
+                Modifier.weight(1f).fillMaxHeight()
                     .pointerInput(Unit) {
                         detectVerticalDragGestures(
                             onDragEnd = {
@@ -208,20 +225,39 @@ fun IncomingAnswerControls(
                             onDragCancel = { scope.launch { dragY.animateTo(0f) } },
                             onVerticalDrag = { change, amount ->
                                 change.consume()
-                                scope.launch { dragY.snapTo((dragY.value + amount).coerceIn(-thresholdPx * 1.25f, 0f)) }
+                                scope.launch { dragY.snapTo((dragY.value + amount).coerceIn(-thresholdPx * 1.1f, 0f)) }
                             }
                         )
                     },
                 contentAlignment = Alignment.BottomCenter
             ) {
-                val hop = if (progress > 0f) 0f else -14f * buzz
-                val wiggle = if (progress > 0f) 0f else 14f * sin(phase * 2f * PI.toFloat() * 6f) * buzz
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    modifier = Modifier.offset { IntOffset(0, (dragY.value + with(density) { hop.dp.toPx() }).roundToInt()) }
+                // Glass swipe track with animated chevrons, centred exactly above the button.
+                Box(
+                    Modifier.align(Alignment.BottomCenter).padding(bottom = 26.dp)
+                        .size(width = buttonSize + 10.dp, height = 184.dp)
+                        .clip(CircleShape)
+                        .background(Brush.verticalGradient(listOf(Color.White.copy(alpha = .03f), Color(0xFF2EE86F).copy(alpha = .10f + .18f * progress))))
+                        .border(1.dp, Brush.verticalGradient(listOf(Color.White.copy(alpha = .05f), Color(0xFF5BF29A).copy(alpha = .45f))), CircleShape),
+                    contentAlignment = Alignment.TopCenter
                 ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(top = 14.dp)) {
+                        repeat(3) { i ->
+                            val local = ((phase * 2f) - i * .18f).mod(1f)
+                            Icon(
+                                Icons.Default.KeyboardArrowUp, null,
+                                tint = Color.White.copy(alpha = (sin(local * PI.toFloat()) * (1f - progress)).coerceIn(0f, 1f) * .9f),
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+                    }
+                }
+                val hop = if (progress > 0f) 0f else -8f * buzz
+                val wiggle = if (progress > 0f) 0f else 14f * sin(phase * 2f * PI.toFloat() * 6f) * buzz
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Box(
-                        Modifier.size(76.dp).scale(1f + .1f * progress + .05f * buzz)
+                        Modifier
+                            .offset { IntOffset(0, (dragY.value + with(density) { hop.dp.toPx() }).roundToInt()) }
+                            .size(buttonSize).scale(1f + .08f * progress + .04f * buzz)
                             .shadow(18.dp, CircleShape, ambientColor = Color(0xFF2EE86F), spotColor = Color(0xFF2EE86F))
                             .clip(CircleShape)
                             .background(Brush.linearGradient(listOf(Color(0xFF5BF29A), Color(0xFF16A34A))))
@@ -229,28 +265,42 @@ fun IncomingAnswerControls(
                             .clickable { accept() },
                         contentAlignment = Alignment.Center
                     ) {
-                        Icon(if (video) Icons.Default.Videocam else Icons.Default.Call, "Answer", tint = Color.White, modifier = Modifier.size(34.dp).rotate(wiggle))
+                        Icon(if (video) Icons.Default.Videocam else Icons.Default.Call, "Answer", tint = Color.White, modifier = Modifier.size(32.dp).rotate(wiggle))
                     }
                     Spacer(Modifier.height(8.dp))
-                    Text("Answer", color = Color.White, style = MaterialTheme.typography.labelMedium)
+                    Text("Answer", color = Color.White, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
                 }
             }
-            if (onDeclineWithMessage != null) RoundAction(Color.White.copy(alpha = .22f), Icons.Default.Message, "Message", alpha = 1f - progress) { onDeclineWithMessage() }
         }
     }
 }
 
 @Composable
-private fun RoundAction(color: Color, icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, alpha: Float, onClick: () -> Unit) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(bottom = 2.dp)) {
+private fun CallSlotButton(
+    size: androidx.compose.ui.unit.Dp,
+    label: String,
+    alpha: Float,
+    colors: List<Color>,
+    glow: Color,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    onClick: () -> Unit,
+    iconSize: androidx.compose.ui.unit.Dp = 30.dp,
+    bottomInset: androidx.compose.ui.unit.Dp = 0.dp
+) {
+    val a = alpha.coerceIn(.3f, 1f)
+    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(bottom = bottomInset).graphicsLayerAlpha(a)) {
         Box(
-            Modifier.size(62.dp).clip(CircleShape)
-                .background(Brush.linearGradient(listOf(color.copy(alpha = color.alpha * alpha.coerceIn(.25f, 1f)), color.copy(alpha = color.alpha * .78f * alpha.coerceIn(.25f, 1f)))))
-                .border(1.dp, Brush.verticalGradient(listOf(Color.White.copy(alpha = .5f * alpha.coerceIn(.2f, 1f)), Color.Transparent)), CircleShape)
+            Modifier.size(size)
+                .then(if (glow != Color.Transparent) Modifier.shadow(14.dp, CircleShape, ambientColor = glow, spotColor = glow) else Modifier)
+                .clip(CircleShape)
+                .background(Brush.linearGradient(colors))
+                .border(1.5.dp, Brush.verticalGradient(listOf(Color.White.copy(alpha = .6f), Color.White.copy(alpha = .08f))), CircleShape)
                 .clickable(onClick = onClick),
             contentAlignment = Alignment.Center
-        ) { Icon(icon, label, tint = Color.White.copy(alpha = alpha.coerceIn(.3f, 1f)), modifier = Modifier.size(28.dp)) }
+        ) { Icon(icon, label, tint = Color.White, modifier = Modifier.size(iconSize)) }
         Spacer(Modifier.height(8.dp))
-        Text(label, color = Color.White.copy(alpha = alpha.coerceIn(.3f, 1f)), style = MaterialTheme.typography.labelMedium)
+        Text(label, color = Color.White, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
     }
 }
+
+private fun Modifier.graphicsLayerAlpha(value: Float): Modifier = this.then(Modifier.graphicsLayer { alpha = value })

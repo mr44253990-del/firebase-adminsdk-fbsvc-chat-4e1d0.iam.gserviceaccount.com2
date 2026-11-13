@@ -12,13 +12,13 @@
 
 // Bump WORKER_API_VERSION whenever routes change; the Android app compares it with
 // the version it expects and tells the admin to redeploy when the Worker is older.
-const WORKER_API_VERSION = 54;
+const WORKER_API_VERSION = 55;
 // Human-readable Worker release tag, reported by the health endpoint and shown in
 // Admin → Server health so the admin can see exactly which build is live.
-const WORKER_RELEASE = "4.9.3";
+const WORKER_RELEASE = "5.0.0";
 
 // Optional extra data forwarded to the device (rich image notifications, group calls, …).
-const PUSH_EXTRA_KEYS = ["imageUrl", "roomId", "groupId", "groupName", "memberIds", "videoCall", "probeId", "chatId", "previewKind"];
+const PUSH_EXTRA_KEYS = ["imageUrl", "roomId", "groupId", "groupName", "memberIds", "videoCall", "probeId", "chatId", "previewKind", "recipientUid"];
 function pushExtras(payload) {
   const out = {};
   for (const key of PUSH_EXTRA_KEYS) {
@@ -1354,6 +1354,17 @@ export default {
         await Promise.all(sessions.map(x => firestoreSet(env, `user_sessions/${uid}/devices/${x.sessionId}`, { ...x, active: false, revokedAt: Date.now() })));
         await fsPatch(env, `users/${uid}`, { forceLogoutAt: Date.now() }).catch(() => null);
         return jsonResponse({ success: auth.ok, sessions: sessions.length }, auth.ok ? 200 : 502);
+      }
+      // ---- Admin user directory: sign-in e-mail + account facts (v5.0) -------------------
+      // E-mails live in Firebase Auth, never in the public profile documents, so only the
+      // admin (or a sub-admin with the "users" permission) can read them through this route.
+      if (path === "/admin/users/lookup") {
+        if (!(await callerCan(env, caller, "users"))) return jsonResponse({ error: "Admin only" }, 403);
+        const uids = (Array.isArray(payload.uids) ? payload.uids : []).map(v => String(v || "")).filter(Boolean).slice(0, 100);
+        const email = String(payload.email || "").trim().toLowerCase();
+        if (!uids.length && !email) return jsonResponse({ success: true, users: [] });
+        const users = await lookupFirebaseAccounts(env, uids.length ? { localId: uids } : { email: [email] });
+        return jsonResponse({ success: true, users });
       }
       // ---- Two-factor authentication (e-mail code / authenticator app / backup codes) -----
       if (path.startsWith("/mfa/")) {
@@ -2964,6 +2975,24 @@ async function fsPatch(env, path, data) {
   const r = await fetch(url.toString(), { method: "PATCH", headers: { Authorization: `Bearer ${t}`, "Content-Type": "application/json" }, body: JSON.stringify({ fields }) });
   if (!r.ok) throw Error(`Firestore patch ${r.status}`);
   return true;
+}
+async function lookupFirebaseAccounts(env, body) {
+  const a = JSON.parse(env.FIREBASE_SERVICE_ACCOUNT || "{}");
+  const t = await getGoogleAccessToken(a.client_email, a.private_key, "https://www.googleapis.com/auth/identitytoolkit");
+  const r = await fetch(`https://identitytoolkit.googleapis.com/v1/projects/${a.project_id}/accounts:lookup`, {
+    method: "POST", headers: { Authorization: `Bearer ${t}`, "Content-Type": "application/json" }, body: JSON.stringify(body)
+  });
+  const j = await r.json().catch(() => ({}));
+  return (j?.users || []).map(u => ({
+    uid: String(u.localId || ""),
+    email: String(u.email || ""),
+    emailVerified: !!u.emailVerified,
+    phone: String(u.phoneNumber || ""),
+    disabled: !!u.disabled,
+    createdAt: Number(u.createdAt || 0),
+    lastLoginAt: Number(u.lastLoginAt || 0),
+    providers: (u.providerUserInfo || []).map(p => String(p.providerId || "")).filter(Boolean)
+  }));
 }
 async function lookupUidByEmail(env, email) {
   const a = JSON.parse(env.FIREBASE_SERVICE_ACCOUNT || "{}");

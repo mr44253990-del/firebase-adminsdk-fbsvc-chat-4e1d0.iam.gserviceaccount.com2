@@ -44,6 +44,8 @@ data class CallState(
     val error: String? = null,
     val frontCamera: Boolean = true,
     val torchOn: Boolean = false,
+    /** Selfie "flash": the screen itself lights the face when the front camera has no LED. */
+    val screenFlash: Boolean = false,
     val filter: CallFilter = CallFilter.NONE
 )
 
@@ -197,6 +199,7 @@ object CallEngine {
     }
 
     private val filterProcessor = CallFilterProcessor()
+    private val audioRouteExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
 
     fun switchCamera() {
         if (_state.value.screenSharing) return
@@ -206,7 +209,7 @@ object CallEngine {
                     mainHandler.post {
                         // Only the selfie camera is mirrored; the back camera shows the real world as-is.
                         localRenderer?.setMirror(isFrontCamera)
-                        _state.value = _state.value.copy(frontCamera = isFrontCamera, torchOn = false)
+                        _state.value = _state.value.copy(frontCamera = isFrontCamera, torchOn = false, screenFlash = false)
                     }
                 }
                 override fun onCameraSwitchError(errorDescription: String?) { Log.w("CALL_ENGINE", "Camera switch failed: $errorDescription") }
@@ -214,11 +217,33 @@ object CallEngine {
         }.onFailure { Log.w("CALL_ENGINE", "Camera switch failed", it) }
     }
 
-    /** Flashlight for the back camera (best effort, depends on the phone). */
+    /** True when the selfie camera of this phone has its own LED flash. */
+    private fun frontCameraHasFlash(): Boolean = runCatching {
+        val manager = appContext?.getSystemService(Context.CAMERA_SERVICE) as? android.hardware.camera2.CameraManager ?: return false
+        manager.cameraIdList.any { id ->
+            val c = manager.getCameraCharacteristics(id)
+            c.get(android.hardware.camera2.CameraCharacteristics.LENS_FACING) == android.hardware.camera2.CameraCharacteristics.LENS_FACING_FRONT &&
+                c.get(android.hardware.camera2.CameraCharacteristics.FLASH_INFO_AVAILABLE) == true
+        }
+    }.getOrDefault(false)
+
+    /**
+     * Light for either camera. Back camera: the LED torch. Front camera: the front LED when the
+     * phone has one, otherwise a bright "screen flash" frame around the picture.
+     */
     fun toggleTorch(): Boolean {
         val st = _state.value
         if (st.screenSharing || st.cameraOff) return false
-        if (st.frontCamera) { notice("Switch to the back camera to use the flashlight"); return false }
+        if (st.frontCamera) {
+            if (st.torchOn || st.screenFlash) {
+                if (st.torchOn) CallTorch.set(videoCapturer, false)
+                _state.value = st.copy(torchOn = false, screenFlash = false)
+                return true
+            }
+            if (frontCameraHasFlash() && CallTorch.set(videoCapturer, true)) { _state.value = st.copy(torchOn = true); return true }
+            _state.value = st.copy(screenFlash = true)
+            return true
+        }
         val target = !st.torchOn
         val ok = CallTorch.set(videoCapturer, target)
         if (ok) _state.value = st.copy(torchOn = target) else notice("Flashlight isn't available on this phone during calls")
@@ -230,8 +255,45 @@ object CallEngine {
         _state.value = _state.value.copy(filter = filter)
     }
 
+    private fun ensureCameraCapturer(): Boolean {
+        if (videoCapturer != null) return true
+        val context = appContext ?: return false
+        val source = videoSource ?: return false
+        return runCatching {
+            val camera = createCameraCapturer(context) ?: error("No usable camera found")
+            camera.initialize(surfaceTextureHelper, context, source.capturerObserver)
+            camera.startCapture(720, 1280, 24)
+            videoCapturer = camera
+            true
+        }.onFailure { Log.w("CALL_ENGINE", "Camera start failed", it) }.getOrDefault(false)
+    }
+
+    /**
+     * Audio → video switch in the middle of a call. A video m-line is always negotiated, so the
+     * camera can simply start publishing; the other side is told through the call record.
+     */
+    fun upgradeToVideo(): Boolean {
+        val st = _state.value
+        if (st.status != "connected" || st.screenSharing) return false
+        if (!ensureCameraCapturer()) { notice("Could not start the camera"); return false }
+        localVideoTrack?.setEnabled(true)
+        _state.value = _state.value.copy(video = true, cameraOff = false, frontCamera = true)
+        val outgoing = st.direction == "outgoing"
+        callRef?.child(if (outgoing) "callerVideoOn" else "calleeVideoOn")?.setValue(true)
+        callRef?.child(if (outgoing) "callerCameraOff" else "calleeCameraOff")?.setValue(false)
+        appContext?.let { runCatching { CallForegroundService.start(it, st.callId, st.remoteName, true) } }
+        mainHandler.post { localRenderer?.setMirror(true) }
+        autoSpeakerForVideo()
+        updateProximityLock()
+        return true
+    }
+
     fun toggleCamera() {
         if (_state.value.screenSharing) return
+        if (_state.value.cameraOff && videoCapturer == null) {
+            // The other person switched this call to video; our camera has never been started.
+            if (!ensureCameraCapturer()) { notice("Could not start the camera"); return }
+        }
         val off = !_state.value.cameraOff
         localVideoTrack?.setEnabled(!off)
         _state.value = _state.value.copy(cameraOff = off)
@@ -342,18 +404,24 @@ object CallEngine {
         val context = appContext ?: return
         val enabled = !_state.value.speaker
         val manager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        manager.mode = AudioManager.MODE_IN_COMMUNICATION
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            if (enabled) manager.availableCommunicationDevices.firstOrNull { it.type == android.media.AudioDeviceInfo.TYPE_BUILTIN_SPEAKER }?.let(manager::setCommunicationDevice)
-            else manager.clearCommunicationDevice()
-        } else @Suppress("DEPRECATION") run { manager.isSpeakerphoneOn = enabled }
-        if (enabled) {
-            val max = manager.getStreamMaxVolume(AudioManager.STREAM_VOICE_CALL)
-            val minimum = (max * .70f).toInt().coerceAtLeast(1)
-            if (manager.getStreamVolume(AudioManager.STREAM_VOICE_CALL) < minimum) manager.setStreamVolume(AudioManager.STREAM_VOICE_CALL, minimum, 0)
-        }
+        // The UI flips immediately. Routing audio (setCommunicationDevice) can block for hundreds
+        // of milliseconds on many phones; doing it on the main thread froze every call animation.
         _state.value = _state.value.copy(speaker = enabled)
         updateProximityLock()
+        audioRouteExecutor.execute {
+            runCatching {
+                manager.mode = AudioManager.MODE_IN_COMMUNICATION
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    if (enabled) manager.availableCommunicationDevices.firstOrNull { it.type == android.media.AudioDeviceInfo.TYPE_BUILTIN_SPEAKER }?.let(manager::setCommunicationDevice)
+                    else manager.clearCommunicationDevice()
+                } else @Suppress("DEPRECATION") run { manager.isSpeakerphoneOn = enabled }
+                if (enabled) {
+                    val max = manager.getStreamMaxVolume(AudioManager.STREAM_VOICE_CALL)
+                    val minimum = (max * .70f).toInt().coerceAtLeast(1)
+                    if (manager.getStreamVolume(AudioManager.STREAM_VOICE_CALL) < minimum) manager.setStreamVolume(AudioManager.STREAM_VOICE_CALL, minimum, 0)
+                }
+            }.onFailure { Log.w("CALL_ENGINE", "Speaker routing failed", it) }
+        }
     }
 
     private fun createPeer(servers: List<PeerConnection.IceServer>, callId: String, myUid: String, caller: Boolean): Boolean {
@@ -452,6 +520,15 @@ object CallEngine {
                 val remoteScreenSharing = snapshot.child(if (isCaller) "calleeScreenSharing" else "callerScreenSharing").getValue(Boolean::class.java) ?: false
                 if (_state.value.remoteCameraOff != remoteCameraOff || _state.value.remoteScreenSharing != remoteScreenSharing) {
                     _state.value = _state.value.copy(remoteCameraOff = remoteCameraOff, remoteScreenSharing = remoteScreenSharing, video = _state.value.video || remoteScreenSharing)
+                }
+                val remoteVideoOn = snapshot.child(if (isCaller) "calleeVideoOn" else "callerVideoOn").getValue(Boolean::class.java) ?: false
+                if (remoteVideoOn && !_state.value.video) {
+                    // The other side switched the audio call to video: show their picture; our own
+                    // camera stays off until we choose to turn it on.
+                    _state.value = _state.value.copy(video = true, cameraOff = videoCapturer == null)
+                    callRef?.child(if (isCaller) "callerCameraOff" else "calleeCameraOff")?.setValue(videoCapturer == null)
+                    autoSpeakerForVideo()
+                    updateProximityLock()
                 }
                 if (isCaller && status == "connected" && !answerApplied) {
                     val answerSdp = snapshot.child("answerSdp").getValue(String::class.java)

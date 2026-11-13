@@ -959,14 +959,14 @@ fun ChatScreen(
                                     contentDescription = updatedRecipient.name,
                                     contentScale = ContentScale.Crop,
                                     modifier = Modifier
-                                        .size(40.dp)
+                                        .size(36.dp)
                                         .clip(CircleShape)
                                         .border(1.5.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f), CircleShape)
                                 )
                             } else {
                                 Box(
                                     modifier = Modifier
-                                        .size(40.dp)
+                                        .size(36.dp)
                                         .clip(CircleShape)
                                         .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
                                     contentAlignment = Alignment.Center
@@ -995,7 +995,7 @@ fun ChatScreen(
                             }
                         }
 
-                        Spacer(modifier = Modifier.width(12.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
 
                         Column {
                             Text(
@@ -1019,12 +1019,8 @@ fun ChatScreen(
                     }
                 },
                 actions = {
-                    IconButton(onClick = {
-                        showMessageSearch = !showMessageSearch
-                        if (!showMessageSearch) messageSearchQuery = ""
-                    }) {
-                        Icon(Icons.Default.Search, contentDescription = "Search messages", tint = MaterialTheme.colorScheme.primary)
-                    }
+                    // Only the two call buttons and one menu live here now, so the person's
+                    // name keeps most of the bar. Search and theme moved into the menu.
                     ChatCallPill(
                         onVideo = {
                             val cameraGranted = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
@@ -1036,9 +1032,28 @@ fun ChatScreen(
                             else { pendingCall = true; permissionLauncher.launch(Manifest.permission.RECORD_AUDIO) }
                         }
                     )
-                    ChatThemeOrb(onClick = { showThemePicker = true }, accent = MaterialTheme.colorScheme.primary)
-                    IconButton(onClick = { showChatSettings = true }) {
-                        Icon(Icons.Default.MoreVert, contentDescription = "Chat settings")
+                    var showTopMenu by remember { mutableStateOf(false) }
+                    Box {
+                        IconButton(onClick = { showTopMenu = true }, modifier = Modifier.size(40.dp)) {
+                            Icon(Icons.Default.MoreVert, contentDescription = "More")
+                        }
+                        DropdownMenu(expanded = showTopMenu, onDismissRequest = { showTopMenu = false }) {
+                            DropdownMenuItem(
+                                text = { Text(tr("Search messages")) },
+                                leadingIcon = { Icon(Icons.Default.Search, null) },
+                                onClick = { showTopMenu = false; showMessageSearch = !showMessageSearch; if (!showMessageSearch) messageSearchQuery = "" }
+                            )
+                            DropdownMenuItem(
+                                text = { Text(tr("Chat theme")) },
+                                leadingIcon = { ChatThemeOrb(onClick = { showTopMenu = false; showThemePicker = true }, accent = MaterialTheme.colorScheme.primary) },
+                                onClick = { showTopMenu = false; showThemePicker = true }
+                            )
+                            DropdownMenuItem(
+                                text = { Text(tr("Chat settings")) },
+                                leadingIcon = { Icon(Icons.Default.Tune, null) },
+                                onClick = { showTopMenu = false; showChatSettings = true }
+                            )
+                        }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -2268,17 +2283,7 @@ fun MessageBubbleItem(
 
                     // Render Chat image if present
                     if (!message.imageUrl.isNullOrBlank()) {
-                        AsyncImage(
-                            model = message.imageUrl,
-                            contentDescription = "Image attachment",
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(180.dp)
-                                .clip(RoundedCornerShape(18.dp))
-                                .clickable { showImageViewer = true }
-                                .background(MaterialTheme.colorScheme.surface)
-                        )
+                        AdaptiveChatImage(url = message.imageUrl, onClick = { showImageViewer = true })
                         Spacer(modifier = Modifier.height(6.dp))
                     }
 
@@ -2715,7 +2720,7 @@ private fun formatLastSeen(lastActive: Long): String {
 }
 
 @Composable
-private fun FullScreenChatImage(imageUrl: String, onDismiss: () -> Unit) {
+internal fun FullScreenChatImage(imageUrl: String, onDismiss: () -> Unit) {
     val context = LocalContext.current
     var scale by remember { mutableFloatStateOf(1f) }
     var offsetX by remember { mutableFloatStateOf(0f) }

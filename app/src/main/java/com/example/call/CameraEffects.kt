@@ -15,7 +15,11 @@ import java.nio.ByteBuffer
 /** Live camera filters applied to the outgoing video (and therefore the local preview too). */
 enum class CallFilter(val label: String, val emoji: String) {
     NONE("Normal", "✨"), BEAUTY("Soft glow", "🌸"), WARM("Warm", "🌅"), COOL("Cool", "❄️"),
-    VIVID("Vivid", "🌈"), MONO("Mono", "🖤"), SEPIA("Vintage", "📜"), NIGHT("Night boost", "🌙")
+    VIVID("Vivid", "🌈"), MONO("Mono", "🖤"), SEPIA("Vintage", "📜"), NIGHT("Night boost", "🌙"),
+    // v5.0 looks, modelled on the popular Google Photos / Meet styles.
+    PORTRAIT("Portrait light", "💡"), GOLDEN("Golden hour", "🌇"), ROSE("Bloom", "🌷"), FILM("Film", "🎞️"),
+    DRAMA("Drama", "🎭"), NOIR("Noir", "🎬"), PASTEL("Pastel", "🍬"), OCEAN("Ocean", "🌊"),
+    EMERALD("Emerald", "🌿"), SUNSET("Sunset", "🔥"), CYBER("Neon 2050", "🪩"), CRISP("Crisp HD", "🔎")
 }
 
 /**
@@ -76,10 +80,49 @@ class CallFilterProcessor : VideoProcessor {
         CallFilter.COOL -> ({ b: Byte -> clamp((b.toInt() and 0xFF) + 16) }) to ({ b: Byte -> clamp((b.toInt() and 0xFF) - 10) })
         CallFilter.VIVID -> ({ b: Byte -> clamp(128 + (((b.toInt() and 0xFF) - 128) * 14) / 10) }) to ({ b: Byte -> clamp(128 + (((b.toInt() and 0xFF) - 128) * 14) / 10) })
         CallFilter.BEAUTY -> ({ b: Byte -> b }) to ({ b: Byte -> clamp((b.toInt() and 0xFF) + 4) })
+        CallFilter.PORTRAIT -> shift(-3, 6)
+        CallFilter.GOLDEN -> shift(-18, 16)
+        CallFilter.ROSE -> shift(4, 14)
+        CallFilter.FILM -> saturate(8, -6, 8)
+        CallFilter.DRAMA -> saturate(12, 0, 2)
+        CallFilter.NOIR -> ({ _: Byte -> 128.toByte() }) to ({ _: Byte -> 128.toByte() })
+        CallFilter.PASTEL -> saturate(6, 3, 5)
+        CallFilter.OCEAN -> shift(20, -14)
+        CallFilter.EMERALD -> shift(-10, -14)
+        CallFilter.SUNSET -> saturate(12, -14, 22)
+        CallFilter.CYBER -> saturate(16, 14, 10)
+        CallFilter.CRISP -> saturate(12, 0, 0)
         else -> ({ b: Byte -> b }) to ({ b: Byte -> b })
     }
 
+    /** Push the two chroma planes (U = blue-yellow, V = red-green axis). */
+    private fun shift(u: Int, v: Int): Pair<(Byte) -> Byte, (Byte) -> Byte> =
+        ({ b: Byte -> clamp((b.toInt() and 0xFF) + u) }) to ({ b: Byte -> clamp((b.toInt() and 0xFF) + v) })
+
+    /** Scale saturation by [tenths]/10 around neutral, then shift. */
+    private fun saturate(tenths: Int, u: Int, v: Int): Pair<(Byte) -> Byte, (Byte) -> Byte> =
+        ({ b: Byte -> clamp(128 + (((b.toInt() and 0xFF) - 128) * tenths) / 10 + u) }) to ({ b: Byte -> clamp(128 + (((b.toInt() and 0xFF) - 128) * tenths) / 10 + v) })
+
+    /** Smooth S-curve contrast (strength 0..1) with an optional lift for faded looks. */
+    private fun curve(strength: Double, lift: Int = 0, gamma: Double = 1.0): ByteArray = ByteArray(256) { i ->
+        val x = Math.pow(i / 255.0, gamma)
+        val s = x * x * (3 - 2 * x)
+        clamp(((x + (s - x) * strength) * (255 - lift) + lift).toInt())
+    }
+
     private fun buildLut(f: CallFilter): ByteArray? = when (f) {
+        CallFilter.PORTRAIT -> curve(.25, lift = 10, gamma = .82)
+        CallFilter.GOLDEN -> curve(.2, lift = 8, gamma = .92)
+        CallFilter.ROSE -> curve(.1, lift = 22, gamma = .9)
+        CallFilter.FILM -> curve(.45, lift = 18)
+        CallFilter.DRAMA -> curve(.9)
+        CallFilter.NOIR -> curve(.8, gamma = 1.08)
+        CallFilter.PASTEL -> curve(-.25, lift = 34, gamma = .88)
+        CallFilter.OCEAN -> curve(.3)
+        CallFilter.EMERALD -> curve(.3, lift = 6)
+        CallFilter.SUNSET -> curve(.4, gamma = 1.05)
+        CallFilter.CYBER -> curve(.7, gamma = .95)
+        CallFilter.CRISP -> curve(.5, gamma = .96)
         // Lifts shadows and softens contrast for a flattering "glow".
         CallFilter.BEAUTY -> ByteArray(256) { i -> clamp((i * 0.86 + 30).toInt()) }
         // Gamma brighten for dark rooms.

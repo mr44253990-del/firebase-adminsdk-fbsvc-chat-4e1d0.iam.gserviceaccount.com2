@@ -12,13 +12,13 @@
 
 // Bump WORKER_API_VERSION whenever routes change; the Android app compares it with
 // the version it expects and tells the admin to redeploy when the Worker is older.
-const WORKER_API_VERSION = 52;
+const WORKER_API_VERSION = 55;
 // Human-readable Worker release tag, reported by the health endpoint and shown in
 // Admin → Server health so the admin can see exactly which build is live.
-const WORKER_RELEASE = "4.9.0";
+const WORKER_RELEASE = "5.0.0";
 
 // Optional extra data forwarded to the device (rich image notifications, group calls, …).
-const PUSH_EXTRA_KEYS = ["imageUrl", "roomId", "groupId", "groupName", "memberIds", "videoCall", "probeId", "chatId", "previewKind"];
+const PUSH_EXTRA_KEYS = ["imageUrl", "roomId", "groupId", "groupName", "memberIds", "videoCall", "probeId", "chatId", "previewKind", "recipientUid"];
 function pushExtras(payload) {
   const out = {};
   for (const key of PUSH_EXTRA_KEYS) {
@@ -347,6 +347,101 @@ export default {
         return webPairJson(request, env, { success: true, sessionToken, expiresAt: 0, name, email }, 200);
       } catch (error) {
         return webPairJson(request, env, { error: "Sign-up could not be completed" }, 500);
+      }
+    }
+
+    // ---- QR Sign-in: secure phone-approval API (v4.8.0) ------------------------------------
+    // No decorative QR is shown; these routes provide real session creation.
+    if (request.method === "POST" && path === "/web-pair/qr/create") {
+      if (!(await webCompanionOriginMatches(request, env))) return webPairJson(request, env, { error: "Unapproved companion origin" }, 403);
+      try {
+        const qrId = randomHex(16);
+        const now = Date.now();
+        const expiresAt = now + 300_000;
+        const origin = (await webCompanionOrigins(env))[0] || "";
+        // Store in Firestore so phone can approve
+        await fsPatch(env, `web_qr_sessions/${qrId}`, {
+          qrId,
+          status: "pending",
+          createdAt: now,
+          expiresAt,
+          origin,
+          scannedBy: "",
+          scannedAt: 0
+        });
+        // QR data is a URL that encodes the qrId for the phone scanner
+        const qrData = `convo-qr://${qrId}`;
+        return webPairJson(request, env, { success: true, qrId, qrData, expiresAt }, 200);
+      } catch (e) {
+        return webPairJson(request, env, { error: "Could not create QR session" }, 500);
+      }
+    }
+
+    if (request.method === "POST" && path === "/web-pair/qr/poll") {
+      if (!(await webCompanionOriginMatches(request, env))) return webPairJson(request, env, { error: "Unapproved companion origin" }, 403);
+      const body = await request.json().catch(() => ({}));
+      const qrId = String(body.qrId || "").trim().slice(0, 64);
+      if (!qrId) return webPairJson(request, env, { error: "Missing qrId" }, 400);
+      try {
+        const doc = await firestoreGet(env, `web_qr_sessions/${qrId}`).catch(() => null);
+        if (!doc) return webPairJson(request, env, { status: "expired", error: "QR expired" }, 410);
+        const now = Date.now();
+        if (Number(doc.expiresAt || 0) <= now && doc.status !== "authenticated") {
+          return webPairJson(request, env, { status: "expired", error: "QR expired" }, 410);
+        }
+        if (doc.status === "authenticated" && doc.sessionToken) {
+          return webPairJson(request, env, { status: "authenticated", sessionToken: doc.sessionToken, expiresAt: doc.expiresAt, uid: doc.uid }, 200);
+        }
+        return webPairJson(request, env, { status: doc.status || "pending" }, 200);
+      } catch (e) {
+        return webPairJson(request, env, { error: "Could not check QR status" }, 500);
+      }
+    }
+
+    if (request.method === "POST" && path === "/web-pair/qr/approve") {
+      const auth = await authenticateCaller(request, env);
+      if (!auth.ok) return auth.response;
+      const body = await request.json().catch(() => ({}));
+      const qrId = String(body.qrId || "").trim().slice(0, 64);
+      if (!qrId) return webPairJson(request, env, { error: "Missing qrId" }, 400);
+      try {
+        const doc = await firestoreGet(env, `web_qr_sessions/${qrId}`).catch(() => null);
+        if (!doc) return webPairJson(request, env, { error: "QR not found or expired" }, 404);
+        const now = Date.now();
+        if (Number(doc.expiresAt || 0) <= now) return webPairJson(request, env, { error: "QR expired" }, 410);
+        const uid = auth.caller.sub;
+        const profile = await firestoreGet(env, `users/${uid}`).catch(() => null);
+        if (!profile || profile.banned === true) return webPairJson(request, env, { error: "Account not eligible" }, 403);
+        // Create a real web session for the phone's account, so web logs in as that user
+        const sessionToken = randomHex(32);
+        const sessionHash = await sha256Hex(`convo-web-session:${sessionToken}`);
+        const userAgent = String(request.headers.get("User-Agent") || "Phone QR").slice(0, 160);
+        await fsPatch(env, `web_pair_sessions/${sessionHash}`, {
+          uid,
+          createdAt: now,
+          expiresAt: 0,
+          revokedAt: 0,
+          lastUsedAt: now,
+          userAgent,
+          via: "qr",
+          sessionVersion: Number(profile.webCompanionVersion || 0)
+        });
+        await fsPatch(env, `web_sessions/${uid}/items/${sessionHash}`, {
+          createdAt: now, expiresAt: 0, userAgent, revokedAt: 0
+        }).catch(() => null);
+        // Mark QR as authenticated with the new session
+        await fsPatch(env, `web_qr_sessions/${qrId}`, {
+          status: "authenticated",
+          authenticatedAt: now,
+          uid,
+          scannedBy: uid,
+          scannedAt: now,
+          sessionToken,
+          expiresAt: 0
+        });
+        return webPairJson(request, env, { success: true, status: "authenticated", sessionToken, expiresAt: 0 }, 200);
+      } catch (e) {
+        return webPairJson(request, env, { error: "Could not approve QR" }, 500);
       }
     }
 
@@ -798,6 +893,32 @@ export default {
       }
 
       /* ---------------------------------------------------------------- devices */
+      if (route === "home/posts") {
+        try {
+          const raw = await firestoreListWithIds(env, "posts").catch(() => []);
+          const posts = raw.map(r => ({ ...(r.data||{}), __id: r.id }));
+          // Sort by createdAt desc, limit 30, filter not banned
+          const sorted = posts.filter(p => p && !p.isDeleted && p.banned !== true).sort((a,b)=>Number(b.createdAt||b.timestamp||0)-Number(a.createdAt||a.timestamp||0)).slice(0,30);
+          // Enrich with author profile
+          const enriched = await Promise.all(sorted.map(async p => {
+            const author = p.uid ? await firestoreGet(env, `users/${p.uid}`).catch(()=>null) : null;
+            return {
+              id: p.__id || p.id || "",
+              text: p.text || p.caption || "",
+              imageUrl: p.imageUrl || (Array.isArray(p.imageUrls)?p.imageUrls[0]:"") || "",
+              videoUrl: p.videoUrl || "",
+              createdAt: Number(p.createdAt||p.timestamp||0),
+              likes: Number(p.likes||p.likeCount||0),
+              comments: Number(p.comments||p.commentCount||0),
+              author: author ? { uid: author.__uid||p.uid, name: author.name||"Convo user", username: author.username||"", profileImageUrl: author.profileImageUrl||"" } : { uid: p.uid||"", name: p.senderName||"Convo user", username: "", profileImageUrl: "" }
+            };
+          }));
+          return webPairJson(request, env, { success: true, posts: enriched }, 200);
+        } catch (error) {
+          return webPairJson(request, env, { error: "Could not load home feed" }, 502);
+        }
+      }
+
       if (route === "devices") {
         try {
           return webPairJson(request, env, { success: true, devices: await webPairDevices(env, meUid), browser: {
@@ -863,7 +984,7 @@ export default {
       }
       const contentType = request.headers.get("Content-Type") || "application/octet-stream";
       const contentLength = Number(request.headers.get("Content-Length") || 0);
-      if (contentLength > 95 * 1024 * 1024) return jsonResponse({ error: "Media exceeds 95 MB limit" }, 413);
+      if (contentLength > 2 * 1024 * 1024 * 1024) return jsonResponse({ error: "Media exceeds 2 GB limit" }, 413);
       const requestedKind = url.searchParams.get("kind");
       const isAdmin = auth.caller.email?.toLowerCase().replace(/\.+$/, "") === "mr4425390@gmail.com";
       if (requestedKind === "update" && !isAdmin) return jsonResponse({ error: "Only the admin can upload app updates" }, 403);
@@ -1233,6 +1354,17 @@ export default {
         await Promise.all(sessions.map(x => firestoreSet(env, `user_sessions/${uid}/devices/${x.sessionId}`, { ...x, active: false, revokedAt: Date.now() })));
         await fsPatch(env, `users/${uid}`, { forceLogoutAt: Date.now() }).catch(() => null);
         return jsonResponse({ success: auth.ok, sessions: sessions.length }, auth.ok ? 200 : 502);
+      }
+      // ---- Admin user directory: sign-in e-mail + account facts (v5.0) -------------------
+      // E-mails live in Firebase Auth, never in the public profile documents, so only the
+      // admin (or a sub-admin with the "users" permission) can read them through this route.
+      if (path === "/admin/users/lookup") {
+        if (!(await callerCan(env, caller, "users"))) return jsonResponse({ error: "Admin only" }, 403);
+        const uids = (Array.isArray(payload.uids) ? payload.uids : []).map(v => String(v || "")).filter(Boolean).slice(0, 100);
+        const email = String(payload.email || "").trim().toLowerCase();
+        if (!uids.length && !email) return jsonResponse({ success: true, users: [] });
+        const users = await lookupFirebaseAccounts(env, uids.length ? { localId: uids } : { email: [email] });
+        return jsonResponse({ success: true, users });
       }
       // ---- Two-factor authentication (e-mail code / authenticator app / backup codes) -----
       if (path.startsWith("/mfa/")) {
@@ -2498,7 +2630,13 @@ async function webCompanionOriginMatches(request, env) {
   const origin = request.headers.get("Origin") || "";
   if (!origin) return false;
   const allowed = await webCompanionOrigins(env);
-  return allowed.includes(origin);
+  if (allowed.includes(origin)) return true;
+  // Allow preview deployments of the same Pages project (e.g. https://abc123.convo-chat-companion.pages.dev)
+  try {
+    const url = new URL(origin);
+    if (url.hostname.endsWith(".convo-chat-companion.pages.dev") || url.hostname === "convo-chat-companion.pages.dev") return true;
+  } catch (_) {}
+  return false;
 }
 function webPairJson(request, env, value, status = 200) {
   const origin = request.headers.get("Origin") || "";
@@ -2837,6 +2975,24 @@ async function fsPatch(env, path, data) {
   const r = await fetch(url.toString(), { method: "PATCH", headers: { Authorization: `Bearer ${t}`, "Content-Type": "application/json" }, body: JSON.stringify({ fields }) });
   if (!r.ok) throw Error(`Firestore patch ${r.status}`);
   return true;
+}
+async function lookupFirebaseAccounts(env, body) {
+  const a = JSON.parse(env.FIREBASE_SERVICE_ACCOUNT || "{}");
+  const t = await getGoogleAccessToken(a.client_email, a.private_key, "https://www.googleapis.com/auth/identitytoolkit");
+  const r = await fetch(`https://identitytoolkit.googleapis.com/v1/projects/${a.project_id}/accounts:lookup`, {
+    method: "POST", headers: { Authorization: `Bearer ${t}`, "Content-Type": "application/json" }, body: JSON.stringify(body)
+  });
+  const j = await r.json().catch(() => ({}));
+  return (j?.users || []).map(u => ({
+    uid: String(u.localId || ""),
+    email: String(u.email || ""),
+    emailVerified: !!u.emailVerified,
+    phone: String(u.phoneNumber || ""),
+    disabled: !!u.disabled,
+    createdAt: Number(u.createdAt || 0),
+    lastLoginAt: Number(u.lastLoginAt || 0),
+    providers: (u.providerUserInfo || []).map(p => String(p.providerId || "")).filter(Boolean)
+  }));
 }
 async function lookupUidByEmail(env, email) {
   const a = JSON.parse(env.FIREBASE_SERVICE_ACCOUNT || "{}");

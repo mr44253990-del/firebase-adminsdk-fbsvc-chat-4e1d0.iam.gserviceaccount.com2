@@ -171,7 +171,30 @@ data class Group(
     val members: List<String> = emptyList(),
     val createdAt: Long = 0L,
     val lastMessage: String = "",
-    val createdBy: String = ""
+    val createdBy: String = "",
+    /** Live group call pointer: every member sees a "Join" bar while this room is active. */
+    val activeCallRoomId: String = "",
+    val activeCallHostId: String = "",
+    val activeCallHostName: String = "",
+    val activeCallVideo: Boolean = false,
+    val activeCallStartedAt: Long = 0L,
+    /** Smart group tools (v5.0). */
+    val pinnedMessage: String = "",
+    val pinnedBy: String = "",
+    val description: String = "",
+    val admins: List<String> = emptyList(),
+    val onlyAdminsCanPost: Boolean = false,
+    val slowModeSeconds: Int = 0
+)
+
+/** What the group chat needs to draw the live "Join call" bar. */
+data class ActiveGroupCallInfo(
+    val roomId: String = "",
+    val hostId: String = "",
+    val hostName: String = "",
+    val video: Boolean = false,
+    val startedAt: Long = 0L,
+    val participantCount: Int = 0
 )
 
 data class GroupMessage(

@@ -272,6 +272,17 @@ fun CallScreen(
             CallEngine.acceptIncoming(context, callId, remoteUid, remoteName, remoteImage, effectiveVideo)
         } else pendingAccept = false
     }
+    // Audio → video switch and "camera on" both need the camera permission first.
+    var cameraPermissionAction by remember { mutableStateOf("") }
+    val videoUpgradeLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) { if (cameraPermissionAction == "toggle") CallEngine.toggleCamera() else CallEngine.upgradeToVideo() }
+        else android.widget.Toast.makeText(context, "Camera permission is needed for video", android.widget.Toast.LENGTH_SHORT).show()
+        cameraPermissionAction = ""
+    }
+    val toggleCameraSafely: () -> Unit = {
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) CallEngine.toggleCamera()
+        else { cameraPermissionAction = "toggle"; videoUpgradeLauncher.launch(Manifest.permission.CAMERA) }
+    }
     // Close the call UI whenever the call is over, including when the engine resets straight to "idle"
     // (remote hang-up during PiP) so a frozen frame never stays on screen.
     var wasLive by remember { mutableStateOf(false) }
@@ -373,11 +384,27 @@ fun CallScreen(
                     GlassCallButton(Icons.Default.Cameraswitch, if (state.frontCamera) "Back cam" else "Selfie", accent = callPalette.accent, size = 52) {
                         CallEngine.switchCamera(); view.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY)
                     }
-                    if (!state.frontCamera) GlassCallButton(if (state.torchOn) Icons.Default.FlashlightOn else Icons.Default.FlashlightOff, "Light", active = state.torchOn, accent = callPalette.accent, size = 46) { CallEngine.toggleTorch() }
+                    GlassCallButton(if (state.torchOn || state.screenFlash) Icons.Default.FlashlightOn else Icons.Default.FlashlightOff, if (state.frontCamera) "Selfie light" else "Light", active = state.torchOn || state.screenFlash, accent = callPalette.accent, size = 46) { CallEngine.toggleTorch() }
                     GlassCallButton(Icons.Default.AutoFixHigh, "Filters", active = showFilters || state.filter != CallFilter.NONE, accent = callPalette.accent, size = 46) { showFilters = !showFilters }
                 }
             }
         }
+        // Selfie light: a bright frame around the picture lights the face (front cameras rarely
+        // have an LED). Screen brightness is pushed to maximum while it is on.
+        val flashOn = state.screenFlash && effectiveVideo && accepted
+        DisposableEffect(flashOn) {
+            val window = (view.context as? Activity)?.window
+            val previous = window?.attributes?.screenBrightness
+            if (flashOn && window != null) window.attributes = window.attributes.apply { screenBrightness = 1f }
+            onDispose {
+                if (flashOn && window != null && previous != null) window.attributes = window.attributes.apply { screenBrightness = previous }
+            }
+        }
+        if (flashOn) Box(
+            Modifier.fillMaxSize()
+                .border(34.dp, Color.White, RoundedCornerShape(0.dp))
+                .border(72.dp, Brush.radialGradient(listOf(Color.Transparent, Color(0xFFFFF4E0).copy(alpha = .55f))), RoundedCornerShape(0.dp))
+        )
         if (canMinimize && (controlsVisible || !effectiveVideo)) IconButton(
             onClick = onMinimize,
             modifier = Modifier.align(Alignment.TopStart).windowInsetsPadding(WindowInsets.statusBars).padding(12.dp).background(Color.Black.copy(.42f), CircleShape)
@@ -460,6 +487,11 @@ fun CallScreen(
                         val tiles = buildList<Triple<androidx.compose.ui.graphics.vector.ImageVector, String, () -> Unit>> {
                             add(Triple(if (state.speaker) Icons.Default.Hearing else Icons.Default.VolumeUp, if (state.speaker) "Earpiece" else "Speaker") { CallEngine.toggleSpeaker() })
                             add(Triple(Icons.Default.PersonAdd, "Add people") { onAddParticipant(); showMoreControls = false })
+                            if (!effectiveVideo && state.status == "connected") add(Triple(Icons.Default.Videocam, "Video call") {
+                                showMoreControls = false
+                                if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) CallEngine.upgradeToVideo()
+                                else videoUpgradeLauncher.launch(Manifest.permission.CAMERA)
+                            })
                             add(Triple(if (state.screenSharing) Icons.Default.StopScreenShare else Icons.Default.ScreenShare, if (state.screenSharing) "Stop share" else "Share screen") {
                                 if (state.screenSharing) CallEngine.stopScreenShare()
                                 else {
@@ -470,7 +502,7 @@ fun CallScreen(
                             })
                             if (effectiveVideo) {
                                 add(Triple(Icons.Default.Cameraswitch, "Flip camera") { if (!state.screenSharing) CallEngine.switchCamera() })
-                                add(Triple(if (state.cameraOff) Icons.Default.Videocam else Icons.Default.VideocamOff, if (state.cameraOff) "Camera on" else "Camera off") { CallEngine.toggleCamera() })
+                                add(Triple(if (state.cameraOff) Icons.Default.Videocam else Icons.Default.VideocamOff, if (state.cameraOff) "Camera on" else "Camera off") { toggleCameraSafely() })
                                 add(Triple(if (fillVideo) Icons.Default.FitScreen else Icons.Default.Fullscreen, if (fillVideo) "Fit video" else "Fill screen") { fillVideo = !fillVideo })
                                 add(Triple(if (showSelfView) Icons.Default.VisibilityOff else Icons.Default.Visibility, if (showSelfView) "Hide me" else "Show me") { showSelfView = !showSelfView })
                                 add(Triple(Icons.Default.AutoFixHigh, "Filters") { showFilters = !showFilters; showMoreControls = false })
@@ -521,7 +553,11 @@ fun CallScreen(
                     ) {
                         GlassCallButton(if (state.muted) Icons.Default.MicOff else Icons.Default.Mic, if (state.muted) "Unmute" else "Mute", active = state.muted, accent = callPalette.accent) { CallEngine.toggleMute() }
                         GlassCallButton(if (state.speaker) Icons.Default.VolumeUp else Icons.Default.Hearing, if (state.speaker) "Speaker" else "Earpiece", active = state.speaker, accent = callPalette.accent) { CallEngine.toggleSpeaker() }
-                        if (effectiveVideo) GlassCallButton(if (state.cameraOff) Icons.Default.VideocamOff else Icons.Default.Videocam, "Camera", active = state.cameraOff, accent = callPalette.accent) { CallEngine.toggleCamera() }
+                        if (effectiveVideo) GlassCallButton(if (state.cameraOff) Icons.Default.VideocamOff else Icons.Default.Videocam, "Camera", active = state.cameraOff, accent = callPalette.accent) { toggleCameraSafely() }
+                        else if (state.status == "connected") GlassCallButton(Icons.Default.Videocam, "Video", accent = callPalette.accent) {
+                            if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) CallEngine.upgradeToVideo()
+                            else videoUpgradeLauncher.launch(Manifest.permission.CAMERA)
+                        }
                         GlassCallButton(Icons.Default.EmojiEmotions, "React", active = showReactions, accent = callPalette.accent) { showReactions = !showReactions }
                         GlassCallButton(Icons.Default.CallEnd, "End", danger = true, size = 56) { onEndCall(); onClose() }
                         GlassCallButton(if (showMoreControls) Icons.Default.Close else Icons.Default.GridView, "More", active = showMoreControls, accent = callPalette.accent) { showMoreControls = !showMoreControls }

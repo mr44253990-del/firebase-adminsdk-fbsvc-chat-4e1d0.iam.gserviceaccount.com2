@@ -618,6 +618,12 @@ fun HomeScreen(
                                     AccountMenuRow(Icons.Outlined.Explore, listOf(Color(0xFF1E88E5), Color(0xFF1565C0)), tr("Discover people")) {
                                         showAccountMenu = false; viewModel.setCurrentTab(5)
                                     }
+                                    AccountMenuRow(Icons.Outlined.AutoAwesome, listOf(Color(0xFF8B7BFF), Color(0xFF36D8E6)), "AI Studio  •  rewrite, translate, captions…") {
+                                        showAccountMenu = false; AppNav.open("ai_studio")
+                                    }
+                                    AccountMenuRow(Icons.Outlined.NewReleases, listOf(Color(0xFFFF6FB5), Color(0xFF8B7BFF)), "What's new in this update") {
+                                        showAccountMenu = false; AppNav.open("whats_new")
+                                    }
                                     AccountMenuRow(Icons.Outlined.QrCodeScanner, listOf(Color(0xFF7B6BFF), Color(0xFF5AC8FA)), "Device Login  •  Scan QR to log in on PC") {
                                         showAccountMenu = false; showDeviceLogin = true
                                     }
@@ -668,19 +674,20 @@ fun HomeScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(topStart = 30.dp, topEnd = 30.dp))
+                    .novaGlowEdge()
             ) {
                 NavigationBarItem(
                     selected = currentTab == 0,
                     onClick = { viewModel.setCurrentTab(0) },
                     modifier = Modifier.coachTarget("nav_home"),
-                    icon = { Icon(Icons.Default.Home, contentDescription = "Home") },
+                    icon = { NovaNavIcon(Icons.Default.Home, "Home", selected = currentTab == 0) },
                     label = { Text(tr("Home"), fontSize = 10.sp) }
                 )
                 NavigationBarItem(
                     selected = currentTab == 1,
                     onClick = { viewModel.setCurrentTab(1) },
                     modifier = Modifier.coachTarget("nav_chats"),
-                    icon = { Icon(Icons.Default.Chat, contentDescription = "Chats") },
+                    icon = { NovaNavIcon(Icons.Default.Chat, "Chats", selected = currentTab == 1) },
                     label = { Text(tr("Chats"), fontSize = 10.sp) }
                 )
                 NavigationBarItem(
@@ -688,9 +695,7 @@ fun HomeScreen(
                     onClick = { showCreateHub = true },
                     modifier = Modifier.coachTarget("nav_create"),
                     icon = {
-                        Box(Modifier.size(54.dp).clip(CircleShape).background(Brush.linearGradient(listOf(Color(0xFF674CFF), Color(0xFFFF36BE)))), contentAlignment = Alignment.Center) {
-                            Icon(Icons.Default.Add, contentDescription = "Create", tint = Color.White, modifier = Modifier.size(28.dp))
-                        }
+                        NovaCreateButton()
                     },
                     label = null
                 )
@@ -700,20 +705,20 @@ fun HomeScreen(
                     selected = currentTab == 6,
                     onClick = { viewModel.openReel() },
                     modifier = Modifier.coachTarget("nav_slot4"),
-                    icon = { Icon(Icons.Default.SmartDisplay, contentDescription = "Reels") },
+                    icon = { NovaNavIcon(Icons.Default.SmartDisplay, "Reels", selected = false) },
                     label = { Text(tr("Reels"), fontSize = 10.sp) }
                 ) else NavigationBarItem(
                     selected = currentTab == 2,
                     onClick = { viewModel.setCurrentTab(2) },
                     modifier = Modifier.coachTarget("nav_slot4"),
-                    icon = { Icon(Icons.Default.Groups, contentDescription = "Groups") },
+                    icon = { NovaNavIcon(Icons.Default.Groups, "Groups", selected = currentTab == 2) },
                     label = { Text(tr("Groups"), fontSize = 10.sp) }
                 )
                 NavigationBarItem(
                     selected = currentTab == 5,
                     onClick = { viewModel.setCurrentTab(5) },
                     modifier = Modifier.coachTarget("nav_friends"),
-                    icon = { Icon(Icons.Default.PeopleAlt, contentDescription = "Friends") },
+                    icon = { NovaNavIcon(Icons.Default.PeopleAlt, "Friends", selected = currentTab == 5) },
                     label = { Text(tr("Friends"), fontSize = 10.sp) }
                 )
             }
@@ -756,6 +761,7 @@ fun HomeScreen(
                 .fillMaxSize()
                 .background(scaffoldBgColor)
                 .padding(innerPadding)
+                .novaTabEntrance(currentTab)
         ) {
             if (incomingAccountBanner != null) {
                 Box(Modifier.align(Alignment.TopCenter).fillMaxWidth()) {
@@ -3527,13 +3533,8 @@ fun ActivityCenterDialog(
             shape = RoundedCornerShape(0.dp)
         ) {
             Column {
-                Row(
-                    Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(tr("Activity"), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                    IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, "Close") }
-                }
+                var activityFilter by remember { mutableStateOf("all") }
+                ActivityNovaHeader(notifications, requests.size + messageRequests.size, onDismiss)
                 if (notifications.isEmpty() && requests.isEmpty() && messageRequests.isEmpty()) {
                     Column(
                         Modifier.fillMaxSize(),
@@ -3595,40 +3596,8 @@ fun ActivityCenterDialog(
                             }
                         }
                         if (notifications.isNotEmpty()) {
-                            item { Text(tr("Recent activity"), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary) }
-                            items(notifications, key = { "activity_${it.id}" }) { item ->
-                                val icon = when (item.type) {
-                                    "post_reaction", "story_reaction" -> Icons.Outlined.Favorite
-                                    "post_comment", "story_comment" -> Icons.Outlined.ChatBubbleOutline
-                                    "story_view" -> Icons.Outlined.Visibility
-                                    "friend_accepted", "friend_request" -> Icons.Outlined.PersonAdd
-                                    else -> Icons.Outlined.Notifications
-                                }
-                                Row(
-                                    Modifier.fillMaxWidth().clip(RoundedCornerShape(22.dp))
-                                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .45f))
-                                        .padding(12.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    AsyncImage(
-                                        model = item.actorImageUrl.ifBlank { null },
-                                        contentDescription = item.actorName,
-                                        error = painterResource(R.drawable.img_app_logo),
-                                        modifier = Modifier.size(46.dp).clip(CircleShape)
-                                    )
-                                    Spacer(Modifier.width(12.dp))
-                                    Column(Modifier.weight(1f)) {
-                                        Text(item.actorName, fontWeight = FontWeight.Bold)
-                                        Text(item.text, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                        Text(
-                                            SimpleDateFormat("dd MMM • hh:mm a", Locale.getDefault()).format(Date(item.timestamp)),
-                                            fontSize = 10.sp,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = .65f)
-                                        )
-                                    }
-                                    Icon(icon, null, tint = MaterialTheme.colorScheme.primary)
-                                }
-                            }
+                            item(key = "activity_filters") { ActivityFilterBar(notifications, activityFilter) { activityFilter = it } }
+                            activitySmartItems(filterActivity(notifications, activityFilter))
                         }
                     }
                 }

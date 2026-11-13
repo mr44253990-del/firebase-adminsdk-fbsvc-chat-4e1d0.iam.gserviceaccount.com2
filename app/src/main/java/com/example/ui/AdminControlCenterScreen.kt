@@ -10,6 +10,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
@@ -215,6 +216,7 @@ fun AdminControlCenterScreen(
     LaunchedEffect(Unit) { if (staffPermissions == null) com.example.data.WorkerHealth.checkAll() }
     val workerNeedsUpdate = workerReports.firstOrNull()?.let { !it.reachable || it.outdated || !it.serviceAccount } ?: workerOutdatedSeen
     val allMenuItems = listOf(
+        AdminMenuEntry("copilot", "Admin AI Copilot", "Type a command: maintenance, features, bans, Premium, broadcast, profiles", Icons.Outlined.AutoAwesome, Color(0xFF7C5CFC), "NEW"),
         AdminMenuEntry("server_health", "Server health & updater", "Worker version, secrets, one-tap Worker update", Icons.Outlined.Dns, Color(0xFF00897B), if (workerNeedsUpdate) "FIX" else "OK"),
         AdminMenuEntry("staff", "Sub-admins & roles", "Delegate access: users, posts, reports, Premium…", Icons.Outlined.AdminPanelSettings, Color(0xFF3949AB), users.count { it.staffRole.isNotBlank() }.takeIf { it > 0 }?.toString().orEmpty()),
         AdminMenuEntry("email_security", "Email & 2FA", "Multi-provider OTP mail pool, Gmail API, failover and test", Icons.Outlined.MarkEmailRead, Color(0xFF00897B)),
@@ -279,6 +281,26 @@ fun AdminControlCenterScreen(
                             }
                             Icon(Icons.Default.ChevronRight, null, tint = Color(0xFFE65100))
                         }
+                    }
+                }
+                if (!isStaffMode) Surface(
+                    onClick = { selectedPage = "copilot" },
+                    shape = RoundedCornerShape(26.dp), color = Color.Transparent
+                ) {
+                    Row(
+                        Modifier.fillMaxWidth()
+                            .background(Brush.linearGradient(listOf(Color(0xFF120F33), Color(0xFF3B2BA8), Color(0xFF0E6F86))), RoundedCornerShape(26.dp))
+                            .border(1.dp, Brush.linearGradient(listOf(Color(0xFF8B7BFF), Color(0xFF36D8E6), Color(0xFFFF6FB5))), RoundedCornerShape(26.dp))
+                            .padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Outlined.AutoAwesome, null, tint = Color.White, modifier = Modifier.size(30.dp))
+                        Spacer(Modifier.width(12.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("Admin AI Copilot", color = Color.White, fontWeight = FontWeight.Black, style = MaterialTheme.typography.titleMedium)
+                            Text("Just say it: \"maintenance on for 30 minutes\", \"ban @user\", \"find rakib's e-mail\"", color = Color.White.copy(alpha = .82f), fontSize = 11.sp)
+                        }
+                        Icon(Icons.Default.ChevronRight, null, tint = Color.White)
                     }
                 }
                 if (!isStaffMode) {
@@ -453,14 +475,19 @@ fun AdminControlCenterScreen(
             ) {
                 pageEntry?.let { AdminPageIntro(it) }
                 when (selectedPage) {
+                    "copilot" -> AdminAiCopilotPanel(viewModel, onOpenUser = { selectedAdminUser = it })
                     "users" -> {
                         val now = System.currentTimeMillis()
                         val query = adminUserSearch.trim()
+                        val adminAccounts by AdminAccounts.accounts.collectAsState()
+                        val adminAccountsStatus by AdminAccounts.status.collectAsState()
+                        // Sign-in e-mails come from Firebase Auth through the admin-only Worker route.
+                        LaunchedEffect(adminDirectoryUsers.size) { AdminAccounts.ensure(adminDirectoryUsers.map { it.uid }) }
+                        var emailLookupBusy by remember { mutableStateOf(false) }
                         val visibleAdminUsers = adminDirectoryUsers.filter { person ->
                             val isOnlineNow = person.isOnline && (person.onlineUntil <= 0L || person.onlineUntil > now)
                             val hasPremium = person.isPremium && (person.premiumPlan.equals("lifetime", true) || person.premiumUntil > now)
-                            val matchesQuery = query.isBlank() || person.name.contains(query, true) ||
-                                person.username.contains(query, true) || person.uid.contains(query, true)
+                            val matchesQuery = adminSmartUserMatch(person, adminAccounts[person.uid], query, now)
                             val matchesFilter = when (adminUserFilter) {
                                 "online" -> isOnlineNow
                                 "offline" -> !isOnlineNow
@@ -469,7 +496,8 @@ fun AdminControlCenterScreen(
                             }
                             matchesQuery && matchesFilter
                         }.sortedWith(
-                            compareByDescending<User> { it.isOnline && (it.onlineUntil <= 0L || it.onlineUntil > now) }
+                            compareByDescending<User> { adminSmartUserScore(it, adminAccounts[it.uid], query) }
+                                .thenByDescending { it.isOnline && (it.onlineUntil <= 0L || it.onlineUntil > now) }
                                 .thenBy { it.name.lowercase(Locale.getDefault()) }
                         )
                         val onlineCount = adminDirectoryUsers.count { it.isOnline && (it.onlineUntil <= 0L || it.onlineUntil > now) }
@@ -479,7 +507,7 @@ fun AdminControlCenterScreen(
                             OutlinedTextField(
                                 value = adminUserSearch,
                                 onValueChange = { adminUserSearch = it.take(120) },
-                                label = { Text("Search name, username or UID") },
+                                label = { Text("Smart search: name, e-mail, @user, UID, device…") },
                                 leadingIcon = { Icon(Icons.Default.Search, null) },
                                 trailingIcon = {
                                     if (adminUserSearch.isNotBlank()) IconButton(onClick = { adminUserSearch = "" }) {
@@ -506,7 +534,40 @@ fun AdminControlCenterScreen(
                                     )
                                 }
                             }
-                            Text("${visibleAdminUsers.size} shown • profiles loaded from Firestore pages", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            // One-tap smart operators (they combine with typed words).
+                            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                listOf("is:new" to "New (7d)", "is:inactive" to "Inactive 30d", "is:staff" to "Staff", "is:unverified" to "Unverified e-mail", "is:google" to "Google sign-in", "is:2fa" to "2FA on", "no:photo" to "No photo", "@gmail.com" to "@gmail.com").forEach { (op, label) ->
+                                    val on = adminUserSearch.contains(op)
+                                    AssistChip(
+                                        onClick = { adminUserSearch = if (on) adminUserSearch.replace(op, "").replace(Regex("\\s+"), " ").trim() else (adminUserSearch.trim() + " " + op).trim() },
+                                        label = { Text(label, fontSize = 10.sp) },
+                                        colors = AssistChipDefaults.assistChipColors(containerColor = if (on) MaterialTheme.colorScheme.primary.copy(alpha = .18f) else Color.Transparent)
+                                    )
+                                }
+                            }
+                            if (adminAccountsStatus.isNotBlank()) AdminInlineInfo(adminAccountsStatus)
+                            Text("${visibleAdminUsers.size} shown • ${adminAccounts.size} e-mails loaded • search works on every loaded page", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            if (query.contains('@') && query.contains('.') && !query.contains(' ') && visibleAdminUsers.isEmpty()) {
+                                OutlinedButton(
+                                    enabled = !emailLookupBusy,
+                                    onClick = {
+                                        emailLookupBusy = true
+                                        scope.launch {
+                                            val found = AdminAccounts.findByEmail(query)
+                                            if (found == null) { emailLookupBusy = false; Toast.makeText(context, "No account uses that e-mail", Toast.LENGTH_SHORT).show() }
+                                            else viewModel.loadUserById(found.uid) { profile ->
+                                                emailLookupBusy = false
+                                                if (profile != null) selectedAdminUser = profile
+                                                else Toast.makeText(context, "Account exists (UID ${found.uid.take(8)}…) but has no profile", Toast.LENGTH_LONG).show()
+                                            }
+                                        }
+                                    },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    if (emailLookupBusy) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp) else Icon(Icons.Default.Search, null, Modifier.size(18.dp))
+                                    Spacer(Modifier.width(8.dp)); Text("Find this e-mail in all accounts")
+                                }
+                            }
                             when {
                                 adminDirectoryUsers.isEmpty() && adminDirectoryLoading -> { CircularProgressIndicator(Modifier.size(24.dp)) }
                                 adminDirectoryUsers.isEmpty() -> Text("No user profiles are loaded yet.", color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -514,6 +575,7 @@ fun AdminControlCenterScreen(
                                 else -> visibleAdminUsers.forEach { person ->
                                     AdminUserManagementRow(
                                         user = person,
+                                        account = adminAccounts[person.uid],
                                         now = now,
                                         onOpenProfile = { selectedAdminUser = person },
                                         onCopyUid = { copyAdminUserUid(context, person.uid) }
@@ -1193,6 +1255,22 @@ fun AdminControlCenterScreen(
                     Modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
+                    val account = AdminAccounts.accounts.collectAsState().value[person.uid]
+                    LaunchedEffect(person.uid) { AdminAccounts.ensure(listOf(person.uid)) }
+                    if (account != null) {
+                        if (account.email.isNotBlank()) Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("E-mail: ${account.email}${if (account.emailVerified) " ✓" else " (unverified)"}", Modifier.weight(1f), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                            IconButton(onClick = {
+                                (context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager).setPrimaryClip(android.content.ClipData.newPlainText("E-mail", account.email))
+                                Toast.makeText(context, "E-mail copied", Toast.LENGTH_SHORT).show()
+                            }, modifier = Modifier.size(30.dp)) { Icon(Icons.Default.ContentCopy, "Copy e-mail", Modifier.size(15.dp)) }
+                        }
+                        if (account.phone.isNotBlank()) Text("Phone: ${account.phone}", fontSize = 11.sp)
+                        Text(
+                            "Sign-in: ${account.providers.joinToString().ifBlank { "password" }} • joined ${formatAdminTimestamp(account.createdAt)} • last login ${formatAdminTimestamp(account.lastLoginAt)}" + if (account.disabled) " • DISABLED" else "",
+                            fontSize = 10.5.sp, color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                     Text("UID: ${person.uid}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     if (person.appVersion.isNotBlank()) Text("Convo ${person.appVersion} (${person.appVersionCode}) · ${person.deviceModel} · ${person.androidVersion}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text("Status: ${if (onlineNow) "Online" else "Offline"} • ${if (premiumNow) "Premium" else "Standard"}", fontWeight = FontWeight.SemiBold)
@@ -1247,6 +1325,7 @@ fun AdminAccessDeniedScreen() {
 @Composable
 private fun AdminUserManagementRow(
     user: User,
+    account: AdminAccountInfo? = null,
     now: Long,
     onOpenProfile: () -> Unit,
     onCopyUid: () -> Unit
@@ -1279,6 +1358,14 @@ private fun AdminUserManagementRow(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
+                    if (account != null && (account.email.isNotBlank() || account.phone.isNotBlank())) Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Email, null, Modifier.size(11.dp), tint = MaterialTheme.colorScheme.primary)
+                        Spacer(Modifier.width(4.dp))
+                        Text(
+                            account.email.ifBlank { account.phone } + if (account.email.isNotBlank() && !account.emailVerified) "  · unverified" else "",
+                            fontSize = 10.5.sp, fontWeight = FontWeight.Medium, color = MaterialTheme.colorScheme.primary, maxLines = 1, overflow = TextOverflow.Ellipsis
+                        )
+                    }
                 }
                 IconButton(onClick = onCopyUid) { Icon(Icons.Default.ContentCopy, contentDescription = "Copy user UID") }
             }

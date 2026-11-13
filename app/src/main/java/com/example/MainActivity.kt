@@ -224,6 +224,40 @@ class MainActivity : FragmentActivity() {
     }
 
     private val pendingPairCode = MutableStateFlow<String?>(null)
+    private val pendingGroupChatId = MutableStateFlow<String?>(null)
+    private val pendingActivityCenter = MutableStateFlow(false)
+
+    /** A push for another saved account on this device: switch first, then open the chat / call. */
+    data class SwitchAccountRequest(val accountUid: String, val openChatWith: String? = null, val callIntent: Intent? = null)
+    private val pendingSwitchAccount = MutableStateFlow<SwitchAccountRequest?>(null)
+
+    /** Reads a notification tap (or launcher start) and queues the screen that should open. */
+    private fun captureNotificationTap(intent: Intent?) {
+        intent ?: return
+        val senderId = intent.getStringExtra("senderId")?.takeIf { it.isNotBlank() }
+        val type = intent.getStringExtra("notificationType")
+        val targetId = intent.getStringExtra("targetId")?.takeIf { it.isNotBlank() }
+        val switchUid = intent.getStringExtra("switchAccountUid")?.takeIf { it.isNotBlank() }
+        if (switchUid != null) {
+            val callIntent = if (intent.getBooleanExtra("switchForCall", false)) {
+                val group = intent.getBooleanExtra("switchGroupCall", false)
+                Intent(this, if (group) com.example.call.IncomingGroupCallActivity::class.java else com.example.call.IncomingCallActivity::class.java).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                    intent.extras?.let { putExtras(it) }
+                    removeExtra("switchAccountUid")
+                }
+            } else null
+            pendingSwitchAccount.value = SwitchAccountRequest(switchUid, senderId.takeIf { callIntent == null && (type == null || type == "message") }, callIntent)
+            runCatching { (getSystemService(NOTIFICATION_SERVICE) as android.app.NotificationManager).cancel(intent.getIntExtra("switchNotificationId", -1)) }
+            return
+        }
+        when {
+            type == null && senderId != null -> pendingChatSenderId.value = senderId
+            type == "message" || type == "online_alert" -> if (senderId != null) pendingChatSenderId.value = senderId
+            type == "group_message" && targetId != null -> pendingGroupChatId.value = targetId
+            type != null -> pendingActivityCenter.value = true
+        }
+    }
 
     private fun captureDeepLink(intent: Intent?) {
         val data = intent?.data
@@ -256,7 +290,7 @@ class MainActivity : FragmentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        pendingChatSenderId.value = intent.getStringExtra("senderId")?.takeIf { it.isNotBlank() }
+        captureNotificationTap(intent)
         com.example.ui.ProTools.handleAction(intent.getStringExtra("convoAction"))
         captureDeepLink(intent); captureActiveGroupCall(intent); captureSharedContent(intent)
     }
@@ -283,7 +317,7 @@ class MainActivity : FragmentActivity() {
         com.example.ui.CrashGuard.install(this)
         installSplashScreen()
         super.onCreate(savedInstanceState)
-        pendingChatSenderId.value = intent?.getStringExtra("senderId")?.takeIf { it.isNotBlank() }
+        captureNotificationTap(intent)
         com.example.ui.ProTools.handleAction(intent?.getStringExtra("convoAction"))
         com.example.ui.CallHistory.ensureStarted(this)
         com.example.ui.ProShortcuts.publish(this)
@@ -340,6 +374,8 @@ class MainActivity : FragmentActivity() {
                 val activeGroup by viewModel.activeGroup.collectAsState()
                 val selectedProfile by viewModel.selectedProfile.collectAsState()
                 var requestedGroupCallVideo by remember { mutableStateOf(false) }
+                /** Room to join when the group-call screen opens; null starts a brand-new call. */
+                var groupCallJoinRoomId by remember { mutableStateOf<String?>(null) }
                 var showCallParticipantPicker by remember { mutableStateOf(false) }
                 val callState by CallEngine.state.collectAsState()
                 val groupCallState by GroupCallEngine.state.collectAsState()
@@ -378,46 +414,105 @@ class MainActivity : FragmentActivity() {
                     }
                 }
 
-                LaunchedEffect(pendingSenderId, knownUsers) {
+                // Deep links and notification taps are only executed once the user is really inside
+                // the app (past splash / sign-in / 2FA). Navigating earlier used to be undone by the
+                // splash "popUpTo", which dropped the user on Home instead of the chat or profile.
+                val navEntryForLinks by navController.currentBackStackEntryAsState()
+                val routeForLinks = navEntryForLinks?.destination?.route
+                val appReady = splashFinished && (currentUser != null || FirebaseAuth.getInstance().currentUser != null) &&
+                    routeForLinks != null && routeForLinks !in setOf("splash", "language", "onboarding", "auth", "session_gate", "mfa")
+                val knownGroups by viewModel.groupsState.collectAsState()
+                val pendingGroupChat by pendingGroupChatId.collectAsState()
+                val pendingActivity by pendingActivityCenter.collectAsState()
+                val pendingSwitch by pendingSwitchAccount.collectAsState()
+
+                LaunchedEffect(pendingSenderId, appReady) {
                     val senderId = pendingSenderId ?: return@LaunchedEffect
-                    knownUsers.find { it.uid == senderId }?.let { sender ->
+                    if (!appReady) return@LaunchedEffect
+                    val open: (User) -> Unit = { sender ->
                         viewModel.selectRecipient(sender)
+                        if (navController.currentBackStackEntry?.destination?.route == "chat") navController.popBackStack()
                         navController.navigate("chat") { launchSingleTop = true }
-                        pendingChatSenderId.value = null
+                    }
+                    pendingChatSenderId.value = null
+                    val cached = knownUsers.find { it.uid == senderId }
+                    if (cached != null) open(cached)
+                    else viewModel.loadUserById(senderId) { loaded -> if (loaded != null) open(loaded) }
+                }
+                LaunchedEffect(pendingGroupChat, appReady, knownGroups) {
+                    val groupId = pendingGroupChat ?: return@LaunchedEffect
+                    if (!appReady) return@LaunchedEffect
+                    val group = knownGroups.find { it.id == groupId }
+                    if (group != null) {
+                        pendingGroupChatId.value = null
+                        viewModel.selectGroup(group)
+                        navController.navigate("group_chat") { launchSingleTop = true }
+                    } else {
+                        // Group list not loaded yet: wait briefly, then fall back to the activity centre.
+                        kotlinx.coroutines.delay(6000)
+                        if (pendingGroupChatId.value == groupId) { pendingGroupChatId.value = null; viewModel.requestOpenActivityCenter() }
                     }
                 }
-                LaunchedEffect(linkedPostId, knownPosts) {
-                    val id = linkedPostId ?: return@LaunchedEffect
-                    knownPosts.find { it.id == id }?.let { post -> linkedPost = post; navController.navigate("post_detail") { launchSingleTop = true }; pendingPostId.value = null }
+                LaunchedEffect(pendingActivity, appReady) {
+                    if (!pendingActivity || !appReady) return@LaunchedEffect
+                    pendingActivityCenter.value = false
+                    viewModel.requestOpenActivityCenter()
+                    navController.navigate("home") { launchSingleTop = true; popUpTo("home") { inclusive = false } }
                 }
-                LaunchedEffect(linkedProfileUid, knownUsers, splashFinished) {
+                // "Switch account" notification: another saved account on this phone got a message/call.
+                LaunchedEffect(pendingSwitch, splashFinished) {
+                    val request = pendingSwitch ?: return@LaunchedEffect
                     if (!splashFinished) return@LaunchedEffect
-                    val uid = linkedProfileUid ?: return@LaunchedEffect
-                    val cached = knownUsers.find { it.uid == uid }
-                    if (cached != null) {
-                        viewModel.selectProfile(cached)
-                        navController.navigate("profile") { launchSingleTop = true }
-                        pendingProfileUid.value = null
-                    } else {
-                        viewModel.loadUserById(uid) { profile ->
-                            if (profile != null) {
-                                viewModel.selectProfile(profile)
-                                navController.navigate("profile") { launchSingleTop = true }
-                            } else Toast.makeText(this@MainActivity, "Profile not found", Toast.LENGTH_SHORT).show()
-                            pendingProfileUid.value = null
+                    pendingSwitchAccount.value = null
+                    if (FirebaseAuth.getInstance().currentUser?.uid == request.accountUid) {
+                        request.openChatWith?.let { pendingChatSenderId.value = it }
+                        return@LaunchedEffect
+                    }
+                    viewModel.switchToRememberedAccount(request.accountUid) { ok ->
+                        if (ok) {
+                            Toast.makeText(this@MainActivity, "Switched account", Toast.LENGTH_SHORT).show()
+                            // Through the session gate, so an account with two-step verification is still checked.
+                            navController.navigate("session_gate") { popUpTo(0) { inclusive = true }; launchSingleTop = true }
+                            request.callIntent?.let { call -> runCatching { startActivity(call) } }
+                            request.openChatWith?.let { pendingChatSenderId.value = it }
+                        } else {
+                            Toast.makeText(this@MainActivity, "Sign in to that account once to enable one-tap switching", Toast.LENGTH_LONG).show()
+                            viewModel.logout { navController.navigate("auth") { popUpTo(0) { inclusive = true } } }
                         }
                     }
                 }
+                LaunchedEffect(linkedPostId, knownPosts, appReady) {
+                    val id = linkedPostId ?: return@LaunchedEffect
+                    if (!appReady) return@LaunchedEffect
+                    knownPosts.find { it.id == id }?.let { post -> linkedPost = post; navController.navigate("post_detail") { launchSingleTop = true }; pendingPostId.value = null }
+                }
+                LaunchedEffect(linkedProfileUid, appReady) {
+                    if (!appReady) return@LaunchedEffect
+                    val uid = linkedProfileUid ?: return@LaunchedEffect
+                    pendingProfileUid.value = null
+                    val showProfile: (User) -> Unit = { profile ->
+                        viewModel.selectProfile(profile)
+                        if (navController.currentBackStackEntry?.destination?.route == "profile") navController.popBackStack()
+                        navController.navigate("profile") { launchSingleTop = true }
+                    }
+                    val self = currentUser?.takeIf { it.uid == uid }
+                    val cached = self ?: knownUsers.find { it.uid == uid }
+                    if (cached != null) showProfile(cached)
+                    else viewModel.loadUserById(uid) { profile ->
+                        if (profile != null) showProfile(profile)
+                        else Toast.makeText(this@MainActivity, "Profile not found", Toast.LENGTH_SHORT).show()
+                    }
+                }
                 // QR login deep link: convochat://pair?code=XXXXXXXXXX
-                LaunchedEffect(pendingPairCode.value, knownUsers, splashFinished, currentUser?.uid) {
+                LaunchedEffect(pendingPairCode.collectAsState().value, appReady) {
                     val code = pendingPairCode.value ?: return@LaunchedEffect
-                    if (!splashFinished || currentUser == null) return@LaunchedEffect
+                    if (!appReady) return@LaunchedEffect
                     pendingPairCode.value = null
                     viewModel.setPendingQrPairCode(code)
                     navController.navigate("device_login") { launchSingleTop = true }
                 }
-                LaunchedEffect(activeGroupRoomId) {
-                    if (!activeGroupRoomId.isNullOrBlank() && FirebaseAuth.getInstance().currentUser != null) {
+                LaunchedEffect(activeGroupRoomId, appReady) {
+                    if (appReady && !activeGroupRoomId.isNullOrBlank() && FirebaseAuth.getInstance().currentUser != null) {
                         viewModel.selectGroup(com.example.data.Group(
                             id = activeGroupId.orEmpty(),
                             name = activeGroupName?.ifBlank { "Convo Chat group" } ?: "Convo Chat group",
@@ -454,14 +549,29 @@ class MainActivity : FragmentActivity() {
                     NavHost(
                         navController = navController,
                         startDestination = "splash",
-                        modifier = Modifier.fillMaxSize()
+                        modifier = Modifier.fillMaxSize(),
+                        // One motion language for every page: the new page glides in and settles,
+                        // the old one eases back; going back mirrors it.
+                        enterTransition = { slideInHorizontally(tween(340)) { it / 5 } + fadeIn(tween(280)) + androidx.compose.animation.scaleIn(tween(340), initialScale = .96f) },
+                        exitTransition = { fadeOut(tween(200)) + androidx.compose.animation.scaleOut(tween(300), targetScale = .97f) },
+                        popEnterTransition = { fadeIn(tween(260)) + androidx.compose.animation.scaleIn(tween(320), initialScale = .97f) },
+                        popExitTransition = { slideOutHorizontally(tween(300)) { it / 5 } + fadeOut(tween(220)) }
                     ) {
                         composable("splash") {
-                                SplashScreen {
-                                    splashFinished = true
-                                    navController.navigate(destinationAfterSplash) {
-                                    popUpTo("splash") { inclusive = true }
+                            // The session/2FA check runs inside the splash animation, so a signed-in
+                            // user goes splash → Home directly (no second "securing" screen).
+                            var gateStatus by remember { mutableStateOf<com.example.ui.MfaStatus?>(null) }
+                            val gated = destinationAfterSplash == "session_gate"
+                            SplashScreen(
+                                work = if (gated) ({ gateStatus = kotlinx.coroutines.withTimeoutOrNull(9000) { com.example.ui.MfaClient.precheck(context) } }) else null
+                            ) {
+                                splashFinished = true
+                                val destination = when {
+                                    !gated -> destinationAfterSplash
+                                    gateStatus != null -> { pendingMfaStatus = gateStatus; "mfa" }
+                                    else -> "home"
                                 }
+                                navController.navigate(destination) { popUpTo("splash") { inclusive = true } }
                             }
                         }
 
@@ -622,6 +732,21 @@ class MainActivity : FragmentActivity() {
                             )
                         }
 
+                        composable("ai_studio") {
+                            com.example.ui.AiStudioScreen(
+                                viewModel = viewModel,
+                                onBack = { navController.popBackStack() },
+                                onOpenAssistant = { navController.navigate("assistant") { launchSingleTop = true } }
+                            )
+                        }
+
+                        composable("whats_new") {
+                            com.example.ui.WhatsNewScreen(
+                                onBack = { navController.popBackStack() },
+                                onOpenStudio = { navController.navigate("ai_studio") { launchSingleTop = true } }
+                            )
+                        }
+
                         composable("compose_post") {
                             PostComposerScreen(
                                 viewModel = viewModel,
@@ -712,22 +837,25 @@ class MainActivity : FragmentActivity() {
                                     pendingCallVideo = activeGroupVideo,
                                     onBack = { navController.popBackStack() },
                                     onGroupCall = { video ->
-                                        // Starting a group call only creates the signaling room and
-                                        // sends notifications. The host joins from that notification,
-                                        // so pressing Call never opens a black/empty call screen.
-                                        viewModel.createNotificationOnlyGroupCall(group, video) { ok ->
-                                            Toast.makeText(
-                                                this@MainActivity,
-                                                if (ok) "Call invitation sent. Join from your notification."
-                                                else "Could not start the group call",
-                                                Toast.LENGTH_SHORT
-                                            ).show()
+                                        // Starting a call now opens the call screen straight away. If a
+                                        // call is already running in this group, the button joins it
+                                        // instead of creating a second room.
+                                        val liveCall = viewModel.activeGroupCall.value
+                                        val engine = GroupCallEngine.state.value
+                                        val alreadyInside = engine.groupId == group.id && engine.status !in listOf("idle", "ended", "failed")
+                                        if (!alreadyInside) {
+                                            requestedGroupCallVideo = video
+                                            groupCallJoinRoomId = liveCall?.roomId
                                         }
+                                        navController.navigate("group_call") { launchSingleTop = true }
                                     },
                                     onJoinPendingCall = { roomId, video ->
-                                        requestedGroupCallVideo = video
-                                        pendingGroupRoomId.value = roomId
-                                        pendingGroupVideo.value = video
+                                        val engine = GroupCallEngine.state.value
+                                        val alreadyInside = engine.roomId == roomId && engine.status !in listOf("idle", "ended", "failed")
+                                        if (!alreadyInside) {
+                                            requestedGroupCallVideo = video
+                                            groupCallJoinRoomId = roomId
+                                        }
                                         navController.navigate("group_call") { launchSingleTop = true }
                                     },
                                     onDismissPendingCall = {
@@ -745,18 +873,32 @@ class MainActivity : FragmentActivity() {
                                 GroupCallScreen(
                                     group = group,
                                     video = requestedGroupCallVideo,
-                                    onClose = { GroupCallEngine.end(); navController.popBackStack() },
+                                    onClose = {
+                                        GroupCallEngine.end()
+                                        groupCallJoinRoomId = null
+                                        pendingGroupRoomId.value = null
+                                        if (navController.currentBackStackEntry?.destination?.route == "group_call") navController.popBackStack()
+                                    },
                                     onMinimize = { if (liveVideoCall()) minimizeActiveCall() else navController.popBackStack() },
-                                    joinRoomId = activeGroupRoomId,
-                                    // A room ID means this is an explicit Join action. Start
-                                    // immediately; only the group-chat banner remains passive.
+                                    joinRoomId = groupCallJoinRoomId,
                                     autoStart = true,
                                     onRoomReady = { roomId ->
+                                        // New room: ring every member. Everyone also sees the Join bar in the group.
                                         viewModel.inviteGroupMembersToCall(group, requestedGroupCallVideo, roomId)
-                                        if (activeGroupRoomId == roomId) pendingGroupRoomId.value = null
-                                    }
+                                    },
+                                    candidates = knownUsers,
+                                    onInvite = { ids, roomId, video -> viewModel.inviteUsersToGroupCall(group, ids, video, roomId) }
                                 )
                             }
+                        }
+                    }
+                    // Any screen can ask for a top-level page (AI Studio, What's new, …).
+                    val navRequest by com.example.ui.AppNav.request.collectAsState()
+                    LaunchedEffect(navRequest) {
+                        val route = navRequest ?: return@LaunchedEffect
+                        com.example.ui.AppNav.consume()
+                        if (FirebaseAuth.getInstance().currentUser != null && route in setOf("ai_studio", "whats_new", "assistant")) {
+                            navController.navigate(route) { launchSingleTop = true }
                         }
                     }
                     val pendingProRoute by com.example.ui.ProTools.pendingRoute.collectAsState()
@@ -879,33 +1021,6 @@ class MainActivity : FragmentActivity() {
                     }
                 }
 
-                // Process deep link if launched via push notification click
-                LaunchedEffect(intent) {
-                    val notificationType = intent?.getStringExtra("notificationType") ?: "message"
-                    val senderId = intent?.getStringExtra("senderId")
-                    // "online_alert" (someone you messaged is online now) opens that chat directly.
-                    if (notificationType != "message" && notificationType != "online_alert") {
-                        viewModel.requestOpenActivityCenter()
-                        navController.navigate("home") { launchSingleTop = true }
-                    } else if (!senderId.isNullOrBlank()) {
-                        // Fetch recipient user profile from Firestore and open chat
-                        FirebaseFirestore.getInstance().collection("users")
-                            .document(senderId)
-                            .get()
-                            .addOnSuccessListener { document ->
-                                if (document.exists()) {
-                                    val recipient = document.toObject(User::class.java)
-                                    if (recipient != null) {
-                                        viewModel.selectRecipient(recipient)
-                                        navController.navigate("chat") {
-                                            popUpTo("home") { saveState = true }
-                                            launchSingleTop = true
-                                        }
-                                    }
-                                }
-                            }
-                    }
-                }
                 }
             }
         }

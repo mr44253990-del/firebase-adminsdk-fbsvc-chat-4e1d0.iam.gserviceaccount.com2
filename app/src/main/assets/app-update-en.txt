@@ -1,3 +1,21 @@
+• NEW 5.0 "Nova": one launch screen — the separate "Securing your session" step is gone; the check now runs inside the animated launch screen (with live stages and tips).
+• Group calls rebuilt: pressing Call opens the call screen at once, and every member sees a live "Join" bar at the top of the group while the call is running.
+• Group calls: when the host hangs up the call ends for everyone; other people can leave without ending it.
+• Group calls: add more people during the call, and switch an audio call to video without hanging up (also in 1-to-1 calls).
+• Smart group tools: AI catch-up summary, pinned announcement, group description, admins-only mode, slow mode, co-admins, member stats, @everyone and roll call.
+• Calls follow you: during an audio call a floating call bubble stays on top of every app, and a call bar with a timer shows in the status bar.
+• New incoming-call screen: Decline, Message and Answer are aligned on a clean grid; tap or swipe up to answer.
+• Fixed: turning the loudspeaker on no longer freezes the call animations.
+• Video calls: 12 new camera looks (Portrait light, Golden hour, Bloom, Film, Drama, Noir, Pastel, Ocean, Emerald, Sunset, Neon 2050, Crisp HD) and a selfie light for the front camera.
+• Several accounts on one phone: a call or message for another saved account now shows "Switch account" — one tap signs in and opens it.
+• Fixed: opening a profile link now shows that profile, and tapping a message notification opens that conversation instead of the home screen.
+• Photos in chats keep their real shape: wide photos are wide, tall photos are tall.
+• Chat top bar tidied: the name has room again; search and theme moved into the menu.
+• Convo AI can search profiles and read community facts from the database; new AI Studio with 9 tools (rewrite, translate, reply ideas, captions, summary, grammar, bio, ideas, explain).
+• Fixed: the AI chat box no longer jumps far above the keyboard.
+• Activity box redesigned: live counters, filters, time groups and colour-coded cards.
+• New sign-in screen details: living constellation background, greeting, typewriter line and feature carousel; better layout on tablets.
+• Admin: AI Copilot (type a command such as "maintenance on for 30 minutes"), user e-mails in User management and smart search operators.
 • Fixed: web messages failed with "Message send failed (401)" — the server now talks to the database with the right credentials, so web ↔ Android chat works live in both directions.
 • Fixed: web chats showed "Say hello" even when messages existed — message history, last message previews and unread counts now load correctly.
 • Web: the message box is pinned to the bottom, stays above the keyboard, and inputs no longer zoom or hide behind the keyboard.

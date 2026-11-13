@@ -92,6 +92,21 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         // messages that arrived while it was offline so senders see ✓✓ without opening the chat.
         runCatching { DeliveryAck.ackAllPending() }
         if (notificationType == "presence_probe") return
+        // Multi-account phones: a push addressed to a different saved account becomes a
+        // "Switch account" notification; pushes for accounts no longer on this phone are dropped.
+        val intendedUid = AccountSwitchNotifier.intendedRecipient(remoteMessage.data)
+        val activeUid = FirebaseAuth.getInstance().currentUser?.uid.orEmpty()
+        if (intendedUid.isNotBlank() && intendedUid != activeUid) {
+            if (notificationType == "call_cancelled") {
+                runCatching { (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).cancel(("switch_" + intendedUid + "_call").hashCode()) }
+                return
+            }
+            val saved = AccountSwitchNotifier.savedAccounts(this).firstOrNull { it.uid == intendedUid }
+            if (saved != null) {
+                AccountSwitchNotifier.show(this, saved, remoteMessage.data, notificationType, plainNotificationText(remoteMessage.data["senderName"] ?: "Someone").ifBlank { "Someone" })
+            }
+            return
+        }
         val sentAt = (remoteMessage.data["sentAt"]?.toLongOrNull() ?: remoteMessage.sentTime.takeIf { it > 0L } ?: System.currentTimeMillis())
             .coerceAtMost(System.currentTimeMillis())
         // Text only: the timestamp is shown by Android via setWhen() and keeps updating

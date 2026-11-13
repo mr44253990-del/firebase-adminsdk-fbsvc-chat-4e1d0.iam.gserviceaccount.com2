@@ -37,6 +37,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -76,8 +77,18 @@ private fun splashGreeting(): String = when (Calendar.getInstance().get(Calendar
     else -> "শুভ রাত্রি"
 }
 
+private fun splashTip(): String = listOf(
+    "Tip · Long-press a message for reactions, reply and translate",
+    "Tip · Ask Convo AI to find any profile for you",
+    "Tip · Group calls now show a Join bar for everyone in the group",
+    "Tip · Minimise a call — the floating bubble follows you everywhere",
+    "Tip · Swipe up on the green button to answer a call",
+    "Tip · Try the new camera looks inside a video call"
+).random()
+
 /** Small rotating status line so the wait feels intentional and short. */
-private fun splashStatus(progress: Float): String = when {
+private fun splashStatus(progress: Float, securing: Boolean = false): String = when {
+    securing && progress >= .80f -> "Securing your session…"
     progress < .22f -> "Waking up your workspace…"
     progress < .45f -> "Restoring your chats…"
     progress < .68f -> "Checking secure sign-in…"
@@ -97,7 +108,10 @@ private fun splashStatus(progress: Float): String = when {
  *    of the app render underneath so navigation feels instant rather than delayed.
  */
 @Composable
-fun SplashScreen(onFinished: () -> Unit) {
+fun SplashScreen(work: (suspend () -> Unit)? = null, onFinished: () -> Unit) {
+    // Optional background job (the old "Securing your session" gate). It runs while the same
+    // animation plays, so there is never a second loading screen between splash and Home.
+    var workDone by remember { mutableStateOf(work == null) }
     val motion = rememberInfiniteTransition(label = "splash_motion")
     val orbit by motion.animateFloat(0f, 360f, infiniteRepeatable(tween(7200, easing = LinearEasing)), label = "orbit")
     val counter by motion.animateFloat(360f, 0f, infiniteRepeatable(tween(5200, easing = LinearEasing)), label = "counter")
@@ -123,9 +137,12 @@ fun SplashScreen(onFinished: () -> Unit) {
                 delay(140)
                 for (i in 1..title.length) { lettersShown = i; delay(32) }
             }
-            progress.animateTo(1f, tween(820, easing = FastOutSlowInEasing))
+            progress.animateTo(if (work == null) 1f else .86f, tween(820, easing = FastOutSlowInEasing))
         }
+        val job = if (work != null) launch { runCatching { work() }; workDone = true } else null
         delay(1050)
+        job?.join()
+        if (work != null) progress.animateTo(1f, tween(240, easing = FastOutSlowInEasing))
         onFinished()
     }
 
@@ -351,11 +368,38 @@ fun SplashScreen(onFinished: () -> Unit) {
             }
             Spacer(Modifier.height(10.dp))
             Text(
-                text = splashStatus(progress.value),
+                text = splashStatus(progress.value, securing = !workDone),
                 color = Color.White.copy(alpha = .62f),
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Medium,
                 textAlign = TextAlign.Center
+            )
+            Spacer(Modifier.height(18.dp))
+            // Three live stages: each lights up as the launch moves forward.
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                listOf("Connect" to .20f, "Secure" to .62f, "Sync" to .99f).forEach { (label, at) ->
+                    val on = progress.value >= at
+                    val chipAlpha by animateFloatAsState(if (on) 1f else .38f, tween(260), label = "stage_alpha")
+                    Row(
+                        Modifier.alpha(chipAlpha).clip(CircleShape)
+                            .background(Color.White.copy(alpha = if (on) .12f else .05f))
+                            .border(1.dp, if (on) SPLASH_CYAN.copy(alpha = .65f) else Color.White.copy(alpha = .12f), CircleShape)
+                            .padding(horizontal = 10.dp, vertical = 5.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(Modifier.size(6.dp).clip(CircleShape).background(if (on) SPLASH_CYAN else Color.White.copy(alpha = .4f)))
+                        Spacer(Modifier.width(6.dp))
+                        Text(label, color = Color.White.copy(alpha = .85f), fontSize = 10.sp, fontWeight = FontWeight.SemiBold, letterSpacing = .3.sp)
+                    }
+                }
+            }
+            Spacer(Modifier.height(14.dp))
+            Text(
+                text = remember { splashTip() },
+                color = Color.White.copy(alpha = .45f * settled),
+                fontSize = 10.5.sp,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.padding(horizontal = 40.dp)
             )
         }
 
@@ -370,7 +414,7 @@ fun SplashScreen(onFinished: () -> Unit) {
                 Box(Modifier.size(5.dp).clip(CircleShape).background(SPLASH_CYAN))
                 Spacer(Modifier.width(6.dp))
                 Text(
-                    "Private · Secure · Always yours",
+                    "Private · Secure · Always yours  ·  v" + com.example.BuildConfig.VERSION_NAME,
                     color = Color.White.copy(alpha = .40f),
                     fontSize = 10.sp,
                     letterSpacing = .5.sp
