@@ -66,6 +66,25 @@ Legend: ✅ done in this branch · 🔧 needs a one-time server step by the admi
 ## J. Notifications
 - ✅ J1. Activity box redesigned: animated header with counters and a daily insight, filter chips with counts, time groups, colour-coded cards, unread dots, staggered entrance.
 
+## M. Version 5.1 "Smart" additions
+- ✅ M1. **Smart Hub** page: universal search (people, groups, posts, features), shortcuts, online friends.
+- ✅ M2. **Group polls** with live results (readable as plain text on older app versions).
+- ✅ M3. AI writing tools in group chats.
+- ✅ M4. Raise hand in group calls.
+- ✅ M5. Offline / back-online connection pill on every page.
+- ✅ M6. AI Studio: Tone check, Plan maker, Quiz me.
+- ✅ M7. Admin Copilot: Undo, command history, sign a user out of every device.
+
+## N. Ideas for the next rounds (not built yet)
+- Voice-message transcription and translation (needs a speech-to-text provider key on the Worker).
+- SFU-based group calls for more than 8 people (the Worker already lists an `sfu` route).
+- Message search across all chats with AI answers ("when did Rahim send the address?").
+- Scheduled maintenance / scheduled broadcasts in the Admin Copilot.
+- Chat folders and smart filters (Unread, Groups, Calls) on the chat list.
+- End-to-end encrypted cloud backup with a user passphrase.
+- Home-screen widgets (unread chats, quick AI) and app shortcuts for favourite contacts.
+- Automated UI tests on an emulator in CI for the call and notification flows.
+
 ## K. One-time server steps for the admin
 1. **Worker**: Admin → Server health → "Update Worker" (the app bundles the new `cloudflare-worker.js`, API 55). Needed for user e-mails and for the `recipientUid` push field.
 2. **Realtime Database rules**: publish `database.rules.json` (adds `groupCalls/$roomId/memberIds/$uid`), so non-host participants can add people.

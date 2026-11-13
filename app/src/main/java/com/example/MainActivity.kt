@@ -738,6 +738,18 @@ class MainActivity : FragmentActivity() {
                             )
                         }
 
+                        composable("smart_hub") {
+                            com.example.ui.SmartHubScreen(
+                                viewModel = viewModel,
+                                onBack = { navController.popBackStack() },
+                                onOpenUser = { user -> viewModel.selectRecipient(user); navController.navigate("chat") },
+                                onOpenProfile = { user -> viewModel.selectProfile(user); navController.navigate("profile") },
+                                onOpenGroup = { group -> viewModel.selectGroup(group); navController.navigate("group_chat") },
+                                onOpenPost = { post -> linkedPost = post; navController.navigate("post_detail") },
+                                onRoute = { route -> navController.navigate(route) { launchSingleTop = true } }
+                            )
+                        }
+
                         composable("ai_studio") {
                             com.example.ui.AiStudioScreen(
                                 viewModel = viewModel,
@@ -903,7 +915,7 @@ class MainActivity : FragmentActivity() {
                     LaunchedEffect(navRequest) {
                         val route = navRequest ?: return@LaunchedEffect
                         com.example.ui.AppNav.consume()
-                        if (FirebaseAuth.getInstance().currentUser != null && route in setOf("ai_studio", "whats_new", "assistant")) {
+                        if (FirebaseAuth.getInstance().currentUser != null && route in setOf("ai_studio", "whats_new", "assistant", "smart_hub")) {
                             navController.navigate(route) { launchSingleTop = true }
                         }
                     }
@@ -938,6 +950,10 @@ class MainActivity : FragmentActivity() {
                         }
                     )
                     if (splashFinished) com.example.ui.CrashReportDialog()
+                    // Connection status pill (offline / back online), above every page.
+                    if (splashFinished && currentRoute !in listOf("call", "group_call", "splash")) {
+                        com.example.ui.ConnectivityBanner(Modifier.align(Alignment.TopCenter).statusBarsPadding())
+                    }
                     // Two-step verification also guards screens opened from notifications/deep links.
                     val globalMfaGate by viewModel.mfaGate.collectAsState()
                     globalMfaGate?.let { gate ->

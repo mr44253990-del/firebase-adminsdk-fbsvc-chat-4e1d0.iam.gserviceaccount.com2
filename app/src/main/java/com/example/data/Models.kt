@@ -184,7 +184,9 @@ data class Group(
     val description: String = "",
     val admins: List<String> = emptyList(),
     val onlyAdminsCanPost: Boolean = false,
-    val slowModeSeconds: Int = 0
+    val slowModeSeconds: Int = 0,
+    /** Poll votes: messageId → (uid → chosen option index). */
+    val pollVotes: Map<String, Map<String, Long>> = emptyMap()
 )
 
 /** What the group chat needs to draw the live "Join call" bar. */

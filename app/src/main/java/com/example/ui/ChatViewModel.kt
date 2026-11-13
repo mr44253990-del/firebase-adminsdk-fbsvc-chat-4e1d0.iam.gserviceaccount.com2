@@ -5898,6 +5898,15 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         stopWatchingGroupCallRoom(); _activeGroupCall.value = null
     }
 
+    /** One vote per member per poll; voting again moves the vote. */
+    fun voteGroupPoll(groupId: String, messageId: String, optionIndex: Int) {
+        val uid = FirebaseAuth.getInstance().currentUser?.uid ?: return
+        if (groupId.isBlank() || messageId.isBlank()) return
+        FirebaseFirestore.getInstance().collection("groups").document(groupId)
+            .update(com.google.firebase.firestore.FieldPath.of("pollVotes", messageId, uid), optionIndex.toLong())
+            .addOnFailureListener { Log.w("GROUP_POLL", "Vote failed: ${it.message}") }
+    }
+
     /** Smart group settings (pin, description, admin-only, slow mode, co-admins). */
     fun updateGroupSmart(groupId: String, fields: Map<String, Any>, announce: String? = null) {
         if (groupId.isBlank() || fields.isEmpty()) return

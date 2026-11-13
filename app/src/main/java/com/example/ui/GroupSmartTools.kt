@@ -237,6 +237,12 @@ fun GroupSmartToolsDialog(
                             else { Icon(Icons.Default.Summarize, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text(if (summary.isBlank()) "Summarise last 60 messages" else "Summarise again") }
                         }
                     }
+                    ToolCard("Create a poll", Icons.Default.Poll) {
+                        GroupPollBuilder { question, options ->
+                            viewModel.sendGroupMessage(group.id, GroupPolls.compose(question, options))
+                            onDismiss()
+                        }
+                    }
                     ToolCard("Pinned announcement", Icons.Default.PushPin) {
                         OutlinedTextField(pinText, { pinText = it.take(400) }, enabled = isAdmin, placeholder = { Text("Rules, meeting time, important link…") }, modifier = Modifier.fillMaxWidth(), maxLines = 4, shape = RoundedCornerShape(14.dp))
                         if (isAdmin) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

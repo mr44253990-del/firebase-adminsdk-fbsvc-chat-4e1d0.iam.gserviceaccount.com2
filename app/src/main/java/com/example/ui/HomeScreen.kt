@@ -618,6 +618,9 @@ fun HomeScreen(
                                     AccountMenuRow(Icons.Outlined.Explore, listOf(Color(0xFF1E88E5), Color(0xFF1565C0)), tr("Discover people")) {
                                         showAccountMenu = false; viewModel.setCurrentTab(5)
                                     }
+                                    AccountMenuRow(Icons.Outlined.TravelExplore, listOf(Color(0xFF19C37D), Color(0xFF14A3B8)), "Smart Hub  •  search everything") {
+                                        showAccountMenu = false; AppNav.open("smart_hub")
+                                    }
                                     AccountMenuRow(Icons.Outlined.AutoAwesome, listOf(Color(0xFF8B7BFF), Color(0xFF36D8E6)), "AI Studio  •  rewrite, translate, captions…") {
                                         showAccountMenu = false; AppNav.open("ai_studio")
                                     }

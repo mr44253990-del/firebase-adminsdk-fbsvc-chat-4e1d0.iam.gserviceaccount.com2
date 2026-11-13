@@ -74,6 +74,11 @@ private val STUDIO_TOOLS = listOf(
     StudioTool("bio", "Bio writer", "A profile bio that sounds like you", Icons.Default.Badge, Color(0xFFB07CFF), "A few words about you: work, hobbies, vibe",
         listOf("Cool", "Professional", "Cute", "Mysterious")) { style -> "Write 3 short ${style.lowercase()} profile bios (max 120 characters each) from the user's notes, in the user's language. Number them 1-3." },
     StudioTool("ideas", "Idea spark", "Names, plans, gifts, anything", Icons.Default.Lightbulb, Color(0xFFFF8A3D), "What do you need ideas for?") { _ -> "Give 7 creative, practical ideas for what the user asks. One line each, numbered, in the user's language." },
+    StudioTool("tone", "Tone check", "How will my message sound?", Icons.Default.Psychology, Color(0xFFE2A93B), "Paste the message you are about to send") { _ -> "Analyse the tone of the user's message in 2 short lines (how it may be received), then give one improved version that keeps the meaning. Use the user's language." },
+    StudioTool("plan", "Plan maker", "Turn a goal into clear steps", Icons.Default.Checklist, Color(0xFF7EE8F4), "What do you want to get done?",
+        listOf("Today", "This week", "This month")) { span -> "Turn the user's goal into a realistic step-by-step plan for: $span. Numbered steps with a rough time for each. Use the user's language." },
+    StudioTool("quiz", "Quiz me", "Learn by answering questions", Icons.Default.Quiz, Color(0xFFFF7AA8), "A topic or notes you want to learn",
+        listOf("Easy", "Medium", "Hard")) { level -> "Create 5 $level multiple-choice questions (A-D) about the user's topic, then list the answers at the end under 'Answers:'. Use the user's language." },
     StudioTool("explain", "Explain simply", "Understand anything in seconds", Icons.Default.School, Color(0xFF2DD4BF), "A word, topic or confusing message",
         listOf("Like I'm 10", "Normal", "Expert")) { level -> "Explain what the user asks at this level: $level. Be short, clear and use one everyday example. Use the user's language." }
 )
@@ -114,7 +119,7 @@ fun AiStudioScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenAssistant
                 Spacer(Modifier.width(10.dp))
                 Column(Modifier.weight(1f)) {
                     Text(tool?.title ?: "AI Studio", color = Color.White, fontWeight = FontWeight.Black, fontSize = 18.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(tool?.subtitle ?: "9 smart tools powered by Convo AI", color = Color.White.copy(alpha = .62f), fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(tool?.subtitle ?: "12 smart tools powered by Convo AI", color = Color.White.copy(alpha = .62f), fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
                 TextButton(onClick = onOpenAssistant) { Icon(Icons.Default.AutoAwesome, null, tint = Color(0xFF9FE8FF), modifier = Modifier.size(16.dp)); Spacer(Modifier.width(4.dp)); Text("Chat", color = Color(0xFF9FE8FF)) }
             }
@@ -215,6 +220,8 @@ private data class NovaHighlight(val icon: ImageVector, val title: String, val b
 fun WhatsNewScreen(onBack: () -> Unit, onOpenStudio: () -> Unit) {
     val items = remember {
         listOf(
+            NovaHighlight(Icons.Default.TravelExplore, "Smart Hub (5.1)", "One search box for people, groups, posts and features, plus shortcuts and who is online now.", Color(0xFF19C37D)),
+            NovaHighlight(Icons.Default.Poll, "Group polls, raise hand, writing tools (5.1)", "Vote with one tap and watch live results; raise your hand in group calls; AI writing tools in group chats.", Color(0xFF36D8E6)),
             NovaHighlight(Icons.Default.RocketLaunch, "One launch screen", "The separate \"Securing your session\" step is gone — security checks now happen inside the animated launch screen.", Color(0xFF8B7BFF)),
             NovaHighlight(Icons.Default.Groups, "Group calls, rebuilt", "Calling opens the call screen at once. Everyone in the group sees a live Join bar. The host can end the call for all, anyone can add people, and audio can switch to video.", Color(0xFF19C37D)),
             NovaHighlight(Icons.Default.AutoAwesome, "Smart group tools", "AI catch-up summaries, pinned announcements, admin-only mode, slow mode, co-admins, member stats and roll call.", Color(0xFF36D8E6)),

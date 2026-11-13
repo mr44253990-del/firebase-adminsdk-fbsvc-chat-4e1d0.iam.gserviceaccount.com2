@@ -1,3 +1,10 @@
+• NEW 5.1: Smart Hub — one search box for people, groups, posts and features, with shortcuts and "online now" (account menu → Smart Hub).
+• Group polls: create a poll from Smart group tools; everyone votes with one tap and sees live results.
+• Group chats now have AI writing tools (polish, shorten, friendly, formal, Bangla, English) like private chats.
+• Group calls: raise your hand ✋ to ask for a turn to speak.
+• Connection pill: shows at once when the phone is offline and when it is back online.
+• AI Studio: 3 more tools — Tone check, Plan maker and Quiz me (12 in total).
+• Admin Copilot: one-tap Undo after every switch change, recent command history, and "sign out @user" from every device.
 • NEW 5.0 "Nova": one launch screen — the separate "Securing your session" step is gone; the check now runs inside the animated launch screen (with live stages and tips).
 • Group calls rebuilt: pressing Call opens the call screen at once, and every member sees a live "Join" bar at the top of the group while the call is running.
 • Group calls: when the host hangs up the call ends for everyone; other people can leave without ending it.

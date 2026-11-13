@@ -38,7 +38,9 @@ data class GroupCallParticipant(
     val connected: Boolean = false,
     val hostMuted: Boolean = false,
     val quality: String = "unknown",
-    val iceState: String = "new"
+    val iceState: String = "new",
+    /** "Raise hand": asks for a turn to speak without interrupting. */
+    val hand: Boolean = false
 )
 
 data class GroupCallState(
@@ -58,7 +60,8 @@ data class GroupCallState(
     val recording: Boolean = false,
     val error: String? = null,
     /** True when the room was closed by its host (everyone is disconnected together). */
-    val endedByHost: Boolean = false
+    val endedByHost: Boolean = false,
+    val handRaised: Boolean = false
 )
 
 object GroupCallEngine {
@@ -313,6 +316,7 @@ object GroupCallEngine {
             muted = snapshot.child("muted").getValue(Boolean::class.java) ?: false,
             connected = uid == myUid || peers[uid]?.connected == true,
             hostMuted = snapshot.child("hostMuted").getValue(Boolean::class.java) ?: false,
+            hand = snapshot.child("hand").getValue(Boolean::class.java) ?: false,
             quality = if (uid == myUid) "good" else "unknown",
             iceState = if (uid == myUid) "local" else "new"
         )
@@ -556,6 +560,12 @@ object GroupCallEngine {
     fun removeParticipant(uid: String) {
         if (!isHost() || uid == myUid) return
         roomRef?.child("participants")?.child(uid)?.child("removed")?.setValue(true)
+    }
+
+    fun toggleHand() {
+        val raised = !_state.value.handRaised
+        roomRef?.child("participants")?.child(myUid)?.child("hand")?.setValue(raised)
+        _state.value = _state.value.copy(handRaised = raised)
     }
 
     fun toggleMute() {

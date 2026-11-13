@@ -66,6 +66,7 @@ sealed class AdminAction(val title: String, val detail: String, val needsConfirm
     class SetFlags(title: String, detail: String, val fields: Map<String, Any>, confirm: Boolean = false) : AdminAction(title, detail, confirm)
     class Ban(val user: User, val banned: Boolean) : AdminAction(if (banned) "Ban ${user.name}" else "Unban ${user.name}", "@${user.username}", true)
     class Premium(val user: User, val days: Int) : AdminAction(if (days > 0) "Give ${user.name} Premium for $days days" else "Remove Premium from ${user.name}", "@${user.username}", true)
+    class SignOut(val user: User) : AdminAction("Sign ${user.name} out of every device", "@${user.username}", true)
     class Broadcast(val heading: String, val body: String) : AdminAction("Send a push to every user", "$heading — $body", true)
     class ShowUsers(val users: List<User>, heading: String) : AdminAction(heading, "", false)
     class Report(val text: String) : AdminAction("Live report", text, false)
@@ -103,6 +104,35 @@ private val COPILOT_FLAGS: List<Triple<String, String, List<String>>> = listOf(
 )
 private val ON_WORDS = listOf("enable", "start", "turn on", "activate", "চালু", "অন ", "অন করো", "শুরু")
 private val OFF_WORDS = listOf("disable", "stop", "turn off", "deactivate", "বন্ধ", "অফ", "শেষ করো")
+
+/** Current value of a switch, so every change can offer a one-tap Undo. */
+private fun currentFlagValue(config: FlagshipConfig, key: String): Any? = when (key) {
+    "maintenanceMode" -> config.maintenanceMode
+    "maintenanceEndsAt" -> config.maintenanceEndsAt
+    "reelsEnabled" -> config.reelsEnabled
+    "assistantEnabled" -> config.assistantEnabled
+    "locationSharingEnabled" -> config.locationSharingEnabled
+    "typingSoundEnabled" -> config.typingSoundEnabled
+    "premiumEnabled" -> config.premiumEnabled
+    "premiumUpsellEnabled" -> config.premiumUpsellEnabled
+    "tiktokModeEnabled" -> config.tiktokModeEnabled
+    "phoneAuthEnabled" -> config.phoneAuthEnabled
+    "aiWebSearchEnabled" -> config.aiWebSearchEnabled
+    "aiStreamingEnabled" -> config.aiStreamingEnabled
+    "smartReplyEnabled" -> config.smartReplyEnabled
+    "autoSaveReceivedFilesEnabled" -> config.autoSaveReceivedFilesEnabled
+    "messageReminderEnabled" -> config.messageReminderEnabled
+    "contactsDiscoveryEnabled" -> config.contactsDiscoveryEnabled
+    "noticeEnabled" -> config.noticeEnabled
+    "noticeTitle" -> config.noticeTitle
+    "noticeBody" -> config.noticeBody
+    "updateEnabled" -> config.updateEnabled
+    "mandatoryUpdate" -> config.mandatoryUpdate
+    "funCampaignEnabled" -> config.funCampaignEnabled
+    "analyticsEnabled" -> config.analyticsEnabled
+    "aiDisplayName" -> config.aiDisplayName
+    else -> null
+}
 
 private fun findUsers(users: List<User>, accounts: Map<String, AdminAccountInfo>, needle: String, limit: Int = 6): List<User> {
     val q = needle.trim().removePrefix("@").lowercase()
@@ -192,9 +222,9 @@ private fun parseAdminCommand(raw: String, users: List<User>, accounts: Map<Stri
         }
     }
     // ---- people ----------------------------------------------------------------------
-    val userWords = listOf("unban", "ban ", "ব্যান", "আনব্যান", "premium", "প্রিমিয়াম", "find", "search", "email", "e-mail", "ইমেইল", "খুঁজ", "profile", "প্রোফাইল", "who is", "info")
+    val userWords = listOf("logout", "log out", "sign out", "signout", "লগআউট", "unban", "ban ", "ব্যান", "আনব্যান", "premium", "প্রিমিয়াম", "find", "search", "email", "e-mail", "ইমেইল", "খুঁজ", "profile", "প্রোফাইল", "who is", "info")
     if (userWords.any { lower.contains(it) } && !lower.contains("premium system") && !lower.contains("upsell")) {
-        val stop = setOf("unban", "ban", "premium", "find", "search", "email", "e-mail", "of", "the", "user", "users", "profile", "give", "remove", "revoke", "for", "days", "day", "please", "show", "me", "who", "is", "info", "about", "to", "from", "and", "his", "her", "get", "account",
+        val stop = setOf("logout", "log", "out", "sign", "signout", "লগআউট", "unban", "ban", "premium", "find", "search", "email", "e-mail", "of", "the", "user", "users", "profile", "give", "remove", "revoke", "for", "days", "day", "please", "show", "me", "who", "is", "info", "about", "to", "from", "and", "his", "her", "get", "account",
             "ব্যান", "আনব্যান", "প্রিমিয়াম", "ইমেইল", "খুঁজে", "খুঁজ", "প্রোফাইল", "দাও", "করো", "কর", "এর", "কে", "দিন", "বের", "ইউজার", "দেখাও", "তথ্য")
         val needle = mention ?: Regex("[\\w.@+-]+@[\\w-]+\\.[\\w.]+").find(raw)?.value
             ?: raw.split(Regex("[^\\p{L}\\p{N}_.]+")).filter { it.length >= 2 && it.lowercase() !in stop && it.toIntOrNull() == null }.joinToString(" ")
@@ -204,6 +234,8 @@ private fun parseAdminCommand(raw: String, users: List<User>, accounts: Map<Stri
         val isUnban = lower.contains("unban") || lower.contains("আনব্যান")
         val isBan = !isUnban && (lower.contains(" ban ") || lower.contains("ব্যান"))
         val isPremium = lower.contains("premium") || lower.contains("প্রিমিয়াম")
+        val isSignOut = listOf("logout", "log out", "sign out", "signout", "লগআউট").any { lower.contains(it) }
+        if (found.isNotEmpty() && isSignOut) return "Confirm to sign this account out everywhere." to found.take(3).map { AdminAction.SignOut(it) }
         if (found.isEmpty()) return "I could not find anyone matching \"$needle\". Try the @username, the e-mail or a few letters of the name." to emptyList()
         if (isBan || isUnban) {
             return (if (found.size == 1) "Ready — confirm to continue." else "Several people match. Confirm the right one.") to found.take(3).map { AdminAction.Ban(it, isBan) }
@@ -241,6 +273,7 @@ private fun actionsFromAiJson(json: JSONObject, users: List<User>, accounts: Map
             "broadcast" -> a.optString("body").takeIf { it.length >= 3 }?.let { out += AdminAction.Broadcast(a.optString("title").ifBlank { "Convo Chat" }.take(60), it.take(240)) }
             "ban", "unban" -> findUsers(users, accounts, a.optString("user"), 1).firstOrNull()?.let { out += AdminAction.Ban(it, a.optString("type") == "ban") }
             "premium" -> findUsers(users, accounts, a.optString("user"), 1).firstOrNull()?.let { out += AdminAction.Premium(it, a.optInt("days", 30).coerceIn(0, 365)) }
+            "sign_out" -> findUsers(users, accounts, a.optString("user"), 1).firstOrNull()?.let { out += AdminAction.SignOut(it) }
             "find_user" -> findUsers(users, accounts, a.optString("user")).takeIf { it.isNotEmpty() }?.let { out += AdminAction.ShowUsers(it, "Profiles from your database") }
             "report" -> out += AdminAction.Report(liveReport(users, config))
         }
@@ -260,6 +293,9 @@ fun AdminAiCopilotPanel(viewModel: ChatViewModel, onOpenUser: (User) -> Unit = {
     var busy by remember { mutableStateOf(false) }
     var instant by remember { mutableStateOf(true) }
     var done by remember { mutableStateOf(setOf<Long>()) }
+    var lastUndo by remember { mutableStateOf<AdminAction.SetFlags?>(null) }
+    val historyPrefs = remember { context.getSharedPreferences("admin_copilot", Context.MODE_PRIVATE) }
+    var history by remember { mutableStateOf(historyPrefs.getString("history", "").orEmpty().split('\n').filter { it.isNotBlank() }) }
     val listState = rememberLazyListState()
     LaunchedEffect(lines.size, busy) { if (lines.isNotEmpty()) listState.animateScrollToItem(lines.size - 1 + if (busy) 1 else 0) }
     LaunchedEffect(users.size) { if (users.isNotEmpty()) AdminAccounts.ensure(users.take(300).map { it.uid }) }
@@ -269,9 +305,22 @@ fun AdminAiCopilotPanel(viewModel: ChatViewModel, onOpenUser: (User) -> Unit = {
     fun run(action: AdminAction, key: Long) {
         done = done + key
         when (action) {
-            is AdminAction.SetFlags -> viewModel.updateFlagshipFields(action.fields) { ok ->
-                AdminAudit.log("copilot_flags", action.fields.entries.joinToString { "${it.key}=${it.value}" })
-                say(if (ok) "✅ Done — ${action.title.replaceFirstChar { it.lowercase() }}." else "❌ That did not save. Only the main admin account can change app settings.")
+            is AdminAction.SetFlags -> {
+                // Remember the previous values first, so the change can be undone in one tap.
+                val previous = action.fields.keys.mapNotNull { k -> currentFlagValue(config, k)?.let { k to it } }.toMap()
+                viewModel.updateFlagshipFields(action.fields) { ok ->
+                    AdminAudit.log("copilot_flags", action.fields.entries.joinToString { "${it.key}=${it.value}" })
+                    if (ok && previous.isNotEmpty() && !action.title.startsWith("Undo")) {
+                        val undo = AdminAction.SetFlags("Undo: ${action.title.replaceFirstChar { it.lowercase() }}", "Puts the previous setting back.", previous, confirm = true)
+                        lastUndo = undo
+                        say("✅ Done — ${action.title.replaceFirstChar { it.lowercase() }}.", listOf(undo))
+                    } else say(if (ok) "✅ Done — ${action.title.replaceFirstChar { it.lowercase() }}." else "❌ That did not save. Only the main admin account can change app settings.")
+                }
+            }
+            is AdminAction.SignOut -> scope.launch {
+                val (code, json) = runCatching { convoWorkerPost("admin", "/admin/user/revoke", JSONObject().put("uid", action.user.uid)) }.getOrElse { 0 to JSONObject() }
+                AdminAudit.log("copilot_signout", action.user.uid)
+                say(if (code in 200..299) "✅ ${action.user.name} was signed out of every device." else "❌ ${json.optString("error").ifBlank { "Sign-out failed (HTTP $code)" }}")
             }
             is AdminAction.Ban -> viewModel.setUserBanned(action.user.uid, action.banned, "Admin copilot") { ok, message ->
                 AdminAudit.log(if (action.banned) "copilot_ban" else "copilot_unban", action.user.uid)
@@ -298,6 +347,13 @@ fun AdminAiCopilotPanel(viewModel: ChatViewModel, onOpenUser: (User) -> Unit = {
         if (prompt.isBlank() || busy) return
         input = ""
         lines = lines + CopilotLine("me", prompt)
+        history = (listOf(prompt) + history.filter { it != prompt }).take(8)
+        historyPrefs.edit().putString("history", history.joinToString("\n")).apply()
+        if (prompt.lowercase().trim() in setOf("undo", "undo last", "আনডু", "আগের মতো করো", "revert")) {
+            val undo = lastUndo
+            if (undo == null) say("There is nothing to undo yet.") else { lastUndo = null; run(undo, System.nanoTime()) }
+            return
+        }
         val parsed = parseAdminCommand(prompt, users, accounts, config)
         if (parsed != null) {
             val line = CopilotLine("ai", parsed.first, parsed.second)
@@ -315,6 +371,7 @@ Allowed actions (use only these):
 {"type":"broadcast","title":"...","body":"..."}
 {"type":"ban","user":"username or name"} {"type":"unban","user":"..."}
 {"type":"premium","user":"...","days":30}  (days 0 removes premium)
+{"type":"sign_out","user":"..."}
 {"type":"find_user","user":"name, username or e-mail"}
 {"type":"report"}
 If the request is only a question, answer it in "reply" and use an empty actions array. Never invent other action types."""
@@ -355,10 +412,10 @@ If the request is only a question, answer it in "reply" and use an empty actions
             }
         }
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-            listOf(
-                "Maintenance on for 30 minutes", "Maintenance off", "Live report", "Turn reels off", "Turn reels on",
+            (history.take(4) + listOf(
+                "Undo", "Maintenance on for 30 minutes", "Maintenance off", "Live report", "Turn reels off", "Turn reels on",
                 "Notice: Update | New version is ready", "Send everyone: Update is ready 🎉", "Find user rakib", "AI assistant off"
-            ).forEach { sample ->
+            )).distinct().forEach { sample ->
                 Text(
                     sample, color = Color.White, fontSize = 11.sp,
                     modifier = Modifier.clip(CircleShape).background(Color.White.copy(alpha = .10f)).border(1.dp, Color.White.copy(alpha = .18f), CircleShape)

@@ -98,6 +98,11 @@ fun GroupCallScreen(
             onClose()
         }
     }
+    // Tell everyone when someone raises a hand.
+    val raisedNames = state.participants.filter { it.hand && it.uid != localUidForPicker() }.map { it.name }
+    LaunchedEffect(raisedNames.size) {
+        if (raisedNames.isNotEmpty()) Toast.makeText(context, "✋ ${raisedNames.last()} raised a hand", Toast.LENGTH_SHORT).show()
+    }
     val upgradeCameraLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) { if (!GroupCallEngine.upgradeToVideo()) Toast.makeText(context, "Could not start the camera", Toast.LENGTH_SHORT).show() }
         else Toast.makeText(context, "Camera permission is needed for video", Toast.LENGTH_SHORT).show()
@@ -363,6 +368,11 @@ fun GroupCallScreen(
                             onDismissRequest = { showMoreControls = false }
                         ) {
                             DropdownMenuItem(
+                                text = { Text(if (state.handRaised) "Lower hand" else "Raise hand ✋") },
+                                leadingIcon = { Icon(Icons.Default.PanTool, null) },
+                                onClick = { GroupCallEngine.toggleHand(); showMoreControls = false }
+                            )
+                            DropdownMenuItem(
                                 text = { Text("Add people") },
                                 leadingIcon = { Icon(Icons.Default.PersonAdd, null) },
                                 onClick = { showAddPeople = true; showMoreControls = false }
@@ -528,7 +538,7 @@ fun GroupCallScreen(
                 ) {
                     item(key = "local-tile") {
                         CallVideoTile(
-                            name = "You",
+                            name = if (state.handRaised) "✋ You" else "You",
                             connected = state.status == "connected" || state.status == "reconnecting",
                             muted = state.muted,
                             cameraOff = state.cameraOff || !state.video,
@@ -547,7 +557,7 @@ fun GroupCallScreen(
                     }
                     items(remoteParticipants, key = { it.uid }) { participant ->
                         CallVideoTile(
-                            name = participant.name,
+                            name = (if (participant.hand) "✋ " else "") + participant.name,
                             image = participant.image,
                             accent = callPalette.accent,
                             connected = participant.connected,
@@ -572,7 +582,7 @@ fun GroupCallScreen(
                     if (focusedLocal) {
                         CallVideoTile(
                             modifier = Modifier.fillMaxSize(),
-                            name = "You",
+                            name = if (state.handRaised) "✋ You" else "You",
                             connected = state.status == "connected" || state.status == "reconnecting",
                             muted = state.muted,
                             cameraOff = state.cameraOff || !state.video,
@@ -592,7 +602,7 @@ fun GroupCallScreen(
                         val focused = focusedRemote!!
                         CallVideoTile(
                             modifier = Modifier.fillMaxSize(),
-                            name = focused.name,
+                            name = (if (focused.hand) "✋ " else "") + focused.name,
                             image = focused.image,
                             accent = callPalette.accent,
                             connected = focused.connected,
@@ -618,7 +628,7 @@ fun GroupCallScreen(
                 ) {
                     if (!focusedLocal) CallVideoTile(
                         modifier = Modifier.width(112.dp).fillMaxHeight(),
-                        name = "You",
+                        name = if (state.handRaised) "✋ You" else "You",
                         connected = state.status == "connected" || state.status == "reconnecting",
                         muted = state.muted,
                         cameraOff = state.cameraOff || !state.video,
@@ -637,7 +647,7 @@ fun GroupCallScreen(
                     remoteParticipants.filter { it.uid != focusedParticipantId }.forEach { participant ->
                         CallVideoTile(
                             modifier = Modifier.width(112.dp).fillMaxHeight(),
-                            name = participant.name,
+                            name = (if (participant.hand) "✋ " else "") + participant.name,
                             image = participant.image,
                             accent = callPalette.accent,
                             connected = participant.connected,

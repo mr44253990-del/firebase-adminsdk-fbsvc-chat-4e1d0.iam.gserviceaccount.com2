@@ -572,6 +572,8 @@ fun GroupChatScreen(
                                     )
                                 }
                             }
+                        } else if (GroupPolls.parse(msg.text) != null) {
+                            GroupPollCard(GroupPolls.parse(msg.text)!!, msg, group, currentUserId) { option -> viewModel.voteGroupPoll(group.id, msg.messageId, option) }
                         } else {
                             val isSentByMe = msg.senderId == currentUserId
                             GroupMessageBubbleItem(
@@ -666,6 +668,7 @@ fun GroupChatScreen(
                 }
                 MentionSuggestionBar(mentionSuggestions, onPick = { user -> messageText = Mentions.complete(messageText, user) })
                 val hasText = messageText.isNotBlank()
+                if (hasText && AppFeatureFlags.aiEnabled.collectAsState().value) AiWritingToolsRow(messageText, viewModel) { messageText = it }
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
