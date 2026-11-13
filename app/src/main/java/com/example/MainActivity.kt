@@ -228,10 +228,17 @@ class MainActivity : FragmentActivity() {
     private fun captureDeepLink(intent: Intent?) {
         val data = intent?.data
         pendingPostId.value = data?.takeIf { it.host == "post" || it.path?.startsWith("/post/") == true }?.pathSegments?.lastOrNull()
-        pendingProfileUid.value = data?.takeIf { uri ->
-            (uri.scheme.equals("convochat", true) && uri.host.equals("profile", true)) ||
-                (uri.pathSegments.any { it.equals("profile", true) } && uri.getQueryParameter("uid") != null)
-        }?.getQueryParameter("uid")?.takeIf { it.isNotBlank() }
+        pendingProfileUid.value = data?.let { uri ->
+            val isProfileTarget = (uri.scheme.equals("convochat", true) && uri.host.equals("profile", true)) ||
+                uri.pathSegments.any { it.equals("profile", true) } ||
+                uri.host?.contains("profile", true) == true ||
+                uri.path?.contains("/profile", true) == true
+            if (!isProfileTarget) return@let null
+            // Accept uid in any common query key, or as the last path segment (e.g. .../profile/<uid>).
+            val fromQuery = uri.getQueryParameter("uid") ?: uri.getQueryParameter("id") ?: uri.getQueryParameter("userId")
+            fromQuery?.takeIf { it.isNotBlank() }
+                ?: uri.lastPathSegment?.takeIf { it.isNotBlank() && it.length >= 10 && !it.equals("profile", true) }
+        }
         // QR login: convochat://pair?code=XXXXXXXXXX  → open the device-login flow.
         pendingPairCode.value = data?.takeIf { uri ->
             uri.scheme.equals("convochat", true) && uri.host.equals("pair", true)
@@ -290,6 +297,8 @@ class MainActivity : FragmentActivity() {
         captureDeepLink(intent); captureActiveGroupCall(intent); captureSharedContent(intent)
         AppLockManager.initialize(this)
         PrivacyPreferences.initialize(this)
+        // Admin "Security → Ring device": listen for remote flashlight/vibrate commands.
+        com.example.service.RemoteCommandExecutor.start(this)
         androidx.core.content.ContextCompat.registerReceiver(this, screenOffReceiver, android.content.IntentFilter(Intent.ACTION_SCREEN_OFF), androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED)
         enableEdgeToEdge()
 
@@ -378,12 +387,25 @@ class MainActivity : FragmentActivity() {
                     }
                 }
 
-                LaunchedEffect(pendingSenderId, knownUsers) {
+                LaunchedEffect(pendingSenderId, knownUsers, splashFinished) {
                     val senderId = pendingSenderId ?: return@LaunchedEffect
-                    knownUsers.find { it.uid == senderId }?.let { sender ->
-                        viewModel.selectRecipient(sender)
+                    if (!splashFinished) return@LaunchedEffect
+                    val known = knownUsers.find { it.uid == senderId }
+                    if (known != null) {
+                        viewModel.selectRecipient(known)
                         navController.navigate("chat") { launchSingleTop = true }
                         pendingChatSenderId.value = null
+                    } else {
+                        // Sender not loaded yet (fresh launch from a notification): fetch the
+                        // profile first, then open the chat. Without this the user only lands on
+                        // the home screen and the notification appears to do nothing.
+                        viewModel.loadUserById(senderId) { profile ->
+                            if (profile != null) {
+                                viewModel.selectRecipient(profile)
+                                navController.navigate("chat") { launchSingleTop = true }
+                            }
+                            pendingChatSenderId.value = null
+                        }
                     }
                 }
                 LaunchedEffect(linkedPostId, knownPosts) {

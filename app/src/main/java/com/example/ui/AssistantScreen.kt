@@ -338,7 +338,7 @@ fun AssistantScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenAiSettin
             }
             // ---- Composer ----------------------------------------------------------------------
             Row(
-                Modifier.fillMaxWidth().navigationBarsPadding().imePadding().padding(horizontal = 12.dp, vertical = 10.dp)
+                Modifier.fillMaxWidth().windowInsetsPadding(WindowInsets.ime.union(WindowInsets.navigationBars)).padding(horizontal = 12.dp, vertical = 10.dp)
                     .clip(RoundedCornerShape(28.dp))
                     .background(Color.White.copy(alpha = .08f))
                     .border(BorderStroke(1.dp, Brush.linearGradient(listOf(AiCyan.copy(alpha = .6f), AiPink.copy(alpha = .5f), AiViolet.copy(alpha = .6f)))), RoundedCornerShape(28.dp))
