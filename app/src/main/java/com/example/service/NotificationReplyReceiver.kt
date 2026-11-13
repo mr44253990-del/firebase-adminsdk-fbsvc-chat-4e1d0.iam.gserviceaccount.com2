@@ -58,7 +58,7 @@ class NotificationReplyReceiver : BroadcastReceiver() {
         val accountUid = intent.getStringExtra("accountUid").orEmpty()
         val notificationId = intent.getIntExtra("notificationId", 0)
         if (accountUid.isNotBlank() && accountUid != authUser.uid) {
-            val switched = runCatching { switchToAccount(context, accountUid) }.getOrDefault(false)
+            val switched = kotlinx.coroutines.runBlocking { try { switchToAccount(context, accountUid) } catch (_: Throwable) { false } }
             val nowUser = FirebaseAuth.getInstance().currentUser
             if (!switched || nowUser == null || nowUser.uid != accountUid) {
                 NotificationManagerCompat.from(context).cancel(notificationId)

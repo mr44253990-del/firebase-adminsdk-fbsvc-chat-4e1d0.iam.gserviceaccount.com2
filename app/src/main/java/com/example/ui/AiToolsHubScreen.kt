@@ -27,7 +27,7 @@ import androidx.compose.material.icons.filled.Summarize
 import androidx.compose.material.icons.filled.CloudSync
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.RecordVoiceOver
-import androidx.compose.material.icons.filled.SmartReply
+import androidx.compose.material.icons.filled.Reply
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
@@ -61,7 +61,7 @@ fun AiToolsHubScreen(onBack: () -> Unit, onOpenTool: (String) -> Unit, modifier:
     val tools = listOf(
         AiTool("AI Assistant", "Chat, search & memory", Icons.Default.Psychology, listOf(Color(0xFF7C5CFF), Color(0xFFFF4FD8))),
         AiTool("Image Creator", "Generate images from text", Icons.Default.Image, listOf(Color(0xFF29D3FF), Color(0xFF7C5CFF))),
-        AiTool("Smart Reply", "One-tap context replies", Icons.Default.SmartReply, listOf(Color(0xFF12B886), Color(0xFF3BC9DB))),
+        AiTool("Smart Reply", "One-tap context replies", Icons.Default.Reply, listOf(Color(0xFF12B886), Color(0xFF3BC9DB))),
         AiTool("Summarize Chat", "TL;DR of any conversation", Icons.Default.Summarize, listOf(Color(0xFFFFB020), Color(0xFFFF6B6B))),
         AiTool("Translator", "Translate messages live", Icons.Default.Translate, listOf(Color(0xFF2E5BFF), Color(0xFF00E5FF))),
         AiTool("Voice to Text", "Transcribe voice notes", Icons.Default.RecordVoiceOver, listOf(Color(0xFFFF4FD8), Color(0xFFFFB020))),

@@ -44,9 +44,9 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.example.R
 import com.example.service.CallRingtoneController
-import com.example.ui.FuturisticKit.GlassCard
-import com.example.ui.FuturisticKit.GlowDot
-import com.example.ui.FuturisticKit.NeonText
+import com.example.ui.GlassCard
+import com.example.ui.GlowDot
+import com.example.ui.NeonText
 import com.example.ui.theme.AuroraCyan
 import com.example.ui.theme.AuroraPink
 import kotlinx.coroutines.launch

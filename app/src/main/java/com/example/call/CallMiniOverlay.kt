@@ -38,8 +38,8 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import coil.compose.AsyncImage
 import com.example.R
-import com.example.ui.FuturisticKit.GlowDot
-import com.example.ui.FuturisticKit.TalkingBar
+import com.example.ui.GlowDot
+import com.example.ui.TalkingBar
 import com.example.ui.theme.AuroraCyan
 import kotlin.math.roundToInt
 import org.webrtc.SurfaceViewRenderer

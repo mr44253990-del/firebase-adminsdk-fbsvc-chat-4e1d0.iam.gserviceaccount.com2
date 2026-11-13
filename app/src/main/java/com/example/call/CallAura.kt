@@ -63,7 +63,7 @@ fun rememberMicAmplitude(enabled: Boolean): State<Float> {
         if (!enabled) { amplitude.floatValue = 0f; return@LaunchedEffect }
         val hasMic = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
         if (!hasMic) return@LaunchedEffect
-        @Volatile var latest = 0f
+        var latest = 0f
         val sampler = launch(Dispatchers.IO) {
             var recorder: AudioRecord? = null
             val buffer = ShortArray(128)
@@ -76,7 +76,7 @@ fun rememberMicAmplitude(enabled: Boolean): State<Float> {
                     if (read > 0) {
                         var sum = 0.0
                         for (i in 0 until read) sum += buffer[i] * buffer[i]
-                        latest = (sqrt(sum / read) / 32768f).coerceIn(0f, 1f)
+                        latest = (sqrt(sum / read).toFloat() / 32768f).coerceIn(0f, 1f)
                     }
                 }
             } catch (_: Throwable) { latest = 0f }

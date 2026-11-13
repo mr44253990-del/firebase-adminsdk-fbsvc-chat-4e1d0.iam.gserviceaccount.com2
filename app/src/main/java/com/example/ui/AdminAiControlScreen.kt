@@ -16,6 +16,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -171,7 +174,7 @@ fun AdminAiControlScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
                 Modifier.fillMaxWidth().windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.ime.union(androidx.compose.foundation.layout.WindowInsets.navigationBars))
                     .padding(horizontal = 12.dp, vertical = 10.dp)
                     .clip(RoundedCornerShape(26.dp)).background(Color.White.copy(alpha = .09f))
-                    .border(1.dp, Brush.linearGradient(listOf(Color(0xFF29D3FF.copy(alpha = .6f), Color(0xFFFF4FD8.copy(alpha = .5f)))), RoundedCornerShape(26.dp))
+                    .border(1.dp, Brush.linearGradient(listOf(Color(0xFF29D3FF).copy(alpha = .6f), Color(0xFFFF4FD8).copy(alpha = .5f))), RoundedCornerShape(26.dp))
                     .padding(start = 16.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {

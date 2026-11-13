@@ -705,7 +705,7 @@ fun GroupCallScreen(
     if (showReactions) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {
             Surface(
-                modifier = Modifier.padding(bottom = 110.dp, horizontal = 16.dp).fillMaxWidth(),
+                modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 110.dp).fillMaxWidth(),
                 shape = RoundedCornerShape(24.dp),
                 color = Color.Black.copy(alpha = .7f)
             ) {

@@ -297,8 +297,8 @@ fun TalkingBar(modifier: Modifier = Modifier, active: Boolean = true) {
                 val w = size.width
                 val activeBrush = Brush.horizontalGradient(
                     colors = listOf(AuroraCyan, AuroraPink),
-                    start = Offset(phase * w, 0f),
-                    end = Offset(phase * w + w * 0.5f, 0f)
+                    startX = phase * w,
+                    endX = phase * w + w * 0.5f
                 )
                 drawRect(if (active) activeBrush else Color(0xFF3A3D4A))
             }
