@@ -171,7 +171,7 @@ fun AdminAiControlScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
             }
 
             Row(
-                Modifier.fillMaxWidth().windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.ime + androidx.compose.foundation.layout.WindowInsets.navigationBars)
+                Modifier.fillMaxWidth().windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.ime).windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.navigationBars)
                     .padding(horizontal = 12.dp, vertical = 10.dp)
                     .clip(RoundedCornerShape(26.dp)).background(Color.White.copy(alpha = .09f))
                     .border(1.dp, Brush.linearGradient(listOf(Color(0xFF29D3FF).copy(alpha = .6f), Color(0xFFFF4FD8).copy(alpha = .5f))), RoundedCornerShape(26.dp))
