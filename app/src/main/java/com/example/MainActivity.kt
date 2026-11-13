@@ -70,7 +70,7 @@ import com.example.security.AppLockManager
 import com.example.security.AppLockScreen
 import com.example.security.PrivacyPreferences
 import com.google.firebase.auth.FirebaseAuth
-import com.google.firebase.database.FirebaseDatabase
+import com.google.firebase.database.*
 import com.google.firebase.firestore.FirebaseFirestore
 import com.example.data.User
 import com.example.data.IncomingSharePayload
@@ -352,6 +352,7 @@ class MainActivity : FragmentActivity() {
                 var showCallParticipantPicker by remember { mutableStateOf(false) }
                 val callState by CallEngine.state.collectAsState()
                 val groupCallState by GroupCallEngine.state.collectAsState()
+                val context = LocalContext.current
                 LaunchedEffect(currentUser?.uid) {
                     val uid = currentUser?.uid ?: return@LaunchedEffect
                     CallHistory.ensureStarted(context)
