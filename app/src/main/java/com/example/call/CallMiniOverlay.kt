@@ -38,6 +38,9 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import coil.compose.AsyncImage
 import com.example.R
+import com.example.ui.FuturisticKit.GlowDot
+import com.example.ui.FuturisticKit.TalkingBar
+import com.example.ui.theme.AuroraCyan
 import kotlin.math.roundToInt
 import org.webrtc.SurfaceViewRenderer
 
@@ -191,5 +194,45 @@ fun GroupCallReturnPill(state: GroupCallState, onExpand: () -> Unit) {
             Text(state.groupName.ifBlank { "Group call" }, color = Color.White, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold, fontSize = 12.sp, maxLines = 1)
             Text("%02d:%02d  ·  tap to return".format(seconds / 60, seconds % 60), color = Color.White.copy(alpha = .85f), fontSize = 10.sp)
         }
+    }
+}
+
+/**
+ * Slim top "talking" call bar with a live mic indicator. Uses FuturisticKit.TalkingBar and
+ * GlowDot. Shown at the top of the app while a call runs in the background (audio or video).
+ */
+@Composable
+fun CallTalkingBar(
+    active: Boolean,
+    muted: Boolean,
+    label: String = "Call in progress — tap to return",
+    modifier: Modifier = Modifier,
+    onClick: (() -> Unit)? = null
+) {
+    Row(
+        modifier
+            .fillMaxWidth()
+            .background(Brush.horizontalGradient(listOf(Color(0xFF0A0C14), Color(0xFF141828))))
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        GlowDot(color = if (muted) Color(0xFFFF6B6B) else AuroraCyan, size = 8.dp)
+        Icon(
+            if (muted) Icons.Default.MicOff else Icons.Default.Mic,
+            contentDescription = null,
+            tint = Color.White.copy(alpha = .8f),
+            modifier = Modifier.size(14.dp)
+        )
+        TalkingBar(active = active && !muted)
+        Text(
+            label,
+            color = Color.White.copy(alpha = .75f),
+            fontSize = 11.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f)
+        )
     }
 }

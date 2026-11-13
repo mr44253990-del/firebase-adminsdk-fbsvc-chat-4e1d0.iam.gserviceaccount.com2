@@ -159,6 +159,26 @@ fun SmartSettingsPage() {
             }) { Text(if (clearing) "Clearing…" else "Clear cache") }
             Text("Your chats, photos in chats and settings are not affected.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
+        SmartCard(Icons.Default.AutoAwesome, Color(0xFF7C5CFF), "AI & admin shortcuts", "Jump to AI Studio, Admin AI console or Security ring") {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                GradientButton(onClick = { ProTools.navigate("ai_studio") }, modifier = Modifier.weight(1f)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Psychology, null, tint = Color.White, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp)); Text("AI Studio", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+                GradientButton(onClick = { ProTools.navigate("admin_ai") }, modifier = Modifier.weight(1f)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.SmartToy, null, tint = Color.White, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp)); Text("Admin AI", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+            OutlinedButton(onClick = { ProTools.navigate("admin_security") }, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Default.Security, null, modifier = Modifier.size(16.dp)); Spacer(Modifier.width(6.dp)); Text("Security & ring device")
+            }
+        }
     }
 }
 

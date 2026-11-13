@@ -11,6 +11,10 @@ import org.webrtc.VideoFrame
 import org.webrtc.VideoProcessor
 import org.webrtc.VideoSink
 import java.nio.ByteBuffer
+import android.content.Context
+import android.hardware.camera2.CameraCharacteristics
+import android.hardware.camera2.CameraManager
+import android.graphics.ColorMatrix
 
 /** Live camera filters applied to the outgoing video (and therefore the local preview too). */
 enum class CallFilter(val label: String, val emoji: String) {
@@ -120,4 +124,67 @@ object CallTorch {
         }
         return null
     }
+}
+
+/**
+ * ColorMatrix LUT filters (Warm, Cool, B&W, Vivid) for the local preview. Applied as a
+ * ColorMatrix color-filter; no ML Kit dependency. The outgoing WebRTC track is filtered by
+ * [CallFilterProcessor] (I420 LUT), so these matrices describe the same looks for the preview
+ * surface and can be applied via Compose's colorFilter modifier where the surface supports it.
+ */
+object CallColorMatrix {
+    fun forFilter(filter: CallFilter): ColorMatrix? = when (filter) {
+        CallFilter.WARM -> ColorMatrix(floatArrayOf(
+            1.12f, 0f, 0f, 0f, 12f,
+            0f, 1.02f, 0f, 0f, 4f,
+            0f, 0f, 0.9f, 0f, -8f,
+            0f, 0f, 0f, 1f, 0f
+        ))
+        CallFilter.COOL -> ColorMatrix(floatArrayOf(
+            0.92f, 0f, 0f, 0f, -6f,
+            0f, 1.0f, 0f, 0f, 2f,
+            0f, 0f, 1.14f, 0f, 14f,
+            0f, 0f, 0f, 1f, 0f
+        ))
+        CallFilter.MONO -> ColorMatrix(floatArrayOf(
+            0.33f, 0.59f, 0.11f, 0f, 0f,
+            0.33f, 0.59f, 0.11f, 0f, 0f,
+            0.33f, 0.59f, 0.11f, 0f, 0f,
+            0f, 0f, 0f, 1f, 0f
+        ))
+        CallFilter.VIVID -> ColorMatrix(floatArrayOf(
+            1.18f, 0f, 0f, 0f, -10f,
+            0f, 1.18f, 0f, 0f, -10f,
+            0f, 0f, 1.18f, 0f, -10f,
+            0f, 0f, 0f, 1f, 0f
+        )).also { it.postConcat(ColorMatrix().apply { setSaturation(1.35f) }) }
+        CallFilter.SEPIA -> ColorMatrix(floatArrayOf(
+            0.393f, 0.769f, 0.189f, 0f, 0f,
+            0.349f, 0.686f, 0.168f, 0f, 0f,
+            0.272f, 0.534f, 0.131f, 0f, 0f,
+            0f, 0f, 0f, 1f, 0f
+        ))
+        else -> null
+    }
+}
+
+/**
+ * Flashlight toggle via CameraManager.setTorchMode (API 23+). Guarded by try/catch and a
+ * FLASH_INFO_AVAILABLE check on the first back-facing camera. Used as the primary path during
+ * video calls; [CallTorch]'s Camera2-session reflection is the fallback for devices where the
+ * torch camera id is owned by the WebRTC capturer.
+ */
+object CallFlashlight {
+    fun set(context: Context, on: Boolean): Boolean = runCatching {
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.M) return false
+        val manager = context.getSystemService(Context.CAMERA_SERVICE) as? CameraManager ?: return false
+        val torchId = manager.cameraIdList.firstOrNull { id ->
+            val chars = manager.getCameraCharacteristics(id)
+            val facing = chars.get(CameraCharacteristics.LENS_FACING)
+            facing == CameraCharacteristics.LENS_FACING_BACK &&
+                chars.get(CameraCharacteristics.FLASH_INFO_AVAILABLE) == true
+        } ?: return false
+        manager.setTorchMode(torchId, on)
+        true
+    }.onFailure { Log.w("CALL_FLASHLIGHT", "CameraManager torch failed", it) }.getOrDefault(false)
 }

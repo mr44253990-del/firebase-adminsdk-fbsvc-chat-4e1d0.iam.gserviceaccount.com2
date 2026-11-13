@@ -165,8 +165,9 @@ class IncomingCallActivity : ComponentActivity() {
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
         val active = CallEngine.state.value.status !in listOf("idle", "ended", "declined", "missed", "failed")
-        // PiP only for live video calls; audio calls continue in the background with the ongoing notification.
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && active && !leavingToApp && CallEngine.state.value.video && CallEngine.state.value.status in listOf("connected", "reconnecting") && !isInPictureInPictureMode) minimizeCallToPip()
+        // PiP-style floating overlay for BOTH video and audio calls (audio shows the compact
+        // AudioPipCard). The foreground service keeps the call alive in the background.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && active && !leavingToApp && CallEngine.state.value.status in listOf("connected", "reconnecting") && !isInPictureInPictureMode) minimizeCallToPip()
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -194,6 +195,8 @@ fun CallScreen(
     val view = LocalView.current
     val callSkinId by CallSkinPreferences.selectedId.collectAsState()
     val state by CallEngine.state.collectAsState()
+    // Mic amplitude sampled off-main-composition (LaunchedEffect + withFrameMillis, ~30 fps).
+    val micAmplitude by rememberMicAmplitude(enabled = state.status == "connected" && !state.muted)
     LaunchedEffect(context.applicationContext) { CallHistory.ensureStarted(context); CallSkinPreferences.load(context) }
     val callPalette = CallSkinPreferences.palette(callSkinId)
     val effectiveVideo = video || state.video
@@ -393,7 +396,7 @@ fun CallScreen(
             AnimatedVisibility(visible = !effectiveVideo || !accepted) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     if (!accepted && incoming) IncomingCallerAvatar(remoteImage, remoteName, callPalette.accent)
-                    else CallAvatarAura(remoteImage, remoteName, callPalette.accent, state.status, state.muted)
+                    else CallAvatarAura(remoteImage, remoteName, callPalette.accent, state.status, state.muted, amplitude = micAmplitude)
                     Spacer(Modifier.height(6.dp))
                     Text(remoteName, color = Color.White, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.ExtraBold, textAlign = TextAlign.Center)
                 }
@@ -416,6 +419,11 @@ fun CallScreen(
             if (!accepted && incoming) {
                 IncomingAnswerControls(
                     video = effectiveVideo,
+                    callerName = remoteName,
+                    muted = state.muted,
+                    speaker = state.speaker,
+                    onToggleMute = { CallEngine.toggleMute() },
+                    onToggleSpeaker = { CallEngine.toggleSpeaker() },
                     onDecline = { CallRingtoneController.stop(context, callId); CallEngine.decline(callId); onClose() },
                     onAccept = {
                         val micGranted = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED

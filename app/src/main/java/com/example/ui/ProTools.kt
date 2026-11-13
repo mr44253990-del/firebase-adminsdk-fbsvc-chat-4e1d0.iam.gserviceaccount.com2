@@ -57,6 +57,9 @@ object ProTools {
     val pendingRoute: StateFlow<String?> = _pendingRoute.asStateFlow()
     fun consumeRoute() { _pendingRoute.value = null }
 
+    /** Request MainActivity to navigate to any NavHost route (used by settings/hub entry buttons). */
+    fun navigate(route: String) { _pendingRoute.value = route }
+
     fun handleAction(action: String?) {
         when (action) {
             null, "" -> Unit

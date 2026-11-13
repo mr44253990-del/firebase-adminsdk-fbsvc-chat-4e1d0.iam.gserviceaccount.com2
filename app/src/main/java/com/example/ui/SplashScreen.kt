@@ -12,6 +12,7 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -38,6 +39,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -85,6 +87,16 @@ private fun splashStatus(progress: Float): String = when {
     else -> "Almost there…"
 }
 
+/** Rotating tip lines (Bengali + English) shown under the greeting. */
+private val splashTips = listOf(
+    "স্বাগতম! আপনার বার্তাগুলো এন্ড-টু-এন্ড নিরাপদ।",
+    "End-to-end encrypted — only you and your friend can read them.",
+    "ডাবল টিক = পৌঁছে গেছে। নীল টিক = পড়েছে।",
+    "Tap the chat theme orb to give each friend their own look.",
+    "ভয়েস নোট পাঠাতে মাইক বোতামটি চেপে ধরুন।",
+    "Pin your favourite chats so they stay on top."
+)
+
 /**
  * Launch screen, rebuilt for a fast, premium first impression:
  *
@@ -97,7 +109,11 @@ private fun splashStatus(progress: Float): String = when {
  *    of the app render underneath so navigation feels instant rather than delayed.
  */
 @Composable
-fun SplashScreen(onFinished: () -> Unit) {
+fun SplashScreen(ready: Boolean = true, onFinished: () -> Unit) {
+    // Fold all real startup work (token refresh, presence, cache warm) behind this gate: the
+    // splash holds at 99% until the caller reports ready, so no intermediate/flash screen shows.
+    var readyState by remember { mutableStateOf(ready) }
+    LaunchedEffect(ready) { readyState = ready }
     val motion = rememberInfiniteTransition(label = "splash_motion")
     val orbit by motion.animateFloat(0f, 360f, infiniteRepeatable(tween(7200, easing = LinearEasing)), label = "orbit")
     val counter by motion.animateFloat(360f, 0f, infiniteRepeatable(tween(5200, easing = LinearEasing)), label = "counter")
@@ -113,6 +129,7 @@ fun SplashScreen(onFinished: () -> Unit) {
     val title = "Convo Chat"
     val greeting = remember { splashGreeting() }
 
+    var tipIndex by remember { mutableIntStateOf(0) }
     LaunchedEffect(Unit) {
         launch {
             // Everything overlaps: the mark, halo, letters and bar animate at the same time.
@@ -123,9 +140,13 @@ fun SplashScreen(onFinished: () -> Unit) {
                 delay(140)
                 for (i in 1..title.length) { lettersShown = i; delay(32) }
             }
-            progress.animateTo(1f, tween(820, easing = FastOutSlowInEasing))
+            progress.animateTo(0.94f, tween(820, easing = FastOutSlowInEasing))
         }
+        launch { while (true) { delay(2200); tipIndex += 1 } }
         delay(1050)
+        // splashFinished gate: hold at 99% until token refresh / presence / cache warm report ready.
+        while (!readyState) delay(120)
+        progress.animateTo(1f, tween(180))
         onFinished()
     }
 
@@ -336,6 +357,17 @@ fun SplashScreen(onFinished: () -> Unit) {
 
             Spacer(Modifier.height(26.dp))
 
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(horizontal = 24.dp).fillMaxWidth()) {
+                GlowDot(color = SPLASH_CYAN, size = 7.dp)
+                androidx.compose.animation.AnimatedContent(
+                    targetState = splashTips[tipIndex % splashTips.size],
+                    transitionSpec = { androidx.compose.animation.fadeIn(tween(250)) togetherWith androidx.compose.animation.fadeOut(tween(250)) },
+                    label = "splash_tip",
+                    modifier = Modifier.weight(1f)
+                ) { tip -> Text(tip, color = Color.White.copy(alpha = .72f), fontSize = 11.sp, maxLines = 1) }
+                Text("${(progress.value * 100).coerceIn(0f, 1f).toInt()}%", color = SPLASH_CYAN, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            }
+            Spacer(Modifier.height(14.dp))
             // Slim determinate bar mirrors the ring so progress is obvious at a glance.
             Box(
                 Modifier.width(176.dp).height(4.dp).clip(CircleShape)

@@ -52,6 +52,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -113,7 +114,10 @@ fun AdminAiControlScreen(onBack: () -> Unit, modifier: Modifier = Modifier) {
                 Spacer(Modifier.width(10.dp))
                 Column(Modifier.weight(1f)) {
                     Text("Admin AI", color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 19.sp)
-                    Text(if (busy) "Executing…" else "Voice of the server — tap or type a command", color = if (busy) Color(0xFF29D3FF) else Color.White.copy(alpha = .6f), fontSize = 11.sp)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (busy) { GlowDot(color = Color(0xFF29D3FF), size = 6.dp); Spacer(Modifier.width(6.dp)) }
+                        Text(if (busy) "Executing…" else "Voice of the server — tap or type a command", color = if (busy) Color(0xFF29D3FF) else Color.White.copy(alpha = .6f), fontSize = 11.sp)
+                    }
                 }
             }
 
@@ -235,6 +239,32 @@ private suspend fun executeAdminCommand(q: String, raw: String): String = runCat
             val ai = snap.getBoolean("assistantEnabled") ?: true
             "📊 Current state — maintenance: ${if (mm) "ON" else "off"}, AI assistant: ${if (ai) "enabled" else "disabled"}."
         }
-        else -> "I can run: maintenance mode on/off, broadcast <text>, enable/disable ai, enable/disable web search, status. Try one of the chips above."
+        ("ban" in q) && ("user" in q || "uid" in q || "account" in q) -> {
+            val uid = raw.trim().split(Regex("\\s+")).firstOrNull { it.length >= 10 && !it.lowercase().let { t -> t in setOf("ban","user","uid","account","please","the","for") } }
+                ?: return@runCatching "⚠️ Could not find a UID. Say: ban user <uid>"
+            val now = System.currentTimeMillis()
+            db.collection("users").document(uid).set(mapOf("banned" to true, "bannedAt" to now, "bannedBy" to (FirebaseAuth.getInstance().currentUser?.uid ?: "admin"), "forceLogoutAt" to now), com.google.firebase.firestore.SetOptions.merge()).await()
+            "✅ User $uid banned and force-logged out."
+        }
+        ("wipe" in q) && ("post" in q) -> {
+            val uid = raw.trim().split(Regex("\\s+")).firstOrNull { it.length >= 10 && !it.lowercase().let { t -> t in setOf("wipe","posts","post","user","for","the","please") } }
+                ?: return@runCatching "⚠️ Could not find a target UID. Say: wipe posts for <uid>"
+            val id = db.collection("adminCommands").document().id
+            db.collection("adminCommands").document(id).set(mapOf("type" to "wipe_user_posts", "targetUid" to uid, "requestedAt" to System.currentTimeMillis(), "requestedBy" to (FirebaseAuth.getInstance().currentUser?.uid ?: "admin"))).await()
+            "✅ Wipe queued ($id) for user $uid — the worker will delete their posts."
+        }
+        (("force" in q || "kick" in q) && ("logout" in q || "signout" in q || "sign out" in q)) || ("log out" in q && "user" in q) -> {
+            val uid = raw.trim().split(Regex("\\s+")).firstOrNull { it.length >= 10 && !it.lowercase().let { t -> t in setOf("force","logout","log","out","kick","user","sign","please","the") } }
+                ?: return@runCatching "⚠️ Could not find a target UID. Say: force logout <uid>"
+            db.collection("users").document(uid).set(mapOf("forceLogoutAt" to System.currentTimeMillis()), com.google.firebase.firestore.SetOptions.merge()).await()
+            "✅ Force-logout stamp written for $uid — client signs out on next resume."
+        }
+        ("min" in q) && ("version" in q) -> {
+            val code = Regex("\\d+").find(raw)?.value?.toIntOrNull()
+            if (code == null || code <= 0) return@runCatching "⚠️ Specify a numeric versionCode. Say: set min app version 42"
+            db.collection("config").document("appConfig").set(mapOf("minVersionCode" to code, "minVersionEnforced" to true, "updatedAt" to System.currentTimeMillis()), com.google.firebase.firestore.SetOptions.merge()).await()
+            "✅ Min app version set to $code (enforced). Clients below are blocked on start."
+        }
+        else -> "I can run: maintenance on/off, broadcast <text>, enable/disable ai/web search, ban user <uid>, wipe posts for <uid>, force logout <uid>, set min app version <n>, status."
     }
 }.getOrElse { "⚠️ Command failed: ${it.message}" }

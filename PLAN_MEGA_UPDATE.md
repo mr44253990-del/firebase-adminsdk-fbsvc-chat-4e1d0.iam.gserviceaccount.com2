@@ -80,4 +80,9 @@ Add entry buttons in `AdminControlCenterScreen` (admin drawer) and in the Settin
 ---
 
 ## Push
-- New branch `feature/mega-update-v3`, commit all of the above, push to origin.
+- v3: branch `feature/mega-update-v3`, pushed.
+- v4 (current): branch `feature/mega-update-v4-futuristic`. Shared design system seeded: `ui/FuturisticKit.kt` (AuroraBackground, GlassCard, GradientButton, NeonText, ShimmerBox, GlowDot, TalkingBar, springPress) on the Aurora palette.
+  - [ ] Call vertical: group-call banner wiring in GroupChatScreen, host-end teardown, add-participant mid-call, audio↔video switch, IncomingCallUi regen, loudspeaker animation freeze fix (throttled amplitude sampling, no collect inside draw), video color-LUT filters + flashlight toggle, audio-call mini bubble + talking bar.
+  - [ ] Auth/chat vertical: AuthScreen full redesign (aurora + biometric + guest + OTP toggle), splash single-gate + live % + tips, multi-account switch on incoming call/message + unsubscribeForUid, chat image Fit sizing + full-screen viewer, top-bar name weight(1f)+ellipsis, SmartSearch recent+filter chips, Home combined smart strip.
+  - [ ] Admin/design vertical: NavHost wiring (admin_security / user_management / admin_ai / ai_studio) + entry buttons, admin expansion (ban / wipe / force-logout / min-version / feature-flags / broadcast-history / analytics), AI DB search + source chip, design pass on Settings/Admin/Premium/Assistant/ModernChrome, proactive bug hunt.
+  - [ ] CI green: push → poll Actions → fix compile errors → repeat until `android-ci` succeeds.

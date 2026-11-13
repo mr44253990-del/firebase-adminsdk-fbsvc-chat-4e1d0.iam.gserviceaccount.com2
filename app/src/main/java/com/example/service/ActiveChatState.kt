@@ -29,6 +29,13 @@ object ActiveChatState {
 
     internal fun setPeer(uid: String?) { openPeerUid = uid }
     internal fun setGroup(id: String?) { openGroupId = id }
+    internal fun setActiveUid(uid: String?) { activeUid = uid }
+    /** Firebase uid of the currently signed-in (active) account. Updated on sign-in/switch. */
+    @Volatile var activeUid: String? = null
+        private set
+    /** A message for [accountUid] should only suppress its notification if that account is active. */
+    fun isViewingPeerFor(uid: String?, accountUid: String?): Boolean =
+        isViewingPeer(uid) && (accountUid.isNullOrBlank() || accountUid == activeUid)
 }
 
 /** Marks a 1:1 chat as visible only while its screen is RESUMED. */

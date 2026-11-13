@@ -772,7 +772,7 @@ fun AuthScreen(
                             .clip(RoundedCornerShape(22.dp))
                             .background(Brush.horizontalGradient(listOf(Color(0xFF168CFF), Color(0xFF7B3DFF), Color(0xFFFF3D9A))))
                             .border(1.dp, Color.White.copy(alpha = ctaGlow), RoundedCornerShape(22.dp))
-                            .clickable(enabled = !authLoading && !isUploadingPic) {
+                            .springPress(enabled = !authLoading && !isUploadingPic) {
                                 if (isLoginMode) {
                                     val e = email; val pw = password
                                     viewModel.login(e, pw) { savePasswordThen(e, pw, onAuthSuccess) }
@@ -802,6 +802,52 @@ fun AuthScreen(
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Icon(Icons.Default.ArrowForward, contentDescription = null, tint = Color.White)
                             }
+                        }
+                    }
+
+                    // Biometric quick sign-in: only when hardware supports it and a saved password account exists.
+                    val biometricAvailable = remember {
+                        androidx.biometric.BiometricManager.from(context).canAuthenticate(
+                            androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_STRONG or androidx.biometric.BiometricManager.Authenticators.DEVICE_CREDENTIAL
+                        ) == androidx.biometric.BiometricManager.BIOMETRIC_SUCCESS
+                    }
+                    if (isLoginMode && biometricAvailable && rememberedAccounts.any { acct ->
+                        acct.provider.equals("password", true) &&
+                            com.example.security.AccountCredentialVault.load(context, acct.email)?.isNotBlank() == true
+                    }) {
+                        Spacer(Modifier.height(10.dp))
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(lp.text.copy(alpha = .06f))
+                                .springPress {
+                                    val account = rememberedAccounts.first { acct ->
+                                        acct.provider.equals("password", true) &&
+                                            com.example.security.AccountCredentialVault.load(context, acct.email)?.isNotBlank() == true
+                                    }
+                                    val activity = context as? androidx.fragment.app.FragmentActivity ?: return@springPress
+                                    val executor = androidx.core.content.ContextCompat.getMainExecutor(context)
+                                    val callback = object : androidx.biometric.BiometricPrompt.AuthenticationCallback() {
+                                        override fun onAuthenticationSucceeded(result: androidx.biometric.BiometricPrompt.AuthenticationResult) {
+                                            val pw = com.example.security.AccountCredentialVault.load(context, account.email)
+                                            if (pw != null) viewModel.login(account.email, pw) { savePasswordThen(account.email, pw, onAuthSuccess) }
+                                        }
+                                    }
+                                    androidx.biometric.BiometricPrompt(activity, executor, callback).authenticate(
+                                        androidx.biometric.BiometricPrompt.PromptInfo.Builder()
+                                            .setTitle("Unlock Convo Chat")
+                                            .setSubtitle("Sign in as ${account.name.ifBlank { account.email }}")
+                                            .setAllowedAuthenticators(androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_STRONG or androidx.biometric.BiometricManager.Authenticators.DEVICE_CREDENTIAL)
+                                            .build()
+                                    )
+                                }
+                                .padding(horizontal = 14.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(Icons.Default.Fingerprint, contentDescription = "Biometric login", tint = lp.highlight, modifier = Modifier.size(18.dp))
+                            Text("Unlock with biometrics", color = lp.text, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                         }
                     }
 
@@ -878,6 +924,27 @@ fun AuthScreen(
                     Text(tr("End-to-end encrypted"), color = lp.textSoft, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                 }
             }
+
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "Trusted by 2M+ people for secure messaging.",
+                color = lp.textSoft,
+                fontSize = 11.sp,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "Continue as guest →",
+                color = lp.highlight,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .springPress { Toast.makeText(context, "Guest mode coming soon — sign in to keep your chats synced.", Toast.LENGTH_SHORT).show() }
+                    .padding(4.dp)
+            )
 
             if (rememberedAccounts.isNotEmpty()) {
                 Spacer(Modifier.height(8.dp))

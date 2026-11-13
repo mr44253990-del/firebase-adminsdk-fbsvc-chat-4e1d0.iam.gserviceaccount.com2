@@ -103,7 +103,8 @@ class IncomingGroupCallActivity : ComponentActivity() {
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
         val active = accepted && GroupCallEngine.state.value.status !in listOf("idle", "ended", "failed")
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && active && GroupCallEngine.state.value.video && !isInPictureInPictureMode) minimizeCallToPip()
+        // PiP-style floating overlay for both video and audio group calls.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && active && !isInPictureInPictureMode) minimizeCallToPip()
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -136,7 +137,7 @@ class IncomingGroupCallActivity : ComponentActivity() {
                         // the passive Join Call card is only for group-chat banners.
                         autoStart = true,
                         onClose = { GroupCallEngine.end(); finish() },
-                        onMinimize = { if (GroupCallEngine.state.value.video) minimizeCallToPip() else moveTaskToBack(true) },
+                        onMinimize = { minimizeCallToPip() },
                         onPipCallOver = { CallPipState.set(false); finish() }
                     )
                 } else {
@@ -144,6 +145,8 @@ class IncomingGroupCallActivity : ComponentActivity() {
                         groupName = groupName,
                         callerName = callerName,
                         video = videoCall,
+                        roomId = roomId,
+                        onRoomEnded = { finish() },
                         onAccept = { CallRingtoneController.stop(this, roomId); accepted = true; render() },
                         onDecline = { CallRingtoneController.stop(this, roomId); finish() }
                     )
@@ -158,9 +161,25 @@ private fun IncomingGroupCallPrompt(
     groupName: String,
     callerName: String,
     video: Boolean,
+    roomId: String = "",
+    onRoomEnded: () -> Unit = {},
     onAccept: () -> Unit,
     onDecline: () -> Unit
 ) {
+    // Host-end teardown: if the host ends the call while it is still ringing, exit immediately.
+    if (roomId.isNotBlank()) {
+        androidx.compose.runtime.DisposableEffect(roomId) {
+            val ref = com.google.firebase.database.FirebaseDatabase.getInstance().getReference("groupCalls").child(roomId).child("status")
+            val listener = object : com.google.firebase.database.ValueEventListener {
+                override fun onDataChange(snapshot: com.google.firebase.database.DataSnapshot) {
+                    if (snapshot.getValue(String::class.java) == "ended") onRoomEnded()
+                }
+                override fun onCancelled(error: com.google.firebase.database.DatabaseError) = Unit
+            }
+            ref.addValueEventListener(listener)
+            onDispose { ref.removeEventListener(listener) }
+        }
+    }
     val accent = Color(0xFF7C9CFF)
     Box(
         Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF0E1330), Color(0xFF1C1F4A), Color(0xFF071A2B)))),

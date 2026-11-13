@@ -371,6 +371,15 @@ fun HomeScreen(
     var showChatActionMenu by remember { mutableStateOf(false) }
     var selectedChatForMenu by remember { mutableStateOf<User?>(null) }
     var incomingAccountBanner by remember { mutableStateOf<Pair<String,String>?>(null) }
+    // FCM service posts non-active-account requests here; show the switch banner while foreground.
+    LaunchedEffect(Unit) {
+        AccountSwitchRequestBus.requests.collect { req ->
+            if (req != null) {
+                incomingAccountBanner = req.targetUid to req.message
+                AccountSwitchRequestBus.consume()
+            }
+        }
+    }
 
     // First-launch guided tour (spotlight + blurred surroundings). Replayable from Settings.
     var coachTourActive by remember { mutableStateOf(false) }
@@ -757,10 +766,15 @@ fun HomeScreen(
                 .background(scaffoldBgColor)
                 .padding(innerPadding)
         ) {
-            if (incomingAccountBanner != null) {
-                Box(Modifier.align(Alignment.TopCenter).fillMaxWidth()) {
+            Column(Modifier.align(Alignment.TopCenter).fillMaxWidth()) {
+                if (incomingAccountBanner != null) {
                     AccountSwitchBanner(incomingAccountId = incomingAccountBanner!!.first, incomingMessage = incomingAccountBanner!!.second, rememberedAccounts = rememberedAccounts, onSwitch = { uid -> viewModel.loginRememberedAccount(rememberedAccounts.first { it.uid == uid }) { incomingAccountBanner = null } }, onDismiss = { incomingAccountBanner = null })
                 }
+                SmartHomeTopStrip(
+                    notifications = activityNotifications,
+                    onOpenNotifications = { },
+                    onDismiss = { }
+                )
             }
             when (currentTab) {
                 0 -> {
@@ -3331,7 +3345,7 @@ fun SmartSearchDialog(
     onDismiss: () -> Unit
 ) {
     var query by remember { mutableStateOf("") }
-    var searchFilter by remember { mutableStateOf("All") }
+    var searchFilter by remember { mutableStateOf(SearchFilter.All) }
     val normalized = query.trim()
     val searchContext = LocalContext.current
     var recentSearches by remember { mutableStateOf(SmartSearch.recent(searchContext)) }
@@ -3339,17 +3353,12 @@ fun SmartSearchDialog(
     val parsedQuery = remember(normalized) { SmartSearch.parse(normalized) }
     fun rememberQuery() { SmartSearch.remember(searchContext, normalized); recentSearches = SmartSearch.recent(searchContext) }
     val matchedUsers = remember(parsedQuery, users, searchFilter) {
-        if (normalized.isBlank() || (searchFilter != "All" && searchFilter != "People")) emptyList() else SmartSearch.rankUsers(parsedQuery, users).take(30)
+        if (normalized.isBlank() || (searchFilter != SearchFilter.All && searchFilter != SearchFilter.People)) emptyList() else SmartSearch.rankUsers(parsedQuery, users).take(30)
     }
     val matchedPosts = remember(parsedQuery, posts, searchFilter) {
-        if (normalized.isBlank() || searchFilter == "People") emptyList() else SmartSearch.rankPosts(parsedQuery, posts.filter { post ->
+        if (normalized.isBlank() || searchFilter == SearchFilter.People) emptyList() else SmartSearch.rankPosts(parsedQuery, posts.filter { post ->
             if (post.isAdminReel && !post.postEverywhere) return@filter false
-            when (searchFilter) {
-                "Photos" -> post.imageUrl.isNotBlank() || post.imageUrls.isNotEmpty()
-                "Videos" -> post.videoUrl.isNotBlank() || post.isReel
-                "Audio" -> post.audioUrl.isNotBlank()
-                else -> true
-            }
+            searchFilter.matches(post)
         }).take(60)
     }
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
@@ -3372,16 +3381,21 @@ fun SmartSearchDialog(
                     )
                     IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, "Close search") }
                 }
-                Row(
-                    Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                GlassCard(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                    cornerRadius = 16.dp
                 ) {
-                    listOf("All", "People", "Posts", "Photos", "Videos", "Audio").forEach { filter ->
-                        FilterChip(
-                            selected = searchFilter == filter,
-                            onClick = { searchFilter = filter },
-                            label = { Text(filter) }
-                        )
+                    Row(
+                        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        SearchFilter.chips.forEach { filter ->
+                            FilterChip(
+                                selected = searchFilter == filter,
+                                onClick = { searchFilter = filter },
+                                label = { Text(filter.label) }
+                            )
+                        }
                     }
                 }
                 if (normalized.isBlank()) {
@@ -3391,17 +3405,13 @@ fun SmartSearchDialog(
                                 Text(tr("Recent"), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                                 TextButton(onClick = { SmartSearch.clear(searchContext); recentSearches = emptyList() }) { Text(tr("Clear all")) }
                             }
-                            recentSearches.forEach { recent ->
-                                Row(
-                                    Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).clickable { query = recent }.padding(horizontal = 6.dp, vertical = 8.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Icon(Icons.Default.History, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    Spacer(Modifier.width(10.dp))
-                                    Text(recent, Modifier.weight(1f))
-                                    IconButton(onClick = { SmartSearch.forget(searchContext, recent); recentSearches = SmartSearch.recent(searchContext) }, modifier = Modifier.size(28.dp)) {
-                                        Icon(Icons.Default.Close, "Remove", modifier = Modifier.size(16.dp))
-                                    }
+                            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                recentSearches.forEach { recent ->
+                                    AssistChip(
+                                        onClick = { query = recent; rememberQuery() },
+                                        label = { Text(recent, maxLines = 1) },
+                                        leadingIcon = { Icon(Icons.Default.History, null, Modifier.size(16.dp)) }
+                                    )
                                 }
                             }
                         }

@@ -32,6 +32,71 @@ import com.example.R
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
+import kotlin.math.sqrt
+import android.Manifest
+import android.content.pm.PackageManager
+import android.media.AudioFormat
+import android.media.AudioRecord
+import android.media.MediaRecorder
+import androidx.compose.runtime.State
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalContext
+import androidx.core.content.ContextCompat
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.withFrameMillis
+
+/**
+ * Samples microphone amplitude OFF the main composition: a background coroutine continuously
+ * reads a small AudioRecord buffer into a @Volatile float, and a LaunchedEffect loop with
+ * withFrameMillis throttles reads to ~30 fps into a mutableState. Never collect flows or
+ * block inside draw/drawBehind/canvas lambdas — they only read the finished state value.
+ */
+@Composable
+fun rememberMicAmplitude(enabled: Boolean): State<Float> {
+    val amplitude = remember { mutableFloatStateOf(0f) }
+    val context = LocalContext.current
+    androidx.compose.runtime.LaunchedEffect(enabled) {
+        if (!enabled) { amplitude.floatValue = 0f; return@LaunchedEffect }
+        val hasMic = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+        if (!hasMic) return@LaunchedEffect
+        @Volatile var latest = 0f
+        val sampler = launch(Dispatchers.IO) {
+            var recorder: AudioRecord? = null
+            val buffer = ShortArray(128)
+            try {
+                val minBuf = AudioRecord.getMinBufferSize(8000, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
+                recorder = AudioRecord(MediaRecorder.AudioSource.VOICE_RECOGNITION, 8000, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, minBuf.coerceAtLeast(buffer.size * 2))
+                if (recorder.state == AudioRecord.STATE_INITIALIZED) recorder.startRecording()
+                while (true) {
+                    val read = recorder.read(buffer, 0, buffer.size)
+                    if (read > 0) {
+                        var sum = 0.0
+                        for (i in 0 until read) sum += buffer[i] * buffer[i]
+                        latest = (sqrt(sum / read) / 32768f).coerceIn(0f, 1f)
+                    }
+                }
+            } catch (_: Throwable) { latest = 0f }
+            finally { runCatching { recorder?.stop(); recorder?.release() } }
+        }
+        try {
+            var lastSample = 0L
+            while (true) {
+                withFrameMillis { now ->
+                    if (now - lastSample >= 33L) { // ~30 fps throttle
+                        lastSample = now
+                        // Smooth so the aura moves fluidly instead of jittering per sample.
+                        amplitude.floatValue = amplitude.floatValue * 0.55f + latest * 0.45f
+                    }
+                }
+            }
+        } finally { sampler.cancel() }
+    }
+    return amplitude
+}
 
 /**
  * Animated caller avatar for 1:1 calls (coded, no emoji/assets):
@@ -40,7 +105,7 @@ import kotlin.math.sin
  *  - anything else (connecting/reconnecting): a dashed spinner ring.
  */
 @Composable
-fun CallAvatarAura(image: String, name: String, accent: Color, status: String, muted: Boolean = false, modifier: Modifier = Modifier) {
+fun CallAvatarAura(image: String, name: String, accent: Color, status: String, muted: Boolean = false, amplitude: Float = 0f, modifier: Modifier = Modifier) {
     val t = rememberInfiniteTransition(label = "aura")
     val spin by t.animateFloat(0f, 360f, infiniteRepeatable(tween(2600, easing = LinearEasing)), label = "spin")
     val wave by t.animateFloat(0f, 1f, infiniteRepeatable(tween(1800, easing = LinearEasing)), label = "wave")
@@ -73,11 +138,15 @@ fun CallAvatarAura(image: String, name: String, accent: Color, status: String, m
                     }
                 }
                 connected -> {
-                    drawCircle(Brush.radialGradient(listOf(accent.copy(alpha = .35f), Color.Transparent), center = c, radius = avatarR * 1.7f * breathe), radius = avatarR * 1.7f * breathe, center = c)
+                    // Aura radius + alpha breathe with the throttled mic amplitude (never sampled here).
+                    val drive = if (muted) 0f else amplitude.coerceIn(0f, 1f)
+                    val haloR = avatarR * (1.55f + 0.35f * drive) * breathe
+                    drawCircle(Brush.radialGradient(listOf(accent.copy(alpha = .28f + .32f * drive), Color.Transparent), center = c, radius = haloR), radius = haloR, center = c)
                     val bars = 48
                     for (i in 0 until bars) {
                         val ang = 2 * PI * i / bars - PI / 2
-                        val amp = if (muted) .12f else (.35f + .65f * ((sin(ang * 3 + wave * 2 * PI) * sin(ang * 5 - wave * 4 * PI) + 1) / 2).toFloat())
+                        val synth = (.35f + .65f * ((sin(ang * 3 + wave * 2 * PI) * sin(ang * 5 - wave * 4 * PI) + 1) / 2).toFloat())
+                        val amp = if (muted) .12f else (synth * (0.45f + 0.55f * drive))
                         val r0 = avatarR + 10.dp.toPx()
                         val r1 = r0 + 6.dp.toPx() + 18.dp.toPx() * amp
                         drawLine(

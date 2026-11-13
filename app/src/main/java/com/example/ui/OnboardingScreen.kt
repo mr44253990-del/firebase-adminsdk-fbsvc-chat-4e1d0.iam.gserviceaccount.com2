@@ -174,7 +174,7 @@ fun OnboardingScreen(onFinished: () -> Unit) {
                 Box(
                     Modifier.height(62.dp).width(btnWidth).clip(CircleShape)
                         .background(Brush.linearGradient(listOf(top, bottom)))
-                        .clickable { if (last) finish() else scope.launch { pagerState.animateScrollToPage(pagerState.currentPage + 1) } }
+                        .springPress { if (last) finish() else scope.launch { pagerState.animateScrollToPage(pagerState.currentPage + 1) } }
                         .testTag("onboarding_next"),
                     contentAlignment = Alignment.Center
                 ) {

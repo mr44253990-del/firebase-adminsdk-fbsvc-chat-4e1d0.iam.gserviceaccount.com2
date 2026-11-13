@@ -93,7 +93,7 @@ fun AiToolsHubScreen(onBack: () -> Unit, onOpenTool: (String) -> Unit, modifier:
                         .clip(RoundedCornerShape(22.dp))
                         .background(Brush.linearGradient(tool.colors, start = Offset.Zero, end = Offset(300f, 300f)))
                         .border(1.dp, Color.White.copy(alpha = .25f), RoundedCornerShape(22.dp))
-                        .clickable { if (!tool.soon) onOpenTool(tool.title) }
+                        .springPress(enabled = !tool.soon) { if (!tool.soon) onOpenTool(tool.title) }
                         .padding(14.dp)
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {

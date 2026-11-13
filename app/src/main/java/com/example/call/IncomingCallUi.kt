@@ -44,6 +44,11 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.example.R
 import com.example.service.CallRingtoneController
+import com.example.ui.FuturisticKit.GlassCard
+import com.example.ui.FuturisticKit.GlowDot
+import com.example.ui.FuturisticKit.NeonText
+import com.example.ui.theme.AuroraCyan
+import com.example.ui.theme.AuroraPink
 import kotlinx.coroutines.launch
 import kotlin.math.PI
 import kotlin.math.roundToInt
@@ -148,7 +153,12 @@ fun IncomingAnswerControls(
     video: Boolean,
     onAccept: () -> Unit,
     onDecline: () -> Unit,
-    onDeclineWithMessage: (() -> Unit)? = null
+    onDeclineWithMessage: (() -> Unit)? = null,
+    callerName: String = "",
+    muted: Boolean = false,
+    speaker: Boolean = false,
+    onToggleMute: (() -> Unit)? = null,
+    onToggleSpeaker: (() -> Unit)? = null
 ) {
     val phase by rememberRingPhase()
     val view = LocalView.current
@@ -178,14 +188,57 @@ fun IncomingAnswerControls(
     }
 
     Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+        // Larger caller name + audio/video badge (futuristic restyle).
+        if (callerName.isNotBlank()) {
+            NeonText(
+                text = callerName,
+                style = MaterialTheme.typography.headlineLarge.copy(fontWeight = FontWeight.ExtraBold, fontSize = 30.sp),
+                color = Color.White,
+                glow = AuroraCyan
+            )
+            Spacer(Modifier.height(8.dp))
+        }
+        GlassCard(cornerRadius = 14.dp, borderWidth = 1.dp) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                GlowDot(color = if (video) AuroraPink else AuroraCyan, size = 7.dp)
+                Icon(if (video) Icons.Default.Videocam else Icons.Default.Call, null, tint = if (video) AuroraPink else AuroraCyan, modifier = Modifier.size(14.dp))
+                Text(
+                    if (video) "Incoming video call" else "Incoming audio call",
+                    color = Color.White.copy(alpha = .85f), fontSize = 12.sp, fontWeight = FontWeight.Medium
+                )
+            }
+        }
+        Spacer(Modifier.height(14.dp))
+        // Mute / speaker quick-action row.
+        if (onToggleMute != null || onToggleSpeaker != null) {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                if (onToggleMute != null) {
+                    Box(
+                        Modifier.size(44.dp).clip(CircleShape)
+                            .background(if (muted) Color.White.copy(alpha = .9f) else Color.White.copy(alpha = .14f))
+                            .clickable { onToggleMute() },
+                        contentAlignment = Alignment.Center
+                    ) { Icon(if (muted) Icons.Default.MicOff else Icons.Default.Mic, "Mute", tint = if (muted) Color(0xFF111827) else Color.White, modifier = Modifier.size(20.dp)) }
+                }
+                if (onToggleSpeaker != null) {
+                    Box(
+                        Modifier.size(44.dp).clip(CircleShape)
+                            .background(if (speaker) Color.White.copy(alpha = .9f) else Color.White.copy(alpha = .14f))
+                            .clickable { onToggleSpeaker() },
+                        contentAlignment = Alignment.Center
+                    ) { Icon(if (speaker) Icons.Default.VolumeUp else Icons.Default.VolumeDown, "Speaker", tint = if (speaker) Color(0xFF111827) else Color.White, modifier = Modifier.size(20.dp)) }
+                }
+            }
+            Spacer(Modifier.height(14.dp))
+        }
         // Animated chevrons: "swipe up to answer".
-        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.height(64.dp)) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.height(56.dp)) {
             repeat(3) { i ->
                 val local = ((phase * 2f) - i * .18f).mod(1f)
                 Icon(
                     Icons.Default.KeyboardArrowUp, null,
                     tint = Color.White.copy(alpha = (sin(local * PI.toFloat()) * (1f - progress)).coerceIn(0f, 1f) * .9f),
-                    modifier = Modifier.size(26.dp).offset(y = (-6 * local).dp)
+                    modifier = Modifier.size(24.dp).offset(y = (-6 * local).dp)
                 )
             }
         }
@@ -193,9 +246,10 @@ fun IncomingAnswerControls(
             if (progress > .05f) "Release to answer" else "Swipe up or tap to answer",
             color = Color.White.copy(alpha = .78f), fontSize = 12.sp, fontWeight = FontWeight.Medium
         )
-        Spacer(Modifier.height(18.dp))
+        Spacer(Modifier.height(14.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.Bottom) {
             RoundAction(Color(0xFFE53935), Icons.Default.CallEnd, "Decline", alpha = 1f - progress) { onDecline() }
+            if (onDeclineWithMessage != null) RoundAction(Color.White.copy(alpha = .22f), Icons.Default.Message, "Message", alpha = 1f - progress) { onDeclineWithMessage() }
             // Drag surface is fixed; only the inner button moves (avoids gesture feedback loops).
             Box(
                 Modifier.size(width = 96.dp, height = 110.dp)
@@ -235,7 +289,6 @@ fun IncomingAnswerControls(
                     Text("Answer", color = Color.White, style = MaterialTheme.typography.labelMedium)
                 }
             }
-            if (onDeclineWithMessage != null) RoundAction(Color.White.copy(alpha = .22f), Icons.Default.Message, "Message", alpha = 1f - progress) { onDeclineWithMessage() }
         }
     }
 }

@@ -997,7 +997,7 @@ fun ChatScreen(
 
                         Spacer(modifier = Modifier.width(12.dp))
 
-                        Column {
+                        Column(Modifier.weight(1f)) {
                             Text(
                                 text = ConversationPrefs.version.collectAsState().value.let { ConversationPrefs.nickname(context, recipient.uid) }.ifBlank { updatedRecipient.name },
                                 style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
@@ -2266,19 +2266,26 @@ fun MessageBubbleItem(
                         )
                     }
 
-                    // Render Chat image if present
+                    // Render Chat image if present — original aspect ratio, ContentScale.Fit, capped ~320dp. No crop.
                     if (!message.imageUrl.isNullOrBlank()) {
-                        AsyncImage(
-                            model = message.imageUrl,
-                            contentDescription = "Image attachment",
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier
+                        var imageLoaded by remember(message.imageUrl) { mutableStateOf(false) }
+                        Box(
+                            Modifier
                                 .fillMaxWidth()
-                                .height(180.dp)
+                                .heightIn(max = 320.dp)
                                 .clip(RoundedCornerShape(18.dp))
-                                .clickable { showImageViewer = true }
                                 .background(MaterialTheme.colorScheme.surface)
-                        )
+                                .clickable { showImageViewer = true }
+                        ) {
+                            if (!imageLoaded) ShimmerBox(Modifier.fillMaxWidth().height(180.dp).align(Alignment.TopCenter))
+                            AsyncImage(
+                                model = message.imageUrl,
+                                contentDescription = "Image attachment",
+                                contentScale = ContentScale.Fit,
+                                modifier = Modifier.fillMaxWidth().heightIn(max = 320.dp).align(Alignment.TopCenter),
+                                onSuccess = { imageLoaded = true }
+                            )
+                        }
                         Spacer(modifier = Modifier.height(6.dp))
                     }
 

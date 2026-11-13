@@ -57,6 +57,10 @@ import coil.compose.AsyncImage
 import com.example.data.Group
 import com.example.data.GroupMessage
 import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.database.DataSnapshot
+import com.google.firebase.database.DatabaseError
+import com.google.firebase.database.FirebaseDatabase
+import com.google.firebase.database.ValueEventListener
 import java.io.File
 import java.io.InputStream
 import java.text.SimpleDateFormat
@@ -101,6 +105,34 @@ fun GroupChatScreen(
     var translationText by remember { mutableStateOf("") }
     var translationLoading by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
+
+    // Group call banner wiring: observe RTDB `groupCalls` for a live room tied to this group.
+    // The engine keys rooms by UUID (`groupCalls/<roomId>`) with a `groupId` field, so we query
+    // by groupId and keep the first room whose status is active/live. Tapping Join reuses the
+    // existing pending-call join flow (onJoinPendingCall) so it opens the same group call screen.
+    data class LiveGroupCall(val roomId: String, val video: Boolean, val hostName: String, val participantCount: Int)
+    var liveCall by remember(group.id) { mutableStateOf<LiveGroupCall?>(null) }
+    DisposableEffect(group.id) {
+        val ref = FirebaseDatabase.getInstance().getReference("groupCalls")
+            .orderByChild("groupId").equalTo(group.id)
+        val listener = object : ValueEventListener {
+            override fun onDataChange(snapshot: DataSnapshot) {
+                val live = snapshot.children.firstOrNull { room ->
+                    val status = room.child("status").getValue(String::class.java).orEmpty()
+                    status == "active" || status == "live"
+                }
+                liveCall = if (live == null) null else LiveGroupCall(
+                    roomId = live.key.orEmpty(),
+                    video = live.child("video").getValue(Boolean::class.java) ?: false,
+                    hostName = live.child("participants").child(live.child("hostId").getValue(String::class.java).orEmpty()).child("name").getValue(String::class.java)?.takeIf { it.isNotBlank() } ?: "Group member",
+                    participantCount = live.child("participants").children.count().coerceAtLeast(1)
+                )
+            }
+            override fun onCancelled(error: DatabaseError) { liveCall = null }
+        }
+        ref.addValueEventListener(listener)
+        onDispose { ref.removeEventListener(listener) }
+    }
 
     if (translationMessage != null) {
         AlertDialog(
@@ -410,6 +442,17 @@ fun GroupChatScreen(
                 .fillMaxSize()
                 .padding(innerPadding)
         ) {
+            // Live group call banner (observed from RTDB above). Tapping Join opens the group
+            // call screen through the existing pending-call join flow.
+            liveCall?.let { lc ->
+                GroupJoinCallBanner(
+                    visible = true,
+                    video = lc.video,
+                    hostName = lc.hostName,
+                    participantCount = lc.participantCount,
+                    onJoin = { onJoinPendingCall(lc.roomId, lc.video) }
+                )
+            }
             AnimatedVisibility(
                 visible = !pendingCallRoomId.isNullOrBlank(),
                 enter = fadeIn() + expandVertically(),

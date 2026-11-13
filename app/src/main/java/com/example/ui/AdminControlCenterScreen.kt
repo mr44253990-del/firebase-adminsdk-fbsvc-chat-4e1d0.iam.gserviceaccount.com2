@@ -230,6 +230,10 @@ fun AdminControlCenterScreen(
         AdminMenuEntry("workers", "Smart worker pool", "3-4 workers all active: weighted random + automatic failover", Icons.Outlined.Hub, Color(0xFF2B7FD9)),
         AdminMenuEntry("insights", "Smart insights", "Segments, sign-up chart, health checks, CSV export", Icons.Outlined.Insights, Color(0xFF00A3A3)),
         AdminMenuEntry("ai", "AI & feature flags", "Assistant and staged capabilities", Icons.Outlined.AutoAwesome, Color(0xFF8E5CE6)),
+        AdminMenuEntry("admin_ai", "Admin AI console", "Natural-language server commands (ban, broadcast, min version)", Icons.Outlined.SmartToy, Color(0xFF8E5CE6)),
+        AdminMenuEntry("ai_studio", "AI Studio", "Image creator, smart reply, summarize, translator…", Icons.Outlined.AutoAwesome, Color(0xFF29D3FF)),
+        AdminMenuEntry("admin_security", "Security & ring", "Live presence + remote device ring", Icons.Outlined.Security, Color(0xFF2E5BFF)),
+        AdminMenuEntry("advanced_controls", "Advanced controls", "Ban, wipe posts, force-logout, min version, feature flags", Icons.Outlined.AdminPanelSettings, Color(0xFFD84949)),
         AdminMenuEntry("premium", "Premium & payments", "Plans, pricing and payment methods", Icons.Outlined.WorkspacePremium, Color(0xFFCF9829)),
         AdminMenuEntry("campaigns", "Campaigns", "One-time Friday Fun message", Icons.Outlined.Campaign, Color(0xFFDB5B8C)),
         AdminMenuEntry("users", "User management", "Search profiles, filter status and open quick details", Icons.Outlined.Groups, Color(0xFF4B83BE), users.size.takeIf { it > 0 }?.toString().orEmpty()),
@@ -1161,6 +1165,30 @@ fun AdminControlCenterScreen(
                                 Icon(Icons.Default.SendToMobile, null); Spacer(Modifier.width(7.dp)); Text("Send diagnostic push")
                             }
                         }
+                    }
+                    "admin_security" -> {
+                        AdminSecurityScreen(users = users, onBack = { selectedPage = "dashboard" })
+                    }
+                    "admin_ai" -> {
+                        AdminAiControlScreen(onBack = { selectedPage = "dashboard" })
+                    }
+                    "ai_studio" -> {
+                        val hubCtx = LocalContext.current
+                        AiToolsHubScreen(
+                            onBack = { selectedPage = "dashboard" },
+                            onOpenTool = { tool ->
+                                when (tool) {
+                                    "AI Assistant" -> ProTools.navigate("assistant")
+                                    else -> Toast.makeText(hubCtx, "$tool coming soon", Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        )
+                    }
+                    "user_management" -> {
+                        UserManagementScreen(onBack = { selectedPage = "dashboard" })
+                    }
+                    "advanced_controls" -> {
+                        AdminAdvancedControls(onBack = { selectedPage = "dashboard" })
                     }
                 }
                 Spacer(Modifier.height(24.dp))

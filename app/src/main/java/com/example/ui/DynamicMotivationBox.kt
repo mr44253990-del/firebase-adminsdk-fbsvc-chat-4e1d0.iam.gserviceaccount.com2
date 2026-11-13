@@ -1,10 +1,13 @@
 package com.example.ui
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -42,6 +45,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.ui.theme.AuroraCyan
+import com.example.ui.theme.AuroraPink
 import kotlinx.coroutines.delay
 import java.util.Calendar
 
@@ -66,6 +71,74 @@ private fun quotesForNow(): List<String> = when (Calendar.getInstance().get(Cale
     in 5..11 -> morningQuotes
     in 12..16 -> dayQuotes
     else -> eveningQuotes
+}
+
+/**
+ * v4 smart home top strip: combines EnhancedNotificationBox (latest unread activity) and
+ * DynamicMotivationBox (time-of-day quote) into ONE rotating GlassCard. Both data sources are
+ * kept: when there is an unread notification it shows first, then rotates to a motivation quote
+ * every 7 s. Tap cycles instantly; the × dismisses for this session.
+ */
+@Composable
+fun SmartHomeTopStrip(
+    notifications: List<com.example.data.ActivityNotification>,
+    onOpenNotifications: () -> Unit,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val pool = remember { quotesForNow() }
+    var quoteIndex by remember { mutableIntStateOf((System.currentTimeMillis() % pool.size).toInt()) }
+    var showNotif by remember { mutableStateOf(notifications.any { !it.isRead }) }
+    var visible by remember { mutableStateOf(true) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(7_000)
+            showNotif = !showNotif
+            if (!showNotif) quoteIndex = (quoteIndex + 1) % pool.size
+        }
+    }
+    val latest = notifications.firstOrNull { !it.isRead } ?: notifications.firstOrNull()
+    AnimatedVisibility(
+        visible = visible,
+        enter = slideInVertically { -it } + fadeIn(),
+        exit = slideOutVertically { -it } + fadeOut(),
+        modifier = modifier
+    ) {
+        GlassCard(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+            cornerRadius = 18.dp
+        ) {
+            Row(
+                Modifier.fillMaxWidth().clickable {
+                    if (latest != null && showNotif) onOpenNotifications() else { showNotif = !showNotif; quoteIndex = (quoteIndex + 1) % pool.size }
+                }.padding(vertical = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                GlowDot(color = if (showNotif && latest != null) AuroraPink else AuroraCyan, size = 10.dp)
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        if (showNotif && latest != null) "Activity" else "Daily spark",
+                        color = AuroraCyan, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp
+                    )
+                    Spacer(Modifier.height(2.dp))
+                    androidx.compose.animation.AnimatedContent(
+                        targetState = if (showNotif && latest != null) "${latest.actorName.ifBlank { "Someone" }}: ${latest.text}" else pool[quoteIndex],
+                        transitionSpec = { fadeIn(tween(300)) togetherWith fadeOut(tween(300)) },
+                        label = "strip_content"
+                    ) { text ->
+                        Text(text, color = Color.White, fontSize = 13.sp, lineHeight = 17.sp, fontWeight = FontWeight.Medium, maxLines = 2)
+                    }
+                }
+                if (notifications.any { !it.isRead }) {
+                    Text("${notifications.count { !it.isRead }}", color = AuroraPink, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                }
+                Box(Modifier.size(24.dp).clip(CircleShape).clickable { visible = false; onDismiss() }.padding(4.dp), contentAlignment = Alignment.Center) {
+                    Icon(Icons.Default.Close, null, tint = Color.White.copy(alpha = .7f), modifier = Modifier.size(14.dp))
+                }
+            }
+        }
+    }
 }
 
 /**

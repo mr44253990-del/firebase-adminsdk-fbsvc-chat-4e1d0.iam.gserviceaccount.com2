@@ -24,7 +24,10 @@ import com.example.call.IncomingGroupCallActivity
 import com.example.data.AppDatabase
 import com.example.data.CachedMessage
 import com.example.data.Message
+import com.example.data.RememberedAccount
 import com.example.data.User
+import com.example.ui.AccountSwitchRequest
+import com.example.ui.AccountSwitchRequestBus
 import com.google.firebase.auth.FirebaseAuth
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -53,6 +56,11 @@ const val PRESENCE_LEASE_MS = 6 * 60_000L
 private const val SUMMARY_ID = 0x0C0FFEE
 
 class MyFirebaseMessagingService : FirebaseMessagingService() {
+
+    companion object {
+        /** Token unsubscribing per uid: removes routing token fields so pushes stop for that account. */
+        fun unsubscribeForUid(context: Context, uid: String) = com.example.ui.unsubscribeForUid(context, uid)
+    }
 
     override fun onNewToken(token: String) {
         super.onNewToken(token)
@@ -98,6 +106,28 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         // ("now", "5m", "1h") instead of being frozen inside the message text.
         val body = if (hideContent) "New notification. Unlock Convo Chat to view it." else plainNotificationText(rawBody).ifBlank { "New message" }
         val targetId = remoteMessage.data["targetId"] ?: ""
+        // Multi-account: which uid is this push addressed to? The Worker stamps recipientUid when
+        // delivering to a device hosting several remembered accounts. Default to the signed-in uid.
+        val currentUid = FirebaseAuth.getInstance().currentUser?.uid
+        val recipientUid = remoteMessage.data["recipientUid"]?.takeIf { it.isNotBlank() }
+            ?: remoteMessage.data["toUid"]?.takeIf { it.isNotBlank() }
+            ?: remoteMessage.data["accountUid"]?.takeIf { it.isNotBlank() }
+            ?: currentUid.orEmpty()
+        val forNonActiveAccount = recipientUid.isNotBlank() && currentUid != null && recipientUid != currentUid &&
+            RememberedAccount.findByUid(this, recipientUid) != null
+        // Foreground: raise the "Switch account & receive" banner instead of surprising the user with
+        // a notification for an account they are not currently using.
+        if (forNonActiveAccount && ActiveChatState.appVisible) {
+            AccountSwitchRequestBus.post(
+                AccountSwitchRequest(
+                    targetUid = recipientUid,
+                    message = body,
+                    senderId = senderId,
+                    callId = if (notificationType == "incoming_call" || notificationType == "incoming_video_call") targetId else "",
+                    videoCall = notificationType == "incoming_video_call"
+                )
+            )
+        }
         if (notificationType == "message" && senderId.isNotBlank()) {
             FirebaseAuth.getInstance().currentUser?.uid?.let { receiverUid ->
                 val chatId = listOf(senderId, receiverUid).sorted().joinToString("_")
@@ -147,7 +177,7 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
             val imageUrl = remoteMessage.data["imageUrl"].orEmpty()
                 .takeIf { !hideContent && it.startsWith("https://") && com.example.ui.NotificationExtrasPrefs.richImagesEnabled(applicationContext) }
                 .orEmpty()
-            sendNotification(title, body, senderId, notificationType, senderProfileUrl, targetId, sentAt, senderName, imageUrl)
+            sendNotification(title, body, senderId, notificationType, senderProfileUrl, targetId, sentAt, senderName, imageUrl, accountUid = recipientUid)
         }
     }
 
@@ -400,7 +430,8 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         targetId: String,
         sentAt: Long = System.currentTimeMillis(),
         senderName: String = title,
-        imageUrl: String = ""
+        imageUrl: String = "",
+        accountUid: String = ""
     ) {
         val richImage = if (imageUrl.isNotBlank()) notificationImage(imageUrl) else null
         val intent = Intent(this, MainActivity::class.java).apply {
@@ -408,6 +439,7 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
             putExtra("senderId", senderId)
             putExtra("notificationType", notificationType)
             putExtra("targetId", targetId)
+            putExtra("accountUid", accountUid)
         }
 
         val pendingIntent = PendingIntent.getActivity(
@@ -515,7 +547,7 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
                 .setChoices(SmartReplies.suggest(messageBody).toTypedArray())
                 .build()
             val replyIntent = Intent(this, NotificationReplyReceiver::class.java).apply {
-                putExtra("senderId", senderId); putExtra("notificationId", notificationId)
+                putExtra("senderId", senderId); putExtra("notificationId", notificationId); putExtra("accountUid", accountUid)
             }
             val replyPending = PendingIntent.getBroadcast(this, notificationId, replyIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE)
             notificationBuilder.addAction(NotificationCompat.Action.Builder(android.R.drawable.ic_menu_send, "Reply", replyPending).addRemoteInput(replyInput).setAllowGeneratedReplies(true).setSemanticAction(NotificationCompat.Action.SEMANTIC_ACTION_REPLY).setShowsUserInterface(false).build())
@@ -528,6 +560,24 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
                 NotificationCompat.Action.Builder(android.R.drawable.ic_lock_silent_mode, "Mute 1h", mute)
                     .setSemanticAction(NotificationCompat.Action.SEMANTIC_ACTION_MUTE).setShowsUserInterface(false).build()
             )
+            // Multi-account: this message arrived for a remembered account that is not currently
+            // signed in. Offer a one-tap switch that signs in as that account then opens the chat.
+            val activeNow = FirebaseAuth.getInstance().currentUser?.uid
+            if (accountUid.isNotBlank() && activeNow != null && accountUid != activeNow) {
+                val switchIntent = Intent(this, NotificationReplyReceiver::class.java)
+                    .setAction(NotificationReplyReceiver.ACTION_SWITCH_ACCOUNT)
+                    .putExtra("switchUid", accountUid)
+                    .putExtra("senderId", senderId)
+                    .putExtra("notificationId", notificationId)
+                val switchPending = PendingIntent.getBroadcast(
+                    this, ("switch_" + accountUid + "_" + notificationId).hashCode(),
+                    switchIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                )
+                notificationBuilder.addAction(
+                    NotificationCompat.Action.Builder(android.R.drawable.ic_menu_revert, "Switch & receive", switchPending)
+                        .setShowsUserInterface(true).build()
+                )
+            }
         }
 
         avatarBitmap?.let { notificationBuilder.setLargeIcon(it) }

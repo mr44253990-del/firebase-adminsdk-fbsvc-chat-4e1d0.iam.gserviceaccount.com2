@@ -220,7 +220,8 @@ object CallEngine {
         if (st.screenSharing || st.cameraOff) return false
         if (st.frontCamera) { notice("Switch to the back camera to use the flashlight"); return false }
         val target = !st.torchOn
-        val ok = CallTorch.set(videoCapturer, target)
+        // Primary path: CameraManager.setTorchMode with FLASH_INFO_AVAILABLE check.
+        val ok = appContext?.let { CallFlashlight.set(it, target) } == true || CallTorch.set(videoCapturer, target)
         if (ok) _state.value = st.copy(torchOn = target) else notice("Flashlight isn't available on this phone during calls")
         return ok
     }

@@ -92,7 +92,7 @@ fun MultiImageSendSheet(
                 FilterChip(selected = hd, onClick = { hd = !hd }, label = { Text("HD") }, leadingIcon = { Icon(if (hd) Icons.Default.HighQuality else Icons.Default.Hd, null, Modifier.size(18.dp)) })
             }
             items.getOrNull(focused.coerceIn(0, (items.size - 1).coerceAtLeast(0)))?.let { big ->
-                AsyncImage(big, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxWidth().height(260.dp).clip(RoundedCornerShape(22.dp)).background(Color.Black))
+                AsyncImage(big, null, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxWidth().heightIn(max = 260.dp).clip(RoundedCornerShape(22.dp)).background(Color.Black))
             }
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 itemsIndexed(items, key = { _, u -> u.toString() }) { index, uri ->
@@ -121,15 +121,16 @@ fun MultiImageSendSheet(
                 placeholder = { Text("Add a caption…") },
                 shape = RoundedCornerShape(20.dp), maxLines = 3, modifier = Modifier.fillMaxWidth()
             )
-            Button(
+            GradientButton(
                 onClick = { onSend(items, caption.trim(), hd) },
                 enabled = items.isNotEmpty(),
-                shape = RoundedCornerShape(18.dp),
+                cornerRadius = 18.dp,
                 modifier = Modifier.fillMaxWidth().height(52.dp)
             ) {
-                Icon(Icons.AutoMirrored.Filled.Send, null)
-                Spacer(Modifier.width(8.dp))
-                Text(if (items.size == 1) "Send photo" else "Send ${items.size} photos", fontWeight = FontWeight.Bold)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Icon(Icons.AutoMirrored.Filled.Send, null, tint = Color.White)
+                    Text(if (items.size == 1) "Send photo" else "Send ${items.size} photos", fontWeight = FontWeight.Bold, color = Color.White)
+                }
             }
         }
     }

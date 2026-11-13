@@ -52,6 +52,7 @@ import com.example.data.Post
 import com.example.data.User
 import com.google.firebase.auth.FirebaseAuth
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.tasks.await
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -236,7 +237,43 @@ fun AssistantScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenAiSettin
                     val haystack = "${user.name} ${user.username}".lowercase()
                     user to tokens.count { token -> haystack.contains(token) }
                 }.filter { it.second > 0 }.sortedWith(compareByDescending<Pair<User, Int>> { it.second }.thenBy { it.first.name }).map { it.first }.take(20)
-                answer(if (matches.isEmpty()) "No users matched. Try a few more letters of the name." else "Found ${matches.size} matching people. Open a profile or start a chat below.")
+                answer(if (matches.isEmpty()) "No users matched. Try a few more letters of the name." else "Found ${matches.size} matching people. Open a profile or start a chat below.", sources = listOf(AssistantSource("source: your data", "")))
+            }
+            normalized.startsWith("find post") || normalized.startsWith("search post") || normalized.contains("my post") || normalized.contains("posts about") -> {
+                val stopWords = setOf("find", "search", "post", "posts", "my", "please", "show", "me", "the", "for", "about")
+                val tokens = normalized.split(Regex("[^\\p{L}\\p{N}_]+")).filter { it.length >= 2 && it !in stopWords }
+                val found = posts.filter { p ->
+                    val hay = p.text.lowercase()
+                    tokens.isEmpty() || tokens.any { hay.contains(it) }
+                }.take(5)
+                val summary = if (found.isEmpty()) "No matching posts found in your data." else buildString {
+                    append("Found ${found.size} post(s) from your data:\n")
+                    found.forEachIndexed { i, p -> append("${i + 1}. \"${p.text.take(80)}${if (p.text.length > 80) "…" else ""}\"\n") }
+                }
+                answer(summary, sources = listOf(AssistantSource("source: your data", "")))
+            }
+            normalized.contains("mutual friend") || normalized.contains("common friend") || normalized.contains("mutual friends") -> {
+                val myFriends = currentUser?.friends?.toSet() ?: emptySet()
+                val mutual = users.filter { it.uid != uid && myFriends.intersect(it.friends.toSet()).isNotEmpty() }.take(10)
+                answer(
+                    if (mutual.isEmpty()) "No mutual friends found in your contacts." else "You have ${mutual.size} mutual friend(s): ${mutual.joinToString { it.name }}.",
+                    sources = listOf(AssistantSource("source: your data", ""))
+                )
+            }
+            normalized.contains("my group") || normalized.startsWith("search group") || normalized.contains("which group") || normalized.contains("my groups") -> {
+                thinking = true
+                scope.launch {
+                    val groupNames = runCatching {
+                        val db = com.google.firebase.firestore.FirebaseFirestore.getInstance()
+                        val snap = db.collection("groups").whereArrayContains("members", uid).limit(15).get().await()
+                        snap.documents.mapNotNull { doc -> doc.getString("name") }.filter { it.isNotBlank() }
+                    }.getOrDefault(emptyList())
+                    thinking = false
+                    answer(
+                        if (groupNames.isEmpty()) "No groups found in your data." else "You are in ${groupNames.size} group(s): ${groupNames.joinToString(", ")}.",
+                        sources = listOf(AssistantSource("source: your data", ""))
+                    )
+                }
             }
             else -> askAi(prompt)
         }

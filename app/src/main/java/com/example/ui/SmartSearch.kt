@@ -127,3 +127,20 @@ object SmartSearch {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().remove(KEY_RECENT).apply()
     }
 }
+
+/** v4 filter chips that scope search results. People = users only; Messages = text only; Media = any photo/video/audio; Links = posts containing a URL. */
+enum class SearchFilter(val label: String) {
+    All("All"), People("People"), Messages("Messages"), Media("Media"), Links("Links");
+    companion object { val chips: List<SearchFilter> get() = values().toList() }
+}
+
+/** True if a post belongs under the chosen filter scope. */
+fun SearchFilter.matches(post: com.example.data.Post): Boolean = when (this) {
+    SearchFilter.All -> true
+    SearchFilter.People -> false // people-only results come from rankUsers, not posts
+    SearchFilter.Messages -> post.imageUrl.isBlank() && post.imageUrls.isEmpty() &&
+        post.videoUrl.isBlank() && !post.isReel && post.audioUrl.isBlank()
+    SearchFilter.Media -> post.imageUrl.isNotBlank() || post.imageUrls.isNotEmpty() ||
+        post.videoUrl.isNotBlank() || post.isReel || post.audioUrl.isNotBlank()
+    SearchFilter.Links -> post.text.contains("http://") || post.text.contains("https://")
+}

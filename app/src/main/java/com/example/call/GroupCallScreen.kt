@@ -46,6 +46,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import android.os.VibrationEffect
 import android.os.Vibrator
@@ -76,6 +77,14 @@ fun GroupCallScreen(
     var joinRequested by remember { mutableStateOf(autoStart) }
     var showDiagnostics by remember { mutableStateOf(false) }
     var showMoreControls by remember { mutableStateOf(false) }
+    // Add-participant mid-call picker + smart group functions state.
+    var showAddParticipant by remember { mutableStateOf(false) }
+    var pickableUsers by remember { mutableStateOf<List<com.example.data.User>>(emptyList()) }
+    val selectedParticipants = remember { mutableStateListOf<String>() }
+    var myHandRaised by remember { mutableStateOf(false) }
+    var hostMutedAll by remember { mutableStateOf(false) }
+    var showReactions by remember { mutableStateOf(false) }
+    var floatingReactions by remember { mutableStateOf<List<Pair<String, String>>>(emptyList()) }
     BackHandler(enabled = started && state.status !in listOf("idle", "ended", "failed")) { onMinimize() }
     val localUid = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid.orEmpty()
     val isHost = state.hostId.isNotBlank() && state.hostId == localUid
@@ -183,7 +192,7 @@ fun GroupCallScreen(
                     }
                 },
                 navigationIcon = {
-                    IconButton(onClick = { GroupCallEngine.end(); onClose() }) {
+                    IconButton(onClick = { GroupCallEngine.end(host = isHost); onClose() }) {
                         Icon(Icons.Default.Close, "End call")
                     }
                 },
@@ -260,9 +269,14 @@ fun GroupCallScreen(
                     GroupDockButton(if (state.muted) Icons.Default.MicOff else Icons.Default.Mic, if (state.muted) "Unmute" else "Mute", state.muted, callPalette.accent) { GroupCallEngine.toggleMute() }
                     if (state.video) GroupDockButton(if (state.cameraOff) Icons.Default.VideocamOff else Icons.Default.Videocam, "Camera", state.cameraOff, callPalette.accent) { GroupCallEngine.toggleCamera() }
                     GroupDockButton(if (state.speaker) Icons.Default.VolumeUp else Icons.Default.Hearing, if (state.speaker) "Speaker" else "Earpiece", state.speaker, callPalette.accent) { GroupCallEngine.toggleSpeaker() }
+                    GroupDockButton(Icons.Default.PanTool, if (myHandRaised) "Lower hand" else "Raise hand", myHandRaised, callPalette.accent) {
+                        myHandRaised = !myHandRaised
+                        GroupCallEngine.raiseHand(myHandRaised)
+                    }
+                    GroupDockButton(Icons.Default.EmojiEmotions, "Reactions", showReactions, callPalette.accent) { showReactions = !showReactions }
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         FilledIconButton(
-                            onClick = { GroupCallEngine.end(); onClose() },
+                            onClick = { GroupCallEngine.end(host = isHost); onClose() },
                             modifier = Modifier.size(width = 64.dp, height = 48.dp),
                             shape = RoundedCornerShape(24.dp),
                             colors = IconButtonDefaults.filledIconButtonColors(containerColor = Color(0xFFE53935), contentColor = Color.White)
@@ -315,6 +329,36 @@ fun GroupCallScreen(
                                 )
                             }
                             DropdownMenuItem(
+                                text = { Text("Add participant") },
+                                leadingIcon = { Icon(Icons.Default.PersonAdd, null) },
+                                onClick = { showMoreControls = false; showAddParticipant = true }
+                            )
+                            DropdownMenuItem(
+                                text = { Text(if (state.video) "Switch to audio call" else "Switch to video call") },
+                                leadingIcon = { Icon(if (state.video) Icons.Default.Call else Icons.Default.Videocam, null) },
+                                onClick = { GroupCallEngine.toggleVideoCall(); showMoreControls = false }
+                            )
+                            if (isHost) {
+                                DropdownMenuItem(
+                                    text = { Text(if (hostMutedAll) "Unmute all" else "Mute all participants") },
+                                    leadingIcon = { Icon(Icons.Default.MicOff, null) },
+                                    onClick = {
+                                        hostMutedAll = !hostMutedAll
+                                        GroupCallEngine.hostMuteAll(hostMutedAll)
+                                        showMoreControls = false
+                                    }
+                                )
+                            }
+                            DropdownMenuItem(
+                                text = { Text(if (myHandRaised) "Lower hand" else "Raise hand") },
+                                leadingIcon = { Icon(Icons.Default.PanTool, null) },
+                                onClick = {
+                                    myHandRaised = !myHandRaised
+                                    GroupCallEngine.raiseHand(myHandRaised)
+                                    showMoreControls = false
+                                }
+                            )
+                            DropdownMenuItem(
                                 text = { Text(if (showDiagnostics) "Hide diagnostics" else "Show diagnostics") },
                                 leadingIcon = { Icon(Icons.Default.NetworkCheck, null) },
                                 onClick = { showDiagnostics = !showDiagnostics; showMoreControls = false }
@@ -365,7 +409,7 @@ fun GroupCallScreen(
                 Text(state.error ?: "Group call failed", color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
                 Button(
                     onClick = {
-                        GroupCallEngine.end()
+                        GroupCallEngine.end(host = isHost)
                         started = false
                         val cameraAllowed = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
                         if (joinRoomId.isNullOrBlank()) {
@@ -452,6 +496,7 @@ fun GroupCallScreen(
                             accent = callPalette.accent,
                             connected = participant.connected,
                             muted = participant.muted || participant.hostMuted,
+                            handRaised = participant.handRaised,
                             cameraOff = !participant.video,
                             isHost = isHost,
                             onMute = { GroupCallEngine.hostMuteParticipant(participant.uid, !participant.hostMuted) },
@@ -542,6 +587,7 @@ fun GroupCallScreen(
                             accent = callPalette.accent,
                             connected = participant.connected,
                             muted = participant.muted || participant.hostMuted,
+                            handRaised = participant.handRaised,
                             cameraOff = !participant.video,
                             isHost = isHost,
                             onMute = { GroupCallEngine.hostMuteParticipant(participant.uid, !participant.hostMuted) },
@@ -555,6 +601,117 @@ fun GroupCallScreen(
                                 onRelease = { GroupCallEngine.detachRemoteRenderer(participant.uid, it) }
                             )
                         }
+                    }
+                }
+            }
+        }
+    }
+
+    // Add-participant mid-call picker (reuses the checkbox user-picker pattern from GroupChatScreen).
+    if (showAddParticipant) {
+        LaunchedEffect(Unit) {
+            val me = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid
+            com.google.firebase.firestore.FirebaseFirestore.getInstance().collection("users").get()
+                .addOnSuccessListener { snapshot ->
+                    val inCall = state.participants.map { it.uid }.toSet() + me.orEmpty()
+                    pickableUsers = snapshot.documents.mapNotNull { doc ->
+                        val uid = doc.id
+                        if (uid in inCall) return@mapNotNull null
+                        com.example.data.User(
+                            uid = uid,
+                            name = doc.getString("name") ?: "Convo Chat user",
+                            profileImageUrl = doc.getString("profileImageUrl").orEmpty(),
+                            fcmToken = doc.getString("fcmToken").orEmpty()
+                        )
+                    }
+                }
+        }
+        val selected = remember { mutableStateListOf<String>() }
+        AlertDialog(
+            onDismissRequest = { showAddParticipant = false },
+            title = { Text("Add to call", fontWeight = FontWeight.Bold) },
+            text = {
+                if (pickableUsers.isEmpty()) {
+                    Text("Loading users…", color = Color.White.copy(alpha = .7f))
+                } else {
+                    LazyColumn(Modifier.heightIn(max = 380.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        items(pickableUsers, key = { it.uid }) { user ->
+                            val checked = selected.contains(user.uid)
+                            Row(
+                                Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp))
+                                    .clickable { if (checked) selected.remove(user.uid) else selected.add(user.uid) }
+                                    .background(if (checked) callPalette.accent.copy(alpha = .22f) else Color.Transparent)
+                                    .padding(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Checkbox(checked, null)
+                                Spacer(Modifier.width(8.dp))
+                                Text(user.name, color = Color.White)
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        GroupCallEngine.addParticipantsAndInvite(selected.toList())
+                        selected.clear()
+                        showAddParticipant = false
+                    },
+                    enabled = selected.isNotEmpty()
+                ) { Text("Add") }
+            },
+            dismissButton = { TextButton(onClick = { showAddParticipant = false; selected.clear() }) { Text("Cancel") } }
+        )
+    }
+
+    // Floating reaction emojis (smart group function): observe the room's short-lived reactions node.
+    DisposableEffect(state.roomId) {
+        if (state.roomId.isBlank()) return@DisposableEffect onDispose {}
+        val ref = com.google.firebase.database.FirebaseDatabase.getInstance().getReference("groupCalls").child(state.roomId).child("reactions")
+        val listener = object : com.google.firebase.database.ChildEventListener {
+            override fun onChildAdded(snapshot: com.google.firebase.database.DataSnapshot, previousChildName: String?) {
+                val from = snapshot.child("from").getValue(String::class.java).orEmpty()
+                val emoji = snapshot.child("emoji").getValue(String::class.java).orEmpty()
+                if (emoji.isNotBlank()) {
+                    val name = state.participants.firstOrNull { it.uid == from }?.name ?: "Someone"
+                    floatingReactions = floatingReactions + (name to emoji)
+                }
+            }
+            override fun onChildChanged(s: com.google.firebase.database.DataSnapshot, p: String?) = Unit
+            override fun onChildRemoved(s: com.google.firebase.database.DataSnapshot) = Unit
+            override fun onChildMoved(s: com.google.firebase.database.DataSnapshot, p: String?) = Unit
+            override fun onCancelled(error: com.google.firebase.database.DatabaseError) = Unit
+        }
+        ref.addChildEventListener(listener)
+        onDispose { ref.removeEventListener(listener) }
+    }
+    LaunchedEffect(floatingReactions.size) {
+        if (floatingReactions.isNotEmpty()) {
+            kotlinx.coroutines.delay(3500)
+            floatingReactions = floatingReactions.drop(1)
+        }
+    }
+    if (floatingReactions.isNotEmpty()) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+            Column(Modifier.padding(top = 72.dp), verticalArrangement = Arrangement.spacedBy(4.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                floatingReactions.take(4).forEach { (name, emoji) ->
+                    Text("$emoji  $name", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+    }
+    if (showReactions) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {
+            Surface(
+                modifier = Modifier.padding(bottom = 110.dp, horizontal = 16.dp).fillMaxWidth(),
+                shape = RoundedCornerShape(24.dp),
+                color = Color.Black.copy(alpha = .7f)
+            ) {
+                Row(Modifier.padding(12.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
+                    listOf("👍", "❤️", "😂", "🎉", "👏", "🔥").forEach { emoji ->
+                        Text(emoji, fontSize = 28.sp, modifier = Modifier.clickable { GroupCallEngine.sendReaction(emoji); showReactions = false })
                     }
                 }
             }
@@ -585,6 +742,7 @@ private fun CallVideoTile(
     connected: Boolean,
     muted: Boolean,
     cameraOff: Boolean,
+    handRaised: Boolean = false,
     isHost: Boolean,
     onMute: () -> Unit,
     onRemove: () -> Unit,
@@ -646,6 +804,10 @@ private fun CallVideoTile(
                     if (muted) {
                         Spacer(Modifier.width(5.dp))
                         Icon(Icons.Default.MicOff, "Muted", tint = Color(0xFFFF8A80), modifier = Modifier.size(14.dp))
+                    }
+                    if (handRaised) {
+                        Spacer(Modifier.width(5.dp))
+                        Icon(Icons.Default.PanTool, "Hand raised", tint = Color(0xFFFFD54F), modifier = Modifier.size(14.dp))
                     }
                 }
             }

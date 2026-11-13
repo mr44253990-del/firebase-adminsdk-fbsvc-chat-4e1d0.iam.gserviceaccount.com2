@@ -52,10 +52,10 @@ fun AdminInsightsPanel(users: List<User>) {
     // KPI tiles
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         InsightTile("Users", users.size.toString(), Icons.Outlined.Groups, Color(0xFF4B83BE), Modifier.weight(1f))
-        InsightTile("Online", segments["online"]!!.second.size.toString(), Icons.Outlined.Bolt, Color(0xFF23A55A), Modifier.weight(1f))
-        InsightTile("Premium", segments["premium"]!!.second.size.toString(), Icons.Outlined.WorkspacePremium, Color(0xFFCF9829), Modifier.weight(1f))
+        InsightTile("Online", (segments["online"]?.second?.size ?: 0).toString(), Icons.Outlined.Bolt, Color(0xFF23A55A), Modifier.weight(1f))
+        InsightTile("Premium", (segments["premium"]?.second?.size ?: 0).toString(), Icons.Outlined.WorkspacePremium, Color(0xFFCF9829), Modifier.weight(1f))
     }
-    val active = segments["active7"]!!.second.size
+    val active = segments["active7"]?.second?.size ?: 0
     val retention = if (users.isEmpty()) 0f else active / users.size.toFloat()
     Text("Weekly active: $active (${(retention * 100).toInt()}%)", fontWeight = FontWeight.Bold, fontSize = 13.sp)
     LinearProgressIndicator(progress = { retention }, modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(8.dp)))
@@ -124,9 +124,9 @@ fun AdminInsightsPanel(users: List<User>) {
     // Quality checks
     Text("Health checks", fontWeight = FontWeight.Bold, fontSize = 13.sp)
     InsightCheck("Duplicate display names", if (dupNames.isEmpty()) "None found" else dupNames.entries.take(5).joinToString { "${it.value.first().name} ×${it.value.size}" }, dupNames.isEmpty())
-    InsightCheck("Profiles without a photo", "${segments["nophoto"]!!.second.size} of ${users.size}", segments["nophoto"]!!.second.size * 2 < users.size.coerceAtLeast(1))
-    InsightCheck("New empty accounts (24h)", "${segments["suspicious"]!!.second.size} to review", segments["suspicious"]!!.second.isEmpty())
-    InsightCheck("Premium ending within 7 days", "${segments["expiring"]!!.second.size} users - consider a reminder", segments["expiring"]!!.second.isEmpty())
+    InsightCheck("Profiles without a photo", "${(segments["nophoto"]?.second?.size ?: 0)} of ${users.size}", (segments["nophoto"]?.second?.size ?: 0) * 2 < users.size.coerceAtLeast(1))
+    InsightCheck("New empty accounts (24h)", "${(segments["suspicious"]?.second?.size ?: 0)} to review", (segments["suspicious"]?.second ?: emptyList()).isEmpty())
+    InsightCheck("Premium ending within 7 days", "${(segments["expiring"]?.second?.size ?: 0)} users - consider a reminder", (segments["expiring"]?.second ?: emptyList()).isEmpty())
 }
 
 private fun ago(ms: Long): String {

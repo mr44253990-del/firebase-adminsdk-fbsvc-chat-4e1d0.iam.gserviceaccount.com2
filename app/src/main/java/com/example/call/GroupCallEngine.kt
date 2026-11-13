@@ -10,6 +10,7 @@ import android.util.Log
 import com.example.service.CallForegroundService
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.database.*
+import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import okhttp3.*
@@ -37,6 +38,7 @@ data class GroupCallParticipant(
     val muted: Boolean = false,
     val connected: Boolean = false,
     val hostMuted: Boolean = false,
+    val handRaised: Boolean = false,
     val quality: String = "unknown",
     val iceState: String = "new"
 )
@@ -224,6 +226,19 @@ object GroupCallEngine {
                     hostId = remoteHostId
                     _state.value = _state.value.copy(hostId = remoteHostId)
                 }
+                // Host-end teardown: the host writes status="ended" (and clears participants).
+                // Every client observes it here and exits the call immediately.
+                val roomStatus = snapshot.child("status").getValue(String::class.java).orEmpty()
+                if (roomStatus == "ended" && _state.value.status !in listOf("idle", "ended", "failed")) {
+                    cleanup("ended")
+                    return
+                }
+                // Mid-call audio<->video switch: the room's `video` flag is the source of truth.
+                // When it flips, upgrade/downgrade the local track so every client stays in sync.
+                val roomVideo = snapshot.child("video").getValue(Boolean::class.java) ?: _state.value.video
+                if (roomVideo != _state.value.video) {
+                    applyRoomVideoFlag(roomVideo)
+                }
                 val meeting = snapshot.child("meetingState")
                 _state.value = _state.value.copy(
                     captionsEnabled = meeting.child("captionsEnabled").getValue(Boolean::class.java) ?: false,
@@ -288,6 +303,7 @@ object GroupCallEngine {
             muted = snapshot.child("muted").getValue(Boolean::class.java) ?: false,
             connected = uid == myUid || peers[uid]?.connected == true,
             hostMuted = snapshot.child("hostMuted").getValue(Boolean::class.java) ?: false,
+            handRaised = snapshot.child("handRaised").getValue(Boolean::class.java) ?: false,
             quality = if (uid == myUid) "good" else "unknown",
             iceState = if (uid == myUid) "local" else "new"
         )
@@ -754,10 +770,155 @@ object GroupCallEngine {
         }
     }
 
-    fun end() {
-        roomRef?.child("participants")?.child(myUid)?.removeValue()
-        roomRef?.child("status")?.setValue("ended")
+    fun end(host: Boolean = false) {
+        if (host && isHost()) {
+            // Host-end teardown: mark the room ended and clear every participant node so all
+            // clients (GroupCallScreen / IncomingGroupCallActivity) observe status="ended"
+            // and exit the call at once. onDisconnect handlers are superseded by this write.
+            roomRef?.child("status")?.setValue("ended")
+            roomRef?.child("endedAt")?.setValue(System.currentTimeMillis())
+            roomRef?.child("participants")?.removeValue()
+        } else {
+            roomRef?.child("participants")?.child(myUid)?.removeValue()
+            roomRef?.child("status")?.setValue("ended")
+        }
         cleanup("ended")
+    }
+
+    /**
+     * Mid-call audio<->video switch. Flips the `video` flag on the room document; every other
+     * client observes the change in [watchRoom] and upgrades/downgrades its local track.
+     */
+    fun toggleVideoCall() {
+        val target = !_state.value.video
+        roomRef?.child("video")?.setValue(target)
+        applyRoomVideoFlag(target)
+    }
+
+    /** Upgrade (audio->video) or downgrade (video->audio) the local WebRTC track in place. */
+    private fun applyRoomVideoFlag(roomVideo: Boolean) {
+        val app = context ?: return
+        val source = videoSource
+        if (roomVideo && localVideo == null && source != null && surfaceTextureHelper != null) {
+            // Upgrade: start the camera, create a video track and publish it to every peer.
+            runCatching {
+                val camera = createCameraCapturer(app) ?: error("No camera available")
+                camera.initialize(surfaceTextureHelper, app, source.capturerObserver)
+                camera.startCapture(720, 1280, 24)
+                videoCapturer = camera
+                val track = factory?.createVideoTrack("group_video_$myUid", source) ?: return
+                track.setEnabled(true)
+                localVideo = track
+                replacePublishedVideoTrack(track)
+                localRenderer?.let { track.addSink(it) }
+                roomRef?.child("participants")?.child(myUid)?.child("video")?.setValue(true)
+                _state.value = _state.value.copy(video = true, cameraOff = false)
+                CallForegroundService.start(app, "group:${_state.value.roomId}", _state.value.groupName, true, groupId = _state.value.groupId, roomId = _state.value.roomId, groupName = _state.value.groupName, memberIds = activeMemberIds)
+            }.onFailure { Log.e(TAG, "Video upgrade failed", it) }
+        } else if (!roomVideo && localVideo != null) {
+            // Downgrade: stop the camera and unpublish the video track (audio keeps flowing).
+            runCatching {
+                videoCapturer?.stopCapture(); videoCapturer?.dispose(); videoCapturer = null
+                localVideo?.let { track -> localRenderer?.let(track::removeSink) }
+                localVideo?.dispose(); localVideo = null
+                peers.values.forEach { slot ->
+                    slot.peer.senders.firstOrNull { it.track()?.kind() == MediaStreamTrack.VIDEO_TRACK_KIND }?.let { runCatching { slot.peer.removeTrack(it) } }
+                }
+                roomRef?.child("participants")?.child(myUid)?.child("video")?.setValue(false)
+                _state.value = _state.value.copy(video = false, cameraOff = true, screenSharing = false)
+                CallForegroundService.start(app, "group:${_state.value.roomId}", _state.value.groupName, false, groupId = _state.value.groupId, roomId = _state.value.roomId, groupName = _state.value.groupName, memberIds = activeMemberIds)
+            }.onFailure { Log.e(TAG, "Video downgrade failed", it) }
+        } else {
+            _state.value = _state.value.copy(video = roomVideo)
+        }
+    }
+
+    /**
+     * Add participants mid-call: writes each new member to `groupCalls/<roomId>/participants`
+     * (so the mesh engine connects to them via the existing child-event listener) and to
+     * `memberIds`, then sends an FCM `group_call` invite following the same gateway pattern
+     * used when the call is first created.
+     */
+    fun addParticipantsAndInvite(newUids: List<String>) {
+        val room = roomRef ?: return
+        val me = FirebaseAuth.getInstance().currentUser ?: return
+        val fresh = newUids.distinct().filterNot { uid -> _state.value.participants.any { it.uid == uid } || uid == myUid }
+        if (fresh.isEmpty()) return
+        val slot = MAX_PARTICIPANTS - _state.value.participants.size
+        val admitted = fresh.take(slot.coerceAtLeast(0))
+        val myName = me.displayName ?: "Convo Chat user"
+        val myImage = me.photoUrl?.toString().orEmpty()
+        admitted.forEach { uid ->
+            room.child("participants").child(uid).setValue(mapOf("uid" to uid, "invitedAt" to System.currentTimeMillis(), "invitedBy" to myUid))
+            room.child("memberIds").child(uid).setValue(true)
+        }
+        activeMemberIds = (activeMemberIds + admitted).distinct()
+        val callType = if (_state.value.video) "video" else "audio"
+        val roster = (activeMemberIds + admitted).distinct().joinToString(",")
+        val extra = mapOf(
+            "roomId" to _state.value.roomId, "groupId" to _state.value.groupId,
+            "groupName" to _state.value.groupName, "memberIds" to roster, "videoCall" to _state.value.video.toString()
+        )
+        admitted.forEach { uid -> sendGroupCallFcm(uid, myName, myImage, myUid, callType, extra) }
+    }
+
+    /** Sends one FCM `group_call` push through the admin's routed calls worker. */
+    private fun sendGroupCallFcm(targetUid: String, senderName: String, senderImage: String, senderId: String, callType: String, extraData: Map<String, String>) {
+        val app = context ?: return
+        FirebaseFirestore.getInstance().collection("users").document(targetUid).get()
+            .addOnSuccessListener { doc ->
+                val token = doc?.getString("fcmToken").orEmpty()
+                if (token.isBlank()) { Log.w(TAG, "No FCM token for invitee $targetUid"); return@addOnSuccessListener }
+                val user = FirebaseAuth.getInstance().currentUser ?: return@addOnSuccessListener
+                user.getIdToken(false).addOnSuccessListener { idToken ->
+                    val bearer = idToken.token ?: return@addOnSuccessListener
+                    val gateway = com.example.data.WorkerRouter.resolve("calls", com.example.data.WorkerRouter.primary.value.ifBlank { DEFAULT_WORKER })
+                    val json = org.json.JSONObject().apply {
+                        put("token", token)
+                        put("title", "$senderName • Convo Chat")
+                        put("body", "$senderName added you to a group $callType call")
+                        put("text", "$senderName added you to a group $callType call")
+                        put("senderId", senderId)
+                        put("senderName", senderName)
+                        put("senderProfileUrl", senderImage)
+                        put("notificationType", "group_call")
+                        put("targetId", extraData["groupId"].orEmpty())
+                        put("timestamp", System.currentTimeMillis())
+                        extraData.forEach { (k, v) -> put(k, v) }
+                    }
+                    val body = json.toString().toRequestBody("application/json; charset=utf-8".toMediaType())
+                    val request = Request.Builder().url(gateway).header("Authorization", "Bearer $bearer").post(body).build()
+                    OkHttpClient.Builder().connectTimeout(10, TimeUnit.SECONDS).writeTimeout(10, TimeUnit.SECONDS).readTimeout(10, TimeUnit.SECONDS).build()
+                        .newCall(request).enqueue(object : Callback {
+                            override fun onFailure(call: Call, e: java.io.IOException) { Log.w(TAG, "Group call invite FCM failed for $targetUid", e) }
+                            override fun onResponse(call: Call, response: Response) { response.close() }
+                        })
+                }
+            }
+            .addOnFailureListener { Log.w(TAG, "Could not load FCM token for invitee $targetUid", it) }
+    }
+
+    /** Raise / lower hand (smart group function). Persisted on the participant node. */
+    fun raiseHand(raised: Boolean) {
+        roomRef?.child("participants")?.child(myUid)?.child("handRaised")?.setValue(raised)
+    }
+
+    /** Host-only: force-mute every other participant by setting hostMuted=true on their nodes. */
+    fun hostMuteAll(mute: Boolean) {
+        if (!isHost()) return
+        val room = roomRef ?: return
+        _state.value.participants.filter { it.uid != myUid }.forEach { p ->
+            room.child("participants").child(p.uid).child("hostMuted").setValue(mute)
+        }
+    }
+
+    /** Floating reaction emoji: written to a short-lived reactions node, observed by peers. */
+    fun sendReaction(emoji: String) {
+        val room = roomRef ?: return
+        val key = room.child("reactions").push().key ?: return
+        room.child("reactions").child(key).setValue(mapOf("from" to myUid, "emoji" to emoji, "at" to System.currentTimeMillis()))
+        room.child("reactions").child(key).onDisconnect().removeValue()
+        mainHandler.postDelayed({ room.child("reactions").child(key).removeValue() }, 4000)
     }
 
     private fun removePeer(uid: String) {

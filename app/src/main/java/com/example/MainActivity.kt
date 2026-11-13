@@ -58,6 +58,10 @@ import com.example.ui.OnboardingScreen
 import com.example.ui.PostComposerScreen
 import com.example.ui.PostDetailScreen
 import com.example.ui.PremiumScreen
+import com.example.ui.AdminAiControlScreen
+import com.example.ui.AdminSecurityScreen
+import com.example.ui.AiToolsHubScreen
+import com.example.ui.UserManagementScreen
 import com.example.ui.SplashScreen
 import com.example.ui.UserProfileScreen
 import com.example.ui.QrContactScreen
@@ -780,13 +784,42 @@ class MainActivity : FragmentActivity() {
                                 )
                             }
                         }
+                        composable("admin_security") {
+                            val adminUsers by viewModel.usersState.collectAsState()
+                            AdminSecurityScreen(
+                                users = adminUsers,
+                                onBack = { navController.popBackStack() }
+                            )
+                        }
+                        composable("user_management") {
+                            UserManagementScreen(onBack = { navController.popBackStack() })
+                        }
+                        composable("admin_ai") {
+                            AdminAiControlScreen(onBack = { navController.popBackStack() })
+                        }
+                        composable("ai_studio") {
+                            val studioCtx = LocalContext.current
+                            AiToolsHubScreen(
+                                onBack = { navController.popBackStack() },
+                                onOpenTool = { tool ->
+                                    when (tool) {
+                                        "AI Assistant" -> navController.navigate("assistant")
+                                        else -> Toast.makeText(studioCtx, "$tool coming soon", Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                            )
+                        }
                     }
                     val pendingProRoute by com.example.ui.ProTools.pendingRoute.collectAsState()
                     LaunchedEffect(pendingProRoute) {
-                        if (pendingProRoute == "assistant") {
-                            if (FirebaseAuth.getInstance().currentUser != null) navController.navigate("assistant") { launchSingleTop = true }
-                            com.example.ui.ProTools.consumeRoute()
+                        val route = pendingProRoute
+                        if (route != null && FirebaseAuth.getInstance().currentUser != null) {
+                            when (route) {
+                                "assistant" -> navController.navigate("assistant") { launchSingleTop = true }
+                                "admin_security", "user_management", "admin_ai", "ai_studio" -> navController.navigate(route)
+                            }
                         }
+                        if (route != null) com.example.ui.ProTools.consumeRoute()
                     }
                     com.example.ui.ProToolsOverlay(
                         users = knownUsers,
