@@ -188,5 +188,7 @@ data class GroupMessage(
     val replyToText: String? = null,
     val replyToSenderName: String? = null,
     /** Epoch millis after which the group message should be hidden/removed; 0 means persistent. */
-    val expiresAt: Long = 0L
+    val expiresAt: Long = 0L,
+    /** uid -> reaction symbol (group message reactions). */
+    val reactions: Map<String, String> = emptyMap()
 )

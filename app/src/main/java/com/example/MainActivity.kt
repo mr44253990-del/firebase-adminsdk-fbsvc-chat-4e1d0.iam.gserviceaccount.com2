@@ -16,6 +16,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -24,6 +25,8 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
@@ -183,6 +186,10 @@ class MainActivity : FragmentActivity() {
     private val pendingGroupName = MutableStateFlow<String?>(null)
     private val pendingGroupMembers = MutableStateFlow<List<String>>(emptyList())
     private val pendingGroupVideo = MutableStateFlow(false)
+    /** Push-notification taps: refreshed on both cold start and onNewIntent. */
+    private val notificationTap = MutableStateFlow<Intent?>(null)
+    /** Request to switch to another remembered account (call/message arrived for it). */
+    private val accountSwitchRequest = MutableStateFlow<com.example.ui.AccountSwitchBus.Request?>(null)
     private val presenceHandler = Handler(Looper.getMainLooper())
     private val presenceHeartbeat = object : Runnable {
         override fun run() {
@@ -259,17 +266,42 @@ class MainActivity : FragmentActivity() {
         pendingChatSenderId.value = intent.getStringExtra("senderId")?.takeIf { it.isNotBlank() }
         com.example.ui.ProTools.handleAction(intent.getStringExtra("convoAction"))
         captureDeepLink(intent); captureActiveGroupCall(intent); captureSharedContent(intent)
+        captureNotificationTap(intent)
+        com.example.call.CallSystemOverlay.update(this)
+    }
+
+    /** A launcher/notification tap that carries routing extras is processed once, after the splash. */
+    private fun captureNotificationTap(intent: Intent?) {
+        val type = intent?.getStringExtra("notificationType")
+        val sender = intent?.getStringExtra("senderId")
+        val switchUid = intent?.getStringExtra("switchAccountUid")
+        if (!switchUid.isNullOrBlank()) {
+            accountSwitchRequest.value = com.example.ui.AccountSwitchBus.Request(
+                accountUid = switchUid,
+                senderId = sender.orEmpty(),
+                notificationType = type ?: "message",
+                targetId = intent.getStringExtra("targetId").orEmpty()
+            )
+            notificationTap.value = null
+            return
+        }
+        if (type != null || !sender.isNullOrBlank()) notificationTap.value = intent
     }
 
     override fun onStart() {
         super.onStart()
         com.example.service.ActiveChatState.appVisible = true
         startPresenceHeartbeat()
+        // Returning to the app hides the system-wide floating call bar (the in-app bubble takes over).
+        com.example.call.CallSystemOverlay.hide(this)
     }
 
     override fun onStop() {
         com.example.service.ActiveChatState.appVisible = false
         stopPresenceHeartbeat()
+        // Leaving the app with a live call: show the floating call bar over other apps
+        // when the user granted "Display over other apps".
+        com.example.call.CallSystemOverlay.update(this)
         // Keep the uninstall-surviving encrypted text mirror current whenever the
         // activity leaves the foreground. Media payloads are excluded by the manager.
         viewModel.exportTextBackup()
@@ -288,6 +320,7 @@ class MainActivity : FragmentActivity() {
         com.example.ui.CallHistory.ensureStarted(this)
         com.example.ui.ProShortcuts.publish(this)
         captureDeepLink(intent); captureActiveGroupCall(intent); captureSharedContent(intent)
+        captureNotificationTap(intent)
         AppLockManager.initialize(this)
         PrivacyPreferences.initialize(this)
         androidx.core.content.ContextCompat.registerReceiver(this, screenOffReceiver, android.content.IntentFilter(Intent.ACTION_SCREEN_OFF), androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED)
@@ -349,6 +382,21 @@ class MainActivity : FragmentActivity() {
                 }
                 var splashFinished by remember { mutableStateOf(false) }
                 var pendingMfaStatus by remember { mutableStateOf<com.example.ui.MfaStatus?>(null) }
+                // The old full-screen "Securing your session…" gate is gone: the MFA precheck
+                // now runs in parallel with the splash, inside the loading screen itself.
+                var gateReady by remember { mutableStateOf(FirebaseAuth.getInstance().currentUser == null) }
+                LaunchedEffect(currentUser?.uid) {
+                    if (FirebaseAuth.getInstance().currentUser == null) {
+                        gateReady = true
+                        return@LaunchedEffect
+                    }
+                    gateReady = false
+                    val needed = kotlinx.coroutines.withTimeoutOrNull(9000) {
+                        com.example.ui.MfaClient.precheck(this@MainActivity)
+                    }
+                    if (needed != null) pendingMfaStatus = needed
+                    gateReady = true
+                }
                 var showOverlayPermissionPrompt by remember { mutableStateOf(false) }
                 var overlayPromptShownThisSession by remember { mutableStateOf(false) }
                 LaunchedEffect(splashFinished, currentUser?.uid, callState.status, groupCallState.status) {
@@ -369,7 +417,7 @@ class MainActivity : FragmentActivity() {
                         } else if (!isOnboardingCompleted(context)) {
                             "onboarding"
                         } else if (FirebaseAuth.getInstance().currentUser != null) {
-                            "session_gate"
+                            "home"
                         } else {
                             "auth"
                         }
@@ -378,14 +426,6 @@ class MainActivity : FragmentActivity() {
                     }
                 }
 
-                LaunchedEffect(pendingSenderId, knownUsers) {
-                    val senderId = pendingSenderId ?: return@LaunchedEffect
-                    knownUsers.find { it.uid == senderId }?.let { sender ->
-                        viewModel.selectRecipient(sender)
-                        navController.navigate("chat") { launchSingleTop = true }
-                        pendingChatSenderId.value = null
-                    }
-                }
                 LaunchedEffect(linkedPostId, knownPosts) {
                     val id = linkedPostId ?: return@LaunchedEffect
                     knownPosts.find { it.id == id }?.let { post -> linkedPost = post; navController.navigate("post_detail") { launchSingleTop = true }; pendingPostId.value = null }
@@ -431,6 +471,16 @@ class MainActivity : FragmentActivity() {
                         }
                     }
                 }
+                // The group call ended (host ended for everyone, or this device left): clear the
+                // pending room so the group chat banner never offers a dead room again.
+                LaunchedEffect(groupCallState.status, groupCallState.roomId) {
+                    if (groupCallState.status in listOf("idle", "ended", "failed") &&
+                        groupCallState.roomId.isNotBlank() && activeGroupRoomId == groupCallState.roomId
+                    ) {
+                        pendingGroupRoomId.value = null
+                        pendingGroupVideo.value = false
+                    }
+                }
 
                 PremiumBackground {
                     val privacySettings by com.example.security.PrivacyPreferences.settings.collectAsState()
@@ -457,9 +507,15 @@ class MainActivity : FragmentActivity() {
                         modifier = Modifier.fillMaxSize()
                     ) {
                         composable("splash") {
-                                SplashScreen {
+                                // The splash itself waits for the parallel session precheck, so the
+                                // separate "Securing your session" gate screen no longer exists.
+                                SplashScreen(gateReady = gateReady) {
                                     splashFinished = true
-                                    navController.navigate(destinationAfterSplash) {
+                                    val destination = when {
+                                        destinationAfterSplash == "home" && pendingMfaStatus != null -> "mfa"
+                                        else -> destinationAfterSplash
+                                    }
+                                    navController.navigate(destination) {
                                     popUpTo("splash") { inclusive = true }
                                 }
                             }
@@ -469,7 +525,7 @@ class MainActivity : FragmentActivity() {
                             com.example.ui.LanguagePickerScreen(onDone = {
                                 val dest = try {
                                     if (!isOnboardingCompleted(context)) "onboarding"
-                                    else if (FirebaseAuth.getInstance().currentUser != null) "session_gate" else "auth"
+                                    else if (FirebaseAuth.getInstance().currentUser != null) "home" else "auth"
                                 } catch (e: Exception) { "auth" }
                                 navController.navigate(dest) { popUpTo("language") { inclusive = true } }
                             })
@@ -479,7 +535,7 @@ class MainActivity : FragmentActivity() {
                             OnboardingScreen(
                                 onFinished = {
                                     val dest = try {
-                                        if (FirebaseAuth.getInstance().currentUser != null) "session_gate" else "auth"
+                                        if (FirebaseAuth.getInstance().currentUser != null) "home" else "auth"
                                     } catch (e: Exception) {
                                         "auth"
                                     }
@@ -494,21 +550,9 @@ class MainActivity : FragmentActivity() {
                             AuthScreen(
                                 viewModel = viewModel,
                                 onAuthSuccess = {
-                                    navController.navigate("session_gate") {
+                                    navController.navigate("home") {
                                         popUpTo("auth") { inclusive = true }
                                     }
-                                }
-                            )
-                        }
-
-                        // Decides before Home is shown whether two-step verification is needed,
-                        // so Home never flashes and is then covered by the 2FA screen.
-                        composable("session_gate") {
-                            com.example.ui.SessionGateScreen(
-                                onHome = { navController.navigate("home") { popUpTo("session_gate") { inclusive = true } } },
-                                onMfa = { status ->
-                                    pendingMfaStatus = status
-                                    navController.navigate("mfa") { popUpTo("session_gate") { inclusive = true } }
                                 }
                             )
                         }
@@ -618,7 +662,16 @@ class MainActivity : FragmentActivity() {
                                 onOpenUser = { user ->
                                     viewModel.selectRecipient(user)
                                     navController.navigate("chat")
-                                }
+                                },
+                                onOpenToolbox = { navController.navigate("ai_toolbox") }
+                            )
+                        }
+
+                        // AI Toolbox: the new AI-tools page (translate, summarize, captions, …).
+                        composable("ai_toolbox") {
+                            com.example.ui.AiToolboxScreen(
+                                viewModel = viewModel,
+                                onBack = { navController.popBackStack() }
                             )
                         }
 
@@ -701,6 +754,12 @@ class MainActivity : FragmentActivity() {
                         }
                         composable("group_chat") {
                             activeGroup?.let { group ->
+                                // Live discovery: anyone opening the group sees the ongoing call
+                                // and can join with one tap, even if they missed the invite push.
+                                val liveCall by viewModel.activeGroupCall.collectAsState()
+                                val effectiveLiveCall = remember(liveCall, activeGroupRoomId) {
+                                    liveCall?.takeIf { it.roomId != activeGroupRoomId }
+                                }
                                 GroupChatScreen(
                                     viewModel = viewModel,
                                     group = group,
@@ -708,20 +767,29 @@ class MainActivity : FragmentActivity() {
                                         viewModel.selectProfile(user)
                                         navController.navigate("profile")
                                     },
-                                    pendingCallRoomId = activeGroupRoomId,
-                                    pendingCallVideo = activeGroupVideo,
+                                    pendingCallRoomId = activeGroupRoomId ?: effectiveLiveCall?.roomId,
+                                    pendingCallVideo = activeGroupRoomId?.let { activeGroupVideo } ?: (effectiveLiveCall?.video ?: false),
+                                    liveCallParticipants = effectiveLiveCall?.participants ?: 0,
                                     onBack = { navController.popBackStack() },
                                     onGroupCall = { video ->
-                                        // Starting a group call only creates the signaling room and
-                                        // sends notifications. The host joins from that notification,
-                                        // so pressing Call never opens a black/empty call screen.
-                                        viewModel.createNotificationOnlyGroupCall(group, video) { ok ->
-                                            Toast.makeText(
-                                                this@MainActivity,
-                                                if (ok) "Call invitation sent. Join from your notification."
-                                                else "Could not start the group call",
-                                                Toast.LENGTH_SHORT
-                                            ).show()
+                                        // The host now goes straight into the call screen: the room is
+                                        // created, invites are sent, and the call UI opens immediately.
+                                        viewModel.createNotificationOnlyGroupCall(group, video) { ok, roomId ->
+                                            if (ok && roomId.isNotBlank()) {
+                                                requestedGroupCallVideo = video
+                                                pendingGroupRoomId.value = roomId
+                                                pendingGroupId.value = group.id
+                                                pendingGroupName.value = group.name
+                                                pendingGroupMembers.value = group.members
+                                                pendingGroupVideo.value = video
+                                                navController.navigate("group_call") { launchSingleTop = true }
+                                            } else {
+                                                Toast.makeText(
+                                                    this@MainActivity,
+                                                    "Could not start the group call",
+                                                    Toast.LENGTH_SHORT
+                                                ).show()
+                                            }
                                         }
                                     },
                                     onJoinPendingCall = { roomId, video ->
@@ -742,6 +810,7 @@ class MainActivity : FragmentActivity() {
                         }
                         composable("group_call") {
                             activeGroup?.let { group ->
+                                var invitePicker by remember { mutableStateOf(false) }
                                 GroupCallScreen(
                                     group = group,
                                     video = requestedGroupCallVideo,
@@ -754,8 +823,26 @@ class MainActivity : FragmentActivity() {
                                     onRoomReady = { roomId ->
                                         viewModel.inviteGroupMembersToCall(group, requestedGroupCallVideo, roomId)
                                         if (activeGroupRoomId == roomId) pendingGroupRoomId.value = null
-                                    }
+                                    },
+                                    onInvitePeople = { invitePicker = true }
                                 )
+                                if (invitePicker) {
+                                    CallParticipantPickerDialog(
+                                        users = knownUsers,
+                                        excludedIds = setOfNotNull(FirebaseAuth.getInstance().currentUser?.uid),
+                                        multiSelect = true,
+                                        onDismiss = { invitePicker = false },
+                                        onSelect = { _ -> },
+                                        onConfirm = { picked ->
+                                            invitePicker = false
+                                            val roomId = GroupCallEngine.state.value.roomId
+                                            if (roomId.isNotBlank() && picked.isNotEmpty()) {
+                                                viewModel.inviteUsersToGroupCall(group, GroupCallEngine.state.value.video, roomId, picked.map { it.uid })
+                                                Toast.makeText(this@MainActivity, "Invited ${picked.size} member(s)", Toast.LENGTH_SHORT).show()
+                                            }
+                                        }
+                                    )
+                                }
                             }
                         }
                     }
@@ -879,31 +966,67 @@ class MainActivity : FragmentActivity() {
                     }
                 }
 
-                // Process deep link if launched via push notification click
-                LaunchedEffect(intent) {
-                    val notificationType = intent?.getStringExtra("notificationType") ?: "message"
-                    val senderId = intent?.getStringExtra("senderId")
-                    // "online_alert" (someone you messaged is online now) opens that chat directly.
-                    if (notificationType != "message" && notificationType != "online_alert") {
-                        viewModel.requestOpenActivityCenter()
+                // Process a notification tap AFTER the splash finishes, so the deep-linked screen
+                // is never popped by the splash navigation. Group messages open the group chat;
+                // direct messages/online alerts open the sender's chat; everything else the activity center.
+                val tapIntent by notificationTap.collectAsState()
+                val switchRequest by accountSwitchRequest.collectAsState()
+                val rememberedAccounts by viewModel.rememberedAccounts.collectAsState()
+                LaunchedEffect(switchRequest) {
+                    val request = switchRequest ?: return@LaunchedEffect
+                    val account = rememberedAccounts.firstOrNull { it.uid == request.accountUid }
+                    if (account == null) {
+                        accountSwitchRequest.value = null
+                        return@LaunchedEffect
+                    }
+                    if (FirebaseAuth.getInstance().currentUser?.uid == request.accountUid) {
+                        accountSwitchRequest.value = null
+                        return@LaunchedEffect
+                    }
+                    Toast.makeText(this@MainActivity, "Switching to @${account.name.ifBlank { "account" }}…", Toast.LENGTH_SHORT).show()
+                    viewModel.loginRememberedAccount(account) {
+                        accountSwitchRequest.value = null
                         navController.navigate("home") { launchSingleTop = true }
-                    } else if (!senderId.isNullOrBlank()) {
-                        // Fetch recipient user profile from Firestore and open chat
-                        FirebaseFirestore.getInstance().collection("users")
-                            .document(senderId)
-                            .get()
-                            .addOnSuccessListener { document ->
-                                if (document.exists()) {
-                                    val recipient = document.toObject(User::class.java)
-                                    if (recipient != null) {
-                                        viewModel.selectRecipient(recipient)
-                                        navController.navigate("chat") {
-                                            popUpTo("home") { saveState = true }
-                                            launchSingleTop = true
+                    }
+                }
+                LaunchedEffect(tapIntent, splashFinished, currentUser?.uid) {
+                    if (!splashFinished || currentUser == null) return@LaunchedEffect
+                    val intent = tapIntent ?: return@LaunchedEffect
+                    val notificationType = intent.getStringExtra("notificationType") ?: "message"
+                    val senderId = intent.getStringExtra("senderId")
+                    val targetId = intent.getStringExtra("targetId").orEmpty()
+                    notificationTap.value = null
+                    if (notificationType == "group_message" && targetId.isNotBlank()) {
+                        // A group chat notification opens that group's chat screen directly.
+                        viewModel.loadGroupById(targetId) { group ->
+                            if (group != null) {
+                                viewModel.selectGroup(group)
+                                if (navController.currentBackStackEntry?.destination?.route != "group_chat") {
+                                    navController.navigate("group_chat") { launchSingleTop = true }
+                                }
+                            }
+                        }
+                    } else if (notificationType == "message" || notificationType == "online_alert") {
+                        if (!senderId.isNullOrBlank()) {
+                            FirebaseFirestore.getInstance().collection("users")
+                                .document(senderId)
+                                .get()
+                                .addOnSuccessListener { document ->
+                                    if (document.exists()) {
+                                        val recipient = document.toObject(User::class.java)
+                                        if (recipient != null) {
+                                            viewModel.selectRecipient(recipient)
+                                            navController.navigate("chat") {
+                                                popUpTo("home") { saveState = true }
+                                                launchSingleTop = true
+                                            }
                                         }
                                     }
                                 }
-                            }
+                        }
+                    } else {
+                        viewModel.requestOpenActivityCenter()
+                        navController.navigate("home") { launchSingleTop = true }
                     }
                 }
                 }
@@ -918,9 +1041,12 @@ private fun CallParticipantPickerDialog(
     users: List<User>,
     excludedIds: Set<String>,
     onDismiss: () -> Unit,
-    onSelect: (User) -> Unit
+    onSelect: (User) -> Unit = {},
+    multiSelect: Boolean = false,
+    onConfirm: (List<User>) -> Unit = {}
 ) {
     var query by remember { mutableStateOf("") }
+    val selected = remember { mutableStateListOf<String>() }
     val candidates = remember(users, excludedIds, query) {
         users.filter { user ->
             user.uid !in excludedIds &&
@@ -929,10 +1055,14 @@ private fun CallParticipantPickerDialog(
     }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Add participant", fontWeight = androidx.compose.ui.text.font.FontWeight.Bold) },
+        title = { Text(if (multiSelect) "Add people to the call" else "Add participant", fontWeight = androidx.compose.ui.text.font.FontWeight.Bold) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("Choose someone to move this call into a group call.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    if (multiSelect) "Invite group members into the running call. They get a call notification instantly."
+                    else "Choose someone to move this call into a group call.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
                 OutlinedTextField(
                     value = query,
                     onValueChange = { query = it },
@@ -945,10 +1075,27 @@ private fun CallParticipantPickerDialog(
                 } else {
                     LazyColumn(Modifier.heightIn(max = 280.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         items(candidates, key = { it.uid }) { user ->
-                            TextButton(onClick = { onSelect(user) }, modifier = Modifier.fillMaxWidth()) {
-                                Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.Start) {
-                                    Text(user.name.ifBlank { "Convo Chat user" }, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
-                                    if (user.username.isNotBlank()) Text("@${user.username}", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            if (multiSelect) {
+                                val checked = selected.contains(user.uid)
+                                Row(
+                                    Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
+                                        .clickable { if (checked) selected.remove(user.uid) else selected.add(user.uid) }
+                                        .background(if (checked) MaterialTheme.colorScheme.primaryContainer.copy(alpha = .5f) else androidx.compose.ui.graphics.Color.Transparent)
+                                        .padding(horizontal = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    androidx.compose.material3.Checkbox(checked, null)
+                                    Column {
+                                        Text(user.name.ifBlank { "Convo Chat user" }, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
+                                        if (user.username.isNotBlank()) Text("@${user.username}", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                                    }
+                                }
+                            } else {
+                                TextButton(onClick = { onSelect(user) }, modifier = Modifier.fillMaxWidth()) {
+                                    Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.Start) {
+                                        Text(user.name.ifBlank { "Convo Chat user" }, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
+                                        if (user.username.isNotBlank()) Text("@${user.username}", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
                                 }
                             }
                         }
@@ -956,6 +1103,13 @@ private fun CallParticipantPickerDialog(
                 }
             }
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+        confirmButton = {
+            if (multiSelect) {
+                Button(onClick = { onConfirm(candidates.filter { selected.contains(it.uid) }) }, enabled = selected.isNotEmpty()) { Text("Invite") }
+            } else {
+                TextButton(onClick = onDismiss) { Text("Cancel") }
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )
 }

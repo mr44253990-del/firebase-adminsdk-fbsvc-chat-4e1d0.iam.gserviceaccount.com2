@@ -50,6 +50,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -201,7 +202,7 @@ fun CallScreen(
     val callMotion = rememberInfiniteTransition(label = "call_liquid_motion")
     val callPulse by callMotion.animateFloat(.94f, 1.08f, infiniteRepeatable(tween(900, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "call_pulse")
     val protectScreens by com.example.security.PrivacyPreferences.settings.collectAsState()
-    LaunchedEffect(effectiveVideo, state.screenSharing, protectScreens.preventScreenshotOnSensitiveScreens) {
+    LaunchedEffect(effectiveVideo, state.speaker, state.screenSharing, protectScreens.preventScreenshotOnSensitiveScreens) {
         val window = (view.context as? Activity)?.window
         // Screen sharing always needs to be capturable; otherwise the user's own
         // screenshot preference decides. Defaults to off so normal screenshots work.
@@ -210,7 +211,9 @@ fun CallScreen(
         } else {
             window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         }
-        if (effectiveVideo) window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        // Video calls always keep the screen awake; audio calls keep it awake while the
+        // loudspeaker is on (the user is watching the UI) so animations never appear frozen.
+        if (effectiveVideo || state.speaker) window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         else window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
     }
     val activeForLock = state.status !in listOf("idle", "ended", "declined", "missed", "failed")
@@ -373,7 +376,7 @@ fun CallScreen(
                     GlassCallButton(Icons.Default.Cameraswitch, if (state.frontCamera) "Back cam" else "Selfie", accent = callPalette.accent, size = 52) {
                         CallEngine.switchCamera(); view.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY)
                     }
-                    if (!state.frontCamera) GlassCallButton(if (state.torchOn) Icons.Default.FlashlightOn else Icons.Default.FlashlightOff, "Light", active = state.torchOn, accent = callPalette.accent, size = 46) { CallEngine.toggleTorch() }
+                    GlassCallButton(if (state.torchOn) Icons.Default.FlashlightOn else Icons.Default.FlashlightOff, "Light", active = state.torchOn, accent = callPalette.accent, size = 46) { CallEngine.toggleTorch() }
                     GlassCallButton(Icons.Default.AutoFixHigh, "Filters", active = showFilters || state.filter != CallFilter.NONE, accent = callPalette.accent, size = 46) { showFilters = !showFilters }
                 }
             }
@@ -388,6 +391,37 @@ fun CallScreen(
             accent = callPalette.accent,
             modifier = Modifier.align(Alignment.TopCenter).windowInsetsPadding(WindowInsets.statusBars).padding(top = 18.dp)
         )
+        // Video mode: a compact top bar keeps the caller's name readable at all times
+        // (ellipsis instead of pushing controls around).
+        if (accepted && effectiveVideo && (controlsVisible || !state.remoteCameraOff)) {
+            Row(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .windowInsetsPadding(WindowInsets.statusBars)
+                    .padding(top = 64.dp)
+                    .clip(RoundedCornerShape(50))
+                    .background(Color.Black.copy(alpha = .45f))
+                    .border(1.dp, Color.White.copy(alpha = .18f), RoundedCornerShape(50))
+                    .padding(horizontal = 14.dp, vertical = 6.dp)
+                    .widthIn(max = 260.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                if (remoteImage.isNotBlank()) AsyncImage(
+                    remoteImage, null, contentScale = ContentScale.Crop,
+                    modifier = Modifier.size(22.dp).clip(CircleShape)
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    remoteName,
+                    color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis
+                )
+                if (state.remoteCameraOff) {
+                    Spacer(Modifier.width(8.dp))
+                    Icon(Icons.Default.VideocamOff, null, tint = Color.White.copy(alpha = .7f), modifier = Modifier.size(14.dp))
+                }
+            }
+        }
         Column(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).padding(horizontal = 16.dp, vertical = 28.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             Spacer(Modifier.weight(if (effectiveVideo && accepted) .06f else .18f))
             AnimatedVisibility(visible = !effectiveVideo || !accepted) {
@@ -520,10 +554,11 @@ fun CallScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         GlassCallButton(if (state.muted) Icons.Default.MicOff else Icons.Default.Mic, if (state.muted) "Unmute" else "Mute", active = state.muted, accent = callPalette.accent) { CallEngine.toggleMute() }
-                        GlassCallButton(if (state.speaker) Icons.Default.VolumeUp else Icons.Default.Hearing, if (state.speaker) "Speaker" else "Earpiece", active = state.speaker, accent = callPalette.accent) { CallEngine.toggleSpeaker() }
                         if (effectiveVideo) GlassCallButton(if (state.cameraOff) Icons.Default.VideocamOff else Icons.Default.Videocam, "Camera", active = state.cameraOff, accent = callPalette.accent) { CallEngine.toggleCamera() }
-                        GlassCallButton(Icons.Default.EmojiEmotions, "React", active = showReactions, accent = callPalette.accent) { showReactions = !showReactions }
+                        // End stays centred in the dock so it is always easy to hit.
                         GlassCallButton(Icons.Default.CallEnd, "End", danger = true, size = 56) { onEndCall(); onClose() }
+                        GlassCallButton(if (state.speaker) Icons.Default.VolumeUp else Icons.Default.Hearing, if (state.speaker) "Speaker" else "Earpiece", active = state.speaker, accent = callPalette.accent) { CallEngine.toggleSpeaker() }
+                        GlassCallButton(Icons.Default.EmojiEmotions, "React", active = showReactions, accent = callPalette.accent) { showReactions = !showReactions }
                         GlassCallButton(if (showMoreControls) Icons.Default.Close else Icons.Default.GridView, "More", active = showMoreControls, accent = callPalette.accent) { showMoreControls = !showMoreControls }
                     }
                 }

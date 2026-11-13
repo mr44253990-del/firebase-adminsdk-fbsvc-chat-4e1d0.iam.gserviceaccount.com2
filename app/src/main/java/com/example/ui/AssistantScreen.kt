@@ -73,7 +73,7 @@ private val AiInk = Color(0xFF070616)
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AssistantScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenAiSettings: () -> Unit, onOpenUser: (User) -> Unit) {
+fun AssistantScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenAiSettings: () -> Unit, onOpenUser: (User) -> Unit, onOpenToolbox: () -> Unit = {}) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val scope = rememberCoroutineScope()
     val currentUser by viewModel.currentUserState.collectAsState()
@@ -229,14 +229,29 @@ fun AssistantScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenAiSettin
                 val joined = currentUser?.createdAt?.takeIf { it > 0 }?.let { SimpleDateFormat("dd MMMM yyyy", Locale.getDefault()).format(Date(it)) } ?: "unknown"
                 answer("Account report\n- Posts: ${myPosts.size}\n- Total likes/reactions: $likes\n- Followers: ${currentUser?.followers?.size ?: 0}\n- Friends: ${currentUser?.friends?.size ?: 0}\n- Account created: $joined")
             }
-            normalized.startsWith("find user") || normalized.startsWith("search user") || normalized.contains("ইউজার খুঁজ") -> {
-                val stopWords = setOf("find", "search", "user", "please", "show", "me", "ইউজার", "খুঁজে", "খুঁজ", "বের", "করো", "দাও", "নামে", "নাম", "কে", "আছে")
-                val tokens = normalized.split(Regex("[^\\p{L}\\p{N}_]+")).filter { it.length >= 2 && it !in stopWords }
-                matches = users.map { user ->
-                    val haystack = "${user.name} ${user.username}".lowercase()
-                    user to tokens.count { token -> haystack.contains(token) }
-                }.filter { it.second > 0 }.sortedWith(compareByDescending<Pair<User, Int>> { it.second }.thenBy { it.first.name }).map { it.first }.take(20)
-                answer(if (matches.isEmpty()) "No users matched. Try a few more letters of the name." else "Found ${matches.size} matching people. Open a profile or start a chat below.")
+            normalized.startsWith("find user") || normalized.startsWith("search user") || normalized.contains("ইউজার খুঁজ") || normalized.startsWith("who is ") || normalized.contains("প্রোফাইল খুঁজ") -> {
+                val stopWords = setOf("find", "search", "user", "please", "show", "me", "who", "is", "the", "profile", "ইউজার", "খুঁজে", "খুঁজ", "বের", "করো", "দাও", "নামে", "নাম", "কে", "আছে", "প্রোফাইল")
+                val tokens = normalized.split(Regex("[^\\p{L}\\p{N}_@]+")).filter { it.length >= 2 && it !in stopWords }
+                // Full-database people search: name, username, bio, pronouns and title are all
+                // matched, ranked, and returned as tappable profile cards.
+                matches = users.mapNotNull { user ->
+                    val haystack = "${user.name} ${user.username} ${user.bio} ${user.pronouns} ${user.professionalTitle}".lowercase()
+                    val hits = tokens.count { token -> haystack.contains(token.trimStart('@')) }
+                    if (hits > 0) user to hits else null
+                }.sortedWith(compareByDescending<Pair<User, Int>> { it.second }.thenByDescending { it.first.isOnline }).map { it.first }.take(20)
+                answer(
+                    if (matches.isEmpty()) "No profiles matched in the database. Try a few more letters of the name."
+                    else "Found ${matches.size} matching people from the database. Open a profile or start a chat below."
+                )
+            }
+            normalized.contains("who is online") || normalized.contains("কারা অনলাইন") -> {
+                val online = users.filter { it.isOnline }.take(15)
+                matches = online
+                answer(if (online.isEmpty()) "Nobody is online right now." else "${online.size} people are online right now. Tap one to open a chat.")
+            }
+            normalized.contains("top users") || normalized.contains("popular users") || normalized.contains("top people") -> {
+                matches = users.sortedByDescending { it.followers.size }.take(10)
+                answer("Here are the most-followed people on Convo Chat:")
             }
             else -> askAi(prompt)
         }
@@ -290,6 +305,7 @@ fun AssistantScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenAiSettin
                 if (config.aiHumanStyle) AiChip(Icons.Default.RecordVoiceOver, "Human style", true) {}
                 AiChip(Icons.Default.Lock, "Private memory", true) {}
                 if (config.assistantEnabled) AiChip(Icons.Default.Image, "Create image", true) { showImageGenerator = true }
+                AiChip(Icons.Default.Construction, "AI Toolbox", true) { onOpenToolbox() }
                 AiChip(Icons.Default.Settings, "AI setup guide", false) { showAiSetupGuide = true }
             }
             Spacer(Modifier.height(6.dp))
@@ -337,8 +353,11 @@ fun AssistantScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenAiSettin
                 }
             }
             // ---- Composer ----------------------------------------------------------------------
+            // NOTE: no imePadding() here. The window itself resizes for the keyboard (same as
+            // Chat/GroupChat); adding an IME inset on top lifted this bar far above the keyboard
+            // with an ugly gap in the middle.
             Row(
-                Modifier.fillMaxWidth().navigationBarsPadding().imePadding().padding(horizontal = 12.dp, vertical = 10.dp)
+                Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 12.dp, vertical = 10.dp)
                     .clip(RoundedCornerShape(28.dp))
                     .background(Color.White.copy(alpha = .08f))
                     .border(BorderStroke(1.dp, Brush.linearGradient(listOf(AiCyan.copy(alpha = .6f), AiPink.copy(alpha = .5f), AiViolet.copy(alpha = .6f)))), RoundedCornerShape(28.dp))
@@ -486,6 +505,7 @@ private fun AiWelcome(name: String, enabled: Boolean, smartReplies: Boolean, tas
             if (web) add(Triple(Icons.Default.Newspaper, "Today's news", "What are the top news headlines today?"))
             add(Triple(Icons.Default.Insights, "My account", "my account stats"))
             add(Triple(Icons.Default.EditNote, "Write a caption", "Write a short, catchy caption for a photo of a rainy evening in Dhaka."))
+            add(Triple(Icons.Default.ManageSearch, "Find anyone", "find user rakib"))
             if (smartReplies) add(Triple(Icons.Default.Reply, "Smart replies", "Suggest three short, friendly replies to: 'Are you free tonight?'"))
             if (tasks) add(Triple(Icons.Default.TaskAlt, "Plan my day", "Make a simple plan for my day with 5 tasks and times."))
             add(Triple(Icons.Default.Translate, "Translate", "Translate to Bangla: 'Thank you for your help, see you tomorrow.'"))

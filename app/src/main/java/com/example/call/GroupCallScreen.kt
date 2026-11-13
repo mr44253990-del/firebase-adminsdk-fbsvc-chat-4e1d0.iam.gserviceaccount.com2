@@ -55,7 +55,7 @@ import org.webrtc.SurfaceViewRenderer
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-// Smart group call UI — 2026-11-07: participant grid + vibration + adaptive layout
+// Smart group call UI — participant grid + vibration + adaptive layout
 fun GroupCallScreen(
     group: Group,
     video: Boolean,
@@ -64,7 +64,8 @@ fun GroupCallScreen(
     onPipCallOver: () -> Unit = {},
     onRoomReady: (String) -> Unit = {},
     joinRoomId: String? = null,
-    autoStart: Boolean = true
+    autoStart: Boolean = true,
+    onInvitePeople: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val callSkinId by CallSkinPreferences.selectedId.collectAsState()
@@ -76,9 +77,52 @@ fun GroupCallScreen(
     var joinRequested by remember { mutableStateOf(autoStart) }
     var showDiagnostics by remember { mutableStateOf(false) }
     var showMoreControls by remember { mutableStateOf(false) }
-    BackHandler(enabled = started && state.status !in listOf("idle", "ended", "failed")) { onMinimize() }
+    var showHostEndConfirm by remember { mutableStateOf(false) }
+    val view = androidx.compose.ui.platform.LocalView.current
     val localUid = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid.orEmpty()
     val isHost = state.hostId.isNotBlank() && state.hostId == localUid
+    // Group audio calls keep the screen awake while the speaker is on, exactly like 1:1 calls,
+    // so the timer/tiles never look frozen.
+    LaunchedEffect(state.video, state.speaker, state.status) {
+        val window = (view.context as? Activity)?.window
+        val live = state.status !in listOf("idle", "ended", "failed")
+        if (live && (state.video || state.speaker)) window?.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        else window?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+    }
+    // The host ended the call for everyone: show it clearly, then close.
+    var endedByHost by remember { mutableStateOf(false) }
+    LaunchedEffect(state.status, started) {
+        if (started && state.status == "ended" && !endedByHost) {
+            endedByHost = true
+            try { (context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator).vibrate(VibrationEffect.createWaveform(longArrayOf(0, 90, 70, 160), -1)) } catch (_: Exception) {}
+            kotlinx.coroutines.delay(1400)
+            onClose()
+        }
+    }
+    if (showHostEndConfirm) {
+        AlertDialog(
+            onDismissRequest = { showHostEndConfirm = false },
+            title = { Text(if (isHost) "End the call for everyone?" else "Leave this call?") },
+            text = { Text(if (isHost) "You started this group call. Ending it will hang up every participant." else "You can re-join later from the group chat banner while the call is still running.") },
+            confirmButton = {
+                Button(
+                    onClick = { showHostEndConfirm = false; GroupCallEngine.end(); onClose() },
+                    colors = ButtonDefaults.buttonColors(containerColor = androidx.compose.ui.graphics.Color(0xFFE53935))
+                ) { Text(if (isHost) "End for everyone" else "Leave") }
+            },
+            dismissButton = { TextButton(onClick = { showHostEndConfirm = false }) { Text("Stay") } }
+        )
+    }
+    if (endedByHost && state.status == "ended") {
+        Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = .72f)), contentAlignment = Alignment.Center) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Icon(Icons.Default.CallEnd, null, tint = Color.White, modifier = Modifier.size(44.dp))
+                Spacer(Modifier.height(12.dp))
+                Text("The host ended this call", color = Color.White, fontWeight = FontWeight.Bold)
+            }
+        }
+    }
+    BackHandler(enabled = started && state.status !in listOf("idle", "ended", "failed")) { onMinimize() }
 
     val permissionsLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -183,7 +227,7 @@ fun GroupCallScreen(
                     }
                 },
                 navigationIcon = {
-                    IconButton(onClick = { GroupCallEngine.end(); onClose() }) {
+                    IconButton(onClick = { showHostEndConfirm = true }) {
                         Icon(Icons.Default.Close, "End call")
                     }
                 },
@@ -259,17 +303,21 @@ fun GroupCallScreen(
                 ) {
                     GroupDockButton(if (state.muted) Icons.Default.MicOff else Icons.Default.Mic, if (state.muted) "Unmute" else "Mute", state.muted, callPalette.accent) { GroupCallEngine.toggleMute() }
                     if (state.video) GroupDockButton(if (state.cameraOff) Icons.Default.VideocamOff else Icons.Default.Videocam, "Camera", state.cameraOff, callPalette.accent) { GroupCallEngine.toggleCamera() }
+                    else GroupDockButton(Icons.Default.Videocam, "Video", false, callPalette.accent) {
+                        // Upgrade this live audio call into a video call for everyone.
+                        if (!GroupCallEngine.upgradeToVideo()) Toast.makeText(context, "Could not turn on the camera", Toast.LENGTH_SHORT).show()
+                    }
                     GroupDockButton(if (state.speaker) Icons.Default.VolumeUp else Icons.Default.Hearing, if (state.speaker) "Speaker" else "Earpiece", state.speaker, callPalette.accent) { GroupCallEngine.toggleSpeaker() }
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         FilledIconButton(
-                            onClick = { GroupCallEngine.end(); onClose() },
+                            onClick = { showHostEndConfirm = true },
                             modifier = Modifier.size(width = 64.dp, height = 48.dp),
                             shape = RoundedCornerShape(24.dp),
                             colors = IconButtonDefaults.filledIconButtonColors(containerColor = Color(0xFFE53935), contentColor = Color.White)
                         ) {
                             Icon(Icons.Default.CallEnd, "End call")
                         }
-                        Text("End", style = MaterialTheme.typography.labelSmall, color = Color.White.copy(alpha = .8f))
+                        Text(if (isHost) "End all" else "Leave", style = MaterialTheme.typography.labelSmall, color = Color.White.copy(alpha = .8f))
                     }
                     Box {
                         GroupDockButton(Icons.Default.MoreHoriz, "More", showMoreControls, callPalette.accent) { showMoreControls = true }
@@ -277,6 +325,11 @@ fun GroupCallScreen(
                             expanded = showMoreControls,
                             onDismissRequest = { showMoreControls = false }
                         ) {
+                            DropdownMenuItem(
+                                text = { Text("Add people to this call") },
+                                leadingIcon = { Icon(Icons.Default.PersonAdd, null) },
+                                onClick = { showMoreControls = false; onInvitePeople() }
+                            )
                             DropdownMenuItem(
                                 text = { Text(if (state.speaker) "Use earpiece" else "Use speaker") },
                                 leadingIcon = { Icon(if (state.speaker) Icons.Default.Hearing else Icons.Default.VolumeUp, null) },

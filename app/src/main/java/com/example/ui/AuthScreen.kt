@@ -331,14 +331,16 @@ fun AuthScreen(
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            // Three quiet promise chips: they answer "why this app" before the user types anything.
+            // Promise chips: they answer "why this app" before the user types anything.
             Row(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 listOf(
                     Icons.Default.Lock to tr("Encrypted"),
-                    Icons.Default.Speed to tr("Fast"),
+                    Icons.Default.AutoAwesome to tr("AI powered"),
+                    Icons.Default.Videocam to tr("Free calls"),
+                    Icons.Default.Groups to tr("Groups"),
                     Icons.Default.Block to tr("No ads")
                 ).forEach { (icon, label) ->
                     Row(
@@ -896,6 +898,10 @@ fun AuthScreen(
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     rememberedAccounts.forEach { account ->
+                        // Fingerprint/face unlock for saved password accounts: decrypt the vault
+                        // credential only after a successful biometric prompt.
+                        val canBiometric = androidx.biometric.BiometricManager.from(context)
+                            .canAuthenticate(androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_WEAK or androidx.biometric.BiometricManager.Authenticators.DEVICE_CREDENTIAL) == androidx.biometric.BiometricManager.BIOMETRIC_SUCCESS
                         Surface(
                             modifier = Modifier.fillMaxWidth().clickable {
                                 isLoginMode = true
@@ -939,6 +945,28 @@ fun AuthScreen(
                                 Column(Modifier.weight(1f)) {
                                     Text(account.name.ifBlank { account.email }, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                     Text(account.email, fontSize = 11.sp, color = lp.textSoft, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                }
+                                if (account.provider == "password" && canBiometric) {
+                                    IconButton(onClick = {
+                                        val activity = context as? androidx.fragment.app.FragmentActivity ?: return@IconButton
+                                        val prompt = androidx.biometric.BiometricPrompt(
+                                            activity,
+                                            androidx.core.content.ContextCompat.getMainExecutor(context),
+                                            object : androidx.biometric.BiometricPrompt.AuthenticationCallback() {
+                                                override fun onAuthenticationSucceeded(result: androidx.biometric.BiometricPrompt.AuthenticationResult) {
+                                                    Toast.makeText(context, "Signing in securely…", Toast.LENGTH_SHORT).show()
+                                                    viewModel.loginRememberedAccount(account, onAuthSuccess)
+                                                }
+                                            }
+                                        )
+                                        prompt.authenticate(
+                                            androidx.biometric.BiometricPrompt.PromptInfo.Builder()
+                                                .setTitle("Unlock ${account.name.ifBlank { "your account" }}")
+                                                .setSubtitle("Use your fingerprint or face to sign in")
+                                                .setAllowedAuthenticators(androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_WEAK or androidx.biometric.BiometricManager.Authenticators.DEVICE_CREDENTIAL)
+                                                .build()
+                                        )
+                                    }) { Icon(Icons.Default.Fingerprint, contentDescription = "Sign in with biometrics", tint = lp.highlight) }
                                 }
                                 Text(account.provider.replaceFirstChar { it.uppercase() }, fontSize = 10.sp, color = lp.highlight)
                                 IconButton(onClick = { viewModel.forgetRememberedAccount(account.uid) }) {

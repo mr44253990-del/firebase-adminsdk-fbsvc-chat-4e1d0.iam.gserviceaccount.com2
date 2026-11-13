@@ -370,7 +370,17 @@ fun HomeScreen(
     var showDeviceLogin by remember { mutableStateOf(false) }
     var showChatActionMenu by remember { mutableStateOf(false) }
     var selectedChatForMenu by remember { mutableStateOf<User?>(null) }
-    var incomingAccountBanner by remember { mutableStateOf<Pair<String,String>?>(null) }
+    // Live multi-account switch banner: fed by the FCM service through AccountSwitchBus
+    // (a call or message arrived for another saved account on this device).
+    val accountSwitch by AccountSwitchBus.pending.collectAsState()
+    val incomingAccountBanner = accountSwitch?.let { request ->
+        if (request.accountUid == FirebaseAuth.getInstance().currentUser?.uid) null
+        else request.accountUid to AccountSwitchBus.describe(request)
+    }
+    // Daily motivation card: marks the streak and refreshes the quote each day.
+    LaunchedEffect(currentUser?.uid) {
+        if (currentUser != null) MotivationEngine.markToday(context)
+    }
 
     // First-launch guided tour (spotlight + blurred surroundings). Replayable from Settings.
     var coachTourActive by remember { mutableStateOf(false) }
@@ -759,7 +769,17 @@ fun HomeScreen(
         ) {
             if (incomingAccountBanner != null) {
                 Box(Modifier.align(Alignment.TopCenter).fillMaxWidth()) {
-                    AccountSwitchBanner(incomingAccountId = incomingAccountBanner!!.first, incomingMessage = incomingAccountBanner!!.second, rememberedAccounts = rememberedAccounts, onSwitch = { uid -> viewModel.loginRememberedAccount(rememberedAccounts.first { it.uid == uid }) { incomingAccountBanner = null } }, onDismiss = { incomingAccountBanner = null })
+                    AccountSwitchBanner(
+                        incomingAccountId = incomingAccountBanner!!.first,
+                        incomingMessage = incomingAccountBanner!!.second,
+                        rememberedAccounts = rememberedAccounts,
+                        onSwitch = { uid ->
+                            rememberedAccounts.firstOrNull { it.uid == uid }?.let { account ->
+                                viewModel.loginRememberedAccount(account) { AccountSwitchBus.consume() }
+                            } ?: AccountSwitchBus.consume()
+                        },
+                        onDismiss = { AccountSwitchBus.consume() }
+                    )
                 }
             }
             when (currentTab) {
@@ -1042,6 +1062,7 @@ fun HomeScreen(
                                                 }
                                             }
                                             ContactsDiscoveryCard(viewModel, users, onUserSelected)
+                                            MotivationBox(Modifier.fillMaxWidth())
                                             val friendIds = currentUser?.friends.orEmpty().toSet()
                                             val noteMe = currentUser?.uid?.let { friendNotes[it] }
                                             val noteFriends = chatUsers.filter { it.uid in friendIds }.map { user -> user to (friendNotes[user.uid] ?: UserNote()) }
@@ -3521,6 +3542,16 @@ fun ActivityCenterDialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
+        var filter by remember { mutableStateOf("all") }
+        val unreadCount = notifications.count { !it.isRead } + requests.size + messageRequests.size
+        val filteredNotifications = remember(notifications, filter) {
+            when (filter) {
+                "social" -> notifications.filter { it.type in listOf("friend_request", "friend_accepted", "message_request", "message_accepted", "new_follower") }
+                "reactions" -> notifications.filter { it.type.contains("reaction") }
+                "comments" -> notifications.filter { it.type.contains("comment") }
+                else -> notifications
+            }
+        }
         Surface(
             modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing),
             color = MaterialTheme.colorScheme.background,
@@ -3531,8 +3562,34 @@ fun ActivityCenterDialog(
                     Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 12.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(tr("Activity"), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                    Column(Modifier.weight(1f)) {
+                        Text(tr("Activity"), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                        if (unreadCount > 0) {
+                            Text("$unreadCount new update${if (unreadCount > 1) "s" else ""}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+                        }
+                    }
                     IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, "Close") }
+                }
+                // Quick filter chips keep a busy inbox scannable at a glance.
+                if (notifications.isNotEmpty()) {
+                    Row(
+                        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 14.dp),
+                        horizontalArrangement = Arrangement.spacedBy(7.dp)
+                    ) {
+                        listOf(
+                            "all" to tr("All"),
+                            "social" to tr("People"),
+                            "reactions" to tr("Reactions"),
+                            "comments" to tr("Comments")
+                        ).forEach { (key, label) ->
+                            FilterChip(
+                                selected = filter == key,
+                                onClick = { filter = key },
+                                label = { Text(label, fontSize = 12.sp) }
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(6.dp))
                 }
                 if (notifications.isEmpty() && requests.isEmpty() && messageRequests.isEmpty()) {
                     Column(
@@ -3594,9 +3651,9 @@ fun ActivityCenterDialog(
                                 }
                             }
                         }
-                        if (notifications.isNotEmpty()) {
+                        if (filteredNotifications.isNotEmpty()) {
                             item { Text(tr("Recent activity"), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary) }
-                            items(notifications, key = { "activity_${it.id}" }) { item ->
+                            items(filteredNotifications, key = { "activity_${it.id}" }) { item ->
                                 val icon = when (item.type) {
                                     "post_reaction", "story_reaction" -> Icons.Outlined.Favorite
                                     "post_comment", "story_comment" -> Icons.Outlined.ChatBubbleOutline

@@ -91,6 +91,8 @@ fun CallMiniOverlay(state: CallState, onExpand: () -> Unit, onEnd: () -> Unit) {
     val connected = state.status == "connected"
     val (level, _) = rememberCallSignalLevel(connected)
     val weak = connected && level == 1
+    // Live "the other side is talking" indicator from WebRTC audio levels.
+    val remoteSpeaking by CallEngine.remoteSpeaking.collectAsState()
     val pulse = rememberInfiniteTransition(label = "mini_call_pulse")
     val ring by pulse.animateFloat(1f, 1.12f, infiniteRepeatable(tween(900, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "mini_ring")
     LaunchedEffect(state.connectedAt, state.status) {
@@ -149,6 +151,12 @@ fun CallMiniOverlay(state: CallState, onExpand: () -> Unit, onEnd: () -> Unit) {
                 Column(Modifier.weight(1f)) {
                     Text(state.remoteName, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (remoteSpeaking) {
+                            Box(Modifier.size(7.dp).clip(CircleShape).background(Color(0xFF42E695)))
+                            Spacer(Modifier.width(5.dp))
+                            Text("Speaking", color = Color(0xFF42E695), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            Spacer(Modifier.width(8.dp))
+                        }
                         if (connected) { SignalBars(level); Spacer(Modifier.width(6.dp)) }
                         Text(
                             if (weak) "Low signal · $statusText" else statusText,

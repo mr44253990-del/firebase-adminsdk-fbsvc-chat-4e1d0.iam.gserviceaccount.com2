@@ -73,6 +73,7 @@ fun GroupChatScreen(
     onGroupCall: (video: Boolean) -> Unit = {},
     pendingCallRoomId: String? = null,
     pendingCallVideo: Boolean = false,
+    liveCallParticipants: Int = 0,
     onJoinPendingCall: (String, Boolean) -> Unit = { _, _ -> },
     onDismissPendingCall: () -> Unit = {},
     onOpenUserProfile: (com.example.data.User) -> Unit = {}
@@ -88,6 +89,11 @@ fun GroupChatScreen(
     var showMembers by remember { mutableStateOf(false) }
     var showMessageSearch by remember { mutableStateOf(false) }
     var messageSearchQuery by remember { mutableStateOf("") }
+    var viewerImage by remember { mutableStateOf<String?>(null) }
+    var aiSummary by remember { mutableStateOf("") }
+    var aiSummaryLoading by remember { mutableStateOf(false) }
+    var showAiSummary by remember { mutableStateOf(false) }
+    var reactionTarget by remember { mutableStateOf<GroupMessage?>(null) }
     val visibleGroupMessages = remember(messages, messageSearchQuery) {
         val query = messageSearchQuery.trim().lowercase()
         if (query.isBlank()) messages else messages.filter {
@@ -124,11 +130,14 @@ fun GroupChatScreen(
     // Select the active group when entering this screen and clean up when leaving
     LaunchedEffect(group.id) {
         viewModel.selectGroup(group)
+        // Live group-call discovery: shows the Join banner while a call is running.
+        viewModel.observeActiveGroupCall(group.id)
     }
 
     DisposableEffect(group.id) {
         onDispose {
             viewModel.selectGroup(null)
+            viewModel.stopObservingActiveGroupCall()
         }
     }
 
@@ -381,6 +390,28 @@ fun GroupChatScreen(
                 },
                 actions = {
                     IconButton(onClick = {
+                        // AI summary of the recent group conversation (smart function).
+                        if (messages.isNotEmpty() && !aiSummaryLoading) {
+                            showAiSummary = true
+                            aiSummaryLoading = true
+                            aiSummary = ""
+                            val recent = messages.reversed().take(30).joinToString("\n") { m ->
+                                "${m.senderName.ifBlank { "Someone" }}: ${m.text.ifBlank { if (m.imageUrl != null) "[photo]" else if (m.voiceUrl != null) "[voice note]" else "" }}"
+                            }
+                            viewModel.askAssistant(
+                                "Summarize this group chat in 3-5 short bullet points in the same language the chat uses (Bangla or English). Highlight decisions, questions waiting for an answer, and anything important:\n\n$recent",
+                                emptyList()
+                            ) { result ->
+                                aiSummary = result
+                                aiSummaryLoading = false
+                            }
+                        } else if (messages.isEmpty()) {
+                            Toast.makeText(context, "No messages to summarize yet", Toast.LENGTH_SHORT).show()
+                        }
+                    }) {
+                        Icon(Icons.Default.AutoAwesome, contentDescription = "AI summary of the group chat", tint = MaterialTheme.colorScheme.primary)
+                    }
+                    IconButton(onClick = {
                         onGroupCall(false)
                     }) {
                         Icon(Icons.Default.Call, contentDescription = "Start group audio call", tint = MaterialTheme.colorScheme.primary)
@@ -425,17 +456,33 @@ fun GroupChatScreen(
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(Icons.Default.Call, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                        Icon(
+                            if (pendingCallVideo) Icons.Default.Videocam else Icons.Default.Call,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary
+                        )
                         Spacer(Modifier.width(10.dp))
                         Column(Modifier.weight(1f)) {
-                            Text(tr("Group call available"), fontWeight = FontWeight.Bold)
-                            Text("Join ${group.name} when you are ready", style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(
+                                if (liveCallParticipants > 0) "Group call live · $liveCallParticipants in call"
+                                else tr("Group call available"),
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                if (liveCallParticipants > 0) "Tap Join to connect now"
+                                else "Join ${group.name} when you are ready",
+                                style = MaterialTheme.typography.bodySmall,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
                         }
-                        TextButton(onClick = { pendingCallRoomId?.let { onJoinPendingCall(it, pendingCallVideo) } }) {
+                        Button(onClick = { pendingCallRoomId?.let { onJoinPendingCall(it, pendingCallVideo) } }) {
                             Text(tr("Join Call"), fontWeight = FontWeight.Bold)
                         }
-                        IconButton(onClick = onDismissPendingCall) {
-                            Icon(Icons.Default.Close, contentDescription = "Dismiss call")
+                        if (liveCallParticipants <= 0) {
+                            IconButton(onClick = onDismissPendingCall) {
+                                Icon(Icons.Default.Close, contentDescription = "Dismiss call")
+                            }
                         }
                     }
                 }
@@ -599,6 +646,16 @@ fun GroupChatScreen(
                                 onReplySelect = { target ->
                                     replyingToGroupMessage = target
                                 },
+                                onReactSelect = { target ->
+                                    reactionTarget = target
+                                },
+                                onOpenImage = { url ->
+                                    viewerImage = url
+                                },
+                                onToggleReaction = { target, emoji ->
+                                    viewModel.toggleGroupMessageReaction(group.id, target, emoji)
+                                },
+                                currentUserId = currentUserId,
                                 onTranslate = { target ->
                                     translationMessage = target
                                     translationText = ""
@@ -837,6 +894,76 @@ fun GroupChatScreen(
         }
     }
 
+    // Full-screen photo viewer (shared with direct chats).
+    viewerImage?.let { url ->
+        FullScreenImageViewer(url = url, onDismiss = { viewerImage = null })
+    }
+
+    // AI summary of the recent conversation.
+    if (showAiSummary) {
+        AlertDialog(
+            onDismissRequest = { if (!aiSummaryLoading) showAiSummary = false },
+            icon = { Icon(Icons.Default.AutoAwesome, null, tint = MaterialTheme.colorScheme.primary) },
+            title = { Text(tr("AI group summary"), fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    if (aiSummaryLoading) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
+                            Text(tr("Reading the last 30 messages…"))
+                        }
+                    } else {
+                        Text(aiSummary)
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(enabled = !aiSummaryLoading, onClick = { showAiSummary = false }) { Text(tr("Close")) }
+            },
+            dismissButton = {
+                if (!aiSummaryLoading) TextButton(onClick = {
+                    aiSummaryLoading = true
+                    val recent = messages.reversed().take(30).joinToString("\n") { m ->
+                        "${m.senderName.ifBlank { "Someone" }}: ${m.text.ifBlank { if (m.imageUrl != null) "[photo]" else if (m.voiceUrl != null) "[voice note]" else "" }}"
+                    }
+                    viewModel.askAssistant(
+                        "Summarize this group chat in 3-5 short bullet points in the same language the chat uses (Bangla or English). Highlight decisions, questions waiting for an answer, and anything important:\n\n$recent",
+                        emptyList()
+                    ) { result -> aiSummary = result; aiSummaryLoading = false }
+                }) { Text(tr("Regenerate")) }
+            }
+        )
+    }
+
+    // Emoji reaction picker for group messages.
+    reactionTarget?.let { target ->
+        AlertDialog(
+            onDismissRequest = { reactionTarget = null },
+            title = { Text(tr("React to message"), fontWeight = FontWeight.Bold) },
+            text = {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceEvenly
+                ) {
+                    listOf("❤️", "😂", "👍", "😮", "😢", "🔥").forEach { emoji ->
+                        Text(
+                            emoji,
+                            fontSize = 28.sp,
+                            modifier = Modifier
+                                .clip(CircleShape)
+                                .clickable {
+                                    viewModel.toggleGroupMessageReaction(group.id, target, emoji)
+                                    reactionTarget = null
+                                }
+                                .padding(6.dp)
+                        )
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { reactionTarget = null }) { Text(tr("Cancel")) } }
+        )
+    }
+
     if (showAddMembers) {
         val selectable = allUsers.filterNot { group.members.contains(it.uid) }
         val selected = remember { mutableStateListOf<String>() }
@@ -889,7 +1016,11 @@ fun GroupMessageBubbleItem(
     isSentByMe: Boolean,
     onDeleteSelect: () -> Unit,
     onReplySelect: (GroupMessage) -> Unit = {},
+    onReactSelect: (GroupMessage) -> Unit = {},
     onTranslate: (GroupMessage) -> Unit = {},
+    onOpenImage: (String) -> Unit = {},
+    onToggleReaction: (GroupMessage, String) -> Unit = { _, _ -> },
+    currentUserId: String = "",
     textScale: Float = 1f,
     onMentionClick: (String) -> Unit = {},
     appearance: ChatAppearance = ChatAppearance(),
@@ -1000,14 +1131,12 @@ fun GroupMessageBubbleItem(
                     }
 
                     if (!msg.imageUrl.isNullOrBlank()) {
-                        AsyncImage(
-                            model = msg.imageUrl,
-                            contentDescription = "Image attachment",
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(160.dp)
-                                .clip(RoundedCornerShape(14.dp)),
-                            contentScale = ContentScale.Crop
+                        // Natural-size photo: small stays small, big fills the bubble; tap for full screen.
+                        SmartChatImage(
+                            url = msg.imageUrl,
+                            maxWidth = maxBubbleWidth,
+                            corner = 14.dp,
+                            onOpen = { onOpenImage(msg.imageUrl!!) }
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                     }
@@ -1047,6 +1176,33 @@ fun GroupMessageBubbleItem(
                 }
             }
 
+            // Reaction chips under the bubble: tap a chip to add/remove your reaction.
+            if (msg.reactions.isNotEmpty()) {
+                val grouped = msg.reactions.entries.groupBy({ it.value }, { it.key })
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    modifier = Modifier.padding(top = 2.dp, start = 6.dp, end = 6.dp)
+                ) {
+                    grouped.forEach { (emoji, uids) ->
+                        val mine = currentUserId.isNotBlank() && currentUserId in uids
+                        Surface(
+                            shape = RoundedCornerShape(50),
+                            color = if (mine) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .7f),
+                            modifier = Modifier.clickable { onToggleReaction(msg, emoji) }
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
+                            ) {
+                                Text(emoji, fontSize = 12.sp)
+                                Spacer(Modifier.width(3.dp))
+                                Text("${uids.size}", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                    }
+                }
+            }
+
             // Dropdown Menu for deletion
             DropdownMenu(
                 expanded = showMenu,
@@ -1063,6 +1219,22 @@ fun GroupMessageBubbleItem(
                         }
                     )
                 }
+                DropdownMenuItem(
+                    text = { Text(tr("React")) },
+                    leadingIcon = { Icon(Icons.Default.EmojiEmotions, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
+                    onClick = {
+                        showMenu = false
+                        onReactSelect(msg)
+                    }
+                )
+                DropdownMenuItem(
+                    text = { Text(tr("Reply")) },
+                    leadingIcon = { Icon(Icons.Default.Reply, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
+                    onClick = {
+                        showMenu = false
+                        onReplySelect(msg)
+                    }
+                )
                 DropdownMenuItem(
                     text = { Text(tr("Delete Message"), color = MaterialTheme.colorScheme.error) },
                     leadingIcon = { Icon(Icons.Default.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error) },

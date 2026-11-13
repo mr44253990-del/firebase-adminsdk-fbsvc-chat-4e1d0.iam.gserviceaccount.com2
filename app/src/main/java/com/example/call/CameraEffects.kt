@@ -15,7 +15,9 @@ import java.nio.ByteBuffer
 /** Live camera filters applied to the outgoing video (and therefore the local preview too). */
 enum class CallFilter(val label: String, val emoji: String) {
     NONE("Normal", "✨"), BEAUTY("Soft glow", "🌸"), WARM("Warm", "🌅"), COOL("Cool", "❄️"),
-    VIVID("Vivid", "🌈"), MONO("Mono", "🖤"), SEPIA("Vintage", "📜"), NIGHT("Night boost", "🌙")
+    VIVID("Vivid", "🌈"), MONO("Mono", "🖤"), SEPIA("Vintage", "📜"), NIGHT("Night boost", "🌙"),
+    SUNSET("Sunset", "🌇"), NOIR("Noir", "🎬"), FROST("Frost", "🧊"), DREAM("Dreamy", "💭"),
+    AQUA("Aqua", "🌊"), CHROME("Chrome", "🔮"), POP("Pop", "🎉")
 }
 
 /**
@@ -76,6 +78,12 @@ class CallFilterProcessor : VideoProcessor {
         CallFilter.COOL -> ({ b: Byte -> clamp((b.toInt() and 0xFF) + 16) }) to ({ b: Byte -> clamp((b.toInt() and 0xFF) - 10) })
         CallFilter.VIVID -> ({ b: Byte -> clamp(128 + (((b.toInt() and 0xFF) - 128) * 14) / 10) }) to ({ b: Byte -> clamp(128 + (((b.toInt() and 0xFF) - 128) * 14) / 10) })
         CallFilter.BEAUTY -> ({ b: Byte -> b }) to ({ b: Byte -> clamp((b.toInt() and 0xFF) + 4) })
+        CallFilter.SUNSET -> ({ b: Byte -> clamp((b.toInt() and 0xFF) - 22) }) to ({ b: Byte -> clamp((b.toInt() and 0xFF) + 26) })
+        CallFilter.FROST -> ({ b: Byte -> clamp((b.toInt() and 0xFF) + 20) }) to ({ b: Byte -> clamp((b.toInt() and 0xFF) - 14) })
+        CallFilter.DREAM -> ({ b: Byte -> clamp((b.toInt() and 0xFF) + 8) }) to ({ b: Byte -> clamp((b.toInt() and 0xFF) + 12) })
+        CallFilter.AQUA -> ({ b: Byte -> clamp((b.toInt() and 0xFF) - 16) }) to ({ b: Byte -> clamp((b.toInt() and 0xFF) - 6) })
+        CallFilter.CHROME -> ({ b: Byte -> clamp((b.toInt() and 0xFF) + 10) }) to ({ b: Byte -> clamp((b.toInt() and 0xFF) - 10) })
+        CallFilter.POP -> ({ b: Byte -> clamp(128 + (((b.toInt() and 0xFF) - 128) * 17) / 10) }) to ({ b: Byte -> clamp(128 + (((b.toInt() and 0xFF) - 128) * 17) / 10) })
         else -> ({ b: Byte -> b }) to ({ b: Byte -> b })
     }
 
@@ -85,6 +93,14 @@ class CallFilterProcessor : VideoProcessor {
         // Gamma brighten for dark rooms.
         CallFilter.NIGHT -> ByteArray(256) { i -> clamp((Math.pow(i / 255.0, 0.62) * 255).toInt()) }
         CallFilter.VIVID -> ByteArray(256) { i -> clamp(((i - 128) * 1.08 + 128).toInt()) }
+        // Hard cinematic contrast.
+        CallFilter.NOIR -> ByteArray(256) { i -> clamp(((i - 128) * 1.26 + 126).toInt()) }
+        // Gentle pastel haze.
+        CallFilter.DREAM -> ByteArray(256) { i -> clamp((i * 0.92 + 18).toInt()) }
+        // Metallic sheen.
+        CallFilter.CHROME -> ByteArray(256) { i -> clamp(((i - 128) * 1.12 + 136).toInt()) }
+        // Punchy social look.
+        CallFilter.POP -> ByteArray(256) { i -> clamp(((i - 128) * 1.15 + 128).toInt()) }
         else -> null
     }
 }

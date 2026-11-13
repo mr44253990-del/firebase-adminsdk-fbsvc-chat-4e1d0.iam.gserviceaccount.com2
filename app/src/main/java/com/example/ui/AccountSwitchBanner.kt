@@ -20,6 +20,31 @@ import com.example.data.RememberedAccount
 import com.google.firebase.auth.FirebaseAuth
 
 /**
+ * Cross-component bus for "activity arrived on another remembered account of this device".
+ * The FCM service publishes here; MainActivity / HomeScreen subscribe and show the banner.
+ */
+object AccountSwitchBus {
+    data class Request(
+        val accountUid: String,
+        val senderId: String,
+        val notificationType: String,
+        val targetId: String
+    )
+
+    private val _pending = kotlinx.coroutines.flow.MutableStateFlow<Request?>(null)
+    val pending: kotlinx.coroutines.flow.StateFlow<Request?> = _pending
+
+    fun announce(request: Request) { _pending.value = request }
+    fun consume() { _pending.value = null }
+
+    fun describe(request: Request?): String = when (request?.notificationType) {
+        "incoming_call", "incoming_video_call" -> "Incoming call — switch to answer"
+        "group_call" -> "Group call — switch to join"
+        else -> "New message — switch to read"
+    }
+}
+
+/**
  * Smart account switch banner — when a notification arrives for a non-active account,
  * show banner: "Account X got a message — tap to switch"
  * Also handles FCM per-account isolation: token is removed on sign-out.

@@ -112,6 +112,13 @@
         ".indexOn": ["status", "createdAt", "expiresAt"]
       }
     },
+    "groupCallIndex": {
+      "$groupId": {
+        ".read": "auth != null",
+        ".write": "auth != null",
+        ".validate": "!newData.exists() || (newData.hasChildren(['roomId', 'active']) && newData.child('roomId').isString() && newData.child('roomId').val().length <= 80 && newData.child('active').isBoolean())"
+      }
+    },
     "groupCalls": {
       "$roomId": {
         ".read": "auth != null && (data.child('memberIds').child(auth.uid).val() === true || data.child('hostId').val() === auth.uid)",

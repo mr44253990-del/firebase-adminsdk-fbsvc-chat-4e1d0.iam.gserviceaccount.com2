@@ -17,8 +17,8 @@ const WORKER_API_VERSION = 54;
 // Admin → Server health so the admin can see exactly which build is live.
 const WORKER_RELEASE = "4.9.3";
 
-// Optional extra data forwarded to the device (rich image notifications, group calls, …).
-const PUSH_EXTRA_KEYS = ["imageUrl", "roomId", "groupId", "groupName", "memberIds", "videoCall", "probeId", "chatId", "previewKind"];
+// Optional extra data forwarded to the device (rich image notifications, group calls, multi-account routing, …).
+const PUSH_EXTRA_KEYS = ["imageUrl", "roomId", "groupId", "groupName", "memberIds", "videoCall", "probeId", "chatId", "previewKind", "recipientId", "locateDuration"];
 function pushExtras(payload) {
   const out = {};
   for (const key of PUSH_EXTRA_KEYS) {
@@ -1059,12 +1059,14 @@ export default {
         const appLink = `convochat://profile?uid=${encodeURIComponent(uid)}`;
         const fallback = escapeHtml(env.APP_DOWNLOAD_URL || new URL(request.url).origin);
         const intentLink = `intent://profile?uid=${encodeURIComponent(uid)}#Intent;scheme=convochat;package=com.ebchat;S.browser_fallback_url=${encodeURIComponent(env.APP_DOWNLOAD_URL || new URL(request.url).origin)};end`;
-        // The real web app is the primary action now; the Android app stays secondary.
+        // The Android app is the primary action: opening a shared profile link from Messenger
+        // etc. jumps straight into the app on the full profile (the app handles the uid).
         const webOrigin = (await webCompanionOrigins(env))[0] || "";
         const webProfileUrl = webOrigin ? `${webOrigin}/?u=${encodeURIComponent(String(profile.username || uid))}` : "";
-        const primaryHref = webProfileUrl ? escapeHtml(webProfileUrl) : intentLink;
-        const primaryLabel = webProfileUrl ? "Open in Convo Web" : "Open profile in Convo Chat";
-        const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${name} — Convo Chat</title><meta name="description" content="${bio}"><meta property="og:site_name" content="Convo Chat"><meta property="og:type" content="profile"><meta property="og:title" content="${name}${username ? ` (@${username})` : ""}"><meta property="og:description" content="${bio}">${image ? `<meta property="og:image" content="${image}">` : ""}<style>body{margin:0;background:#070814;color:#fff;font-family:system-ui;display:grid;place-items:center;min-height:100vh}.card{width:min(620px,calc(100% - 40px));padding:30px;border-radius:30px;background:linear-gradient(145deg,#211c45,#08192b);border:1px solid #806fff77;box-sizing:border-box;text-align:center;position:relative;overflow:hidden;animation:cardIn .72s cubic-bezier(.2,.8,.2,1) both;box-shadow:0 18px 70px #09001f99}.card:before{content:"";position:absolute;inset:-60% -20%;background:linear-gradient(110deg,transparent 42%,#ffffff22 50%,transparent 58%);transform:translateX(-70%) rotate(8deg);animation:sheen 4.8s ease-in-out infinite;pointer-events:none}.card>*{position:relative;z-index:1}.avatar{width:112px;height:112px;border-radius:50%;object-fit:cover;background:#ffffff18;border:4px solid #ffffff44;animation:avatarPulse 2.8s ease-in-out infinite}.name{font-size:28px;font-weight:800;margin:18px 0 4px}.user{color:#b8b6d8}.bio{color:#e4e1ff;line-height:1.55}.btn{display:block;margin-top:16px;padding:15px;border-radius:999px;text-decoration:none;color:white;font-weight:800;background:linear-gradient(90deg,#6757ff,#ef3fac);transition:transform .2s ease,filter .2s ease}.btn:hover{transform:translateY(-2px);filter:brightness(1.12)}.secondary{background:#ffffff18}.cover{position:absolute;inset:0 0 auto 0;height:132px;background:linear-gradient(115deg,#4b2fd6,#8c3dff 48%,#12b5c9);background-size:cover;background-position:center;opacity:.92}.card{padding-top:150px}.stats{display:flex;gap:22px;justify-content:center;margin:14px 0 4px;color:#cfcbf2;font-size:13px}.stats b{display:block;color:#fff;font-size:18px;font-weight:800}.title{color:#a9e9ff;font-size:13px;margin-top:2px}@keyframes cardIn{from{opacity:0;transform:translateY(18px) scale(.98)}to{opacity:1;transform:translateY(0) scale(1)}}@keyframes sheen{0%,35%{transform:translateX(-75%) rotate(8deg)}70%,100%{transform:translateX(75%) rotate(8deg)}}@keyframes avatarPulse{0%,100%{box-shadow:0 0 0 0 #7ee7ff22}50%{box-shadow:0 0 0 12px #7ee7ff00}}@media (prefers-reduced-motion:reduce){.card,.avatar,.card:before{animation:none}.btn{transition:none}}</style></head><body><main class="card">${cover ? `<div class="cover" style="background-image:url('${cover}')"></div>` : `<div class="cover"></div>`}${image ? `<img class="avatar" src="${image}" alt="${name}">` : `<div class="avatar" aria-hidden="true"></div>`}<div class="name">${name}</div>${username ? `<div class="user">@${username}</div>` : ""}${profileTitle ? `<div class="title">${profileTitle}</div>` : ""}<p class="bio">${bio}</p><div class="stats"><span><b>${friendsCount}</b>friends</span><span><b>${followersCount}</b>followers</span></div><a class="btn" href="${primaryHref}">${primaryLabel}</a><a class="btn secondary" href="${intentLink}">Get the Android app</a></main><script>setTimeout(()=>{location.href=${JSON.stringify(appLink)}},350)</script></body></html>`;
+        const primaryHref = intentLink;
+        const primaryLabel = "Open in Convo Chat app";
+        const secondaryHref = webProfileUrl ? escapeHtml(webProfileUrl) : fallback;
+        const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${name} — Convo Chat</title><meta name="description" content="${bio}"><meta property="og:site_name" content="Convo Chat"><meta property="og:type" content="profile"><meta property="og:title" content="${name}${username ? ` (@${username})` : ""}"><meta property="og:description" content="${bio}">${image ? `<meta property="og:image" content="${image}">` : ""}<style>body{margin:0;background:#070814;color:#fff;font-family:system-ui;display:grid;place-items:center;min-height:100vh}.card{width:min(620px,calc(100% - 40px));padding:30px;border-radius:30px;background:linear-gradient(145deg,#211c45,#08192b);border:1px solid #806fff77;box-sizing:border-box;text-align:center;position:relative;overflow:hidden;animation:cardIn .72s cubic-bezier(.2,.8,.2,1) both;box-shadow:0 18px 70px #09001f99}.card:before{content:"";position:absolute;inset:-60% -20%;background:linear-gradient(110deg,transparent 42%,#ffffff22 50%,transparent 58%);transform:translateX(-70%) rotate(8deg);animation:sheen 4.8s ease-in-out infinite;pointer-events:none}.card>*{position:relative;z-index:1}.avatar{width:112px;height:112px;border-radius:50%;object-fit:cover;background:#ffffff18;border:4px solid #ffffff44;animation:avatarPulse 2.8s ease-in-out infinite}.name{font-size:28px;font-weight:800;margin:18px 0 4px}.user{color:#b8b6d8}.bio{color:#e4e1ff;line-height:1.55}.btn{display:block;margin-top:16px;padding:15px;border-radius:999px;text-decoration:none;color:white;font-weight:800;background:linear-gradient(90deg,#6757ff,#ef3fac);transition:transform .2s ease,filter .2s ease}.btn:hover{transform:translateY(-2px);filter:brightness(1.12)}.secondary{background:#ffffff18}.cover{position:absolute;inset:0 0 auto 0;height:132px;background:linear-gradient(115deg,#4b2fd6,#8c3dff 48%,#12b5c9);background-size:cover;background-position:center;opacity:.92}.card{padding-top:150px}.stats{display:flex;gap:22px;justify-content:center;margin:14px 0 4px;color:#cfcbf2;font-size:13px}.stats b{display:block;color:#fff;font-size:18px;font-weight:800}.title{color:#a9e9ff;font-size:13px;margin-top:2px}@keyframes cardIn{from{opacity:0;transform:translateY(18px) scale(.98)}to{opacity:1;transform:translateY(0) scale(1)}}@keyframes sheen{0%,35%{transform:translateX(-75%) rotate(8deg)}70%,100%{transform:translateX(75%) rotate(8deg)}}@keyframes avatarPulse{0%,100%{box-shadow:0 0 0 0 #7ee7ff22}50%{box-shadow:0 0 0 12px #7ee7ff00}}@media (prefers-reduced-motion:reduce){.card,.avatar,.card:before{animation:none}.btn{transition:none}}</style></head><body><main class="card">${cover ? `<div class="cover" style="background-image:url('${cover}')"></div>` : `<div class="cover"></div>`}${image ? `<img class="avatar" src="${image}" alt="${name}">` : `<div class="avatar" aria-hidden="true"></div>`}<div class="name">${name}</div>${username ? `<div class="user">@${username}</div>` : ""}${profileTitle ? `<div class="title">${profileTitle}</div>` : ""}<p class="bio">${bio}</p><div class="stats"><span><b>${friendsCount}</b>friends</span><span><b>${followersCount}</b>followers</span></div><a class="btn" href="${primaryHref}">${primaryLabel}</a><a class="btn secondary" href="${secondaryHref}">Open in Convo Web</a></main><script>setTimeout(()=>{location.href=${JSON.stringify(appLink)}},350)</script></body></html>`;
         return new Response(html, { status: 200, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "public,max-age=120", "Access-Control-Allow-Origin": "*" } });
       } catch (error) {
         return htmlResponse("Could not load this profile", 500);
@@ -1345,6 +1347,30 @@ export default {
 
       // ---- Admin power tools (v4.3.3) -------------------------------------------------
       const isAdminCaller = String(caller.email || "").toLowerCase() === String(env.ADMIN_EMAIL || "mr4425390@gmail.com").toLowerCase();
+      // Admin-only: list Firebase Auth accounts (uid, e-mail, disabled) for the user-management page.
+      if (path === "/admin/auth-users") {
+        if (!(await callerCan(env, caller, "users"))) return jsonResponse({ error: "Admin only" }, 403);
+        try {
+          const account = JSON.parse(env.FIREBASE_SERVICE_ACCOUNT);
+          const token = await getGoogleAccessToken(account.client_email, account.private_key, "https://www.googleapis.com/auth/identitytoolkit");
+          const pageSize = 200;
+          const pageToken = String(payload.pageToken || "").slice(0, 500);
+          let url = `https://identitytoolkit.googleapis.com/v1/projects/${account.project_id}/accounts:query?pageSize=${pageSize}`;
+          if (pageToken) url += `&pageToken=${encodeURIComponent(pageToken)}`;
+          const response = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok) return jsonResponse({ error: (data && data.error && data.error.message) || `Auth list failed (${response.status})` }, 502);
+          const users = (data.userInfo || []).map(u => ({
+            uid: String(u.localId || ""),
+            email: String(u.email || ""),
+            name: String(u.displayName || ""),
+            disabled: u.disabled === true
+          }));
+          return jsonResponse({ success: true, users, nextPageToken: String(data.nextPageToken || "") });
+        } catch (error) {
+          return jsonResponse({ error: safeError(error) }, 500);
+        }
+      }
       if (path === "/admin/user/revoke") {
         if (!(await callerCan(env, caller, "users"))) return jsonResponse({ error: "Admin only" }, 403);
         const uid = String(payload.uid || ""); if (!uid) return jsonResponse({ error: "uid required" }, 400);

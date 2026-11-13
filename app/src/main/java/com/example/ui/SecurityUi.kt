@@ -364,30 +364,9 @@ fun MfaGateScreen(method: String, maskedEmail: String, onVerified: () -> Unit, o
     MfaVerifyContent(method, maskedEmail, onVerified, onSignOut)
 }
 
-/**
- * Shown between sign-in/splash and Home: decides, before Home ever appears, whether this
- * session must pass two-step verification. Prevents Home flashing and then the 2FA screen.
- */
-@Composable
-fun SessionGateScreen(onHome: () -> Unit, onMfa: (MfaStatus) -> Unit) {
-    val context = LocalContext.current
-    LaunchedEffect(Unit) {
-        val needed = kotlinx.coroutines.withTimeoutOrNull(9000) { MfaClient.precheck(context) }
-        if (needed != null) onMfa(needed) else onHome()
-    }
-    val motion = androidx.compose.animation.core.rememberInfiniteTransition(label = "gate")
-    val spin by motion.animateFloat(0f, 360f, androidx.compose.animation.core.infiniteRepeatable(androidx.compose.animation.core.tween(1400, easing = androidx.compose.animation.core.LinearEasing)), label = "gate_spin")
-    Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF070816), Color(0xFF15123A), Color(0xFF071622)))), contentAlignment = Alignment.Center) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Box(contentAlignment = Alignment.Center) {
-                Box(Modifier.size(92.dp).rotate(spin).border(3.dp, Brush.sweepGradient(listOf(Color.Transparent, Color(0xFF8A72FF), Color(0xFF36D8C4))), CircleShape))
-                ConvoLogo(Modifier.size(56.dp), size = 56.dp)
-            }
-            Spacer(Modifier.height(16.dp))
-            Text("Securing your session…", color = Color.White.copy(alpha = .75f), style = MaterialTheme.typography.labelLarge)
-        }
-    }
-}
+// NOTE: the old full-screen SessionGateScreen ("Securing your session…") was removed.
+// The MFA precheck now runs in parallel with the splash loading screen (see SplashScreen /
+// MainActivity), so users no longer see an extra gate step after the fast splash.
 
 @Composable
 private fun MfaVerifyContent(method: String, maskedEmail: String, onVerified: () -> Unit, onSignOut: () -> Unit) {

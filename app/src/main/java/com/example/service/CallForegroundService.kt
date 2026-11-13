@@ -73,7 +73,14 @@ class CallForegroundService : Service() {
         }
         // Keep the foreground call service eligible for restart if Android recreates
         // the process while the user is backgrounded or the screen is locked.
+        // The system-wide floating call bar (visible over other apps) refreshes too.
+        com.example.call.CallSystemOverlay.update(this, openIntent, name, callId)
         return START_STICKY
+    }
+
+    override fun onDestroy() {
+        com.example.call.CallSystemOverlay.hide(this)
+        super.onDestroy()
     }
 
     override fun onBind(intent: Intent?) = null

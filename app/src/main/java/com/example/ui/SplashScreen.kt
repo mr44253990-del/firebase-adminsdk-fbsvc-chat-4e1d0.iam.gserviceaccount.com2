@@ -1,7 +1,6 @@
 package com.example.ui
 
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.FastOutLinearInEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -29,9 +28,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.CloudDone
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -52,6 +56,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -60,6 +65,7 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.Calendar
+import java.util.Date
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
@@ -68,6 +74,7 @@ private val SPLASH_INK = Color(0xFF07070F)
 private val SPLASH_VIOLET = Color(0xFF8B7BFF)
 private val SPLASH_CYAN = Color(0xFF5AC8FA)
 private val SPLASH_PINK = Color(0xFFFF6FB5)
+private val SPLASH_MINT = Color(0xFF42E695)
 
 private fun splashGreeting(): String = when (Calendar.getInstance().get(Calendar.HOUR_OF_DAY)) {
     in 5..11 -> "শুভ সকাল"
@@ -76,33 +83,35 @@ private fun splashGreeting(): String = when (Calendar.getInstance().get(Calendar
     else -> "শুভ রাত্রি"
 }
 
-/** Small rotating status line so the wait feels intentional and short. */
-private fun splashStatus(progress: Float): String = when {
-    progress < .22f -> "Waking up your workspace…"
-    progress < .45f -> "Restoring your chats…"
-    progress < .68f -> "Checking secure sign-in…"
-    progress < .86f -> "Syncing friends & stories…"
-    else -> "Almost there…"
-}
+/** The live checklist shown under the wordmark; each row ticks as loading progresses. */
+private data class SplashStep(val icon: ImageVector, val label: String)
+
+private fun splashSteps(): List<SplashStep> = listOf(
+    SplashStep(Icons.Default.CloudDone, "Restoring your chats"),
+    SplashStep(Icons.Default.Lock, "Securing your session"),
+    SplashStep(Icons.Default.AutoAwesome, "Syncing friends & stories"),
+    SplashStep(Icons.Default.Check, "Almost there")
+)
 
 /**
- * Launch screen, rebuilt for a fast, premium first impression:
+ * Launch screen — the whole boot experience lives here now.
  *
- *  - A liquid-glass brand mark that settles in with a spring and keeps breathing.
- *  - Two counter-rotating light arcs plus a thin gradient progress ring = one smooth gesture
- *    instead of a stack of unrelated spinners.
- *  - Floating aurora orbs and a drifting particle field for depth.
- *  - Letter-by-letter wordmark, greeting, and a single changing status line.
- *  - Deliberately quick: the whole sequence completes in ~1.05 s, and it lets the first frame
- *    of the app render underneath so navigation feels instant rather than delayed.
+ *  - The MFA/session precheck that used to run on a separate "Securing your session" gate screen
+ *    runs IN PARALLEL with this loading screen, so that extra full-screen step is gone.
+ *  - The loading bar tracks real progress (brand intro + precheck), not a fake timer.
+ *  - A live checklist, orbiting particles, greeting by time of day and a build stamp keep it
+ *    feeling premium while the real work completes underneath.
+ *
+ * [gateReady] is false while the background precheck is still running; the splash waits for it
+ * (with a hard cap of ~9 s) before calling [onFinished], so Home never flashes and no extra
+ * "sequence" screen is ever shown.
  */
 @Composable
-fun SplashScreen(onFinished: () -> Unit) {
+fun SplashScreen(gateReady: Boolean = true, onFinished: () -> Unit) {
     val motion = rememberInfiniteTransition(label = "splash_motion")
     val orbit by motion.animateFloat(0f, 360f, infiniteRepeatable(tween(7200, easing = LinearEasing)), label = "orbit")
     val counter by motion.animateFloat(360f, 0f, infiniteRepeatable(tween(5200, easing = LinearEasing)), label = "counter")
     val breathe by motion.animateFloat(.94f, 1.06f, infiniteRepeatable(tween(2100, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "breathe")
-    val drift by motion.animateFloat(-14f, 18f, infiniteRepeatable(tween(2600, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "drift")
     val sparkle by motion.animateFloat(0f, 1f, infiniteRepeatable(tween(3600, easing = LinearEasing)), label = "sparkle")
 
     val markScale = remember { Animatable(.55f) }
@@ -112,20 +121,33 @@ fun SplashScreen(onFinished: () -> Unit) {
     var lettersShown by remember { mutableIntStateOf(0) }
     val title = "Convo Chat"
     val greeting = remember { splashGreeting() }
+    val steps = remember { splashSteps() }
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val versionName = remember { appVersionLabel(context) }
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(gateReady) {
         launch {
-            // Everything overlaps: the mark, halo, letters and bar animate at the same time.
             launch { markAlpha.animateTo(1f, tween(260)) }
-            launch { markScale.animateTo(1f, spring(dampingRatio = .55f, stiffness = 420f)) }
+            launch { markScale.animateTo(1f, spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = 420f)) }
             launch { delay(90); halo.animateTo(1f, tween(620, easing = FastOutSlowInEasing)) }
             launch {
                 delay(140)
                 for (i in 1..title.length) { lettersShown = i; delay(32) }
             }
-            progress.animateTo(1f, tween(820, easing = FastOutSlowInEasing))
+            // Real progress: the brand intro animates to 88%, and the last stretch completes
+            // only when the background session precheck is done (capped at 9 s).
+            launch {
+                progress.animateTo(.88f, tween(900, easing = FastOutSlowInEasing))
+                val started = System.currentTimeMillis()
+                while (!gateReady && System.currentTimeMillis() - started < 9000L) delay(90)
+                progress.animateTo(1f, tween(240, easing = FastOutSlowInEasing))
+            }
         }
-        delay(1050)
+        // Minimum brand time (1.15 s) AND the real work done before we continue.
+        val started = System.currentTimeMillis()
+        while (System.currentTimeMillis() - started < 1150L) delay(60)
+        val gateStart = System.currentTimeMillis()
+        while (!gateReady && System.currentTimeMillis() - gateStart < 9000L) delay(90)
         onFinished()
     }
 
@@ -165,7 +187,7 @@ fun SplashScreen(onFinished: () -> Unit) {
 
         // Particle field: tiny rising sparks plus a slow twinkle in the corners.
         Canvas(Modifier.fillMaxSize().alpha(settled)) {
-            repeat(34) { index ->
+            repeat(40) { index ->
                 val seed = ((index * 61) % 100) / 100f
                 val phase = (sparkle + seed) % 1f
                 val x = size.width * ((seed * 2.3f + index * .029f) % 1f)
@@ -177,8 +199,7 @@ fun SplashScreen(onFinished: () -> Unit) {
                     center = Offset(x, y)
                 )
             }
-            // Soft light rays behind the mark.
-            val center = Offset(size.width / 2f, size.height * .42f)
+            val center = Offset(size.width / 2f, size.height * .38f)
             repeat(3) { ray ->
                 val radius = 120f + ray * 46f
                 drawCircle(
@@ -194,7 +215,7 @@ fun SplashScreen(onFinished: () -> Unit) {
         }
 
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Box(Modifier.size(236.dp), contentAlignment = Alignment.Center) {
+            Box(Modifier.size(218.dp), contentAlignment = Alignment.Center) {
                 // Progress ring: draws once, tracks the real loading progress.
                 Canvas(Modifier.fillMaxSize()) {
                     val radius = size.minDimension / 2f - 6f
@@ -243,7 +264,7 @@ fun SplashScreen(onFinished: () -> Unit) {
                 // Orbiting glass dots.
                 repeat(3) { index ->
                     val angle = (orbit + index * 120f) * (PI.toFloat() / 180f)
-                    val radius = 96f
+                    val radius = 88f
                     Box(
                         Modifier
                             .offsetPx(x = cos(angle) * radius, y = sin(angle) * radius * .9f)
@@ -263,7 +284,7 @@ fun SplashScreen(onFinished: () -> Unit) {
                 // The mark itself.
                 Box(
                     modifier = Modifier
-                        .size(126.dp)
+                        .size(122.dp)
                         .scale(markScale.value * (0.99f + (breathe - 1f) * .1f))
                         .alpha(markAlpha.value)
                         .clip(RoundedCornerShape(40.dp))
@@ -277,8 +298,7 @@ fun SplashScreen(onFinished: () -> Unit) {
                         .border(1.dp, Color.White.copy(alpha = .34f), RoundedCornerShape(40.dp)),
                     contentAlignment = Alignment.Center
                 ) {
-                    ConvoLogo(Modifier.fillMaxSize().padding(16.dp), size = 96.dp)
-                    // Glass specular sweep.
+                    ConvoLogo(Modifier.fillMaxSize().padding(16.dp), size = 92.dp)
                     Box(
                         Modifier.align(Alignment.TopCenter)
                             .fillMaxWidth(.82f)
@@ -334,11 +354,40 @@ fun SplashScreen(onFinished: () -> Unit) {
                 Box(Modifier.width(18.dp).height(1.5.dp).background(SPLASH_PINK.copy(alpha = .8f), CircleShape))
             }
 
-            Spacer(Modifier.height(26.dp))
+            Spacer(Modifier.height(22.dp))
+
+            // Live checklist: ticks follow the real progress, replacing the old gate screen.
+                steps.forEachIndexed { index, step ->
+                val done = progress.value >= (index + 1) / steps.size.toFloat()
+                val alpha by animateFloatAsState(if (index == 0 || progress.value > index * .25f) 1f else .35f, tween(300), label = "step_alpha")
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(vertical = 3.dp).alpha(alpha)
+                ) {
+                    Box(
+                        Modifier.size(20.dp).clip(CircleShape)
+                            .background(if (done) SPLASH_MINT.copy(alpha = .22f) else Color.White.copy(alpha = .10f))
+                            .border(1.dp, if (done) SPLASH_MINT.copy(alpha = .8f) else Color.White.copy(alpha = .22f), CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (done) Icon(Icons.Default.Check, null, tint = SPLASH_MINT, modifier = Modifier.size(13.dp))
+                        else Box(Modifier.size(5.dp).clip(CircleShape).background(Color.White.copy(alpha = .5f)))
+                    }
+                    Spacer(Modifier.width(9.dp))
+                    Text(
+                        step.label,
+                        color = if (done) Color.White.copy(alpha = .9f) else Color.White.copy(alpha = .55f),
+                        fontSize = 12.sp,
+                        fontWeight = if (done) FontWeight.SemiBold else FontWeight.Normal
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(20.dp))
 
             // Slim determinate bar mirrors the ring so progress is obvious at a glance.
             Box(
-                Modifier.width(176.dp).height(4.dp).clip(CircleShape)
+                Modifier.width(200.dp).height(4.dp).clip(CircleShape)
                     .background(Color.White.copy(alpha = .10f))
             ) {
                 Box(
@@ -349,14 +398,6 @@ fun SplashScreen(onFinished: () -> Unit) {
                         .background(Brush.horizontalGradient(listOf(SPLASH_VIOLET, SPLASH_CYAN, SPLASH_PINK)))
                 )
             }
-            Spacer(Modifier.height(10.dp))
-            Text(
-                text = splashStatus(progress.value),
-                color = Color.White.copy(alpha = .62f),
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Medium,
-                textAlign = TextAlign.Center
-            )
         }
 
         Column(
@@ -376,9 +417,21 @@ fun SplashScreen(onFinished: () -> Unit) {
                     letterSpacing = .5.sp
                 )
             }
+            Text(
+                versionName,
+                color = Color.White.copy(alpha = .28f),
+                fontSize = 9.sp,
+                letterSpacing = .6.sp
+            )
         }
     }
 }
+
+/** Reads the installed version label for the splash footer (e.g. "Convo Chat · v4.9.3"). */
+private fun appVersionLabel(context: android.content.Context): String = runCatching {
+    val info = context.packageManager.getPackageInfo(context.packageName, 0)
+    "Convo Chat · v${info.versionName ?: ""}".trim()
+}.getOrDefault("Convo Chat")
 
 /** Offset in pixels without converting to dp, so orbit radii stay physically constant. */
 private fun Modifier.offsetPx(x: Float = 0f, y: Float = 0f) = this.then(
@@ -389,4 +442,3 @@ private fun Modifier.offsetPx(x: Float = 0f, y: Float = 0f) = this.then(
         }
     }
 )
-

@@ -2266,18 +2266,13 @@ fun MessageBubbleItem(
                         )
                     }
 
-                    // Render Chat image if present
+                    // Render Chat image if present — natural size: small stays small, big fills the bubble.
                     if (!message.imageUrl.isNullOrBlank()) {
-                        AsyncImage(
-                            model = message.imageUrl,
-                            contentDescription = "Image attachment",
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(180.dp)
-                                .clip(RoundedCornerShape(18.dp))
-                                .clickable { showImageViewer = true }
-                                .background(MaterialTheme.colorScheme.surface)
+                        SmartChatImage(
+                            url = message.imageUrl,
+                            maxWidth = maxBubbleWidth,
+                            corner = 18.dp,
+                            onOpen = { showImageViewer = true }
                         )
                         Spacer(modifier = Modifier.height(6.dp))
                     }

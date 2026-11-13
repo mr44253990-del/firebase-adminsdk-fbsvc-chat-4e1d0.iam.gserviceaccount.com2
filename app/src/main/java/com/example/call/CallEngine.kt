@@ -54,7 +54,13 @@ object CallEngine {
     private val GATEWAY: String get() = com.example.data.WorkerRouter.resolve("calls", com.example.data.WorkerRouter.primary.value.ifBlank { DEFAULT_WORKER }) + "/turn-credentials"
     private val _state = MutableStateFlow(CallState())
     val state: StateFlow<CallState> = _state
+    /** True while the remote side is audibly talking (from WebRTC inbound audio levels). */
+    private val _remoteSpeaking = MutableStateFlow(false)
+    val remoteSpeaking: StateFlow<Boolean> = _remoteSpeaking
     private val mainHandler = Handler(Looper.getMainLooper())
+    /** Binder audio-route calls are slow; they run off the UI thread so animations never stall. */
+    private val audioExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
+    private var speakingPoll: Runnable? = null
 
     private var appContext: Context? = null
     private var factory: PeerConnectionFactory? = null
@@ -214,14 +220,14 @@ object CallEngine {
         }.onFailure { Log.w("CALL_ENGINE", "Camera switch failed", it) }
     }
 
-    /** Flashlight for the back camera (best effort, depends on the phone). */
+    /** Flashlight for the active camera (best effort; front torch exists on a few phones). */
     fun toggleTorch(): Boolean {
         val st = _state.value
         if (st.screenSharing || st.cameraOff) return false
-        if (st.frontCamera) { notice("Switch to the back camera to use the flashlight"); return false }
         val target = !st.torchOn
         val ok = CallTorch.set(videoCapturer, target)
-        if (ok) _state.value = st.copy(torchOn = target) else notice("Flashlight isn't available on this phone during calls")
+        if (ok) _state.value = st.copy(torchOn = target)
+        else notice("Flashlight isn't available on this phone during calls")
         return ok
     }
 
@@ -341,19 +347,27 @@ object CallEngine {
     fun toggleSpeaker() {
         val context = appContext ?: return
         val enabled = !_state.value.speaker
-        val manager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        manager.mode = AudioManager.MODE_IN_COMMUNICATION
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            if (enabled) manager.availableCommunicationDevices.firstOrNull { it.type == android.media.AudioDeviceInfo.TYPE_BUILTIN_SPEAKER }?.let(manager::setCommunicationDevice)
-            else manager.clearCommunicationDevice()
-        } else @Suppress("DEPRECATION") run { manager.isSpeakerphoneOn = enabled }
-        if (enabled) {
-            val max = manager.getStreamMaxVolume(AudioManager.STREAM_VOICE_CALL)
-            val minimum = (max * .70f).toInt().coerceAtLeast(1)
-            if (manager.getStreamVolume(AudioManager.STREAM_VOICE_CALL) < minimum) manager.setStreamVolume(AudioManager.STREAM_VOICE_CALL, minimum, 0)
-        }
+        // Update state first so the UI (and its animations) never wait on a slow audio
+        // route switch. The heavy binder calls then run on a background thread.
         _state.value = _state.value.copy(speaker = enabled)
-        updateProximityLock()
+        audioExecutor.execute {
+            try {
+                val manager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+                manager.mode = AudioManager.MODE_IN_COMMUNICATION
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    if (enabled) manager.availableCommunicationDevices.firstOrNull { it.type == android.media.AudioDeviceInfo.TYPE_BUILTIN_SPEAKER }?.let(manager::setCommunicationDevice)
+                    else manager.clearCommunicationDevice()
+                } else @Suppress("DEPRECATION") run { manager.isSpeakerphoneOn = enabled }
+                if (enabled) {
+                    val max = manager.getStreamMaxVolume(AudioManager.STREAM_VOICE_CALL)
+                    val minimum = (max * .70f).toInt().coerceAtLeast(1)
+                    if (manager.getStreamVolume(AudioManager.STREAM_VOICE_CALL) < minimum) manager.setStreamVolume(AudioManager.STREAM_VOICE_CALL, minimum, 0)
+                }
+            } catch (error: Throwable) {
+                Log.w("CALL_ENGINE", "Speaker toggle failed", error)
+            }
+            mainHandler.post { updateProximityLock() }
+        }
     }
 
     private fun createPeer(servers: List<PeerConnection.IceServer>, callId: String, myUid: String, caller: Boolean): Boolean {
@@ -471,6 +485,7 @@ object CallEngine {
                     activateCallRuntime()
                     if (previous != "connected") autoSpeakerForVideo()
                     updateProximityLock()
+                    startSpeakingPoll()
                 }
                 if (status in listOf("declined", "ended", "missed")) cleanup(status)
             }
@@ -570,6 +585,38 @@ object CallEngine {
         else @Suppress("DEPRECATION") vibrator.vibrate(longArrayOf(0, 80, 60, 160), -1)
     }
 
+    /** Samples the remote audio level once per second while connected; drives call-bar indicators. */
+    private fun startSpeakingPoll() {
+        if (speakingPoll != null) return
+        val poll = object : Runnable {
+            override fun run() {
+                val self: Runnable = this
+                val pc = peer
+                if (_state.value.status != "connected" || pc == null) { _remoteSpeaking.value = false; return }
+                runCatching {
+                    pc.getStats(RTCStatsCollectorCallback { report ->
+                        var level = 0.0
+                        report.statsMap.values.forEach { stat ->
+                            if (stat.type == "inbound-rtp" && stat.members["kind"] == "audio") {
+                                (stat.members["audioLevel"] as? Number)?.toDouble()?.let { value -> if (value > level) level = value }
+                            }
+                        }
+                        _remoteSpeaking.value = level > 0.055
+                        if (_state.value.status == "connected") mainHandler.postDelayed(self, 1000)
+                    })
+                }.onFailure { _remoteSpeaking.value = false; if (_state.value.status == "connected") mainHandler.postDelayed(self, 1000) }
+            }
+        }
+        speakingPoll = poll
+        mainHandler.post(poll)
+    }
+
+    private fun stopSpeakingPoll() {
+        speakingPoll?.let { mainHandler.removeCallbacks(it) }
+        speakingPoll = null
+        _remoteSpeaking.value = false
+    }
+
     private fun updateProximityLock() {
         val context = appContext ?: return
         val shouldUse = _state.value.status == "connected" && !_state.value.video && !_state.value.speaker
@@ -586,7 +633,9 @@ object CallEngine {
     private fun cleanup(finalStatus: String) {
         val wasConnected = _state.value.connectedAt > 0L
         stopRingback()
+        stopSpeakingPoll()
         appContext?.let(CallForegroundService::stop)
+        appContext?.let { com.example.call.CallSystemOverlay.hide(it) }
         if (proximityWakeLock?.isHeld == true) runCatching { proximityWakeLock?.release() }
         proximityWakeLock = null
         if (callCpuWakeLock?.isHeld == true) runCatching { callCpuWakeLock?.release() }

@@ -1056,7 +1056,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 gatewayUrl = routed("calls"), targetToken = token,
                 senderName = caller.name, messageBody = "Call ended",
                 senderId = caller.uid, senderProfileUrl = caller.profileImageUrl,
-                notificationType = "call_cancelled", targetId = callId
+                notificationType = "call_cancelled", targetId = callId,
+                extraData = mapOf("recipientId" to recipient.uid)
             )
         }
     }
@@ -1074,7 +1075,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     senderId = caller.uid,
                     senderProfileUrl = caller.profileImageUrl,
                     notificationType = if (video) "incoming_video_call" else "incoming_call",
-                    targetId = callId
+                    targetId = callId,
+                    // Lets a multi-account device route the ringing UI to the right account.
+                    extraData = mapOf("recipientId" to recipient.uid)
                 )
             }
             val chatId = listOf(caller.uid, recipient.uid).sorted().joinToString("_")
@@ -3706,7 +3709,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     senderId = actor.uid,
                     senderProfileUrl = actor.profileImageUrl,
                     notificationType = type,
-                    targetId = targetId
+                    targetId = targetId,
+                    // Multi-account devices show a "switch account" notice instead of a wrong chat.
+                    extraData = mapOf("recipientId" to ownerId)
                 )
             }
         }.addOnFailureListener { Log.e("ACTIVITY_CENTER", "Delivery failed: ${it.message}") }
@@ -3979,8 +3984,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         notificationType = "message",
                         targetId = messageId,
                         // Rich notification: the recipient's phone shows the photo itself.
-                        extraData = imageUrl?.takeIf { it.startsWith("https://") }
-                            ?.let { mapOf("imageUrl" to it, "previewKind" to "photo") } ?: emptyMap()
+                        extraData = (imageUrl?.takeIf { it.startsWith("https://") }
+                            ?.let { mapOf("imageUrl" to it, "previewKind" to "photo") } ?: emptyMap()) +
+                            mapOf("recipientId" to recipientUser.uid)
                     )
                 }
                 registerOnlineWatchIfOffline(recipientUser.uid, currentUser)
@@ -5715,19 +5721,19 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * Creates the signaling room and sends invitations without mounting the host's
-     * WebRTC screen. The host joins later from the notification, matching invitees.
+     * Creates the signaling room and sends invitations. The host is navigated straight into
+     * the call screen, so the callback also returns the new room id.
      */
-    fun createNotificationOnlyGroupCall(group: Group, video: Boolean, onComplete: (Boolean) -> Unit = {}) {
+    fun createNotificationOnlyGroupCall(group: Group, video: Boolean, onComplete: (Boolean, String) -> Unit = { _, _ -> }) {
         val caller = getCurrentUserOrFallback()
         if (caller == null || caller.uid !in group.members) {
-            onComplete(false)
+            onComplete(false, "")
             return
         }
         val roomId = UUID.randomUUID().toString()
         val members = group.members.distinct().take(6)
         if (members.isEmpty()) {
-            onComplete(false)
+            onComplete(false, "")
             return
         }
         val now = System.currentTimeMillis()
@@ -5745,11 +5751,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         getDatabaseInstance().getReference("groupCalls").child(roomId).setValue(roomData)
             .addOnSuccessListener {
                 inviteGroupMembersToCall(group, video, roomId, includeCaller = true)
-                onComplete(true)
+                onComplete(true, roomId)
             }
             .addOnFailureListener {
                 Log.e("GROUP_CALL", "Could not create notification-only room", it)
-                onComplete(false)
+                onComplete(false, "")
             }
     }
 
@@ -5766,6 +5772,16 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             Log.d("GROUP_CALL", "Skipping duplicate invite dispatch for $inviteKey")
             return
         }
+        // Live discovery index: lets every group member see the running call and join late.
+        getDatabaseInstance().getReference("groupCallIndex").child(group.id).setValue(
+            mapOf(
+                "roomId" to roomId,
+                "video" to video,
+                "groupName" to group.name,
+                "createdAt" to System.currentTimeMillis(),
+                "active" to true
+            )
+        )
         val callType = if (video) "video" else "audio"
         val roster = group.members.distinct().take(6).joinToString(",")
         val recipients = if (includeCaller) {
@@ -5789,11 +5805,213 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         "groupId" to group.id,
                         "groupName" to group.name,
                         "memberIds" to roster,
-                        "videoCall" to video.toString()
+                        "videoCall" to video.toString(),
+                        "recipientId" to memberUid
                     )
                 )
             }
         }
+    }
+
+    /** Invites specific extra people into a group call that is already running. */
+    fun inviteUsersToGroupCall(group: Group, video: Boolean, roomId: String, uids: List<String>) {
+        if (roomId.isBlank() || uids.isEmpty()) return
+        val caller = getCurrentUserOrFallback() ?: return
+        val callType = if (video) "video" else "audio"
+        uids.distinct().forEach { memberUid ->
+            withUserFcmToken(memberUid) { token ->
+                triggerFcmGatewayNotification(
+                    gatewayUrl = routed("calls"),
+                    targetToken = token,
+                    senderName = caller.name,
+                    messageBody = "${caller.name} added you to a group $callType call in ${group.name}",
+                    senderId = caller.uid,
+                    senderProfileUrl = caller.profileImageUrl,
+                    notificationType = "group_call",
+                    targetId = group.id,
+                    extraData = mapOf(
+                        "roomId" to roomId,
+                        "groupId" to group.id,
+                        "groupName" to group.name,
+                        "memberIds" to group.members.distinct().take(6).joinToString(","),
+                        "videoCall" to video.toString(),
+                        "recipientId" to memberUid
+                    )
+                )
+            }
+        }
+    }
+
+    // ---- Live group-call discovery: everyone opening the group sees a Join banner ----
+
+    data class ActiveGroupCall(
+        val roomId: String,
+        val groupId: String,
+        val groupName: String,
+        val video: Boolean,
+        val participants: Int,
+        val startedAt: Long
+    )
+
+    private val _activeGroupCall = MutableStateFlow<ActiveGroupCall?>(null)
+    val activeGroupCall: StateFlow<ActiveGroupCall?> = _activeGroupCall.asStateFlow()
+    private var activeGroupCallListener: ValueEventListener? = null
+    private var activeGroupCallQuery: com.google.firebase.database.Query? = null
+
+    /** Watches for an ongoing call room of this group so any member can join late. */
+    fun observeActiveGroupCall(groupId: String) {
+        if (groupId.isBlank()) return
+        stopObservingActiveGroupCall()
+        val indexRef = getDatabaseInstance().getReference("groupCallIndex").child(groupId)
+        activeGroupCallQuery = indexRef
+        activeGroupCallListener = indexRef.addValueEventListener(object : ValueEventListener {
+            override fun onDataChange(snapshot: DataSnapshot) {
+                val active = snapshot.child("active").getValue(Boolean::class.java) == true
+                val roomId = snapshot.child("roomId").getValue(String::class.java).orEmpty()
+                if (!active || roomId.isBlank()) {
+                    _activeGroupCall.value = null
+                    return
+                }
+                val groupName = snapshot.child("groupName").getValue(String::class.java) ?: "Convo Chat group"
+                val video = snapshot.child("video").getValue(Boolean::class.java) ?: false
+                val startedAt = snapshot.child("createdAt").getValue(Long::class.java) ?: 0L
+                // Participants count comes from the room itself (members are allowed to read it).
+                getDatabaseInstance().getReference("groupCalls").child(roomId).child("participants").get()
+                    .addOnSuccessListener { parts ->
+                        _activeGroupCall.value = ActiveGroupCall(roomId, groupId, groupName, video, parts.childrenCount.toInt(), startedAt)
+                    }
+                    .addOnFailureListener {
+                        _activeGroupCall.value = ActiveGroupCall(roomId, groupId, groupName, video, 0, startedAt)
+                    }
+            }
+            override fun onCancelled(error: DatabaseError) {
+                Log.w("GROUP_CALL", "Active call watcher cancelled: ${error.message}")
+            }
+        })
+    }
+
+    fun stopObservingActiveGroupCall() {
+        activeGroupCallListener?.let { listener -> activeGroupCallQuery?.removeEventListener(listener) }
+        activeGroupCallListener = null
+        activeGroupCallQuery = null
+        _activeGroupCall.value = null
+    }
+
+    /** Loads one group by id (notification taps open the right group chat). */
+    fun loadGroupById(groupId: String, onResult: (Group?) -> Unit) {
+        val id = groupId.trim()
+        if (id.isBlank()) return onResult(null)
+        _groupsState.value.firstOrNull { it.id == id }?.let { return onResult(it) }
+        FirebaseFirestore.getInstance().collection("groups").document(id).get()
+            .addOnSuccessListener { doc ->
+                if (!doc.exists()) return@addOnSuccessListener onResult(null)
+                onResult(
+                    Group(
+                        id = doc.getString("id").orEmpty().ifBlank { doc.id },
+                        name = doc.getString("name") ?: "Convo Chat group",
+                        profileUrl = doc.getString("profileUrl").orEmpty(),
+                        members = (doc.get("members") as? List<*>)?.mapNotNull { it as? String }.orEmpty(),
+                        createdAt = doc.getLong("createdAt") ?: 0L,
+                        lastMessage = doc.getString("lastMessage").orEmpty(),
+                        createdBy = doc.getString("createdBy").orEmpty()
+                    )
+                )
+            }
+            .addOnFailureListener { onResult(null) }
+    }
+
+    // ---- Admin: user management helpers (emails, password reset, locate) ----
+
+    /** Firebase Auth e-mails by uid, merged into the admin users list from the Worker. */
+    private val _adminAuthEmails = MutableStateFlow<Map<String, String>>(emptyMap())
+    val adminAuthEmails: StateFlow<Map<String, String>> = _adminAuthEmails.asStateFlow()
+
+    fun loadAdminAuthEmails() {
+        if (!isCurrentAdmin() && !staffCan("users")) return
+        fun page(token: String, pagesLeft: Int) {
+            if (pagesLeft <= 0) return
+            workerSecurityPost("/admin/auth-users", JSONObject().put("pageToken", token)) { ok, json ->
+                if (!ok) return@workerSecurityPost
+                val users = json.optJSONArray("users") ?: JSONArray()
+                val merged = _adminAuthEmails.value.toMutableMap()
+                for (i in 0 until users.length()) {
+                    val item = users.optJSONObject(i) ?: continue
+                    val uid = item.optString("uid")
+                    val email = item.optString("email")
+                    if (uid.isNotBlank() && email.isNotBlank()) merged[uid] = email
+                }
+                _adminAuthEmails.value = merged
+                val next = json.optString("nextPageToken")
+                if (next.isNotBlank()) page(next, pagesLeft - 1)
+            }
+        }
+        page("", 8)
+    }
+
+    /** Sends a Firebase password-reset e-mail to any user (admin action). */
+    fun adminSendPasswordReset(email: String, onResult: (Boolean, String) -> Unit) {
+        val clean = email.trim()
+        if (clean.isBlank()) return onResult(false, "This account has no e-mail on file")
+        FirebaseAuth.getInstance().sendPasswordResetEmail(clean)
+            .addOnSuccessListener {
+                AdminAudit.log("password_reset_sent", clean)
+                onResult(true, "Reset link sent to $clean")
+            }
+            .addOnFailureListener { onResult(false, it.localizedMessage ?: "Could not send the e-mail") }
+    }
+
+    /** Asks a device to flash its flashlight + vibrate (find-my-phone). No location involved. */
+    fun adminLocateUser(user: User, onResult: (Boolean, String) -> Unit) {
+        val admin = getCurrentUserOrFallback() ?: return onResult(false, "Admin access required")
+        if (!isCurrentAdmin() && !staffCan("users")) return onResult(false, "Admin access required")
+        withUserFcmToken(user.uid) { token ->
+            if (token.isBlank()) {
+                onResult(false, "This user has no registered device")
+                return@withUserFcmToken
+            }
+            viewModelScope.launch(Dispatchers.IO) {
+                val (code, json) = runCatching {
+                    val payload = JSONObject()
+                        .put("token", token)
+                        .put("title", "Convo Chat • Security")
+                        .put("body", "Finding this device")
+                        .put("senderId", admin.uid)
+                        .put("senderName", "Convo Chat security")
+                        .put("notificationType", "security_locate")
+                        .put("targetId", user.uid)
+                        .put("recipientId", user.uid)
+                    convoWorkerPost("push", "/", payload)
+                }.getOrElse { 0 to JSONObject().put("error", it.localizedMessage ?: "failed") }
+                val ok = code in 200..299 && json.optBoolean("success", false)
+                withContext(Dispatchers.Main) {
+                    AdminAudit.log("security_locate", user.uid)
+                    onResult(ok, if (ok) "Locate signal sent — the device will flash and vibrate for a few seconds" else json.optString("error").ifBlank { "The signal could not be delivered" })
+                }
+            }
+        }
+    }
+
+    /** Publishes an app-wide announcement banner (used by the admin AI console). */
+    fun publishAnnouncementAdmin(title: String, body: String, onResult: (Boolean, String) -> Unit) {
+        if (!isCurrentAdmin() && !staffCan("announce")) return onResult(false, "Admin access required")
+        val cleanTitle = title.trim().take(80)
+        val cleanBody = body.trim().take(400)
+        if (cleanTitle.isBlank() || cleanBody.isBlank()) return onResult(false, "Title and message are both needed")
+        val doc = FirebaseFirestore.getInstance().collection("app_config").document("announcement")
+        doc.set(
+            mapOf(
+                "id" to doc.id,
+                "title" to cleanTitle,
+                "body" to cleanBody,
+                "level" to "info",
+                "active" to true,
+                "expiresAt" to System.currentTimeMillis() + 24L * 60 * 60 * 1000,
+                "updatedAt" to System.currentTimeMillis()
+            )
+        ).addOnSuccessListener {
+            AdminAudit.log("announcement_publish", cleanTitle)
+            onResult(true, "Announcement published to every user")
+        }.addOnFailureListener { onResult(false, it.localizedMessage ?: "Could not publish") }
     }
 
     fun selectGroup(group: Group?) {
@@ -5890,6 +6108,18 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
             }
+    }
+
+    /** Toggles an emoji reaction on a group message (tap again to remove your reaction). */
+    fun toggleGroupMessageReaction(groupId: String, message: GroupMessage, emoji: String) {
+        val uid = FirebaseAuth.getInstance().currentUser?.uid ?: return
+        val ref = FirebaseFirestore.getInstance().collection("groups").document(groupId)
+            .collection("messages").document(message.messageId)
+        val mine = message.reactions[uid]
+        runCatching {
+            if (mine == emoji) ref.update("reactions.$uid", FieldValue.delete())
+            else ref.update("reactions.$uid", emoji)
+        }.onFailure { Log.w("GROUP_REACTION", "Could not update reaction: ${it.message}") }
     }
 
     fun sendGroupMessage(

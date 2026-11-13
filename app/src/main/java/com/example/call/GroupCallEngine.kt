@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.media.AudioManager
 import android.media.projection.MediaProjection
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
@@ -208,7 +209,9 @@ object GroupCallEngine {
                         watchRoom(ref, servers)
                         onReady(true)
                     }
-                    ref.child("status").onDisconnect().setValue("ended")
+                    // Only the host's disconnect ends the room for everyone; a leaving
+                    // participant only removes their own seat.
+                    if (hostId == myUid) ref.child("status").onDisconnect().setValue("ended")
                     ref.child("participants").child(myUid).onDisconnect().removeValue()
                     ref.child("lastActiveAt").setValue(ServerValue.TIMESTAMP)
                 }.addOnFailureListener { fail(it.localizedMessage ?: "Could not join group call"); onReady(false) }
@@ -229,6 +232,12 @@ object GroupCallEngine {
                     captionsEnabled = meeting.child("captionsEnabled").getValue(Boolean::class.java) ?: false,
                     recording = meeting.child("recording").getValue(Boolean::class.java) ?: false
                 )
+                // The host ended the call (or the room was closed): it ends for everyone.
+                val roomStatus = snapshot.child("status").getValue(String::class.java).orEmpty()
+                if (roomStatus == "ended" && !isClosing && _state.value.status !in listOf("idle", "ended", "failed")) {
+                    Log.i(TAG, "Room status=ended — closing the call for this device")
+                    cleanup("ended")
+                }
             }
             override fun onCancelled(error: DatabaseError) { Log.w(TAG, "Room state listener cancelled: ${error.message}") }
         })
@@ -527,10 +536,79 @@ object GroupCallEngine {
 
     fun toggleCamera() {
         if (_state.value.screenSharing) return
+        // An audio-only call that turns the camera on upgrades to a real video call.
+        if (!_state.value.video && localVideo == null) {
+            if (!upgradeToVideo()) return
+            return
+        }
         val off = !_state.value.cameraOff
         localVideo?.setEnabled(!off)
         roomRef?.child("participants")?.child(myUid)?.child("video")?.setValue(!off)
         _state.value = _state.value.copy(cameraOff = off)
+    }
+
+    /**
+     * Upgrades a live audio-only group call to video: starts the camera, publishes the new
+     * video track to every peer and renegotiates. Other members just receive a new offer.
+     */
+    fun upgradeToVideo(): Boolean {
+        if (_state.value.video && localVideo != null) return true
+        if (_state.value.screenSharing) return false
+        val app = context ?: return false
+        val f = factory ?: return false
+        val ok = runCatching {
+            if (surfaceTextureHelper == null) surfaceTextureHelper = SurfaceTextureHelper.create("Convo Group Camera", eglBase!!.eglBaseContext)
+            if (videoSource == null) videoSource = f.createVideoSource(false)
+            videoCapturer?.let { runCatching { it.stopCapture() }; it.dispose() }
+            videoCapturer = createCameraCapturer(app) ?: error("No camera available")
+            videoCapturer!!.initialize(surfaceTextureHelper, app, videoSource!!.capturerObserver)
+            videoCapturer!!.startCapture(720, 1280, 24)
+            localVideo = f.createVideoTrack("group_video_$myUid", videoSource)
+            localVideo?.setEnabled(true)
+            localVideo?.let { track -> localRenderer?.let(track::addSink) }
+            peers.values.forEach { slot ->
+                runCatching {
+                    val videoSender = slot.peer.senders.firstOrNull { sender -> sender.track()?.kind() == MediaStreamTrack.VIDEO_TRACK_KIND }
+                    if (videoSender != null) videoSender.setTrack(localVideo, false)
+                    else slot.peer.addTrack(localVideo, listOf("group"))
+                }.onFailure { Log.w(TAG, "Video publish failed for ${slot.uid}", it) }
+            }
+            roomRef?.child("participants")?.child(myUid)?.child("video")?.setValue(true)
+            roomRef?.child("video")?.setValue(true)
+            _state.value = _state.value.copy(video = true, cameraOff = false)
+            CallForegroundService.start(
+                app,
+                "group:${_state.value.roomId}",
+                _state.value.groupName,
+                true,
+                groupId = _state.value.groupId,
+                roomId = _state.value.roomId,
+                groupName = _state.value.groupName,
+                memberIds = activeMemberIds
+            )
+            renegotiateAll()
+            true
+        }.onFailure {
+            Log.e(TAG, "Video upgrade failed", it)
+            _state.value = _state.value.copy(error = "Could not turn on the camera: ${it.localizedMessage}")
+            false
+        }.getOrDefault(false)
+        return ok
+    }
+
+    /** Sends a fresh offer to every connected peer (used after publishing a new video track). */
+    private fun renegotiateAll() {
+        peers.values.forEach { slot ->
+            runCatching {
+                slot.peer.createOffer(object : SimpleSdpObserver() {
+                    override fun onCreateSuccess(sdp: SessionDescription) {
+                        slot.peer.setLocalDescription(SimpleSdpObserver(), sdp)
+                        sendSignal(slot.uid, mapOf("kind" to "offer", "from" to myUid, "sdp" to sdp.description))
+                    }
+                    override fun onCreateFailure(error: String) { Log.w(TAG, "Renegotiation offer failed for ${slot.uid}: $error") }
+                }, MediaConstraints())
+            }.onFailure { Log.w(TAG, "Renegotiation failed for ${slot.uid}", it) }
+        }
     }
 
     fun switchCamera() {
@@ -572,7 +650,11 @@ object GroupCallEngine {
         val app = context ?: return
         val manager = app.getSystemService(Context.AUDIO_SERVICE) as AudioManager
         val enabled = !_state.value.speaker
-        @Suppress("DEPRECATION") manager.isSpeakerphoneOn = enabled
+        manager.mode = AudioManager.MODE_IN_COMMUNICATION
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            if (enabled) manager.availableCommunicationDevices.firstOrNull { it.type == android.media.AudioDeviceInfo.TYPE_BUILTIN_SPEAKER }?.let(manager::setCommunicationDevice)
+            else manager.clearCommunicationDevice()
+        } else @Suppress("DEPRECATION") { manager.isSpeakerphoneOn = enabled }
         _state.value = _state.value.copy(speaker = enabled)
     }
 
@@ -755,8 +837,17 @@ object GroupCallEngine {
     }
 
     fun end() {
+        val wasHost = isHost()
+        val groupId = _state.value.groupId
         roomRef?.child("participants")?.child(myUid)?.removeValue()
-        roomRef?.child("status")?.setValue("ended")
+        if (wasHost) {
+            // The host hangs up for everyone: writing status=ended closes the call on all devices,
+            // and the live-call index is cleared so the group's Join banner disappears.
+            roomRef?.child("status")?.setValue("ended")
+            if (groupId.isNotBlank()) {
+                FirebaseDatabase.getInstance().getReference("groupCallIndex").child(groupId).removeValue()
+            }
+        }
         cleanup("ended")
     }
 
@@ -808,6 +899,7 @@ object GroupCallEngine {
         localVideo?.dispose(); localVideo = null; videoSource?.dispose(); videoSource = null
         localAudio?.dispose(); localAudio = null
         context?.let(CallForegroundService::stop)
+        context?.let { CallSystemOverlay.hide(it) }
         activeMemberIds = emptyList()
         hostId = ""
         _state.value = _state.value.copy(status = finalStatus, hostId = "", captionsEnabled = false, recording = false)

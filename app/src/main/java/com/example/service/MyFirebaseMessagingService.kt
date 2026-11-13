@@ -78,6 +78,22 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         markDeviceReachableFromPush(notificationType, remoteMessage.data["probeId"])
         Log.d("FCM_SERVICE", "Message received from: ${remoteMessage.from}")
 
+        // "Find this device": flash the torch + vibrate for a few seconds (admin security tool).
+        if (notificationType == "security_locate") {
+            com.example.service.SecurityLocate.start(this, (remoteMessage.data["locateDuration"]?.toLongOrNull() ?: 6000L))
+            return
+        }
+
+        // Multi-account routing: a push meant for a remembered account that is NOT currently
+        // active shows a "switch account" notification instead of the wrong chat/call UI.
+        val recipientId = remoteMessage.data["recipientId"].orEmpty()
+        val activeUid = FirebaseAuth.getInstance().currentUser?.uid
+        if (recipientId.isNotBlank() && recipientId != activeUid) {
+            handlePushForOtherAccount(recipientId, remoteMessage)
+            return
+        }
+
+
         // Extract title and body
         val rawTitle = remoteMessage.notification?.title ?: remoteMessage.data["title"] ?: "New Message"
         val rawBody = (remoteMessage.notification?.body ?: remoteMessage.data["body"] ?: "You received a new message")
@@ -217,6 +233,58 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         // writes actually leave the device before Android freezes the background process.
         runCatching { com.google.android.gms.tasks.Tasks.await(com.google.android.gms.tasks.Tasks.whenAll(write, ack), 12, java.util.concurrent.TimeUnit.SECONDS) }
             .onFailure { Log.w("FCM_SERVICE", "Presence write not confirmed in time: ${it.message}") }
+    }
+
+    /**
+     * A call or message arrived for another account saved on this device. Shows a switch-account
+     * notification (calls: "switch to answer", messages: "switch to read"). Tapping it switches
+     * the active account automatically and then routes to the original screen.
+     */
+    private fun handlePushForOtherAccount(recipientUid: String, remoteMessage: RemoteMessage) {
+        val account = com.example.data.RememberedAccount.list(this).firstOrNull { it.uid == recipientUid } ?: return
+        val notificationType = remoteMessage.data["notificationType"] ?: "message"
+        val senderName = remoteMessage.data["senderName"].orEmpty().ifBlank { "Someone" }
+        val senderId = remoteMessage.data["senderId"].orEmpty()
+        val targetId = remoteMessage.data["targetId"].orEmpty()
+        val isCall = notificationType in setOf("incoming_call", "incoming_video_call", "group_call")
+
+        // If the app is open, surface the in-app switch banner immediately as well.
+        com.example.ui.AccountSwitchBus.announce(
+            com.example.ui.AccountSwitchBus.Request(account.uid, senderId, notificationType, targetId)
+        )
+
+        val intent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            putExtra("switchAccountUid", recipientUid)
+            putExtra("notificationType", notificationType)
+            putExtra("senderId", senderId)
+            putExtra("targetId", targetId)
+        }
+        val pending = PendingIntent.getActivity(
+            this,
+            ("switch_" + recipientUid + notificationType).hashCode(),
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val channelId = "convo_switch_v1"
+        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            manager.createNotificationChannel(
+                NotificationChannel(channelId, "Account switch", NotificationManager.IMPORTANCE_HIGH).apply {
+                    description = "Calls and messages for your other Convo Chat accounts on this device"
+                    lockscreenVisibility = NotificationCompat.VISIBILITY_PRIVATE
+                }
+            )
+        }
+        val builder = NotificationCompat.Builder(this, channelId)
+            .setSmallIcon(android.R.drawable.sym_call_incoming)
+            .setContentTitle(if (isCall) "Call for @${account.name.ifBlank { "account" }}" else "Message for @${account.name.ifBlank { "account" }}")
+            .setContentText(if (isCall) "$senderName is calling — switch account to answer" else "$senderName sent a message — switch account to read it")
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setCategory(if (isCall) NotificationCompat.CATEGORY_CALL else NotificationCompat.CATEGORY_MESSAGE)
+            .setAutoCancel(true)
+            .setContentIntent(pending)
+        manager.notify(("switch_" + recipientUid).hashCode(), builder.build())
     }
 
     private fun sendIncomingCallNotification(callId: String, callerId: String, callerName: String, callerImage: String, videoCall: Boolean) {

@@ -85,13 +85,18 @@ fun AdminControlCenterScreen(
     val featureRequests by viewModel.featureRequests.collectAsState()
     val chatBackgroundImages by viewModel.chatBackgroundImages.collectAsState()
     val globalSoundUrls by viewModel.globalSoundUrls.collectAsState()
+    val adminAuthEmails by viewModel.adminAuthEmails.collectAsState()
 
     var selectedPage by rememberSaveable { mutableStateOf("dashboard") }
     // Hoisted so returning from a sub-page restores the dashboard position instead of jumping to the top.
     val dashboardScroll = rememberSaveable(saver = androidx.compose.foundation.ScrollState.Saver) { androidx.compose.foundation.ScrollState(0) }
     BackHandler(enabled = selectedPage != "dashboard") { selectedPage = "dashboard" }
     LaunchedEffect(selectedPage) {
-        if (selectedPage == "users") viewModel.loadAdminUsersPage(reset = true)
+        if (selectedPage == "users") {
+            viewModel.loadAdminUsersPage(reset = true)
+            viewModel.loadAdminAuthEmails()
+        }
+        if (selectedPage == "security") viewModel.loadAdminAuthEmails()
         if (selectedPage == "web_deploy") viewModel.refreshWebDeployStatus()
     }
 
@@ -233,6 +238,8 @@ fun AdminControlCenterScreen(
         AdminMenuEntry("premium", "Premium & payments", "Plans, pricing and payment methods", Icons.Outlined.WorkspacePremium, Color(0xFFCF9829)),
         AdminMenuEntry("campaigns", "Campaigns", "One-time Friday Fun message", Icons.Outlined.Campaign, Color(0xFFDB5B8C)),
         AdminMenuEntry("users", "User management", "Search profiles, filter status and open quick details", Icons.Outlined.Groups, Color(0xFF4B83BE), users.size.takeIf { it > 0 }?.toString().orEmpty()),
+        AdminMenuEntry("security", "Security", "All accounts with live status · find a device (flash + vibrate)", Icons.Outlined.Security, Color(0xFFD84949)),
+        AdminMenuEntry("ai_console", "AI console", "Command the app: maintenance, announcements, users — by chat", Icons.Outlined.Terminal, Color(0xFF8E5CE6), "AI"),
         AdminMenuEntry("reports", "Safety reports", "Review reports and take action", Icons.Outlined.Security, Color(0xFFD84949), reports.size.takeIf { it > 0 }?.toString().orEmpty()),
         AdminMenuEntry("feature_requests", "Feature requests", "Review community suggestions", Icons.Outlined.Lightbulb, Color(0xFF2F9A89), featureRequests.size.takeIf { it > 0 }?.toString().orEmpty()),
         AdminMenuEntry("premium_requests", "Payment approvals", "Approve or reject Premium requests", Icons.Outlined.Payments, Color(0xFFBD8B24), premiumRequests.size.takeIf { it > 0 }?.toString().orEmpty()),
@@ -506,7 +513,7 @@ fun AdminControlCenterScreen(
                                     )
                                 }
                             }
-                            Text("${visibleAdminUsers.size} shown • profiles loaded from Firestore pages", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text("${visibleAdminUsers.size} shown • e-mails are merged from Firebase Auth", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             when {
                                 adminDirectoryUsers.isEmpty() && adminDirectoryLoading -> { CircularProgressIndicator(Modifier.size(24.dp)) }
                                 adminDirectoryUsers.isEmpty() -> Text("No user profiles are loaded yet.", color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -515,8 +522,14 @@ fun AdminControlCenterScreen(
                                     AdminUserManagementRow(
                                         user = person,
                                         now = now,
+                                        email = adminAuthEmails[person.uid],
                                         onOpenProfile = { selectedAdminUser = person },
-                                        onCopyUid = { copyAdminUserUid(context, person.uid) }
+                                        onCopyUid = { copyAdminUserUid(context, person.uid) },
+                                        onSendReset = { email ->
+                                            viewModel.adminSendPasswordReset(email) { ok, message ->
+                                                Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+                                            }
+                                        }
                                     )
                                 }
                             }
@@ -533,6 +546,12 @@ fun AdminControlCenterScreen(
                                 Text("All matching directory pages have been loaded.", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
+                    }
+                    "security" -> {
+                        AdminSecurityCenterScreen(viewModel)
+                    }
+                    "ai_console" -> {
+                        AdminAiConsoleScreen(viewModel, onBack = { selectedPage = "dashboard" })
                     }
                     "updates" -> {
                         AdminPanelCard("APK update campaign", "Verify and publish a signed Convo Chat APK", Icons.Outlined.Publish) {
@@ -1248,8 +1267,10 @@ fun AdminAccessDeniedScreen() {
 private fun AdminUserManagementRow(
     user: User,
     now: Long,
+    email: String? = null,
     onOpenProfile: () -> Unit,
-    onCopyUid: () -> Unit
+    onCopyUid: () -> Unit,
+    onSendReset: (String) -> Unit = {}
 ) {
     val onlineNow = user.isOnline && (user.onlineUntil <= 0L || user.onlineUntil > now)
     val premiumNow = user.isPremium && (user.premiumPlan.equals("lifetime", true) || user.premiumUntil > now)
@@ -1279,6 +1300,28 @@ private fun AdminUserManagementRow(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
+                    // Firebase Auth e-mail with a one-tap password reset link.
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Email, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(11.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text(
+                            email ?: "e-mail loading…",
+                            fontSize = 10.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        if (email != null) {
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                "Send forgot password",
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.clickable { onSendReset(email!!) }
+                            )
+                        }
+                    }
                 }
                 IconButton(onClick = onCopyUid) { Icon(Icons.Default.ContentCopy, contentDescription = "Copy user UID") }
             }

@@ -6,8 +6,10 @@ import com.example.data.User
 import org.json.JSONArray
 
 /**
- * Smarter on-device search: multi-word matching, light typo tolerance, relevance ranking,
- * "@" (people) and "#" (hashtag) shortcuts, recent searches and trending hashtags.
+ * Smarter on-device search: multi-word matching, light typo tolerance, initials and
+ * name-abbreviation matching, "@" (people) and "#" (hashtag) shortcuts, richer field coverage
+ * (bio, pronouns, professional title), mutual-friend and online boosts, recent searches and
+ * trending hashtags.
  */
 object SmartSearch {
     private const val PREFS = "convo_search"
@@ -42,18 +44,25 @@ object SmartSearch {
         return prev[b.length] <= 1
     }
 
-    /** Score one token against one field: exact word > prefix > contains > typo match. */
+    /** Score one token against one field: exact word > prefix > contains > initials > typo match. */
     private fun tokenScore(token: String, field: String): Int {
         if (field.isBlank()) return 0
         val lower = field.lowercase()
+        val words = lower.split(Regex("\\W+"))
+        // Initials: "ar" matches "Abdul Rakib", "mr" matches "Md Rakib".
+        val initials = words.filter { it.isNotBlank() }.joinToString("") { it.first().toString() }
         if (!lower.contains(token)) {
             if (token.length < 4) return 0
-            return if (lower.split(Regex("\\W+")).any { it.length >= 3 && closeEnough(token, it) }) 2 else 0
+            return when {
+                initials.length >= token.length && initials.startsWith(token) -> 6
+                words.any { it.length >= 3 && closeEnough(token, it) } -> 2
+                else -> 0
+            }
         }
-        val words = lower.split(Regex("\\W+"))
         return when {
             words.any { it == token } -> 10
             words.any { it.startsWith(token) } -> 7
+            initials.length >= token.length && initials.startsWith(token) -> 6
             else -> 4
         }
     }
@@ -70,13 +79,19 @@ object SmartSearch {
         return total
     }
 
-    fun rankUsers(query: Query, users: List<User>, now: Long = System.currentTimeMillis()): List<User> {
+    fun rankUsers(query: Query, users: List<User>, myFriends: List<String> = emptyList(), now: Long = System.currentTimeMillis()): List<User> {
         if (query.tagOnly) return emptyList()
+        val friendSet = myFriends.toSet()
         return users.mapNotNull { user ->
-            val s = score(query, listOf(user.name to 4, user.username to 4, user.bio to 1))
+            val s = score(
+                query,
+                listOf(user.name to 4, user.username to 4, user.bio to 1, user.pronouns to 1, user.professionalTitle to 1)
+            )
             if (s == 0) null else {
                 val onlineBoost = if (user.isOnline && (user.onlineUntil <= 0L || user.onlineUntil > now)) 3 else 0
-                user to (s + onlineBoost)
+                // People you already know surface first when scores tie.
+                val friendBoost = if (user.uid in friendSet) 2 else 0
+                user to (s + onlineBoost + friendBoost)
             }
         }.sortedByDescending { it.second }.map { it.first }
     }
@@ -105,6 +120,19 @@ object SmartSearch {
             .map { it.trim().removePrefix("#").lowercase() }.filter { it.length in 2..30 }
             .groupingBy { it }.eachCount().entries.sortedByDescending { it.value }
             .take(limit).map { it.key }
+
+    /** Quick "did you mean" suggestions when a search finds nothing (same list, typo-tolerant). */
+    fun suggestUsers(raw: String, users: List<User>, limit: Int = 5): List<User> {
+        val query = parse(raw)
+        if (query.tokens.isEmpty()) return emptyList()
+        return users.mapNotNull { user ->
+            val haystack = "${user.name} ${user.username}".lowercase()
+            val hits = query.tokens.count { token ->
+                haystack.contains(token) || haystack.split(Regex("\\W+")).any { it.length >= 3 && closeEnough(token, it) }
+            }
+            if (hits > 0) user to hits else null
+        }.sortedByDescending { it.second }.take(limit).map { it.first }
+    }
 
     fun recent(context: Context): List<String> = runCatching {
         val array = JSONArray(context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_RECENT, "[]"))
