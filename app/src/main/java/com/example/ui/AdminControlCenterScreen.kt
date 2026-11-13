@@ -478,7 +478,7 @@ fun AdminControlCenterScreen(
                             posts = viewModel.postsState.collectAsState().value,
                             reportsCount = reports.size,
                             onUpdateConfig = { updated ->
-                                viewModel.updateFlagshipConfig(updated) { success ->
+                                viewModel.publishFlagshipConfig(updated) { success ->
                                     Toast.makeText(context, if (success) "Configuration updated by AI Copilot!" else "Update failed", Toast.LENGTH_SHORT).show()
                                 }
                             }

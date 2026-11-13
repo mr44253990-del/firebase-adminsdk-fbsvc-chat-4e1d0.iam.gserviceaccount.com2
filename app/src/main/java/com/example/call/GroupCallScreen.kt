@@ -569,6 +569,7 @@ fun GroupCallScreen(
                         }
                     }
                 }
+            }
         }
     }
 

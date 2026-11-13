@@ -5717,6 +5717,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     /**
      * Creates the signaling room and sends invitations without mounting the host's
      * WebRTC screen. The host joins later from the notification, matching invitees.
+     */
     fun createNotificationOnlyGroupCall(group: Group, video: Boolean, onCompleteWithRoom: (Boolean, String?) -> Unit) {
         val caller = getCurrentUserOrFallback()
         if (caller == null || caller.uid !in group.members) {
