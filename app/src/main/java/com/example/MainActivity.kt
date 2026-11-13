@@ -331,6 +331,10 @@ class MainActivity : FragmentActivity() {
 
         // Configure standard Coil cache so images (like profile pics) are cached aggressively offline
         val imageLoader = ImageLoader.Builder(this)
+            // v5.5: animated GIF and animated WebP play everywhere (chats, posts, stories).
+            .components {
+                if (Build.VERSION.SDK_INT >= 28) add(coil.decode.ImageDecoderDecoder.Factory()) else add(coil.decode.GifDecoder.Factory())
+            }
             .memoryCache {
                 MemoryCache.Builder(this)
                     // Avoid letting image cache consume a quarter of RAM on
@@ -373,7 +377,14 @@ class MainActivity : FragmentActivity() {
                 val knownPosts by viewModel.postsState.collectAsState()
                 var linkedPost by remember { mutableStateOf<com.example.data.Post?>(null) }
                 val activeRecipient by viewModel.activeRecipientUser.collectAsState()
-                val activeGroup by viewModel.activeGroup.collectAsState()
+                val liveActiveGroup by viewModel.activeGroup.collectAsState()
+                // The group chat clears the view-model's active group when it leaves the screen
+                // (opening the call screen, a profile, …). Screens that still need the group — the
+                // call screen above all — used to get "no group" and showed an empty black/white
+                // page. Remember the last opened group here so it is always available.
+                var lastOpenedGroup by remember { mutableStateOf<com.example.data.Group?>(null) }
+                LaunchedEffect(liveActiveGroup) { liveActiveGroup?.let { lastOpenedGroup = it } }
+                val activeGroup = liveActiveGroup ?: lastOpenedGroup
                 val selectedProfile by viewModel.selectedProfile.collectAsState()
                 var requestedGroupCallVideo by remember { mutableStateOf(false) }
                 /** Room to join when the group-call screen opens; null starts a brand-new call. */
@@ -542,8 +553,11 @@ class MainActivity : FragmentActivity() {
                     // every other messenger. ON = sensitive screens are protected. Either way the
                     // phone never gets stuck in a blocked state when leaving a chat or call.
                     val sensitiveRoutes = setOf("chat", "group_chat", "call", "group_call")
-                    LaunchedEffect(currentRoute, privacySettings.preventScreenshotOnSensitiveScreens) {
-                        val needsProtection = privacySettings.preventScreenshotOnSensitiveScreens &&
+                    // While you share your screen in a call the protection is lifted, otherwise the
+                    // other person would only see a black picture for chats and calls.
+                    val sharingScreen = callState.screenSharing || groupCallState.screenSharing
+                    LaunchedEffect(currentRoute, privacySettings.preventScreenshotOnSensitiveScreens, sharingScreen) {
+                        val needsProtection = !sharingScreen && privacySettings.preventScreenshotOnSensitiveScreens &&
                             currentRoute?.substringBefore('/')?.substringBefore('?') in sensitiveRoutes
                         if (needsProtection) {
                             window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
@@ -1017,7 +1031,11 @@ class MainActivity : FragmentActivity() {
                             }
                         )
                     }
-                    if(FirebaseAuth.getInstance().currentUser!=null) sharedContent?.let { payload -> IncomingShareHub(payload,viewModel,onCreatePost={navController.navigate("compose_post")},onDismiss={incomingShare.value=null}) }
+                    if(FirebaseAuth.getInstance().currentUser!=null) sharedContent?.let { payload -> IncomingShareHub(payload,viewModel,onCreatePost={navController.navigate("compose_post")},onDismiss={incomingShare.value=null},onOpenChat={ person ->
+                        viewModel.selectRecipient(person)
+                        if (navController.currentBackStackEntry?.destination?.route == "chat") navController.popBackStack()
+                        navController.navigate("chat") { launchSingleTop = true }
+                    }) }
                     LaunchedEffect(openCallRequest, callState.status) {
                         if (openCallRequest && callState.status !in listOf("idle", "ended", "declined", "missed", "failed")) {
                             pendingOpenCall.value = false

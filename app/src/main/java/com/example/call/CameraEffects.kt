@@ -145,9 +145,22 @@ object CallTorch {
         val device = findField(session, "cameraDevice") as? CameraDevice ?: return false
         val surface = findField(session, "surface") as? Surface ?: return false
         val handler = findField(session, "cameraThreadHandler") as? Handler
+        // Rebuild the same request WebRTC uses (template, frame-rate range, exposure, focus) and
+        // only add the torch. The earlier version left out the frame-rate range, and on many
+        // phones the stream then went black as soon as the light was switched on.
         val builder = device.createCaptureRequest(CameraDevice.TEMPLATE_RECORD)
         builder.addTarget(surface)
+        runCatching {
+            val format = findField(session, "captureFormat")
+            val framerate = findField(format, "framerate")
+            val factor = (findField(session, "fpsUnitFactor") as? Int)?.takeIf { it > 0 } ?: 1
+            val min = (findField(framerate, "min") as? Int) ?: 0
+            val max = (findField(framerate, "max") as? Int) ?: 0
+            if (max > 0) builder.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, android.util.Range(min / factor, max / factor))
+        }
+        builder.set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
         builder.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
+        builder.set(CaptureRequest.CONTROL_AE_LOCK, false)
         builder.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO)
         builder.set(CaptureRequest.FLASH_MODE, if (on) CaptureRequest.FLASH_MODE_TORCH else CaptureRequest.FLASH_MODE_OFF)
         val run = Runnable { runCatching { captureSession.setRepeatingRequest(builder.build(), null, handler) }.onFailure { Log.w("CALL_TORCH", "torch failed", it) } }

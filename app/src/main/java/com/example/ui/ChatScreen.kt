@@ -450,15 +450,21 @@ fun ChatScreen(
             var sent = 0
             images.forEachIndexed { index, uri ->
                 albumProgress = (index + 1) to images.size
-                val bytes = compressChatImage(context, uri, hd)
+                // Animated pictures (GIF / animated WebP) are sent untouched so they keep moving;
+                // everything else is resized and compressed as before.
+                val pickedMime = context.contentResolver.getType(uri).orEmpty()
+                val animated = pickedMime == "image/gif" || pickedMime == "image/webp"
+                val bytes = if (animated) withContext(Dispatchers.IO) {
+                    runCatching { context.contentResolver.openInputStream(uri)?.use { it.readBytes() } }.getOrNull()?.takeIf { it.size <= 20 * 1024 * 1024 }
+                } ?: compressChatImage(context, uri, hd) else compressChatImage(context, uri, hd)
                 if (bytes == null) return@forEachIndexed
                 val url = viewModel.awaitTrackedUpload(
                     kind = "photo",
-                    label = "Photo ${index + 1} of ${images.size}",
+                    label = (if (animated) "GIF " else "Photo ") + "${index + 1} of ${images.size}",
                     bucket = "chat_images",
-                    fileName = "chat_img_${System.currentTimeMillis()}_${index}_${(1000..9999).random()}.jpg",
+                    fileName = "chat_img_${System.currentTimeMillis()}_${index}_${(1000..9999).random()}." + (if (pickedMime == "image/gif") "gif" else if (pickedMime == "image/webp") "webp" else "jpg"),
                     bytes = bytes,
-                    contentType = "image/jpeg",
+                    contentType = if (animated) pickedMime else "image/jpeg",
                     preview = uri.toString()
                 ) { lateUrl -> viewModel.sendMessage(recipientUser = recipient, text = "", imageUrl = lateUrl) }
                 if (url != null) {

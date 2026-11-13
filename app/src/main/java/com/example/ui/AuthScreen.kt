@@ -137,7 +137,10 @@ fun AuthScreen(
         }
     }
     LaunchedEffect(Unit) {
-        if (!savedPasswordOffered) { savedPasswordOffered = true; offerSavedPasswords(silentIfNone = true) }
+        // v5.5: no automatic search for saved passwords when the screen opens. It froze the
+        // sign-in screen for 2-3 seconds with nothing on screen. Saved accounts are listed below
+        // and the password manager opens only when the user taps "Use a saved password".
+        savedPasswordOffered = true
     }
     var name by remember { mutableStateOf("") }
     var dob by remember { mutableStateOf("") }
@@ -716,6 +719,28 @@ fun AuthScreen(
                     )
 
                     // Forgot password trigger (only in login mode)
+                    // Saved accounts appear as you type the e-mail: one tap fills it in (and signs in
+                    // when this phone already knows the password).
+                    if (isLoginMode && email.length >= 2) {
+                        val suggestions = rememberedAccounts.filter { it.email.isNotBlank() && it.email.contains(email.trim(), ignoreCase = true) && !it.email.equals(email.trim(), true) }.take(3)
+                        suggestions.forEach { account ->
+                            Row(
+                                Modifier.fillMaxWidth().padding(top = 6.dp).clip(RoundedCornerShape(16.dp))
+                                    .background(lp.text.copy(alpha = .06f)).border(1.dp, lp.text.copy(alpha = .12f), RoundedCornerShape(16.dp))
+                                    .clickable { email = account.email; viewModel.loginRememberedAccount(account, onAuthSuccess) }
+                                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(Icons.Default.AccountCircle, null, tint = ConvoBrand.Cyan, modifier = Modifier.size(22.dp))
+                                Spacer(Modifier.width(9.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text(account.name.ifBlank { account.email.substringBefore('@') }, color = lp.text, fontWeight = FontWeight.Bold, fontSize = 13.sp, maxLines = 1)
+                                    Text(account.email, color = lp.textSoft, fontSize = 11.sp, maxLines = 1)
+                                }
+                                Text("Use", color = ConvoBrand.Cyan, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                            }
+                        }
+                    }
                     if (isLoginMode) {
                         Box(
                             modifier = Modifier.fillMaxWidth(),

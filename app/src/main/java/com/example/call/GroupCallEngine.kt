@@ -577,6 +577,8 @@ object GroupCallEngine {
 
     fun toggleCamera() {
         if (_state.value.screenSharing) return
+        // Turning the camera on when none has been started yet (call began as audio / screen share).
+        if (_state.value.cameraOff && videoCapturer == null) { recoverLocalVideo(); return }
         val off = !_state.value.cameraOff
         localVideo?.setEnabled(!off)
         roomRef?.child("participants")?.child(myUid)?.child("video")?.setValue(!off)
@@ -735,40 +737,91 @@ object GroupCallEngine {
         }
     }
 
+    /** True when screen sharing was started from an audio-only call (no camera to return to). */
+    private var screenShareWithoutCamera = false
+
+    /**
+     * Screen sharing in a group call — works from video AND audio calls. Android 14+ only allows
+     * capture once the media-projection foreground service is running, so this waits for it
+     * (capturing earlier used to crash the app from a background thread).
+     */
     fun startScreenShare(permissionData: Intent): Boolean {
         val app = context ?: return false
-        val source = videoSource ?: return false
-        return runCatching {
-            videoCapturer?.stopCapture(); videoCapturer?.dispose()
-            CallForegroundService.start(
-                app,
-                "group:${_state.value.roomId}",
-                _state.value.groupName,
-                _state.value.video,
-                screenShare = true,
-                groupId = _state.value.groupId,
-                roomId = _state.value.roomId,
-                groupName = _state.value.groupName,
-                memberIds = activeMemberIds
-            )
-            val capturer = ScreenCapturerAndroid(permissionData, object : MediaProjection.Callback() {
-                override fun onStop() { mainHandler.post { stopScreenShare() } }
-            })
-            val metrics = app.resources.displayMetrics
-            capturer.initialize(surfaceTextureHelper, app, source.capturerObserver)
-            capturer.startCapture(metrics.widthPixels.coerceAtLeast(720), metrics.heightPixels.coerceAtLeast(1280), 15)
-            videoCapturer = capturer
-            localVideo?.setEnabled(true)
-            roomRef?.child("participants")?.child(myUid)?.child("video")?.setValue(true)
-            _state.value = _state.value.copy(screenSharing = true, cameraOff = false)
-            true
-        }.onFailure { Log.e(TAG, "Screen share failed", it) }.getOrDefault(false)
+        val f = factory ?: return false
+        if (_state.value.status !in listOf("connected", "reconnecting", "active")) return false
+        val requestedAt = System.currentTimeMillis()
+        val startService: (Boolean, Boolean) -> Unit = { video, share ->
+            runCatching {
+                CallForegroundService.start(
+                    app, "group:${_state.value.roomId}", _state.value.groupName, video, screenShare = share,
+                    groupId = _state.value.groupId, roomId = _state.value.roomId, groupName = _state.value.groupName, memberIds = activeMemberIds
+                )
+            }
+        }
+        startService(true, true)
+        fun attempt(triesLeft: Int) {
+            val ready = android.os.Build.VERSION.SDK_INT < 34 || CallForegroundService.projectionForegroundAt >= requestedAt
+            if (!ready && triesLeft > 0) { mainHandler.postDelayed({ attempt(triesLeft - 1) }, 100); return }
+            val ok = ready && beginScreenCapture(app, f, permissionData)
+            if (!ok) {
+                android.widget.Toast.makeText(app, "Screen sharing could not start on this phone", android.widget.Toast.LENGTH_LONG).show()
+                startService(_state.value.video && !screenShareWithoutCamera, false)
+            }
+        }
+        mainHandler.postDelayed({ attempt(40) }, 120)
+        return true
     }
+
+    private fun beginScreenCapture(app: Context, f: PeerConnectionFactory, permissionData: Intent): Boolean = runCatching {
+        runCatching { videoCapturer?.stopCapture() }
+        videoCapturer?.dispose(); videoCapturer = null
+        if (surfaceTextureHelper == null) surfaceTextureHelper = SurfaceTextureHelper.create("Convo Group Camera", eglBase!!.eglBaseContext)
+        val source = videoSource ?: f.createVideoSource(true).also { videoSource = it }
+        val capturer = ScreenCapturerAndroid(permissionData, object : MediaProjection.Callback() {
+            override fun onStop() { mainHandler.post { stopScreenShare() } }
+        })
+        val metrics = app.resources.displayMetrics
+        val scale = (720f / metrics.widthPixels.coerceAtLeast(1)).coerceAtMost(1f)
+        capturer.initialize(surfaceTextureHelper, app, source.capturerObserver)
+        capturer.startCapture((metrics.widthPixels * scale).toInt().coerceAtLeast(360) / 2 * 2, (metrics.heightPixels * scale).toInt().coerceAtLeast(640) / 2 * 2, 15)
+        videoCapturer = capturer
+        val existing = localVideo
+        screenShareWithoutCamera = existing == null || !_state.value.video
+        val track = existing ?: f.createVideoTrack("group_video_$myUid", source).also { localVideo = it }
+        track.setEnabled(true)
+        if (existing == null) peers.values.forEach { slot ->
+            // Audio call: publish the new screen track to everyone and renegotiate.
+            runCatching { slot.peer.addTrack(track, listOf("group")) }
+            renegotiate(slot)
+        }
+        roomRef?.child("participants")?.child(myUid)?.child("video")?.setValue(true)
+        _state.value = _state.value.copy(video = true, screenSharing = true, cameraOff = false)
+        upsertParticipantVideo(myUid, true)
+        refreshLocalRenderer()
+        true
+    }.onFailure { Log.e(TAG, "Screen share failed", it) }.getOrDefault(false)
 
     fun stopScreenShare(): Boolean {
         val app = context ?: return false
         val source = videoSource ?: return false
         if (!_state.value.screenSharing) return true
+        if (screenShareWithoutCamera) {
+            // The call had no camera before sharing: just stop the screen, do not start a camera.
+            screenShareWithoutCamera = false
+            return runCatching {
+                runCatching { videoCapturer?.stopCapture() }
+                videoCapturer?.dispose(); videoCapturer = null
+                localVideo?.setEnabled(false)
+                roomRef?.child("participants")?.child(myUid)?.child("video")?.setValue(false)
+                _state.value = _state.value.copy(screenSharing = false, cameraOff = true)
+                upsertParticipantVideo(myUid, false)
+                CallForegroundService.start(
+                    app, "group:${_state.value.roomId}", _state.value.groupName, false,
+                    groupId = _state.value.groupId, roomId = _state.value.roomId, groupName = _state.value.groupName, memberIds = activeMemberIds
+                )
+                true
+            }.getOrDefault(false)
+        }
         return runCatching {
             videoCapturer?.stopCapture(); videoCapturer?.dispose()
             val camera = createCameraCapturer(app) ?: error("No camera available")
@@ -1012,28 +1065,52 @@ object GroupCallEngine {
         return enumerator.deviceNames.firstOrNull()?.let { name -> enumerator.createCapturer(name, null) }
     }
 
+    /** Public STUN servers used when the TURN gateway cannot be reached; most networks connect with these. */
+    private fun fallbackIceServers(): List<PeerConnection.IceServer> = listOf(
+        PeerConnection.IceServer.builder(listOf("stun:stun.cloudflare.com:3478", "stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302")).createIceServer()
+    )
+
+    /**
+     * Loads TURN credentials. v5.5: this can no longer fail a call or crash the app — a network
+     * error, an HTTP error or an unreadable answer (which used to throw on a background thread)
+     * now falls back to public STUN servers, so answering always continues.
+     */
     private fun fetchIceServers(callback: (List<PeerConnection.IceServer>, String?) -> Unit) {
         val user = FirebaseAuth.getInstance().currentUser ?: return callback(emptyList(), "Please sign in again")
+        var delivered = false
+        fun deliver(servers: List<PeerConnection.IceServer>) { mainHandler.post { if (!delivered) { delivered = true; callback(servers, null) } } }
         user.getIdToken(false).addOnSuccessListener { result ->
-            val token = result.token ?: return@addOnSuccessListener callback(emptyList(), "Could not authenticate TURN request")
-            val request = Request.Builder().url(GATEWAY).header("Authorization", "Bearer $token")
-                .post("{}".toRequestBody("application/json".toMediaType())).build()
-            OkHttpClient.Builder().callTimeout(15, TimeUnit.SECONDS).build().newCall(request).enqueue(object : Callback {
-                override fun onFailure(call: Call, e: java.io.IOException) { mainHandler.post { callback(emptyList(), e.localizedMessage ?: "TURN unavailable") } }
-                override fun onResponse(call: Call, response: Response) {
-                    response.use {
-                        if (!it.isSuccessful) { mainHandler.post { callback(emptyList(), "TURN gateway HTTP ${it.code}") }; return }
-                        val root = JSONObject(it.body?.string().orEmpty()); val array = root.optJSONArray("iceServers") ?: JSONArray(); val list = mutableListOf<PeerConnection.IceServer>()
-                        for (i in 0 until array.length()) {
-                            val item = array.getJSONObject(i); val urlsJson = item.optJSONArray("urls")
-                            val urls = if (urlsJson != null) (0 until urlsJson.length()).map { n -> urlsJson.getString(n) } else listOf(item.optString("urls"))
-                            list += PeerConnection.IceServer.builder(urls).setUsername(item.optString("username")).setPassword(item.optString("credential")).createIceServer()
-                        }
-                        mainHandler.post { callback(list.ifEmpty { listOf(PeerConnection.IceServer.builder("stun:stun.cloudflare.com:3478").createIceServer()) }, null) }
+            val token = result.token
+            if (token.isNullOrBlank()) { deliver(fallbackIceServers()); return@addOnSuccessListener }
+            runCatching {
+                val request = Request.Builder().url(GATEWAY).header("Authorization", "Bearer $token")
+                    .post("{}".toRequestBody("application/json".toMediaType())).build()
+                OkHttpClient.Builder().callTimeout(8, TimeUnit.SECONDS).build().newCall(request).enqueue(object : Callback {
+                    override fun onFailure(call: Call, e: java.io.IOException) {
+                        Log.w("GROUP_CALL", "TURN gateway unreachable, using STUN: ${e.message}")
+                        deliver(fallbackIceServers())
                     }
-                }
-            })
-        }.addOnFailureListener { callback(emptyList(), it.localizedMessage ?: "TURN authentication failed") }
+                    override fun onResponse(call: Call, response: Response) {
+                        val servers = runCatching {
+                            response.use {
+                                if (!it.isSuccessful) error("TURN gateway HTTP ${it.code}")
+                                val root = JSONObject(it.body?.string().orEmpty())
+                                val list = mutableListOf<PeerConnection.IceServer>()
+                                val array = root.optJSONArray("iceServers") ?: JSONArray()
+                                for (i in 0 until array.length()) {
+                                    val item = array.getJSONObject(i); val urlsJson = item.optJSONArray("urls")
+                                    val urls = (if (urlsJson != null) (0 until urlsJson.length()).map { index -> urlsJson.getString(index) } else listOf(item.optString("urls"))).filter { u -> u.isNotBlank() }
+                                    if (urls.isEmpty()) continue
+                                    list += PeerConnection.IceServer.builder(urls).setUsername(item.optString("username")).setPassword(item.optString("credential")).createIceServer()
+                                }
+                                list
+                            }
+                        }.onFailure { Log.w("GROUP_CALL", "TURN answer unusable, using STUN: ${it.message}") }.getOrDefault(mutableListOf())
+                        deliver(servers.ifEmpty { fallbackIceServers() } + if (servers.isNotEmpty()) fallbackIceServers() else emptyList())
+                    }
+                })
+            }.onFailure { deliver(fallbackIceServers()) }
+        }.addOnFailureListener { deliver(fallbackIceServers()) }
     }
 }
 

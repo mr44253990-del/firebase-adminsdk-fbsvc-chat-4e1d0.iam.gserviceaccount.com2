@@ -4199,7 +4199,23 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val resolver=getApplication<Application>().contentResolver;var name="shared_${System.currentTimeMillis()}";var size=-1L
         resolver.query(uri,arrayOf(android.provider.OpenableColumns.DISPLAY_NAME,android.provider.OpenableColumns.SIZE),null,null,null)?.use{if(it.moveToFirst()){name=it.getString(0)?:name;if(!it.isNull(1))size=it.getLong(1)}}
         val mime=resolver.getType(uri)?:payload.mimeType
-        uploadUriToSupabase(uri,name,mime,size,{_,_->},{url->if(mime.startsWith("image/"))write(payload.text,imageUrl=url)else write(payload.text,url,name,mime,size)},{onComplete(false,it)})
+        // v5.5: the shared file gets a live upload bubble (percent + time left) inside the chat it
+        // is going to, exactly like files picked from inside the chat. Before, nothing was shown.
+        val shareChatId = listOf(me.uid, target.uid).sorted().joinToString("_")
+        val uploadId = "up_${System.currentTimeMillis()}_${(1000..9999).random()}"
+        val kind = if (mime.startsWith("image/")) "photo" else "file"
+        _outgoingUploads.update { it + OutgoingUpload(uploadId, shareChatId, kind, name, uri.toString().takeIf { mime.startsWith("image/") }, size.coerceAtLeast(0L)) }
+        fun run() {
+            uploadUriToSupabase(uri, name, mime, size,
+                { percent, eta -> updateOutgoingUpload(uploadId, percent, eta) },
+                { url ->
+                    dismissOutgoingUpload(uploadId)
+                    if (mime.startsWith("image/")) write(payload.text, imageUrl = url) else write(payload.text, url, name, mime, size)
+                },
+                { error -> failOutgoingUpload(uploadId, error) { run() }; onComplete(false, error) }
+            )
+        }
+        run()
     }
 
     fun sendPostToUser(target: User, post: Post, onComplete: (Boolean) -> Unit = {}) {

@@ -52,9 +52,34 @@ fun openInBrowser(context: Context, rawUrl: String) {
  * button that really opens the browser (the old banner only showed a toast).
  */
 @Composable
-fun WebPromoCard(config: FlagshipConfig, bangla: Boolean, modifier: Modifier = Modifier, onOpened: () -> Unit = {}) {
+fun WebPromoCard(config: FlagshipConfig, bangla: Boolean, modifier: Modifier = Modifier, compact: Boolean = false, onOpened: () -> Unit = {}) {
     val context = LocalContext.current
     val url = config.webVersionUrl.trim().ifBlank { "https://convo-chat-companion.pages.dev" }
+    if (compact) {
+        // Slim one-line strip: fits between other content without pushing it away.
+        var benefit by remember { mutableIntStateOf(0) }
+        val lines = remember(config.webPromoBenefits) { config.webPromoBenefits.lines().map { it.trim() }.filter { it.isNotBlank() }.ifEmpty { listOf("Now use on PC and browser") } }
+        LaunchedEffect(lines.size) { while (lines.size > 1) { kotlinx.coroutines.delay(3200); benefit = (benefit + 1) % lines.size } }
+        Row(
+            modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp))
+                .background(Brush.horizontalGradient(listOf(Color(0xFF1A237E), Color(0xFF3949AB), Color(0xFF0F7F94))))
+                .clickable { openInBrowser(context, url); onOpened() }
+                .padding(horizontal = 12.dp, vertical = 9.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(Icons.Default.LaptopChromebook, null, tint = Color.White, modifier = Modifier.size(24.dp))
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text(config.webPromoTitle.ifBlank { "Convo Chat Web" } + "  ·  " + url.removePrefix("https://").removePrefix("http://"), color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                androidx.compose.animation.AnimatedContent(benefit, label = "web_benefit") { i ->
+                    Text(lines[i.coerceIn(0, lines.lastIndex)], color = Color(0xFFC5CAE9), fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+            }
+            Spacer(Modifier.width(8.dp))
+            Text(if (bangla) "খুলুন" else "Open", color = Color(0xFF1A237E), fontWeight = FontWeight.ExtraBold, fontSize = 12.sp, modifier = Modifier.clip(CircleShape).background(Color.White).padding(horizontal = 13.dp, vertical = 6.dp))
+        }
+        return
+    }
     val benefits = remember(config.webPromoBenefits) { config.webPromoBenefits.lines().map { it.trim() }.filter { it.isNotBlank() }.take(5) }
     val sheen by rememberInfiniteTransition(label = "web_promo").animateFloat(0f, 1f, infiniteRepeatable(tween(5200, easing = LinearEasing)), label = "sheen")
     Column(

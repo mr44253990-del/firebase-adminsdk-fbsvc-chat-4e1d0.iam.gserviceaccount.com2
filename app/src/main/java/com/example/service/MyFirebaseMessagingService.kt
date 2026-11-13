@@ -143,9 +143,14 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
             return
         }
         if (notificationType == "incoming_call" || notificationType == "incoming_video_call") {
-            if (targetId.isNotBlank()) {
-                FirebaseDatabase.getInstance().getReference("calls").child(targetId).child("status").setValue("ringing")
-            }
+            // The same call can be announced more than once (push retry, realtime channel). A repeat
+            // used to restart the incoming screen and write "ringing" over a call that was already
+            // connected — which threw the user out of the call they had just answered.
+            if (targetId.isBlank() || !IncomingCallRegistry.firstTime(targetId)) return
+            val engine = com.example.call.CallEngine.state.value
+            if (engine.callId == targetId && engine.status in listOf("connecting", "connected", "reconnecting")) return
+            val statusRef = FirebaseDatabase.getInstance().getReference("calls").child(targetId).child("status")
+            statusRef.get().addOnSuccessListener { current -> if (current.getValue(String::class.java) == "calling") statusRef.setValue("ringing") }
             sendIncomingCallNotification(targetId, senderId, senderName, senderProfileUrl, notificationType == "incoming_video_call")
         } else if (notificationType == "group_call") {
             sendIncomingGroupCallNotification(
@@ -236,7 +241,6 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
 
     private fun sendIncomingCallNotification(callId: String, callerId: String, callerName: String, callerImage: String, videoCall: Boolean) {
         if (callId.isBlank()) return
-        IncomingCallRegistry.firstTime(callId)
         fun callIntent(action: String, requestCode: Int) = PendingIntent.getActivity(
             this, requestCode,
             Intent(this, IncomingCallActivity::class.java).apply {

@@ -111,6 +111,21 @@ Legend: ✅ done in this branch · 🔧 needs a one-time server step by the admi
 - ✅ Q7. Assistant tools drawer + AI Studio / Smart Hub buttons.
 - ✅ Q8. Web published to Cloudflare Pages (`convo-chat-companion.pages.dev`, site v5.2.0).
 
+## S. Version 5.5 — stability round
+- ✅ S1. Incoming call: duplicate announcements ignored (service + activity), "answered" state read from the engine (survives re-creation), status never downgraded from connected to ringing.
+- ✅ S2. TURN fetch can no longer crash or fail a call (STUN fallback, parse errors caught) — both engines.
+- ✅ S3. Call foreground service always reaches the foreground (step-down list of service types, plain notification fallback).
+- ✅ S4. Group call blank screen: the call screen no longer depends on the group that the chat screen clears when it closes.
+- ✅ S5. Screen share: no capture before the projection service is up (Android 14 crash); group audio calls can share; FLAG_SECURE lifted while sharing.
+- ✅ S6. Torch request mirrors WebRTC's capture request (frame-rate range etc.). 📱 needs a real-phone check.
+- ✅ S7. External share opens the chat and shows a live upload bubble.
+- ✅ S8. Sign-in: no silent saved-password lookup at start; saved accounts suggested while typing.
+- ✅ S9. Web QR login implemented in the app (scan → confirm account → /web-pair/qr/approve).
+- ✅ S10. Post music under the photo + autoplay in the feed; Freesound provider (key).
+- ✅ S11. Animated GIF / WebP support (coil-gif) and lossless GIF sending in chats.
+- ✅ S12. Web card as a slim strip (stories area + profile menu).
+- ⏳ Not done: redesign of the in-call screen, music on video stories, a GIF search picker, "screenshot on = crash" could not be traced to a specific cause (only the screen-share path was found and fixed).
+
 ## R. Feature ideas — status
 | Idea | Status |
 |---|---|

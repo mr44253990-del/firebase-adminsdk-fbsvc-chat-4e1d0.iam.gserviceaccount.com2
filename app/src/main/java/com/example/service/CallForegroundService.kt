@@ -64,21 +64,49 @@ class CallForegroundService : Service() {
         }.isSuccess
         if (!styled) builder.addAction(android.R.drawable.sym_call_missed, "End call", endIntent)
         val notification = builder.build()
+        // A plain notification without the call style, used when Android rejects the styled one.
+        val plain = NotificationCompat.Builder(this, CHANNEL)
+            .setSmallIcon(if (video) android.R.drawable.presence_video_online else android.R.drawable.sym_call_outgoing)
+            .setContentTitle(if (video) "Convo Chat video call" else "Convo Chat audio call")
+            .setContentText("Connected with $name")
+            .setCategory(NotificationCompat.CATEGORY_CALL).setOngoing(true).setSilent(true)
+            .setContentIntent(content)
+            .addAction(android.R.drawable.sym_call_missed, "End call", endIntent)
+            .build()
         if (Build.VERSION.SDK_INT >= 29) {
-            var type = android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE or android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL
-            if (video && !screenShare) type = type or android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
-            if (screenShare && Build.VERSION.SDK_INT >= 29) type = type or android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
-            try {
-                startForeground(NOTIFICATION_ID, notification, type)
-                projectionForegroundAt = if (screenShare) System.currentTimeMillis() else 0L
-            } catch (error: Exception) {
-                android.util.Log.e("CALL_FGS", "startForeground failed (screenShare=$screenShare)", error)
+            val mic = android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+            val phone = android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL
+            val camera = android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
+            val projection = android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+            // Android refuses a foreground-service type when its permission is missing or the app
+            // is in the wrong state. Try the ideal combination first, then step down — the service
+            // must ALWAYS reach the foreground, otherwise Android kills the app a few seconds later
+            // (this was one of the "call screen closes by itself" crashes).
+            val attempts = buildList {
+                if (screenShare) {
+                    add(notification to (mic or phone or projection)); add(plain to (mic or phone or projection))
+                    add(plain to (phone or projection)); add(plain to projection)
+                } else if (video) {
+                    add(notification to (mic or phone or camera)); add(plain to (mic or phone or camera))
+                }
+                add(notification to (mic or phone)); add(plain to (mic or phone)); add(plain to phone); add(plain to mic)
+            }
+            var started = false
+            for ((candidate, type) in attempts) {
+                val ok = runCatching { startForeground(NOTIFICATION_ID, candidate, type) }
+                    .onFailure { android.util.Log.w("CALL_FGS", "startForeground type=$type failed: ${it.message}") }.isSuccess
+                if (ok) {
+                    started = true
+                    projectionForegroundAt = if (screenShare && (type and projection) != 0) System.currentTimeMillis() else 0L
+                    break
+                }
+            }
+            if (!started) {
                 projectionForegroundAt = 0L
-                // Fall back to a plain call service so the call itself keeps running.
-                runCatching { startForeground(NOTIFICATION_ID, notification, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE or android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL) }
+                runCatching { startForeground(NOTIFICATION_ID, plain) }.onFailure { android.util.Log.e("CALL_FGS", "No foreground type accepted", it) }
             }
         } else {
-            startForeground(NOTIFICATION_ID, notification)
+            runCatching { startForeground(NOTIFICATION_ID, notification) }.recoverCatching { startForeground(NOTIFICATION_ID, plain) }
             projectionForegroundAt = if (screenShare) System.currentTimeMillis() else 0L
         }
         // Keep the foreground call service eligible for restart if Android recreates

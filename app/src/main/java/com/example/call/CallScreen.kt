@@ -171,6 +171,14 @@ class IncomingCallActivity : ComponentActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        val newId = intent.getStringExtra("callId").orEmpty()
+        val currentId = this.intent?.getStringExtra("callId").orEmpty()
+        val engine = CallEngine.state.value
+        val engineBusyWithIt = engine.callId == newId && engine.status in listOf("connecting", "connected", "reconnecting")
+        // Same call announced again: keep the screen exactly as it is. Re-creating it here used to
+        // reset an answered call back to the ringing screen (or close it).
+        if (newId == currentId && (intent.action == "com.ebchat.SHOW_CALL" || engineBusyWithIt)) return
+        if (newId == currentId && intent.action == "com.ebchat.ACCEPT_CALL" && engineBusyWithIt) return
         setIntent(intent)
         recreate()
     }
@@ -239,7 +247,12 @@ fun CallScreen(
             kotlinx.coroutines.delay(1000)
         }
     }
-    var accepted by remember { mutableStateOf(initiallyAccepted || !incoming) }
+    // "Answered" is also read from the call engine, so a rotation, theme change or any other
+    // re-creation of the screen can never drop an answered call back to the ringing screen.
+    var accepted by remember {
+        val live = CallEngine.state.value
+        mutableStateOf(initiallyAccepted || !incoming || (live.callId == callId && live.status in listOf("connecting", "connected", "reconnecting")))
+    }
     // Minimize (mini bubble / PiP) only while a call is really running; otherwise just leave.
     val canMinimize = accepted && activeForLock
     BackHandler(enabled = true) { if (canMinimize) onMinimize() else if (!activeForLock) onClose() }

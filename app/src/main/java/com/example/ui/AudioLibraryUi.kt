@@ -48,7 +48,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 private fun sourceLabel(source: String) = when (source) {
-    "all" -> "All"; "audius" -> "Audius"; "itunes" -> "iTunes"; "radio" -> "Radio"; "deezer" -> "Deezer"; "openverse" -> "Open music"; "jamendo" -> "Jamendo"; else -> "Audio"
+    "all" -> "All"; "audius" -> "Audius"; "itunes" -> "iTunes"; "radio" -> "Radio"; "deezer" -> "Deezer"; "openverse" -> "Open music"; "jamendo" -> "Jamendo"; "freesound" -> "Freesound"; else -> "Audio"
 }
 private fun sourceColors(source: String) = when (source) {
     "audius" -> listOf(Color(0xFFCC0FE0), Color(0xFF7E1BCC))
@@ -57,6 +57,7 @@ private fun sourceColors(source: String) = when (source) {
     "deezer" -> listOf(Color(0xFFA238FF), Color(0xFF6A11CB))
     "openverse" -> listOf(Color(0xFFFFB03A), Color(0xFFFF6F3C))
     "jamendo" -> listOf(Color(0xFF19C37D), Color(0xFF0E8F5A))
+    "freesound" -> listOf(Color(0xFF3AA0FF), Color(0xFF1463E6))
     else -> listOf(Color(0xFF8B7BFF), Color(0xFF36D8E6))
 }
 
@@ -68,6 +69,7 @@ fun enabledAudioSources(config: FlagshipConfig): List<String> = if (!config.audi
     if (config.audioRadioEnabled) add("radio")
     if (config.audioOpenverseEnabled) add("openverse")
     if (config.audioJamendoEnabled && config.audioJamendoClientId.isNotBlank()) add("jamendo")
+    if (config.audioFreesoundEnabled && config.audioFreesoundKey.isNotBlank()) add("freesound")
 }
 
 /** Animated equaliser bars shown while a track is playing. */
@@ -262,6 +264,8 @@ fun AdminAudioLibraryPanel(viewModel: ChatViewModel) {
     var openverse by remember(config.updatedAt) { mutableStateOf(config.audioOpenverseEnabled) }
     var jamendo by remember(config.updatedAt) { mutableStateOf(config.audioJamendoEnabled) }
     var jamendoId by remember(config.updatedAt) { mutableStateOf(config.audioJamendoClientId) }
+    var freesound by remember(config.updatedAt) { mutableStateOf(config.audioFreesoundEnabled) }
+    var freesoundKey by remember(config.updatedAt) { mutableStateOf(config.audioFreesoundKey) }
     var testing by remember { mutableStateOf(false) }
     var testResult by remember { mutableStateOf("") }
     var showPreview by remember { mutableStateOf(false) }
@@ -269,7 +273,8 @@ fun AdminAudioLibraryPanel(viewModel: ChatViewModel) {
         audioLibraryEnabled = enabled, audioAudiusEnabled = audius, audioItunesEnabled = itunes, audioRadioEnabled = radio,
         audioAudiusAppName = appName.trim().ifBlank { "ConvoChat" }, audioAudiusHost = host.trim().ifBlank { "https://discoveryprovider.audius.co" },
         audioItunesCountry = country.trim().uppercase().take(2).ifBlank { "US" },
-        audioDeezerEnabled = deezer, audioOpenverseEnabled = openverse, audioJamendoEnabled = jamendo, audioJamendoClientId = jamendoId.trim()
+        audioDeezerEnabled = deezer, audioOpenverseEnabled = openverse, audioJamendoEnabled = jamendo, audioJamendoClientId = jamendoId.trim(),
+        audioFreesoundEnabled = freesound, audioFreesoundKey = freesoundKey.trim()
     )
     if (showPreview) AudioLibrarySheet(draft().copy(audioLibraryEnabled = true), onPick = {}, onDismiss = { showPreview = false })
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -286,7 +291,7 @@ fun AdminAudioLibraryPanel(viewModel: ChatViewModel) {
                 Text(if (enabled) "ON — music is available in posts and stories for everyone" else "OFF — hidden from every user", color = Color.White.copy(alpha = .88f), fontSize = 12.sp)
             }
             // Master switch: ON turns every catalogue on, OFF turns every catalogue off.
-            Switch(checked = enabled, onCheckedChange = { on -> enabled = on; audius = on; itunes = on; radio = on; deezer = on; openverse = on; jamendo = on })
+            Switch(checked = enabled, onCheckedChange = { on -> enabled = on; audius = on; itunes = on; radio = on; deezer = on; openverse = on; jamendo = on; freesound = on })
         }
         Text("Catalogues (all follow the master switch)", fontWeight = FontWeight.Bold, fontSize = 13.sp)
         listOf(
@@ -295,14 +300,15 @@ fun AdminAudioLibraryPanel(viewModel: ChatViewModel) {
             Triple("Radio Browser", "Live radio stations worldwide · no key", "radio"),
             Triple("Deezer", "30-second previews, very large catalogue · no key", "deezer"),
             Triple("Openverse", "Free, openly licensed music and sounds · no key", "openverse"),
-            Triple("Jamendo", "Full indie tracks · needs the free client id below", "jamendo")
+            Triple("Jamendo", "Full indie tracks · needs the free client id below", "jamendo"),
+            Triple("Freesound", "Sound effects, loops and clips · needs the free API key below", "freesound")
         ).forEach { (title, sub, key) ->
-            val value = when (key) { "audius" -> audius; "itunes" -> itunes; "deezer" -> deezer; "openverse" -> openverse; "jamendo" -> jamendo; else -> radio }
+            val value = when (key) { "audius" -> audius; "itunes" -> itunes; "deezer" -> deezer; "openverse" -> openverse; "jamendo" -> jamendo; "freesound" -> freesound; else -> radio }
             Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .5f)).padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Box(Modifier.size(34.dp).clip(RoundedCornerShape(11.dp)).background(Brush.linearGradient(sourceColors(key))), contentAlignment = Alignment.Center) { Icon(when (key) { "radio" -> Icons.Default.Radio; "itunes", "deezer" -> Icons.Default.MusicNote; "openverse" -> Icons.Default.Public; else -> Icons.Default.GraphicEq }, null, tint = Color.White, modifier = Modifier.size(18.dp)) }
                 Spacer(Modifier.width(10.dp))
                 Column(Modifier.weight(1f)) { Text(title, fontWeight = FontWeight.Bold, fontSize = 13.5.sp); Text(sub, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                Switch(checked = value && enabled, enabled = enabled, onCheckedChange = { when (key) { "audius" -> audius = it; "itunes" -> itunes = it; "deezer" -> deezer = it; "openverse" -> openverse = it; "jamendo" -> jamendo = it; else -> radio = it } })
+                Switch(checked = value && enabled, enabled = enabled, onCheckedChange = { when (key) { "audius" -> audius = it; "itunes" -> itunes = it; "deezer" -> deezer = it; "openverse" -> openverse = it; "jamendo" -> jamendo = it; "freesound" -> freesound = it; else -> radio = it } })
             }
         }
         Text("API configuration", fontWeight = FontWeight.Bold, fontSize = 13.sp)
@@ -310,13 +316,15 @@ fun AdminAudioLibraryPanel(viewModel: ChatViewModel) {
         OutlinedTextField(host, { host = it.take(120) }, label = { Text("Audius API host") }, supportingText = { Text("Default: https://discoveryprovider.audius.co") }, singleLine = true, modifier = Modifier.fillMaxWidth())
         OutlinedTextField(country, { country = it.filter(Char::isLetter).take(2).uppercase() }, label = { Text("iTunes Store country (2 letters)") }, supportingText = { Text("US, GB, IN, BD … decides which songs are found.") }, singleLine = true, modifier = Modifier.fillMaxWidth())
         OutlinedTextField(jamendoId, { jamendoId = it.trim().take(60) }, label = { Text("Jamendo client id (optional)") }, supportingText = { Text("Free at devportal.jamendo.com. Leave empty to hide Jamendo.") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(freesoundKey, { freesoundKey = it.trim().take(80) }, label = { Text("Freesound API key (optional)") }, supportingText = { Text("Free at freesound.org/apiv2/apply. Leave empty to hide Freesound.") }, singleLine = true, modifier = Modifier.fillMaxWidth())
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = {
                 val d = draft()
                 viewModel.updateFlagshipFields(mapOf(
                     "audioLibraryEnabled" to d.audioLibraryEnabled, "audioAudiusEnabled" to d.audioAudiusEnabled, "audioItunesEnabled" to d.audioItunesEnabled,
                     "audioRadioEnabled" to d.audioRadioEnabled, "audioAudiusAppName" to d.audioAudiusAppName, "audioAudiusHost" to d.audioAudiusHost, "audioItunesCountry" to d.audioItunesCountry,
-                    "audioDeezerEnabled" to d.audioDeezerEnabled, "audioOpenverseEnabled" to d.audioOpenverseEnabled, "audioJamendoEnabled" to d.audioJamendoEnabled, "audioJamendoClientId" to d.audioJamendoClientId
+                    "audioDeezerEnabled" to d.audioDeezerEnabled, "audioOpenverseEnabled" to d.audioOpenverseEnabled, "audioJamendoEnabled" to d.audioJamendoEnabled, "audioJamendoClientId" to d.audioJamendoClientId,
+                    "audioFreesoundEnabled" to d.audioFreesoundEnabled, "audioFreesoundKey" to d.audioFreesoundKey
                 )) { ok -> Toast.makeText(context, if (ok) (if (d.audioLibraryEnabled) "Saved — audio library is ON for everyone" else "Saved — audio library is OFF for everyone") else "Could not save", Toast.LENGTH_LONG).show() }
             }, modifier = Modifier.weight(1f), shape = CircleShape) { Icon(Icons.Default.Save, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Save") }
             OutlinedButton(enabled = !testing, onClick = {
@@ -330,6 +338,6 @@ fun AdminAudioLibraryPanel(viewModel: ChatViewModel) {
         }
         OutlinedButton(onClick = { showPreview = true }, modifier = Modifier.fillMaxWidth(), shape = CircleShape) { Icon(Icons.Default.Headphones, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Preview the library") }
         if (testResult.isNotBlank()) Text(testResult, fontSize = 13.sp, modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .5f)).padding(12.dp))
-        Text("Only Jamendo needs a (free) client id; the other services need no key. Tracks are streamed from the provider; only the track details are stored with a post or story.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("Jamendo and Freesound need a free key that you paste above and save; the other services need no key. Keys are stored in the app configuration, which signed-in users can read — use only free, low-risk keys here. Tracks are streamed from the provider; only the track details are stored with a post or story.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }

@@ -527,7 +527,7 @@ fun HomeScreen(
                                     }
 
                                     // ── Web version card (admin-controlled; opens the browser) ──
-                                    if (flagshipConfig.webPromoEnabled) WebPromoCard(flagshipConfig, bangla = appLanguage == "bn") { showAccountMenu = false }
+                                    if (flagshipConfig.webPromoEnabled) WebPromoCard(flagshipConfig, bangla = appLanguage == "bn", compact = true) { showAccountMenu = false }
 
                                     // ── Menu rows ──
                                     AccountMenuRow(Icons.Outlined.Search, listOf(Color(0xFF2E7DFF), Color(0xFF1E5FE0)), tr("Search people and media"), chevron = false) {
@@ -759,9 +759,6 @@ fun HomeScreen(
                         contentPadding = PaddingValues(bottom = 14.dp),
                         verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        if (flagshipConfig.webPromoEnabled && flagshipConfig.webPromoOnHome) item(key = "web_promo") {
-                            WebPromoCard(flagshipConfig, bangla = appLanguage == "bn", modifier = Modifier.padding(horizontal = 12.dp))
-                        }
                         if (storyPlaybackQueue.isNotEmpty()) item(key = "stories") {
                             StoriesHorizontalSection(
                                 viewModel = viewModel,
@@ -771,6 +768,10 @@ fun HomeScreen(
                                     selectedStoryIndex = storyPlaybackQueue.indexOfFirst { it.id == story.id }.takeIf { it >= 0 }
                                 }
                             )
+                        }
+                        // Slim web-version strip under the stories: visible to everyone, never in the way.
+                        if (flagshipConfig.webPromoEnabled && flagshipConfig.webPromoOnHome) item(key = "web_promo") {
+                            WebPromoCard(flagshipConfig, bangla = appLanguage == "bn", modifier = Modifier.padding(horizontal = 12.dp), compact = true)
                         }
                         item(key = "polls") {
                             ActivePollsSection(
@@ -4733,7 +4734,16 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
                 Spacer(modifier = Modifier.height(10.dp))
             }
 
-            // Music attached from the audio library.
+            // Music attached from the audio library. It starts by itself while this post is the one
+            // in view, and stops when you scroll away.
+            if (post.audioUrl.startsWith("http") && post.videoUrl.isBlank()) {
+                DisposableEffect(autoPlayVideo, post.audioUrl) {
+                    if (autoPlayVideo && com.example.data.AudioStreamPlayer.playingUrl.value != post.audioUrl && !com.example.data.AudioStreamPlayer.userStopped(post.audioUrl)) {
+                        com.example.data.AudioStreamPlayer.play(post.audioUrl)
+                    }
+                    onDispose { if (com.example.data.AudioStreamPlayer.playingUrl.value == post.audioUrl) com.example.data.AudioStreamPlayer.stop(byUser = false) }
+                }
+            }
             if (post.audioUrl.startsWith("http")) {
                 AudioTrackChip(post.audioTitle, post.audioArtist, post.audioArtwork, post.audioUrl, post.audioSource, modifier = Modifier.padding(vertical = 6.dp))
             }

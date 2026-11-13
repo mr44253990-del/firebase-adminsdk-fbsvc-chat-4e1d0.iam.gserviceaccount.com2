@@ -53,6 +53,7 @@ object AudioLibraryApi {
             "deezer" -> deezer(query.trim())
             "openverse" -> openverse(query.trim())
             "jamendo" -> jamendo(query.trim(), config)
+            "freesound" -> freesound(query.trim(), config)
             else -> emptyList()
         }
     }
@@ -91,6 +92,22 @@ object AudioLibraryApi {
                 durationSec = (t.optLong("duration") / 1000L).toInt()
             )
         }.filter { it.url.startsWith("https://") && it.title.isNotBlank() }
+    }
+
+    /** Freesound: sound effects, loops and music clips. Needs the free API key the admin enters. */
+    private fun freesound(query: String, config: FlagshipConfig): List<AudioTrack> {
+        val key = config.audioFreesoundKey.trim()
+        if (key.isBlank()) return emptyList()
+        val results = get("https://freesound.org/apiv2/search/text/?query=${enc(query.ifBlank { "music loop" })}&fields=id,name,username,previews,duration,images&page_size=25&token=${enc(key)}")
+            ?.let { runCatching { JSONObject(it).optJSONArray("results") }.getOrNull() } ?: return emptyList()
+        return List(results.length()) { i ->
+            val t = results.getJSONObject(i)
+            AudioTrack(
+                id = "freesound_" + t.optLong("id"), title = t.optString("name"), artist = t.optString("username"),
+                url = t.optJSONObject("previews")?.optString("preview-hq-mp3").orEmpty(),
+                artwork = t.optJSONObject("images")?.optString("waveform_m").orEmpty(), source = "freesound", durationSec = t.optDouble("duration", 0.0).toInt()
+            )
+        }.filter { it.url.startsWith("http") && it.title.isNotBlank() }
     }
 
     /** Jamendo: full tracks by independent artists. Needs the free client id the admin enters. */
@@ -165,6 +182,7 @@ object AudioLibraryApi {
             put("Audius", audius("love", config).size); put("iTunes", itunes("love", config).size); put("Radio Browser", radio("bbc").size)
             put("Deezer", deezer("love").size); put("Openverse", openverse("piano").size)
             if (config.audioJamendoClientId.isNotBlank()) put("Jamendo", jamendo("love", config).size)
+            if (config.audioFreesoundKey.isNotBlank()) put("Freesound", freesound("piano", config).size)
         }
     }
 }
@@ -178,7 +196,11 @@ object AudioStreamPlayer {
     private val _loading = MutableStateFlow(false)
     val loading: StateFlow<Boolean> = _loading
 
-    fun toggle(url: String) { if (_playingUrl.value == url) stop() else play(url) }
+    /** Tracks the user paused by hand are not auto-started again while scrolling the feed. */
+    private val stoppedByUser = java.util.Collections.newSetFromMap(java.util.concurrent.ConcurrentHashMap<String, Boolean>())
+    fun userStopped(url: String): Boolean = url in stoppedByUser
+
+    fun toggle(url: String) { if (_playingUrl.value == url) stop(byUser = true) else { stoppedByUser.remove(url); play(url) } }
 
     fun play(url: String) {
         stop()
@@ -196,7 +218,8 @@ object AudioStreamPlayer {
         }.onFailure { stop() }
     }
 
-    fun stop() {
+    fun stop(byUser: Boolean = false) {
+        if (byUser && _playingUrl.value.isNotBlank()) stoppedByUser.add(_playingUrl.value)
         runCatching { player?.reset(); player?.release() }
         player = null; _playingUrl.value = ""; _loading.value = false
     }

@@ -22,7 +22,7 @@ import com.example.data.IncomingSharePayload
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun IncomingShareHub(payload: IncomingSharePayload,viewModel:ChatViewModel,onCreatePost:()->Unit,onDismiss:()->Unit){
+fun IncomingShareHub(payload: IncomingSharePayload,viewModel:ChatViewModel,onCreatePost:()->Unit,onDismiss:()->Unit,onOpenChat:(com.example.data.User)->Unit={}){
  val context=LocalContext.current;val users by viewModel.usersState.collectAsState();var mode by remember{mutableStateOf("home")};var uploading by remember{mutableStateOf(false)};var progress by remember{mutableIntStateOf(0)}
  ModalBottomSheet(onDismissRequest=onDismiss,shape=RoundedCornerShape(topStart=32.dp,topEnd=32.dp)){
   Column(Modifier.fillMaxWidth().padding(horizontal=18.dp).padding(bottom=28.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
@@ -44,7 +44,11 @@ fun IncomingShareHub(payload: IncomingSharePayload,viewModel:ChatViewModel,onCre
     val friends=remember(users,friendIds,shareQuery){users.filter{it.uid in friendIds&&(shareQuery.isBlank()||it.name.contains(shareQuery.trim(),true)||it.username.contains(shareQuery.trim().removePrefix("@"),true))}.distinctBy{it.uid}.sortedBy{it.name.lowercase()}}
     OutlinedTextField(shareQuery,{shareQuery=it},placeholder={Text("Search friends")},leadingIcon={Icon(Icons.Default.Search,null)},singleLine=true,shape=RoundedCornerShape(18.dp),modifier=Modifier.fillMaxWidth())
     if(friends.isEmpty())Text(if(friendIds.isEmpty())"You can share only with friends. Add friends first." else "No friend matches \"$shareQuery\"",color=MaterialTheme.colorScheme.onSurfaceVariant)
-    LazyColumn(Modifier.heightIn(max=430.dp)){items(friends,key={it.uid}){person->ListItem(headlineContent={Text(person.name,fontWeight=FontWeight.Bold)},supportingContent={Text("@${person.username}")},leadingContent={AsyncImage(person.profileImageUrl.ifBlank{null},person.name,Modifier.size(44.dp).clip(CircleShape))},modifier=Modifier.clip(RoundedCornerShape(18.dp)).clickable{viewModel.sendExternalShareToUser(person,payload){_,msg->Toast.makeText(context,msg,Toast.LENGTH_LONG).show()};onDismiss()})}}
+    LazyColumn(Modifier.heightIn(max=430.dp)){items(friends,key={it.uid}){person->ListItem(headlineContent={Text(person.name,fontWeight=FontWeight.Bold)},supportingContent={Text("@${person.username}")},leadingContent={AsyncImage(person.profileImageUrl.ifBlank{null},person.name,Modifier.size(44.dp).clip(CircleShape))},modifier=Modifier.clip(RoundedCornerShape(18.dp)).clickable{
+        // Open that person's chat first, then start sending: the upload bubble with progress and
+        // time left is visible right where the file is going.
+        onOpenChat(person)
+        viewModel.sendExternalShareToUser(person,payload){_,msg->Toast.makeText(context,msg,Toast.LENGTH_LONG).show()};onDismiss()})}}
    }
   }
  }

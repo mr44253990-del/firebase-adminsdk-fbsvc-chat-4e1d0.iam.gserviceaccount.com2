@@ -376,6 +376,15 @@ fun PostComposerScreen(viewModel: ChatViewModel, onBack: () -> Unit, onPublished
             }
 
             // Organized tools: one tab at a time
+            // Music for this post sits right under the photo / text once the admin has the library on.
+            if (composerConfig.audioLibraryEnabled) {
+                val track = pickedAudio
+                if (track != null) AudioTrackChip(track.title, track.artist, track.artwork, track.url, track.source, onRemove = { pickedAudio = null })
+                else OutlinedButton(onClick = { showAudioLibrary = true }, shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Outlined.LibraryMusic, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp))
+                    Text(if (imageMedia.isNotEmpty()) "Add music to this photo" else "Add music")
+                }
+            }
             val toolTabs = listOf(
                 "media" to "Media", "background" to "Background", "feeling" to "Feeling",
                 "people" to "People", "hashtags" to "Hashtags", "animation" to "Animation", "ai" to "AI studio"

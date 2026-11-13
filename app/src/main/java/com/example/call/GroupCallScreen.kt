@@ -399,6 +399,9 @@ fun GroupCallScreen(
                                     onClick = { GroupCallEngine.switchCamera(); showMoreControls = false },
                                     enabled = !state.screenSharing
                                 )
+                            }
+                            // Screen sharing works in audio and video group calls.
+                            run {
                                 DropdownMenuItem(
                                     text = { Text(if (state.screenSharing) "Stop screen share" else "Share screen") },
                                     leadingIcon = { Icon(if (state.screenSharing) Icons.Default.StopScreenShare else Icons.Default.ScreenShare, null) },

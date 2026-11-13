@@ -314,6 +314,13 @@ object CallEngine {
         fun attempt(triesLeft: Int) {
             val ready = Build.VERSION.SDK_INT < 34 || CallForegroundService.projectionForegroundAt >= requestedAt
             if (!ready && triesLeft > 0) { mainHandler.postDelayed({ attempt(triesLeft - 1) }, 100); return }
+            if (!ready) {
+                // Android 14+: capturing without the media-projection service running throws on a
+                // background thread and crashed the app. Stop cleanly instead.
+                notice("Screen sharing could not start. Allow notifications for Convo Chat and try again.")
+                CallForegroundService.start(context, _state.value.callId, _state.value.remoteName, _state.value.video, screenShare = false)
+                return
+            }
             if (!beginScreenCapture(context, permissionData)) {
                 notice("Screen sharing could not start on this phone")
                 CallForegroundService.start(context, _state.value.callId, _state.value.remoteName, _state.value.video, screenShare = false)
@@ -571,36 +578,52 @@ object CallEngine {
         candidateListeners += ref to listener
     }
 
+    /** Public STUN servers used when the TURN gateway cannot be reached; most networks connect with these. */
+    private fun fallbackIceServers(): List<PeerConnection.IceServer> = listOf(
+        PeerConnection.IceServer.builder(listOf("stun:stun.cloudflare.com:3478", "stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302")).createIceServer()
+    )
+
+    /**
+     * Loads TURN credentials. v5.5: this can no longer fail a call or crash the app — a network
+     * error, an HTTP error or an unreadable answer (which used to throw on a background thread)
+     * now falls back to public STUN servers, so answering always continues.
+     */
     private fun fetchIceServers(callback: (List<PeerConnection.IceServer>, String?) -> Unit) {
         val user = FirebaseAuth.getInstance().currentUser ?: return callback(emptyList(), "Please sign in again")
+        var delivered = false
+        fun deliver(servers: List<PeerConnection.IceServer>) { mainHandler.post { if (!delivered) { delivered = true; callback(servers, null) } } }
         user.getIdToken(false).addOnSuccessListener { result ->
-            val token = result.token ?: return@addOnSuccessListener callback(emptyList(), "Could not authenticate TURN request")
-            val request = Request.Builder().url(GATEWAY).header("Authorization", "Bearer $token")
-                .post("{}".toRequestBody("application/json".toMediaType())).build()
-            OkHttpClient.Builder().callTimeout(15, TimeUnit.SECONDS).build().newCall(request).enqueue(object : Callback {
-                override fun onFailure(call: Call, e: java.io.IOException) {
-                    mainHandler.post { callback(emptyList(), e.localizedMessage ?: "TURN unavailable") }
-                }
-                override fun onResponse(call: Call, response: Response) {
-                    response.use {
-                        if (!it.isSuccessful) {
-                            mainHandler.post { callback(emptyList(), "TURN gateway HTTP ${it.code}") }
-                            return
-                        }
-                        val root = JSONObject(it.body?.string().orEmpty())
-                        val list = mutableListOf<PeerConnection.IceServer>()
-                        val array = root.optJSONArray("iceServers") ?: JSONArray()
-                        for (i in 0 until array.length()) {
-                            val item = array.getJSONObject(i); val urlsJson = item.optJSONArray("urls")
-                            val urls = if (urlsJson != null) (0 until urlsJson.length()).map { index -> urlsJson.getString(index) } else listOf(item.optString("urls"))
-                            list += PeerConnection.IceServer.builder(urls).setUsername(item.optString("username")).setPassword(item.optString("credential")).createIceServer()
-                        }
-                        val resolved = list.ifEmpty { listOf(PeerConnection.IceServer.builder("stun:stun.cloudflare.com:3478").createIceServer()) }
-                        mainHandler.post { callback(resolved, null) }
+            val token = result.token
+            if (token.isNullOrBlank()) { deliver(fallbackIceServers()); return@addOnSuccessListener }
+            runCatching {
+                val request = Request.Builder().url(GATEWAY).header("Authorization", "Bearer $token")
+                    .post("{}".toRequestBody("application/json".toMediaType())).build()
+                OkHttpClient.Builder().callTimeout(8, TimeUnit.SECONDS).build().newCall(request).enqueue(object : Callback {
+                    override fun onFailure(call: Call, e: java.io.IOException) {
+                        Log.w("CALL_ENGINE", "TURN gateway unreachable, using STUN: ${e.message}")
+                        deliver(fallbackIceServers())
                     }
-                }
-            })
-        }.addOnFailureListener { callback(emptyList(), it.localizedMessage ?: "TURN authentication failed") }
+                    override fun onResponse(call: Call, response: Response) {
+                        val servers = runCatching {
+                            response.use {
+                                if (!it.isSuccessful) error("TURN gateway HTTP ${it.code}")
+                                val root = JSONObject(it.body?.string().orEmpty())
+                                val list = mutableListOf<PeerConnection.IceServer>()
+                                val array = root.optJSONArray("iceServers") ?: JSONArray()
+                                for (i in 0 until array.length()) {
+                                    val item = array.getJSONObject(i); val urlsJson = item.optJSONArray("urls")
+                                    val urls = (if (urlsJson != null) (0 until urlsJson.length()).map { index -> urlsJson.getString(index) } else listOf(item.optString("urls"))).filter { u -> u.isNotBlank() }
+                                    if (urls.isEmpty()) continue
+                                    list += PeerConnection.IceServer.builder(urls).setUsername(item.optString("username")).setPassword(item.optString("credential")).createIceServer()
+                                }
+                                list
+                            }
+                        }.onFailure { Log.w("CALL_ENGINE", "TURN answer unusable, using STUN: ${it.message}") }.getOrDefault(mutableListOf())
+                        deliver(servers.ifEmpty { fallbackIceServers() } + if (servers.isNotEmpty()) fallbackIceServers() else emptyList())
+                    }
+                })
+            }.onFailure { deliver(fallbackIceServers()) }
+        }.addOnFailureListener { deliver(fallbackIceServers()) }
     }
 
     private fun activateCallRuntime() {

@@ -139,13 +139,16 @@ data class FlagshipConfig(
     /** Jamendo needs a free client id from devportal.jamendo.com; blank = hidden. */
     val audioJamendoEnabled: Boolean = true,
     val audioJamendoClientId: String = "",
+    /** Freesound needs a free API key from freesound.org/apiv2/apply; blank = hidden. */
+    val audioFreesoundEnabled: Boolean = true,
+    val audioFreesoundKey: String = "",
     /** v5.4 "Convo Chat Web" promo + sponsor card. The admin decides whether it shows, where it opens and what it says. */
     val webPromoEnabled: Boolean = true,
     val webVersionUrl: String = "https://convo-chat-companion.pages.dev",
     val webPromoTitle: String = "Convo Chat Web",
     val webPromoBenefits: String = "Chat from your PC or any browser\nBig screen, real keyboard\nSign in by scanning a QR code\nYour phone stays in control",
     /** Shows the card on the Home feed as well (the account menu always follows webPromoEnabled). */
-    val webPromoOnHome: Boolean = false,
+    val webPromoOnHome: Boolean = true,
     val updatedAt: Long = 0L,
     val updatedBy: String = ""
 )

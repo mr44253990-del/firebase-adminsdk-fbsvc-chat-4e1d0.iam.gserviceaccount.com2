@@ -1,3 +1,14 @@
+• FIXED 5.5 (calls): answering a call no longer throws you back to the ringing screen or closes the call. Causes fixed: the same call being announced twice restarted the call screen; rotating the phone reset an answered call; an unreadable answer from the call server crashed the app; and the call service could fail to start on some phones.
+• FIXED: calls now connect even when the call relay server cannot be reached (they fall back to public servers).
+• FIXED (group calls): the host's call screen is no longer blank — black or white — after pressing Call; going back and in again works too.
+• FIXED (screen sharing): starting screen sharing no longer crashes on Android 14+; group calls can share the screen from audio calls as well; screenshot protection is lifted while you share so the other person does not see black.
+• Video-call flashlight: the light request now matches the camera's own settings, which should stop the picture going black when the light is on.
+• FIXED (sharing from other apps): choosing a person now opens that chat and shows the upload with percent and time left.
+• Sign-in screen: no more 2–3 second freeze while it searched for saved passwords; saved accounts appear as you type the e-mail.
+• FIXED (web QR login): scanning the QR on Convo Chat Web now shows which account will sign in and asks for one confirmation — then the browser signs in.
+• Posts: "Add music" sits right under your photo; music on a post starts by itself while the post is in view. New key-based catalogue: Freesound (plus Jamendo) — the admin pastes the free key and saves.
+• Animated GIFs (and animated WebP) now play everywhere and are sent without losing their animation.
+• The web-version card is now a slim strip under the stories and in the profile menu.
 • FIXED 5.4: "Open Web Version" in the profile-picture menu now really opens the browser. The card shows the web address and its benefits, and the admin can change the address, the text, or switch it off (Admin → Web version card).
 • Calls are more reliable: if the other phone has not started ringing after a few seconds the call request is sent again with a fresh device address, and people who have the app open also receive the call through a second, instant channel.
 • FIXED: swiping a group message to reply — the reply preview now sits above the text box instead of overlapping it.
