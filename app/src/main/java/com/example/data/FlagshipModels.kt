@@ -43,19 +43,6 @@ data class StorageRoutingConfig(
     val bucketThumbnails: String = "thumbnails",
     val bucketUpdates: String = "updates",
     val autoCreateBuckets: Boolean = true,
-    /**
-     * v5.3 audio library (music for posts and stories). The master switch turns every
-     * catalogue on or off together; the per-catalogue switches fine-tune it.
-     */
-    val audioLibraryEnabled: Boolean = false,
-    val audioAudiusEnabled: Boolean = true,
-    val audioItunesEnabled: Boolean = true,
-    val audioRadioEnabled: Boolean = true,
-    /** Audius asks every app to identify itself with a name (no key needed). */
-    val audioAudiusAppName: String = "ConvoChat",
-    val audioAudiusHost: String = "https://discoveryprovider.audius.co",
-    /** Two-letter iTunes Store country for song search (US, GB, IN, BD…). */
-    val audioItunesCountry: String = "US",
     val updatedAt: Long = 0L,
     val updatedBy: String = ""
 )
@@ -146,6 +133,19 @@ data class FlagshipConfig(
     val audioAudiusHost: String = "https://discoveryprovider.audius.co",
     /** Two-letter iTunes Store country for song search (US, GB, IN, BD…). */
     val audioItunesCountry: String = "US",
+    /** v5.4 extra free catalogues. */
+    val audioDeezerEnabled: Boolean = true,
+    val audioOpenverseEnabled: Boolean = true,
+    /** Jamendo needs a free client id from devportal.jamendo.com; blank = hidden. */
+    val audioJamendoEnabled: Boolean = true,
+    val audioJamendoClientId: String = "",
+    /** v5.4 "Convo Chat Web" promo + sponsor card. The admin decides whether it shows, where it opens and what it says. */
+    val webPromoEnabled: Boolean = true,
+    val webVersionUrl: String = "https://convo-chat-companion.pages.dev",
+    val webPromoTitle: String = "Convo Chat Web",
+    val webPromoBenefits: String = "Chat from your PC or any browser\nBig screen, real keyboard\nSign in by scanning a QR code\nYour phone stays in control",
+    /** Shows the card on the Home feed as well (the account menu always follows webPromoEnabled). */
+    val webPromoOnHome: Boolean = false,
     val updatedAt: Long = 0L,
     val updatedBy: String = ""
 )

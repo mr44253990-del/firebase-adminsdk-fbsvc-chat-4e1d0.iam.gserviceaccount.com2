@@ -15,6 +15,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CallEnd
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
@@ -80,7 +81,7 @@ fun SignalBars(level: Int, modifier: Modifier = Modifier) {
  * when the connection is weak), mute state and an End button. Draggable; tap to return.
  */
 @Composable
-fun CallMiniOverlay(state: CallState, onExpand: () -> Unit, onEnd: () -> Unit) {
+fun CallMiniOverlay(state: CallState, onExpand: () -> Unit, onEnd: () -> Unit, onHide: (() -> Unit)? = null) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val callSkinId by CallSkinPreferences.selectedId.collectAsState()
     LaunchedEffect(context.applicationContext) { CallSkinPreferences.load(context) }
@@ -135,7 +136,7 @@ fun CallMiniOverlay(state: CallState, onExpand: () -> Unit, onEnd: () -> Unit) {
                 }
             }
         } else {
-            Row(Modifier.width(272.dp).padding(horizontal = 10.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.width(if (onHide != null) 300.dp else 272.dp).padding(horizontal = 10.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
                 Box(contentAlignment = Alignment.Center) {
                     Box(Modifier.size(54.dp).scale(if (connected) ring else 1f).clip(CircleShape).background(callPalette.accent.copy(alpha = .28f)))
                     AsyncImage(
@@ -164,6 +165,12 @@ fun CallMiniOverlay(state: CallState, onExpand: () -> Unit, onEnd: () -> Unit) {
                 Box(Modifier.size(40.dp).clip(CircleShape).background(Brush.linearGradient(listOf(Color(0xFFFF5F6D), Color(0xFFE53935)))).clickable(onClick = onEnd), contentAlignment = Alignment.Center) {
                     Icon(Icons.Default.CallEnd, "End", tint = Color.White, modifier = Modifier.size(20.dp))
                 }
+                if (onHide != null) {
+                    Spacer(Modifier.width(4.dp))
+                    Box(Modifier.size(26.dp).clip(CircleShape).background(Color.Black.copy(alpha = .35f)).clickable(onClick = onHide), contentAlignment = Alignment.Center) {
+                        Icon(Icons.Default.Close, "Hide", tint = Color.White.copy(alpha = .9f), modifier = Modifier.size(14.dp))
+                    }
+                }
             }
         }
     }
@@ -190,6 +197,65 @@ fun GroupCallReturnPill(state: GroupCallState, onExpand: () -> Unit) {
         Column {
             Text(state.groupName.ifBlank { "Group call" }, color = Color.White, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold, fontSize = 12.sp, maxLines = 1)
             Text("%02d:%02d  ·  tap to return".format(seconds / 60, seconds % 60), color = Color.White.copy(alpha = .85f), fontSize = 10.sp)
+        }
+    }
+}
+
+/**
+ * The call card used by the system-wide floating bubble (v5.4). It is the same design as the
+ * in-app mini call card — palette gradient, pulsing avatar ring, name, live status, mute and
+ * end — plus an X that only hides the bubble (the call keeps running; the status-bar call chip
+ * or the notification brings it back).
+ */
+@Composable
+fun CallBubbleCard(
+    name: String, image: String, statusText: String, connected: Boolean, muted: Boolean, group: Boolean,
+    onOpen: () -> Unit, onMute: () -> Unit, onEnd: () -> Unit, onHide: () -> Unit, onDrag: (Float, Float) -> Unit
+) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val callSkinId by CallSkinPreferences.selectedId.collectAsState()
+    LaunchedEffect(Unit) { CallSkinPreferences.load(context) }
+    val palette = CallSkinPreferences.palette(callSkinId)
+    val ring by rememberInfiniteTransition(label = "bubble_pulse").animateFloat(1f, 1.12f, infiniteRepeatable(tween(900, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "bubble_ring")
+    val shape = RoundedCornerShape(40.dp)
+    Row(
+        Modifier
+            .pointerInput(Unit) { detectDragGestures { change, amount -> change.consume(); onDrag(amount.x, amount.y) } }
+            .clip(shape)
+            .background(Brush.linearGradient(listOf(palette.surface.copy(alpha = .97f), palette.accent.copy(alpha = .55f), palette.surface.copy(alpha = .97f))))
+            .border(1.5.dp, palette.accent.copy(.85f), shape)
+            .clickable(onClick = onOpen)
+            .padding(start = 10.dp, end = 6.dp, top = 9.dp, bottom = 9.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Box(Modifier.size(54.dp).scale(if (connected) ring else 1f).clip(CircleShape).background(palette.accent.copy(alpha = .28f)))
+            Box(Modifier.size(46.dp).clip(CircleShape).background(palette.accent.copy(alpha = .5f)).border(2.dp, Color.White.copy(.8f), CircleShape), contentAlignment = Alignment.Center) {
+                if (group) Icon(Icons.Default.Groups, null, tint = Color.White)
+                else Text(name.trim().take(1).uppercase().ifBlank { "C" }, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                if (image.startsWith("http")) AsyncImage(image, name, contentScale = ContentScale.Crop, modifier = Modifier.matchParentSize().clip(CircleShape))
+            }
+        }
+        Spacer(Modifier.width(10.dp))
+        Column(Modifier.widthIn(min = 70.dp, max = 132.dp)) {
+            Text(name, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(7.dp).clip(CircleShape).background(if (connected) Color(0xFF2EE8A0) else Color(0xFFFFB03A)))
+                Spacer(Modifier.width(5.dp))
+                Text(statusText, color = Color.White.copy(.85f), fontSize = 11.sp, maxLines = 1)
+            }
+        }
+        Spacer(Modifier.width(8.dp))
+        Box(Modifier.size(36.dp).clip(CircleShape).background(Color.White.copy(alpha = if (muted) .9f else .18f)).clickable(onClick = onMute), contentAlignment = Alignment.Center) {
+            Icon(if (muted) Icons.Default.MicOff else Icons.Default.Mic, if (muted) "Unmute" else "Mute", tint = if (muted) Color(0xFF111827) else Color.White, modifier = Modifier.size(18.dp))
+        }
+        Spacer(Modifier.width(6.dp))
+        Box(Modifier.size(40.dp).clip(CircleShape).background(Brush.linearGradient(listOf(Color(0xFFFF5F6D), Color(0xFFE53935)))).clickable(onClick = onEnd), contentAlignment = Alignment.Center) {
+            Icon(Icons.Default.CallEnd, "End call", tint = Color.White, modifier = Modifier.size(20.dp))
+        }
+        Spacer(Modifier.width(4.dp))
+        Box(Modifier.size(28.dp).clip(CircleShape).background(Color.Black.copy(alpha = .35f)).clickable(onClick = onHide), contentAlignment = Alignment.Center) {
+            Icon(Icons.Default.Close, "Hide bubble", tint = Color.White.copy(alpha = .9f), modifier = Modifier.size(15.dp))
         }
     }
 }

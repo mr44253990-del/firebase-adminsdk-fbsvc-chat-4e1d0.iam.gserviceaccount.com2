@@ -26,6 +26,12 @@ import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.lifecycle.setViewTreeLifecycleOwner
+import androidx.lifecycle.setViewTreeViewModelStoreOwner
+import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import coil.imageLoader
 import coil.request.ImageRequest
 import coil.transform.CircleCropTransformation
@@ -88,13 +94,96 @@ object CallFloatingBubble {
         return null
     }
 
+    /** Call the user dismissed with the X; the bubble stays hidden until a different call starts. */
+    private var hiddenKey = ""
+    private var composeOwner: OverlayOwner? = null
+
+    /** Minimal lifecycle host so a ComposeView can live in a system overlay window. */
+    private class OverlayOwner : androidx.lifecycle.LifecycleOwner, androidx.savedstate.SavedStateRegistryOwner, androidx.lifecycle.ViewModelStoreOwner {
+        private val registry = androidx.lifecycle.LifecycleRegistry(this)
+        private val controller = androidx.savedstate.SavedStateRegistryController.create(this)
+        override val lifecycle: androidx.lifecycle.Lifecycle get() = registry
+        override val savedStateRegistry: androidx.savedstate.SavedStateRegistry get() = controller.savedStateRegistry
+        override val viewModelStore = androidx.lifecycle.ViewModelStore()
+        fun start() {
+            controller.performAttach(); controller.performRestore(null)
+            registry.handleLifecycleEvent(androidx.lifecycle.Lifecycle.Event.ON_CREATE)
+            registry.handleLifecycleEvent(androidx.lifecycle.Lifecycle.Event.ON_START)
+            registry.handleLifecycleEvent(androidx.lifecycle.Lifecycle.Event.ON_RESUME)
+        }
+        fun destroy() {
+            runCatching {
+                registry.handleLifecycleEvent(androidx.lifecycle.Lifecycle.Event.ON_PAUSE)
+                registry.handleLifecycleEvent(androidx.lifecycle.Lifecycle.Event.ON_STOP)
+                registry.handleLifecycleEvent(androidx.lifecycle.Lifecycle.Event.ON_DESTROY)
+                viewModelStore.clear()
+            }
+        }
+    }
+
+    /** The same card design as inside the app, hosted in the overlay window. False if it could not be shown. */
+    private fun showCompose(context: Context, live: Live): Boolean = runCatching {
+        val wm = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+        else @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE
+        val lp = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT, type,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            x = if (lastX >= 0) lastX else dp(context, 12f)
+            y = if (lastY >= 0) lastY else dp(context, 96f)
+        }
+        val owner = OverlayOwner().also { it.start() }
+        val view = androidx.compose.ui.platform.ComposeView(context)
+        view.setViewTreeLifecycleOwner(owner)
+        view.setViewTreeSavedStateRegistryOwner(owner)
+        view.setViewTreeViewModelStoreOwner(owner)
+        view.setContent {
+            androidx.compose.material3.MaterialTheme {
+                val p by CallEngine.state.collectAsState()
+                val g by GroupCallEngine.state.collectAsState()
+                val connectedAt = if (live.group) g.connectedAt else p.connectedAt
+                val status = if (live.group) g.status else p.status
+                var seconds by androidx.compose.runtime.remember { androidx.compose.runtime.mutableLongStateOf(0L) }
+                androidx.compose.runtime.LaunchedEffect(connectedAt, status) {
+                    while (true) { seconds = if (connectedAt > 0) (System.currentTimeMillis() - connectedAt) / 1000L else 0L; kotlinx.coroutines.delay(1000) }
+                }
+                val connected = status in listOf("connected", "active")
+                CallBubbleCard(
+                    name = if (live.group) g.groupName.ifBlank { live.name } else p.remoteName.ifBlank { live.name },
+                    image = live.image,
+                    statusText = when {
+                        connected && connectedAt > 0 -> "%02d:%02d".format(seconds / 60, seconds % 60) + if (live.group) " · ${g.participants.size} in call" else ""
+                        status == "ringing" -> "Ringing…"; status == "calling" -> "Calling…"; status == "reconnecting" -> "Reconnecting…"; else -> "Connecting…"
+                    },
+                    connected = connected, muted = if (live.group) g.muted else p.muted, group = live.group,
+                    onOpen = { openCall(context, live) },
+                    onMute = { if (live.group) GroupCallEngine.toggleMute() else CallEngine.toggleMute() },
+                    onEnd = { if (live.group) GroupCallEngine.end() else CallEngine.end(); hide() },
+                    onHide = { hiddenKey = live.key; hide() },
+                    onDrag = { dx, dy ->
+                        lp.x = (lp.x + dx).toInt().coerceAtLeast(0); lp.y = (lp.y + dy).toInt().coerceAtLeast(0)
+                        lastX = lp.x; lastY = lp.y
+                        runCatching { wm.updateViewLayout(view, lp) }
+                    }
+                )
+            }
+        }
+        wm.addView(view, lp)
+        bubble = view; params = lp; shownKey = live.key; composeOwner = owner; muteView = null
+        true
+    }.getOrDefault(false)
+
     private fun refresh() {
         val context = app ?: return
         val live = liveCall()
+        if (live == null) hiddenKey = ""
         val canDraw = Build.VERSION.SDK_INT < Build.VERSION_CODES.M || Settings.canDrawOverlays(context)
-        val shouldShow = live != null && startedActivities == 0 && canDraw && !CallPipState.inPip.value
+        val shouldShow = live != null && live.key != hiddenKey && startedActivities == 0 && canDraw && !CallPipState.inPip.value
         if (!shouldShow) { hide(); return }
-        if (bubble == null || shownKey != live!!.key) { hide(); show(context, live!!) }
+        if (bubble == null || shownKey != live!!.key) { hide(); if (!showCompose(context, live!!)) show(context, live!!) }
         muteView?.text = if (live!!.muted) "🔇" else "🎙️"
     }
 
@@ -220,6 +309,7 @@ object CallFloatingBubble {
         val view = bubble ?: return
         val context = app ?: return
         runCatching { (context.getSystemService(Context.WINDOW_SERVICE) as WindowManager).removeView(view) }
+        composeOwner?.destroy(); composeOwner = null
         bubble = null; params = null; muteView = null; shownKey = ""
     }
 }

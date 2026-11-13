@@ -550,7 +550,7 @@ fun GroupChatScreen(
                 ) {
                     items(visibleGroupMessages.reversed(), key = { it.messageId }) { msg ->
                         val entranceAnimate = remember(msg.messageId) { msg.timestamp > chatOpenedAt - 1500L && enteredMessageIds.add(msg.messageId) }
-                        Box(Modifier.fillMaxWidth().messageEntrance(chatAppearance.messageAnimation, entranceAnimate, msg.senderId == currentUserId)) {
+                        Box(Modifier.fillMaxWidth().animateItem(fadeInSpec = null, fadeOutSpec = null, placementSpec = androidx.compose.animation.core.spring(dampingRatio = .85f, stiffness = 320f)).messageEntrance(chatAppearance.messageAnimation, entranceAnimate, msg.senderId == currentUserId)) {
                         if (msg.senderId == "system") {
                             // System Log message
                             Box(
@@ -624,6 +624,10 @@ fun GroupChatScreen(
                         shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
                     )
             ) {
+                // Reply preview and composer are stacked in ONE column. They used to be siblings
+                // inside the Surface (a Box), so the reply bar was drawn on top of / under the
+                // text box instead of above it.
+                Column {
                 AnimatedVisibility(
                     visible = replyingToGroupMessage != null,
                     enter = expandVertically() + fadeIn(),
@@ -662,7 +666,6 @@ fun GroupChatScreen(
                     }
                 }
 
-                Column {
                 val mentionQuery = remember(messageText) { Mentions.activeQuery(messageText) }
                 val mentionSuggestions = remember(mentionQuery, groupMemberUsers) {
                     mentionQuery?.let { Mentions.suggestions(it, groupMemberUsers, currentUserId) }.orEmpty()

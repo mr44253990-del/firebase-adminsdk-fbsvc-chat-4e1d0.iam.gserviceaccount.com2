@@ -830,7 +830,13 @@ class MainActivity : FragmentActivity() {
                             )
                         }
 
-                        composable("chat") {
+                        composable(
+                            "chat",
+                            enterTransition = { slideInHorizontally(tween(300)) { it / 8 } + fadeIn(tween(260)) },
+                            exitTransition = { fadeOut(tween(180)) },
+                            popEnterTransition = { fadeIn(tween(220)) },
+                            popExitTransition = { slideOutHorizontally(tween(260)) { it / 8 } + fadeOut(tween(200)) }
+                        ) {
                             activeRecipient?.let { recipient ->
                                 ChatScreen(
                                     viewModel = viewModel,
@@ -855,7 +861,13 @@ class MainActivity : FragmentActivity() {
                                 )
                             }
                         }
-                        composable("group_chat") {
+                        composable(
+                            "group_chat",
+                            enterTransition = { slideInHorizontally(tween(300)) { it / 8 } + fadeIn(tween(260)) },
+                            exitTransition = { fadeOut(tween(180)) },
+                            popEnterTransition = { fadeIn(tween(220)) },
+                            popExitTransition = { slideOutHorizontally(tween(260)) { it / 8 } + fadeOut(tween(200)) }
+                        ) {
                             activeGroup?.let { group ->
                                 GroupChatScreen(
                                     viewModel = viewModel,
@@ -1025,12 +1037,18 @@ class MainActivity : FragmentActivity() {
                             com.example.call.GroupCallReturnPill(groupCallState, onExpand = { navController.navigate("group_call") { launchSingleTop = true } })
                         }
                     }
-                    if (!inCallPip && currentRoute != "call" && callState.status !in listOf("idle", "ended", "declined", "missed", "failed")) {
+                    // X on the mini call card hides it for this call (the call itself keeps running).
+                    var hiddenMiniCallId by remember { mutableStateOf("") }
+                    if (!inCallPip && currentRoute != "call" && callState.callId != hiddenMiniCallId && callState.status !in listOf("idle", "ended", "declined", "missed", "failed")) {
                         Box(Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(12.dp)) {
                             CallMiniOverlay(
                                 state = callState,
                                 onExpand = { navController.navigate("call") { launchSingleTop = true } },
-                                onEnd = { activeRecipient?.let { viewModel.endCall(it, callState.callId) } ?: CallEngine.end() }
+                                onEnd = { activeRecipient?.let { viewModel.endCall(it, callState.callId) } ?: CallEngine.end() },
+                                onHide = {
+                                    hiddenMiniCallId = callState.callId
+                                    Toast.makeText(this@MainActivity, "Call card hidden — tap the call notification to return", Toast.LENGTH_SHORT).show()
+                                }
                             )
                         }
                     }

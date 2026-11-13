@@ -101,6 +101,34 @@ Legend: ✅ done in this branch · 🔧 needs a one-time server step by the admi
 - ✅ P5. Admin → Audio library page (master switch, catalogues, API configuration, test, preview) + Copilot switch.
 - ❌ P6. Web deploy: the Cloudflare token supplied on 13 Nov had already expired (12 Nov 17:59 UTC), so nothing was published. The web changes are in the repo.
 
+## Q. Version 5.4
+- ✅ Q1. "Open Web Version" opens the browser; admin-configurable web card (address, title, benefits, on/off, optional Home placement).
+- ✅ Q2. Call delivery: push retry with a fresh token (5 s and 12 s) + realtime in-app call signal through `notifications/{uid}`.
+- ✅ Q3. Group swipe-to-reply layout bug fixed.
+- ✅ Q4. Calmer chat motion (softer entrance, item placement animation, gentler chat transitions).
+- ✅ Q5. Floating call bubble uses the in-app card design (Compose in the overlay window) and has an X to hide; in-app card has X too.
+- ✅ Q6. Audio: Deezer, Openverse, Jamendo; "All" tab; master switch sets every catalogue.
+- ✅ Q7. Assistant tools drawer + AI Studio / Smart Hub buttons.
+- ✅ Q8. Web published to Cloudflare Pages (`convo-chat-companion.pages.dev`, site v5.2.0).
+
+## R. Feature ideas — status
+| Idea | Status |
+|---|---|
+| Search every audio catalogue at once | ✅ 5.4 |
+| AI tools drawer inside the assistant | ✅ 5.4 |
+| Admin-controlled web / sponsor card | ✅ 5.4 |
+| Second delivery channel for calls | ✅ 5.4 |
+| Voice-message transcription and translation | ⏳ needs a speech-to-text key on the Worker |
+| Group calls for more than 8 people (SFU) | ⏳ needs a media server |
+| AI answers across all chats ("when did X send the address?") | ⏳ |
+| Scheduled maintenance and scheduled broadcasts in the Copilot | ⏳ |
+| Chat folders / smart filters on the chat list | ⏳ |
+| Music on video stories and on reels | ⏳ |
+| Sponsor slots with click statistics for the admin | ⏳ |
+| Encrypted cloud backup with a passphrase | ⏳ |
+| Home-screen widgets | ⏳ |
+| Automatic UI tests on an emulator in CI | ⏳ |
+
 ## N. Ideas for the next rounds (not built yet)
 - Voice-message transcription and translation (needs a speech-to-text provider key on the Worker).
 - SFU-based group calls for more than 8 people (the Worker already lists an `sfu` route).

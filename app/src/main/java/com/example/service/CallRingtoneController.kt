@@ -61,3 +61,14 @@ object CallRingtoneController {
         activeCallId = null
     }
 }
+
+/** Remembers which incoming calls already reached this device, so two delivery paths never double-handle one. */
+object IncomingCallRegistry {
+    private val seen = java.util.concurrent.ConcurrentHashMap<String, Long>()
+    /** True only the first time [callId] is reported (entries expire after two minutes). */
+    fun firstTime(callId: String): Boolean {
+        val now = System.currentTimeMillis()
+        seen.entries.removeIf { now - it.value > 120_000L }
+        return seen.putIfAbsent(callId, now) == null
+    }
+}

@@ -83,6 +83,7 @@ private data class CopilotLine(
 private val COPILOT_FLAGS: List<Triple<String, String, List<String>>> = listOf(
     Triple("maintenanceMode", "Maintenance mode", listOf("maintenance", "maintain", "মেইনটেন", "মেইনটেইন", "মেনটেন", "রক্ষণাবেক্ষণ")),
     Triple("reelsEnabled", "Reels", listOf("reels", "reel", "রিল")),
+    Triple("webPromoEnabled", "Web version card", listOf("web card", "web version", "web promo", "sponsor", "ওয়েব ভার্সন", "স্পন্সর")),
     Triple("audioLibraryEnabled", "Audio library", listOf("audio library", "music library", "audio", "music", "অডিও", "মিউজিক", "গান")),
     Triple("assistantEnabled", "AI assistant", listOf("assistant", "ai chat", "chatbot", "এআই", "অ্যাসিস্ট্যান্ট")),
     Triple("locationSharingEnabled", "Location sharing", listOf("location", "লোকেশন")),
@@ -112,6 +113,7 @@ private fun currentFlagValue(config: FlagshipConfig, key: String): Any? = when (
     "maintenanceEndsAt" -> config.maintenanceEndsAt
     "reelsEnabled" -> config.reelsEnabled
     "audioLibraryEnabled" -> config.audioLibraryEnabled
+    "webPromoEnabled" -> config.webPromoEnabled
     "assistantEnabled" -> config.assistantEnabled
     "locationSharingEnabled" -> config.locationSharingEnabled
     "typingSoundEnabled" -> config.typingSoundEnabled

@@ -526,47 +526,8 @@ fun HomeScreen(
                                         }
                                     }
 
-                                    // ── Web version promotion banner ──
-                                    Box(
-                                        Modifier
-                                            .fillMaxWidth()
-                                            .clip(RoundedCornerShape(18.dp))
-                                            .background(Brush.linearGradient(listOf(Color(0xFF1A237E), Color(0xFF3949AB))))
-                                            .border(1.4.dp, Brush.linearGradient(listOf(Color(0xFF5C6BC0), Color(0xFF7986CB))), RoundedCornerShape(18.dp))
-                                    ) {
-                                        Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                                            Box(
-                                                Modifier.size(52.dp).clip(CircleShape)
-                                                    .background(Brush.linearGradient(listOf(Color(0xFF5C6BC0), Color(0xFF7986CB)))),
-                                                contentAlignment = Alignment.Center
-                                            ) {
-                                                Icon(Icons.Default.LaptopChromebook, null, tint = Color(0xFF1A237E), modifier = Modifier.size(30.dp))
-                                            }
-                                            Spacer(Modifier.width(12.dp))
-                                            Column(Modifier.weight(1f)) {
-                                                Text("Convo Chat Web", color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 16.sp)
-                                                Text(
-                                                    if (appLanguage == "bn") "এখন পিসি এবং ব্রাউজারেও চালু করুন" else "Now use on PC and browser",
-                                                    color = Color(0xFFC5CAE9), fontSize = 11.5.sp, fontWeight = FontWeight.Medium
-                                                )
-                                                Spacer(Modifier.height(9.dp))
-                                                Row(
-                                                    Modifier
-                                                        .clip(RoundedCornerShape(50))
-                                                        .background(Brush.linearGradient(listOf(Color(0xFF5C6BC0), Color(0xFF7986CB))))
-                                                        .clickable { showAccountMenu = false; Toast.makeText(context, "Open https://convo-chat-companion.pages.dev in your browser", Toast.LENGTH_LONG).show() }
-                                                        .padding(horizontal = 16.dp, vertical = 6.dp),
-                                                    verticalAlignment = Alignment.CenterVertically
-                                                ) {
-                                                    Text(
-                                                        if (appLanguage == "bn") "ওয়েব ভার্সন খুলুন" else "Open Web Version",
-                                                        color = Color(0xFF1A237E), fontWeight = FontWeight.ExtraBold, fontSize = 12.5.sp
-                                                    )
-                                                    Icon(Icons.Default.OpenInNew, null, tint = Color(0xFF1A237E), modifier = Modifier.size(15.dp))
-                                                }
-                                            }
-                                        }
-                                    }
+                                    // ── Web version card (admin-controlled; opens the browser) ──
+                                    if (flagshipConfig.webPromoEnabled) WebPromoCard(flagshipConfig, bangla = appLanguage == "bn") { showAccountMenu = false }
 
                                     // ── Menu rows ──
                                     AccountMenuRow(Icons.Outlined.Search, listOf(Color(0xFF2E7DFF), Color(0xFF1E5FE0)), tr("Search people and media"), chevron = false) {
@@ -798,6 +759,9 @@ fun HomeScreen(
                         contentPadding = PaddingValues(bottom = 14.dp),
                         verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
+                        if (flagshipConfig.webPromoEnabled && flagshipConfig.webPromoOnHome) item(key = "web_promo") {
+                            WebPromoCard(flagshipConfig, bangla = appLanguage == "bn", modifier = Modifier.padding(horizontal = 12.dp))
+                        }
                         if (storyPlaybackQueue.isNotEmpty()) item(key = "stories") {
                             StoriesHorizontalSection(
                                 viewModel = viewModel,

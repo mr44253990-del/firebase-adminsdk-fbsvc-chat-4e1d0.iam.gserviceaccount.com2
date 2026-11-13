@@ -445,9 +445,11 @@ fun Modifier.messageEntrance(style: String, animate: Boolean, fromEnd: Boolean):
         progress.animateTo(
             1f,
             when (style) {
-                "bounce" -> androidx.compose.animation.core.spring(dampingRatio = .45f, stiffness = 380f)
-                "pop", "swing" -> androidx.compose.animation.core.spring(dampingRatio = .58f, stiffness = 520f)
-                else -> androidx.compose.animation.core.tween(320, easing = androidx.compose.animation.core.FastOutSlowInEasing)
+                // v5.4 "comfortable" motion: softer springs with less overshoot and gentler travel, so
+                // new messages settle in calmly instead of snapping or bouncing hard.
+                "bounce" -> androidx.compose.animation.core.spring(dampingRatio = .68f, stiffness = 240f)
+                "pop", "swing" -> androidx.compose.animation.core.spring(dampingRatio = .78f, stiffness = 300f)
+                else -> androidx.compose.animation.core.tween(380, easing = androidx.compose.animation.core.CubicBezierEasing(.22f, .68f, .32f, 1f))
             }
         )
     }
@@ -456,10 +458,10 @@ fun Modifier.messageEntrance(style: String, animate: Boolean, fromEnd: Boolean):
         val pivot = androidx.compose.ui.graphics.TransformOrigin(if (fromEnd) 1f else 0f, 1f)
         alpha = p.coerceIn(0f, 1f)
         when (style) {
-            "slide" -> translationX = (1f - p) * 90f * (if (fromEnd) 1f else -1f)
-            "pop" -> { val sc = .55f + .45f * p; scaleX = sc; scaleY = sc; transformOrigin = pivot }
-            "bounce" -> translationY = (1f - p) * 70f
-            "swing" -> { rotationZ = (1f - p) * (if (fromEnd) 9f else -9f); transformOrigin = pivot }
+            "slide" -> translationX = (1f - p) * 46f * (if (fromEnd) 1f else -1f)
+            "pop" -> { val sc = .86f + .14f * p; scaleX = sc; scaleY = sc; transformOrigin = pivot }
+            "bounce" -> translationY = (1f - p) * 30f
+            "swing" -> { rotationZ = (1f - p) * (if (fromEnd) 4f else -4f); transformOrigin = pivot }
             else -> Unit
         }
     }

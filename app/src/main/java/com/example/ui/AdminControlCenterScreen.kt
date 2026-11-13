@@ -217,6 +217,7 @@ fun AdminControlCenterScreen(
     val workerNeedsUpdate = workerReports.firstOrNull()?.let { !it.reachable || it.outdated || !it.serviceAccount } ?: workerOutdatedSeen
     val allMenuItems = listOf(
         AdminMenuEntry("copilot", "Admin AI Copilot", "Type a command: maintenance, features, bans, Premium, broadcast, profiles", Icons.Outlined.AutoAwesome, Color(0xFF7C5CFC), "NEW"),
+        AdminMenuEntry("web_promo", "Web version card", "Show the web address and benefits; tap opens the browser", Icons.Outlined.Language, Color(0xFF3949AB), if (flagshipConfig.webPromoEnabled) "ON" else "OFF"),
         AdminMenuEntry("audio", "Audio library", "Music for posts and stories: Audius, iTunes, Radio Browser", Icons.Outlined.LibraryMusic, Color(0xFFCC0FE0), if (flagshipConfig.audioLibraryEnabled) "ON" else "OFF"),
         AdminMenuEntry("server_health", "Server health & updater", "Worker version, secrets, one-tap Worker update", Icons.Outlined.Dns, Color(0xFF00897B), if (workerNeedsUpdate) "FIX" else "OK"),
         AdminMenuEntry("staff", "Sub-admins & roles", "Delegate access: users, posts, reports, Premium…", Icons.Outlined.AdminPanelSettings, Color(0xFF3949AB), users.count { it.staffRole.isNotBlank() }.takeIf { it > 0 }?.toString().orEmpty()),
@@ -477,6 +478,7 @@ fun AdminControlCenterScreen(
                 pageEntry?.let { AdminPageIntro(it) }
                 when (selectedPage) {
                     "copilot" -> AdminAiCopilotPanel(viewModel, onOpenUser = { selectedAdminUser = it })
+                    "web_promo" -> AdminPanelCard("Web version card", "Address, benefits and where the card is shown", Icons.Outlined.Language) { AdminWebPromoPanel(viewModel) }
                     "audio" -> AdminPanelCard("Audio library", "One switch for everyone, plus the API configuration", Icons.Outlined.LibraryMusic) { AdminAudioLibraryPanel(viewModel) }
                     "users" -> {
                         val now = System.currentTimeMillis()

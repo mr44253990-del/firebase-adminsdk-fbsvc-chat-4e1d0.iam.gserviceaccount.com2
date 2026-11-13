@@ -1,3 +1,10 @@
+• FIXED 5.4: "Open Web Version" in the profile-picture menu now really opens the browser. The card shows the web address and its benefits, and the admin can change the address, the text, or switch it off (Admin → Web version card).
+• Calls are more reliable: if the other phone has not started ringing after a few seconds the call request is sent again with a fresh device address, and people who have the app open also receive the call through a second, instant channel.
+• FIXED: swiping a group message to reply — the reply preview now sits above the text box instead of overlapping it.
+• Chat motion is calmer: softer message animations, messages glide into place, and gentler transitions when opening a chat.
+• Floating call bubble: now the same design as the call card inside the app, with an X that hides it (the call keeps running). The in-app call card has the X too.
+• Audio library: 3 more catalogues — Deezer (previews), Openverse (free music and sounds) and Jamendo (full indie tracks, needs a free client id) — and an "All" tab that searches every catalogue at once. The admin master switch now turns every catalogue on or off together.
+• Convo AI: a tools drawer (swipe from the left edge or tap the grid icon) with every AI Studio tool, Smart Hub and quick prompts, plus AI Studio and Smart Hub buttons at the top.
 • FIXED 5.3: in chats and group chats the message box is no longer hidden behind the keyboard — it now sits right on top of the keyboard while you type (the 5.0 AI-chat keyboard fix had left the whole app in the wrong keyboard mode after the AI screen was opened once). Comment boxes are back to normal too.
 • Reactions redrawn: Like, Love, Haha, Wow, Sad and Angry are now hand-drawn, animated faces — in the reaction tray, on the Like button and in the "who reacted" summary.
 • Chat quick-reaction button: glowing halo, gentle wobble, and a "Send once" tray (long-press) for a different emoji without changing the chat's default.

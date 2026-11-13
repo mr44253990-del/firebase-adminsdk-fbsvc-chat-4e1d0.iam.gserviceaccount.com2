@@ -236,6 +236,7 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
 
     private fun sendIncomingCallNotification(callId: String, callerId: String, callerName: String, callerImage: String, videoCall: Boolean) {
         if (callId.isBlank()) return
+        IncomingCallRegistry.firstTime(callId)
         fun callIntent(action: String, requestCode: Int) = PendingIntent.getActivity(
             this, requestCode,
             Intent(this, IncomingCallActivity::class.java).apply {

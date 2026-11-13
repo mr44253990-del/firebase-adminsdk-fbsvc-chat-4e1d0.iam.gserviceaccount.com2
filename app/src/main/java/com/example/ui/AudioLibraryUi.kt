@@ -11,6 +11,8 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -45,11 +47,16 @@ import com.example.data.FlagshipConfig
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-private fun sourceLabel(source: String) = when (source) { "audius" -> "Audius"; "itunes" -> "iTunes"; "radio" -> "Radio"; else -> "Audio" }
+private fun sourceLabel(source: String) = when (source) {
+    "all" -> "All"; "audius" -> "Audius"; "itunes" -> "iTunes"; "radio" -> "Radio"; "deezer" -> "Deezer"; "openverse" -> "Open music"; "jamendo" -> "Jamendo"; else -> "Audio"
+}
 private fun sourceColors(source: String) = when (source) {
     "audius" -> listOf(Color(0xFFCC0FE0), Color(0xFF7E1BCC))
     "itunes" -> listOf(Color(0xFFFF5E62), Color(0xFFFF2D55))
     "radio" -> listOf(Color(0xFF00B4DB), Color(0xFF0083B0))
+    "deezer" -> listOf(Color(0xFFA238FF), Color(0xFF6A11CB))
+    "openverse" -> listOf(Color(0xFFFFB03A), Color(0xFFFF6F3C))
+    "jamendo" -> listOf(Color(0xFF19C37D), Color(0xFF0E8F5A))
     else -> listOf(Color(0xFF8B7BFF), Color(0xFF36D8E6))
 }
 
@@ -57,7 +64,10 @@ private fun sourceColors(source: String) = when (source) {
 fun enabledAudioSources(config: FlagshipConfig): List<String> = if (!config.audioLibraryEnabled) emptyList() else buildList {
     if (config.audioAudiusEnabled) add("audius")
     if (config.audioItunesEnabled) add("itunes")
+    if (config.audioDeezerEnabled) add("deezer")
     if (config.audioRadioEnabled) add("radio")
+    if (config.audioOpenverseEnabled) add("openverse")
+    if (config.audioJamendoEnabled && config.audioJamendoClientId.isNotBlank()) add("jamendo")
 }
 
 /** Animated equaliser bars shown while a track is playing. */
@@ -79,7 +89,9 @@ fun EqualizerBars(color: Color, playing: Boolean, modifier: Modifier = Modifier)
 @Composable
 fun AudioLibrarySheet(config: FlagshipConfig, onPick: (AudioTrack) -> Unit, onDismiss: () -> Unit) {
     val context = LocalContext.current
-    val sources = remember(config) { enabledAudioSources(config) }
+    val realSources = remember(config) { enabledAudioSources(config) }
+    // "All" searches every enabled catalogue together and mixes the results.
+    val sources = remember(realSources) { if (realSources.size > 1) listOf("all") + realSources else realSources }
     var source by remember(sources) { mutableStateOf(sources.firstOrNull().orEmpty()) }
     var query by remember { mutableStateOf("") }
     var submitted by remember { mutableStateOf("") }
@@ -91,7 +103,9 @@ fun AudioLibrarySheet(config: FlagshipConfig, onPick: (AudioTrack) -> Unit, onDi
     LaunchedEffect(source, submitted) {
         if (source.isBlank()) return@LaunchedEffect
         busy = true; failed = false
-        val found = runCatching { AudioLibraryApi.search(source, submitted, config) }.getOrDefault(emptyList())
+        val found = runCatching {
+            if (source == "all") AudioLibraryApi.searchAll(realSources, submitted, config) else AudioLibraryApi.search(source, submitted, config)
+        }.getOrDefault(emptyList())
         results = found; busy = false; failed = found.isEmpty()
     }
     // Search as you type (after a short pause).
@@ -119,16 +133,16 @@ fun AudioLibrarySheet(config: FlagshipConfig, onPick: (AudioTrack) -> Unit, onDi
                     Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) { Text("The audio library is turned off by the admin.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
                     return@Column
                 }
-                Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     sources.forEach { s ->
                         val on = s == source
                         Row(
-                            Modifier.weight(1f).clip(CircleShape)
+                            Modifier.clip(CircleShape)
                                 .background(if (on) Brush.horizontalGradient(sourceColors(s)) else Brush.horizontalGradient(listOf(MaterialTheme.colorScheme.surfaceVariant, MaterialTheme.colorScheme.surfaceVariant)))
-                                .clickable { if (!on) { AudioStreamPlayer.stop(); results = emptyList(); source = s } }.padding(vertical = 9.dp),
+                                .clickable { if (!on) { AudioStreamPlayer.stop(); results = emptyList(); source = s } }.padding(horizontal = 14.dp, vertical = 9.dp),
                             horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(when (s) { "radio" -> Icons.Default.Radio; "itunes" -> Icons.Default.MusicNote; else -> Icons.Default.GraphicEq }, null, tint = if (on) Color.White else MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(16.dp))
+                            Icon(when (s) { "all" -> Icons.Default.AllInclusive; "radio" -> Icons.Default.Radio; "itunes", "deezer" -> Icons.Default.MusicNote; "openverse" -> Icons.Default.Public; else -> Icons.Default.GraphicEq }, null, tint = if (on) Color.White else MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(6.dp))
                             Text(sourceLabel(s), color = if (on) Color.White else MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold, fontSize = 13.sp)
                         }
@@ -136,14 +150,21 @@ fun AudioLibrarySheet(config: FlagshipConfig, onPick: (AudioTrack) -> Unit, onDi
                 }
                 OutlinedTextField(
                     value = query, onValueChange = { query = it.take(60) }, singleLine = true,
-                    placeholder = { Text(when (source) { "radio" -> "Search stations (empty = popular in Bangladesh)"; "itunes" -> "Search songs or artists"; else -> "Search Audius (empty = trending)" }, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                    placeholder = { Text(when (source) { "all" -> "Search every catalogue at once"; "radio" -> "Search stations (empty = popular in Bangladesh)"; "itunes", "deezer" -> "Search songs or artists"; "openverse" -> "Search free music and sounds"; else -> "Search (empty = trending)" }, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                     leadingIcon = { Icon(Icons.Default.Search, null) },
                     trailingIcon = { if (query.isNotBlank()) IconButton(onClick = { query = ""; submitted = "" }) { Icon(Icons.Default.Close, "Clear") } },
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search), keyboardActions = KeyboardActions(onSearch = { submitted = query.trim() }),
                     shape = CircleShape, modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp)
                 )
                 Text(
-                    when (source) { "itunes" -> "30-second previews from the iTunes catalogue"; "radio" -> "Live stations from Radio Browser — they keep playing until stopped"; else -> "Full tracks from independent artists on Audius" },
+                    when (source) {
+                        "all" -> "Results from ${realSources.size} catalogues mixed together"
+                        "itunes" -> "30-second previews from the iTunes catalogue"; "deezer" -> "30-second previews from the Deezer catalogue"
+                        "radio" -> "Live stations from Radio Browser — they keep playing until stopped"
+                        "openverse" -> "Openly licensed music and sounds (Freesound, Jamendo, Wikimedia…)"
+                        "jamendo" -> "Full tracks from independent artists on Jamendo"
+                        else -> "Full tracks from independent artists on Audius"
+                    },
                     fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
                 )
                 when {
@@ -160,12 +181,12 @@ fun AudioLibrarySheet(config: FlagshipConfig, onPick: (AudioTrack) -> Unit, onDi
                             val isPlaying = playing == track.url
                             Row(
                                 Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp))
-                                    .background(if (isPlaying) Brush.horizontalGradient(sourceColors(source).map { it.copy(alpha = .22f) }) else Brush.horizontalGradient(listOf(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .5f), MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .5f))))
+                                    .background(if (isPlaying) Brush.horizontalGradient(sourceColors(track.source).map { it.copy(alpha = .22f) }) else Brush.horizontalGradient(listOf(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .5f), MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .5f))))
                                     .clickable { AudioStreamPlayer.toggle(track.url) }.padding(8.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Box(Modifier.size(50.dp).clip(RoundedCornerShape(14.dp)).background(Brush.linearGradient(sourceColors(source))), contentAlignment = Alignment.Center) {
-                                    Icon(if (source == "radio") Icons.Default.Radio else Icons.Default.MusicNote, null, tint = Color.White)
+                                Box(Modifier.size(50.dp).clip(RoundedCornerShape(14.dp)).background(Brush.linearGradient(sourceColors(track.source))), contentAlignment = Alignment.Center) {
+                                    Icon(if (track.source == "radio") Icons.Default.Radio else Icons.Default.MusicNote, null, tint = Color.White)
                                     if (track.artwork.startsWith("http")) AsyncImage(track.artwork, null, contentScale = ContentScale.Crop, modifier = Modifier.matchParentSize())
                                     if (isPlaying) Box(Modifier.matchParentSize().background(Color.Black.copy(alpha = .45f)), contentAlignment = Alignment.Center) {
                                         if (loading) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = Color.White) else EqualizerBars(Color.White, true)
@@ -175,7 +196,7 @@ fun AudioLibrarySheet(config: FlagshipConfig, onPick: (AudioTrack) -> Unit, onDi
                                 Column(Modifier.weight(1f)) {
                                     Text(track.title, fontWeight = FontWeight.Bold, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                     Text(
-                                        track.artist.ifBlank { sourceLabel(source) } + if (track.durationSec > 0 && source == "audius") "  ·  %d:%02d".format(track.durationSec / 60, track.durationSec % 60) else "",
+                                        (if (source == "all") sourceLabel(track.source) + " · " else "") + track.artist.ifBlank { sourceLabel(track.source) } + if (track.durationSec > 0 && track.source in setOf("audius", "jamendo", "openverse")) "  ·  %d:%02d".format(track.durationSec / 60, track.durationSec % 60) else "",
                                         fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis
                                     )
                                 }
@@ -237,13 +258,18 @@ fun AdminAudioLibraryPanel(viewModel: ChatViewModel) {
     var appName by remember(config.updatedAt) { mutableStateOf(config.audioAudiusAppName) }
     var host by remember(config.updatedAt) { mutableStateOf(config.audioAudiusHost) }
     var country by remember(config.updatedAt) { mutableStateOf(config.audioItunesCountry) }
+    var deezer by remember(config.updatedAt) { mutableStateOf(config.audioDeezerEnabled) }
+    var openverse by remember(config.updatedAt) { mutableStateOf(config.audioOpenverseEnabled) }
+    var jamendo by remember(config.updatedAt) { mutableStateOf(config.audioJamendoEnabled) }
+    var jamendoId by remember(config.updatedAt) { mutableStateOf(config.audioJamendoClientId) }
     var testing by remember { mutableStateOf(false) }
     var testResult by remember { mutableStateOf("") }
     var showPreview by remember { mutableStateOf(false) }
     fun draft() = config.copy(
         audioLibraryEnabled = enabled, audioAudiusEnabled = audius, audioItunesEnabled = itunes, audioRadioEnabled = radio,
         audioAudiusAppName = appName.trim().ifBlank { "ConvoChat" }, audioAudiusHost = host.trim().ifBlank { "https://discoveryprovider.audius.co" },
-        audioItunesCountry = country.trim().uppercase().take(2).ifBlank { "US" }
+        audioItunesCountry = country.trim().uppercase().take(2).ifBlank { "US" },
+        audioDeezerEnabled = deezer, audioOpenverseEnabled = openverse, audioJamendoEnabled = jamendo, audioJamendoClientId = jamendoId.trim()
     )
     if (showPreview) AudioLibrarySheet(draft().copy(audioLibraryEnabled = true), onPick = {}, onDismiss = { showPreview = false })
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -259,32 +285,38 @@ fun AdminAudioLibraryPanel(viewModel: ChatViewModel) {
                 Text("Audio library", color = Color.White, fontWeight = FontWeight.Black, fontSize = 17.sp)
                 Text(if (enabled) "ON — music is available in posts and stories for everyone" else "OFF — hidden from every user", color = Color.White.copy(alpha = .88f), fontSize = 12.sp)
             }
-            Switch(checked = enabled, onCheckedChange = { on -> enabled = on; if (on && !audius && !itunes && !radio) { audius = true; itunes = true; radio = true } })
+            // Master switch: ON turns every catalogue on, OFF turns every catalogue off.
+            Switch(checked = enabled, onCheckedChange = { on -> enabled = on; audius = on; itunes = on; radio = on; deezer = on; openverse = on; jamendo = on })
         }
         Text("Catalogues (all follow the master switch)", fontWeight = FontWeight.Bold, fontSize = 13.sp)
         listOf(
             Triple("Audius", "Full tracks by independent artists · needs only an app name", "audius"),
             Triple("iTunes Search", "30-second previews of commercial songs · no key", "itunes"),
-            Triple("Radio Browser", "Live radio stations worldwide · no key", "radio")
+            Triple("Radio Browser", "Live radio stations worldwide · no key", "radio"),
+            Triple("Deezer", "30-second previews, very large catalogue · no key", "deezer"),
+            Triple("Openverse", "Free, openly licensed music and sounds · no key", "openverse"),
+            Triple("Jamendo", "Full indie tracks · needs the free client id below", "jamendo")
         ).forEach { (title, sub, key) ->
-            val value = when (key) { "audius" -> audius; "itunes" -> itunes; else -> radio }
+            val value = when (key) { "audius" -> audius; "itunes" -> itunes; "deezer" -> deezer; "openverse" -> openverse; "jamendo" -> jamendo; else -> radio }
             Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .5f)).padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(34.dp).clip(RoundedCornerShape(11.dp)).background(Brush.linearGradient(sourceColors(key))), contentAlignment = Alignment.Center) { Icon(when (key) { "radio" -> Icons.Default.Radio; "itunes" -> Icons.Default.MusicNote; else -> Icons.Default.GraphicEq }, null, tint = Color.White, modifier = Modifier.size(18.dp)) }
+                Box(Modifier.size(34.dp).clip(RoundedCornerShape(11.dp)).background(Brush.linearGradient(sourceColors(key))), contentAlignment = Alignment.Center) { Icon(when (key) { "radio" -> Icons.Default.Radio; "itunes", "deezer" -> Icons.Default.MusicNote; "openverse" -> Icons.Default.Public; else -> Icons.Default.GraphicEq }, null, tint = Color.White, modifier = Modifier.size(18.dp)) }
                 Spacer(Modifier.width(10.dp))
                 Column(Modifier.weight(1f)) { Text(title, fontWeight = FontWeight.Bold, fontSize = 13.5.sp); Text(sub, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                Switch(checked = value && enabled, enabled = enabled, onCheckedChange = { when (key) { "audius" -> audius = it; "itunes" -> itunes = it; else -> radio = it } })
+                Switch(checked = value && enabled, enabled = enabled, onCheckedChange = { when (key) { "audius" -> audius = it; "itunes" -> itunes = it; "deezer" -> deezer = it; "openverse" -> openverse = it; "jamendo" -> jamendo = it; else -> radio = it } })
             }
         }
         Text("API configuration", fontWeight = FontWeight.Bold, fontSize = 13.sp)
         OutlinedTextField(appName, { appName = it.take(40) }, label = { Text("Audius app name") }, supportingText = { Text("Sent as app_name with every Audius request.") }, singleLine = true, modifier = Modifier.fillMaxWidth())
         OutlinedTextField(host, { host = it.take(120) }, label = { Text("Audius API host") }, supportingText = { Text("Default: https://discoveryprovider.audius.co") }, singleLine = true, modifier = Modifier.fillMaxWidth())
         OutlinedTextField(country, { country = it.filter(Char::isLetter).take(2).uppercase() }, label = { Text("iTunes Store country (2 letters)") }, supportingText = { Text("US, GB, IN, BD … decides which songs are found.") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(jamendoId, { jamendoId = it.trim().take(60) }, label = { Text("Jamendo client id (optional)") }, supportingText = { Text("Free at devportal.jamendo.com. Leave empty to hide Jamendo.") }, singleLine = true, modifier = Modifier.fillMaxWidth())
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = {
                 val d = draft()
                 viewModel.updateFlagshipFields(mapOf(
                     "audioLibraryEnabled" to d.audioLibraryEnabled, "audioAudiusEnabled" to d.audioAudiusEnabled, "audioItunesEnabled" to d.audioItunesEnabled,
-                    "audioRadioEnabled" to d.audioRadioEnabled, "audioAudiusAppName" to d.audioAudiusAppName, "audioAudiusHost" to d.audioAudiusHost, "audioItunesCountry" to d.audioItunesCountry
+                    "audioRadioEnabled" to d.audioRadioEnabled, "audioAudiusAppName" to d.audioAudiusAppName, "audioAudiusHost" to d.audioAudiusHost, "audioItunesCountry" to d.audioItunesCountry,
+                    "audioDeezerEnabled" to d.audioDeezerEnabled, "audioOpenverseEnabled" to d.audioOpenverseEnabled, "audioJamendoEnabled" to d.audioJamendoEnabled, "audioJamendoClientId" to d.audioJamendoClientId
                 )) { ok -> Toast.makeText(context, if (ok) (if (d.audioLibraryEnabled) "Saved — audio library is ON for everyone" else "Saved — audio library is OFF for everyone") else "Could not save", Toast.LENGTH_LONG).show() }
             }, modifier = Modifier.weight(1f), shape = CircleShape) { Icon(Icons.Default.Save, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Save") }
             OutlinedButton(enabled = !testing, onClick = {
@@ -298,6 +330,6 @@ fun AdminAudioLibraryPanel(viewModel: ChatViewModel) {
         }
         OutlinedButton(onClick = { showPreview = true }, modifier = Modifier.fillMaxWidth(), shape = CircleShape) { Icon(Icons.Default.Headphones, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Preview the library") }
         if (testResult.isNotBlank()) Text(testResult, fontSize = 13.sp, modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .5f)).padding(12.dp))
-        Text("No secret keys are needed for these three services. Tracks are streamed from the provider; only the track details are stored with a post or story.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("Only Jamendo needs a (free) client id; the other services need no key. Tracks are streamed from the provider; only the track details are stored with a post or story.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }

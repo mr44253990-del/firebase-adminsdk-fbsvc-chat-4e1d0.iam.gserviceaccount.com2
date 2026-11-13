@@ -1241,7 +1241,7 @@ fun ChatScreen(
                         val msg = chatReactions[rawMsg.messageId]?.let { live -> rawMsg.copy(reactions = rawMsg.reactions + live) } ?: rawMsg
                         val entranceAnimate = remember(msg.messageId) { msg.timestamp > chatOpenedAt - 1500L && enteredMessageIds.add(msg.messageId) }
                         val flash by animateFloatAsState(if (highlightedMessageId == msg.messageId) .22f else 0f, tween(450), label = "jump_flash")
-                        Box(Modifier.fillMaxWidth().messageEntrance(chatAppearance.messageAnimation, entranceAnimate, msg.senderId == currentUserId).background(MaterialTheme.colorScheme.primary.copy(alpha = flash), RoundedCornerShape(16.dp)).padding(bottom = if (msg.messageId == lastSeenOwnId || msg.messageId == newestOwnId) 20.dp else 0.dp)) {
+                        Box(Modifier.fillMaxWidth().animateItem(fadeInSpec = null, fadeOutSpec = null, placementSpec = spring(dampingRatio = .85f, stiffness = 320f)).messageEntrance(chatAppearance.messageAnimation, entranceAnimate, msg.senderId == currentUserId).background(MaterialTheme.colorScheme.primary.copy(alpha = flash), RoundedCornerShape(16.dp)).padding(bottom = if (msg.messageId == lastSeenOwnId || msg.messageId == newestOwnId) 20.dp else 0.dp)) {
                         val isSentByMe = msg.senderId == currentUserId
                         // Reverse layout: "first in run" = the older message above came from someone else.
                         val position = visibleMessages.indexOfFirst { it.messageId == msg.messageId }

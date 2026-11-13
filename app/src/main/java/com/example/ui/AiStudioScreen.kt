@@ -52,6 +52,11 @@ object AppNav {
     val request: StateFlow<String?> = _request
     fun open(route: String) { _request.value = route }
     fun consume() { _request.value = null }
+
+    /** Optional AI Studio tool to open directly (set by the assistant's tools drawer). */
+    @Volatile private var pendingStudioTool: String? = null
+    fun openStudioTool(id: String) { pendingStudioTool = id; open("ai_studio") }
+    fun consumeStudioTool(): String? = pendingStudioTool.also { pendingStudioTool = null }
 }
 
 private data class StudioTool(
@@ -92,9 +97,10 @@ private val STUDIO_TOOLS = listOf(
 fun AiStudioScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenAssistant: () -> Unit) {
     val context = LocalContext.current
     KeyboardResizeMode()
-    var tool by remember { mutableStateOf<StudioTool?>(null) }
+    val startTool = remember { AppNav.consumeStudioTool()?.let { id -> STUDIO_TOOLS.firstOrNull { it.id == id } } }
+    var tool by remember { mutableStateOf(startTool) }
     var input by remember { mutableStateOf("") }
-    var option by remember { mutableStateOf("") }
+    var option by remember { mutableStateOf(startTool?.options?.firstOrNull().orEmpty()) }
     var output by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     androidx.activity.compose.BackHandler(enabled = tool != null) { tool = null; output = ""; input = "" }
@@ -280,3 +286,7 @@ fun WhatsNewScreen(onBack: () -> Unit, onOpenStudio: () -> Unit) {
         }
     }
 }
+
+/** Public index of the studio tools (id, title, subtitle, icon, colour) for menus outside this file. */
+data class StudioToolInfo(val id: String, val title: String, val subtitle: String, val icon: ImageVector, val tint: Color)
+fun studioToolIndex(): List<StudioToolInfo> = STUDIO_TOOLS.map { StudioToolInfo(it.id, it.title, it.subtitle, it.icon, it.tint) }

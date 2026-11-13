@@ -1102,6 +1102,34 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 cacheDao.insertMessage(CachedMessage.fromMessage(historyMessage, chatId))
             }
             onReady(callId)
+            // Second delivery path for people who have the app open: a realtime signal that does
+            // not depend on push delivery at all (pushes are sometimes delayed by the phone).
+            runCatching {
+                getDatabaseInstance().getReference("notifications").child(recipient.uid).setValue(
+                    mapOf(
+                        "senderId" to caller.uid, "senderName" to caller.name, "senderImage" to caller.profileImageUrl,
+                        "text" to (if (video) "Incoming video call" else "Incoming audio call"), "timestamp" to System.currentTimeMillis(),
+                        "type" to "incoming_call", "callId" to callId, "video" to video
+                    )
+                )
+            }
+            // Push retry: if the phone has not reported "ringing" after a few seconds, send the push
+            // again with a freshly loaded device token (the cached one may be out of date).
+            viewModelScope.launch {
+                for (attempt in 1..2) {
+                    kotlinx.coroutines.delay(if (attempt == 1) 5_000 else 7_000)
+                    val state = CallEngine.state.value
+                    if (state.callId != callId || state.status != "calling") break
+                    withUserFcmToken(recipient.uid) { token ->
+                        triggerFcmGatewayNotification(
+                            gatewayUrl = routed("calls"), targetToken = token, senderName = caller.name,
+                            messageBody = if (video) "Incoming Convo Chat video call" else "Incoming Convo Chat audio call",
+                            senderId = caller.uid, senderProfileUrl = caller.profileImageUrl,
+                            notificationType = if (video) "incoming_video_call" else "incoming_call", targetId = callId
+                        )
+                    }
+                }
+            }
             viewModelScope.launch {
                 kotlinx.coroutines.delay(30_000)
                 if (CallEngine.state.value.callId == callId && CallEngine.state.value.status == "ringing") {
@@ -3572,6 +3600,42 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     val senderName = snapshot.child("senderName").value as? String ?: ""
                     val text = snapshot.child("text").value as? String ?: ""
                     val timestamp = snapshot.child("timestamp").value as? Long ?: 0L
+
+                    // Realtime incoming-call signal (works even when the push is late or lost).
+                    if (snapshot.child("type").value == "incoming_call") {
+                        val callId = snapshot.child("callId").value as? String ?: ""
+                        val fresh = System.currentTimeMillis() - timestamp < 40_000L
+                        if (!isFirstLoad && fresh && callId.isNotBlank() && senderId.isNotBlank()) {
+                            val video = snapshot.child("video").value == true
+                            val image = snapshot.child("senderImage").value as? String ?: ""
+                            viewModelScope.launch {
+                                // Give the normal push a moment; act only if it has not arrived.
+                                kotlinx.coroutines.delay(2500)
+                                val idle = CallEngine.state.value.status in listOf("idle", "ended", "declined", "missed", "failed")
+                                if (idle && com.example.service.IncomingCallRegistry.firstTime(callId)) {
+                                    val app = getApplication<Application>()
+                                    runCatching {
+                                        getDatabaseInstance().getReference("calls").child(callId).child("status").get().addOnSuccessListener { status ->
+                                            if (status.getValue(String::class.java) in listOf("calling", "ringing")) {
+                                                getDatabaseInstance().getReference("calls").child(callId).child("status").setValue("ringing")
+                                                com.example.service.CallRingtoneController.start(app, callId)
+                                                app.startActivity(
+                                                    android.content.Intent(app, com.example.call.IncomingCallActivity::class.java).apply {
+                                                        action = "com.ebchat.SHOW_CALL"
+                                                        flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP
+                                                        putExtra("callId", callId); putExtra("callerId", senderId)
+                                                        putExtra("callerName", senderName.ifBlank { "Convo Chat user" }); putExtra("callerImage", image); putExtra("videoCall", video)
+                                                    }
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        isFirstLoad = false
+                        return
+                    }
 
                     // Skip first load or notifications from the current active chat
                     if (!isFirstLoad && senderId.isNotBlank() && senderId != activeRecipientUser.value?.uid) {
