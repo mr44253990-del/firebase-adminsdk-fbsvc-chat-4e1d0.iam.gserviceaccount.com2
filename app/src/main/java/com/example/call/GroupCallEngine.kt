@@ -82,6 +82,10 @@ object GroupCallEngine {
         @Volatile var needsRenegotiation: Boolean = false
     )
 
+    /** Profile name/photo from the app's own user record (Firebase Auth often has neither). */
+    @Volatile var localName: String = ""
+    @Volatile var localImage: String = ""
+
     private var context: Context? = null
     private var factory: PeerConnectionFactory? = null
     private var eglBase: EglBase? = null
@@ -184,9 +188,10 @@ object GroupCallEngine {
         fetchIceServers { servers, error ->
             if (error != null) { fail(error); onReady(false); return@fetchIceServers }
             if (!createLocalMedia(video)) { fail("Could not start microphone/camera"); onReady(false); return@fetchIceServers }
+            val displayName = localName.ifBlank { user.displayName.orEmpty() }.ifBlank { "Convo Chat user" }
             val me = mapOf(
-                "uid" to myUid, "name" to (user.displayName ?: "Convo Chat user"),
-                "image" to (user.photoUrl?.toString() ?: ""), "video" to video,
+                "uid" to myUid, "name" to displayName,
+                "image" to localImage.ifBlank { user.photoUrl?.toString() ?: "" }, "video" to video,
                 "muted" to false, "joinedAt" to System.currentTimeMillis()
             )
             val roomData = mapOf(
@@ -208,7 +213,7 @@ object GroupCallEngine {
                     }
                     val live = room?.child("participants")?.children?.count { it.child("removed").getValue(Boolean::class.java) != true && it.key != myUid } ?: 0
                     if (live >= MAX_PARTICIPANTS) { fail("This call is full ($MAX_PARTICIPANTS people)"); onReady(false); return@addOnSuccessListener }
-                } else publishGroupPointer(groupId, roomId, user.displayName ?: "Convo Chat user", video)
+                } else publishGroupPointer(groupId, roomId, displayName, video)
                 ref.child("participants").child(myUid).setValue(me).addOnSuccessListener {
                     if (!createRoom && memberIds.isNotEmpty()) {
                         ref.child("participants").get().addOnSuccessListener { snapshot ->

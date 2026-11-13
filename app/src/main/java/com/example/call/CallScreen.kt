@@ -419,6 +419,7 @@ fun CallScreen(
             Spacer(Modifier.weight(if (effectiveVideo && accepted) .06f else .18f))
             AnimatedVisibility(visible = !effectiveVideo || !accepted) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    if (!accepted && incoming) { IncomingCallTypeChip(effectiveVideo, callPalette.accent); Spacer(Modifier.height(10.dp)) }
                     if (!accepted && incoming) IncomingCallerAvatar(remoteImage, remoteName, callPalette.accent)
                     else CallAvatarAura(remoteImage, remoteName, callPalette.accent, state.status, state.muted)
                     Spacer(Modifier.height(6.dp))

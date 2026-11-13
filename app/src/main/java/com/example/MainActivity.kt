@@ -249,6 +249,8 @@ class MainActivity : FragmentActivity() {
             } else null
             pendingSwitchAccount.value = SwitchAccountRequest(switchUid, senderId.takeIf { callIntent == null && (type == null || type == "message") }, callIntent)
             runCatching { (getSystemService(NOTIFICATION_SERVICE) as android.app.NotificationManager).cancel(intent.getIntExtra("switchNotificationId", -1)) }
+            // Consume it: a rotation / activity re-creation must not switch accounts again.
+            intent.removeExtra("switchAccountUid")
             return
         }
         when {
@@ -382,6 +384,10 @@ class MainActivity : FragmentActivity() {
                 val context = LocalContext.current
                 LaunchedEffect(currentUser?.uid) {
                     if (!currentUser?.uid.isNullOrBlank()) CallHistory.ensureStarted(context)
+                }
+                LaunchedEffect(currentUser?.name, currentUser?.profileImageUrl) {
+                    GroupCallEngine.localName = currentUser?.name.orEmpty()
+                    GroupCallEngine.localImage = currentUser?.profileImageUrl.orEmpty()
                 }
                 var splashFinished by remember { mutableStateOf(false) }
                 var pendingMfaStatus by remember { mutableStateOf<com.example.ui.MfaStatus?>(null) }

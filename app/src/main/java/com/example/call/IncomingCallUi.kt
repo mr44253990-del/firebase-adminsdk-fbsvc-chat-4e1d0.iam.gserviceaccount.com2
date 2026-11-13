@@ -304,3 +304,24 @@ private fun CallSlotButton(
 }
 
 private fun Modifier.graphicsLayerAlpha(value: Float): Modifier = this.then(Modifier.graphicsLayer { alpha = value })
+
+/** Small glass chip above the caller: what kind of call this is, and that it is encrypted. */
+@Composable
+fun IncomingCallTypeChip(video: Boolean, accent: Color) {
+    val phase by rememberRingPhase()
+    Row(
+        Modifier.clip(CircleShape)
+            .background(Color.White.copy(alpha = .10f))
+            .border(1.dp, Brush.horizontalGradient(listOf(accent.copy(alpha = .8f), Color.White.copy(alpha = .18f))), CircleShape)
+            .padding(horizontal = 14.dp, vertical = 7.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(Modifier.size(8.dp).scale(1f + .5f * buzzEnvelope(phase)).clip(CircleShape).background(Color(0xFF2EE86F)))
+        Spacer(Modifier.width(8.dp))
+        Icon(if (video) Icons.Default.Videocam else Icons.Default.Call, null, tint = Color.White, modifier = Modifier.size(15.dp))
+        Spacer(Modifier.width(6.dp))
+        Text(if (video) "Convo video call" else "Convo audio call", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.width(8.dp))
+        Icon(Icons.Default.Lock, null, tint = Color.White.copy(alpha = .7f), modifier = Modifier.size(12.dp))
+    }
+}
