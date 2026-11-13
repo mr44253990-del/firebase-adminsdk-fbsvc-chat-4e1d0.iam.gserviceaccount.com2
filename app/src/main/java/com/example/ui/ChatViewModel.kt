@@ -308,9 +308,22 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             }
     }
 
+    /** Manual restore from the single backup file (Settings → Chat backup). */
+    fun restoreTextBackupNow(onDone: (restored: Boolean, count: Int, reason: String) -> Unit) {
+        val uid = FirebaseAuth.getInstance().currentUser?.uid ?: return onDone(false, 0, "not signed in")
+        viewModelScope.launch(Dispatchers.IO) {
+            val result = TextBackupManager.restoreLatest(getApplication(), uid)
+            withContext(Dispatchers.Main) { onDone(result.restored, result.itemCount, result.reason) }
+        }
+    }
+
     fun exportTextBackup(onComplete: (TextBackupManager.Result) -> Unit = {}) {
         val uid = FirebaseAuth.getInstance().currentUser?.uid ?: return
         viewModelScope.launch(Dispatchers.IO) {
+            // A backup folder was just connected: bring its chats back first, then back up.
+            if (TextBackupManager.consumePendingRestore(getApplication())) {
+                runCatching { TextBackupManager.restoreLatest(getApplication(), uid) }
+            }
             val result = TextBackupManager.export(getApplication(), uid)
             withContext(Dispatchers.Main) { onComplete(result) }
         }
@@ -2653,6 +2666,19 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         if (hydratedUser != null && hydratedUser.uid != currentUid) {
                             allUsersList.add(hydratedUser)
                         }
+                    }
+                    // Profile pictures never "load" in front of the user: keep the cached picture
+                    // on screen and swap to a new one only after it has been downloaded.
+                    val app = getApplication<Application>()
+                    for (index in allUsersList.indices) {
+                        val person = allUsersList[index]
+                        val display = com.example.data.AvatarSwap.display(app, person.uid, person.profileImageUrl) { readyUid, readyUrl ->
+                            viewModelScope.launch(Dispatchers.Main) {
+                                _usersState.value = _usersState.value.map { if (it.uid == readyUid) it.copy(profileImageUrl = readyUrl) else it }
+                                _filteredUsersState.value = _filteredUsersState.value.map { if (it.uid == readyUid) it.copy(profileImageUrl = readyUrl) else it }
+                            }
+                        }
+                        if (display != person.profileImageUrl) allUsersList[index] = person.copy(profileImageUrl = display)
                     }
                     _usersState.value = allUsersList
 
@@ -5657,7 +5683,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         try {
                             val members = (doc.get("members") as? List<*>)?.mapNotNull { it as? String } ?: emptyList()
                             if (members.contains(currentUid)) {
-                                val group = Group(
+                                // Full record first (live call, pinned note, admins, polls…); the
+                                // hand-built copy is only a fallback for unusual documents.
+                                val group = runCatching { doc.toObject(Group::class.java)?.copy(id = doc.id, members = members) }.getOrNull() ?: Group(
                                     id = doc.id,
                                     name = doc.getString("name") ?: "",
                                     profileUrl = doc.getString("profileUrl") ?: "",

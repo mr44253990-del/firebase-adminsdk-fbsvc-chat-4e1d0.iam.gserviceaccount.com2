@@ -10,6 +10,8 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
@@ -52,7 +54,12 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
-data class CoachStep(val key: String?, val icon: androidx.compose.ui.graphics.vector.ImageVector, val title: String, val body: String)
+data class CoachStep(
+    val key: String?, val icon: androidx.compose.ui.graphics.vector.ImageVector, val title: String, val body: String,
+    /** Optional "Try it now": leaves the tour and opens this page (see [AppNav]). */
+    val tryRoute: String? = null,
+    val tryLabel: String = "Try it now"
+)
 
 /** First-launch guided tour: spotlight on a real UI element, blurred/dimmed surroundings. */
 object CoachTour {
@@ -69,25 +76,27 @@ object CoachTour {
     fun consumeReplay(): Boolean { val pending = _replay.value; _replay.value = false; return pending }
 
     fun isDone(context: Context): Boolean =
-        context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean("done_v2", false)
+        context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean("done_v3", false)
 
     fun markDone(context: Context) {
-        context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean("done_v2", true).apply()
+        context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean("done_v3", true).apply()
     }
 
     fun requestReplay() { _replay.value = true }
 
     val homeSteps = listOf(
-        CoachStep(null, Icons.Default.AutoAwesome, "Welcome to Convo", "A quick tour of the main buttons and useful controls. It takes about a minute."),
-        CoachStep("nav_home", Icons.Default.Home, "Home feed", "Posts, stories and updates from your friends."),
-        CoachStep("nav_chats", Icons.Default.Forum, "Chats", "All your conversations. In a chat, type / for quick replies."),
-        CoachStep("nav_create", Icons.Default.AddCircle, "Create", "Post, story, reel or poll — everything starts here."),
-        CoachStep("nav_slot4", Icons.Default.SmartDisplay, "Reels & groups", "Watch reels or open your groups from here."),
+        CoachStep(null, Icons.Default.AutoAwesome, "Welcome to Convo", "A one-minute smart tour. Swipe the card left or right, tap a dot to jump, or press \"Try it now\" to open a feature straight away."),
+        CoachStep("nav_home", Icons.Default.Home, "Home feed", "Posts, stories and notes from your friends. Pull down to refresh; tap a story ring to watch."),
+        CoachStep("nav_chats", Icons.Default.Forum, "Chats", "All your conversations. Inside a chat the top bar has call buttons and one menu (search, theme, settings). Type / for quick replies."),
+        CoachStep("nav_create", Icons.Default.AddCircle, "Create", "Post, story, reel or poll — everything starts from this glowing button."),
+        CoachStep("nav_slot4", Icons.Default.SmartDisplay, "Reels & groups", "Watch reels or open your groups. In a group, a green Join bar appears whenever a call is running."),
         CoachStep("nav_friends", Icons.Default.PeopleAlt, "Friends", "Friend requests and people you may know."),
-        CoachStep("account_menu", Icons.Default.ManageAccounts, "Profile and settings", "Open your profile picture menu, then choose Profile & settings for language, privacy, notifications, security and app controls."),
-        CoachStep(null, Icons.Default.LocationOn, "Location sharing", "Location sharing is optional. Review Settings → Privacy before enabling it; live sharing stays visible and can be stopped at any time."),
-        CoachStep(null, Icons.Default.Download, "Media auto-save", "Choose whether received files save automatically, and set Wi-Fi and file-type rules. Manual downloads remain available."),
-        CoachStep(null, Icons.Default.AutoAwesome, "AI assistant", "Open the assistant from Home when available. Assistant history stays on this phone; prompts may be processed by the configured AI provider."),
+        CoachStep("account_menu", Icons.Default.ManageAccounts, "Your menu", "Tap your picture for Profile & settings, Smart Hub, AI Studio, Permission manager and more."),
+        CoachStep(null, Icons.Default.TravelExplore, "Smart Hub", "One search box for people, groups, posts and features — plus who is online right now.", tryRoute = "smart_hub", tryLabel = "Open Smart Hub"),
+        CoachStep(null, Icons.Default.AutoAwesome, "Convo AI & AI Studio", "Ask the assistant anything or let it find a profile. AI Studio rewrites, translates, summarises and more.", tryRoute = "ai_studio", tryLabel = "Open AI Studio"),
+        CoachStep(null, Icons.Default.Call, "Calls that follow you", "Audio calls keep a floating bubble on top of other apps. In a call you can switch to video, add people and use camera looks."),
+        CoachStep(null, Icons.Default.Shield, "Permissions, your way", "Nothing is forced. Review or change every permission any time.", tryRoute = "permissions", tryLabel = "Permission manager"),
+        CoachStep(null, Icons.Default.Backup, "Chat backup", "Pick a backup folder once and your chats stay in a single file — even if the app is removed.", tryRoute = "permissions", tryLabel = "Choose folder"),
         CoachStep(null, Icons.Default.Verified, "You're all set!", "Change the language, read the offline guide, or replay this tour any time in Settings.")
     )
 }
@@ -178,8 +187,23 @@ fun CoachMarkOverlay(steps: List<CoachStep>, onFinish: () -> Unit) {
                 drawRoundRect(Brush.linearGradient(listOf(Color(0xFFFFD36E), accentB, accentA, accentC), from, to), animated.topLeft, animated.size, r, style = Stroke(width = 3.dp.toPx()), alpha = spotAlpha)
             }
         }
+        // A small bouncing pointer next to the highlighted control.
+        if (target != null && spotAlpha > .5f) {
+            val above = target.center.y >= overlaySize.height / 2f
+            val bounce = kotlin.math.sin(ripple * 2f * Math.PI).toFloat() * with(density) { 6.dp.toPx() }
+            val size = with(density) { 34.dp.toPx() }
+            Icon(
+                if (above) Icons.Default.KeyboardDoubleArrowDown else Icons.Default.KeyboardDoubleArrowUp, null, tint = Color(0xFFFFD36E),
+                modifier = Modifier.offset {
+                    IntOffset(
+                        (animated.center.x - size / 2f).toInt(),
+                        (if (above) animated.top - size - with(density) { 10.dp.toPx() } + bounce else animated.bottom + with(density) { 10.dp.toPx() } - bounce).toInt()
+                    )
+                }.size(34.dp)
+            )
+        }
         // Tooltip card: below the spotlight when it is in the top half, otherwise above it.
-        val marginPx = with(density) { 22.dp.toPx() }
+        val marginPx = with(density) { 54.dp.toPx() }
         val cardY: Float = when {
             target == null -> (overlaySize.height - cardHeight) / 2f
             target.center.y < overlaySize.height / 2f -> target.bottom + marginPx
@@ -197,6 +221,16 @@ fun CoachMarkOverlay(steps: List<CoachStep>, onFinish: () -> Unit) {
                 .fillMaxWidth()
                 .offset { IntOffset(0, cardY.toInt()) }
                 .onGloballyPositioned { cardHeight = it.size.height }
+                .pointerInput(steps.size) {
+                    var dragged = 0f
+                    detectHorizontalDragGestures(
+                        onDragStart = { dragged = 0f },
+                        onDragEnd = {
+                            if (dragged < -80f && index < steps.lastIndex) index++
+                            else if (dragged > 80f && index > 0) index--
+                        }
+                    ) { change, amount -> change.consume(); dragged += amount }
+                }
                 .clip(RoundedCornerShape(30.dp))
                 .background(Brush.linearGradient(listOf(Color(0xF2171433), Color(0xF2251B47), Color(0xF2121A33))))
                 .border(androidx.compose.foundation.BorderStroke(1.2.dp, Brush.linearGradient(listOf(accentC.copy(alpha = .7f), accentB.copy(alpha = .55f), accentA.copy(alpha = .7f)))), RoundedCornerShape(30.dp))
@@ -226,9 +260,34 @@ fun CoachMarkOverlay(steps: List<CoachStep>, onFinish: () -> Unit) {
                 androidx.compose.animation.AnimatedContent(step.body, label = "coach_body") { body ->
                     Text(tr(body), fontSize = 14.sp, color = Color.White.copy(alpha = .82f), lineHeight = 21.sp)
                 }
+                if (step.tryRoute != null) {
+                    Spacer(Modifier.height(12.dp))
+                    Row(
+                        Modifier.clip(CircleShape).background(Color.White.copy(alpha = .10f))
+                            .border(1.dp, accentC.copy(alpha = .7f), CircleShape)
+                            .clickable { val route = step.tryRoute; finish(); AppNav.open(route) }
+                            .padding(horizontal = 16.dp, vertical = 9.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Default.PlayArrow, null, tint = accentC, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text(tr(step.tryLabel), color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                    }
+                }
                 Spacer(Modifier.height(16.dp))
                 Box(Modifier.fillMaxWidth().height(4.dp).clip(CircleShape).background(Color.White.copy(alpha = .12f))) {
                     Box(Modifier.fillMaxWidth(progress).fillMaxHeight().clip(CircleShape).background(Brush.horizontalGradient(listOf(accentC, accentB, accentA))))
+                }
+                Spacer(Modifier.height(10.dp))
+                // Step dots: tap any dot to jump straight to that step.
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+                    steps.indices.forEach { i ->
+                        Box(
+                            Modifier.padding(horizontal = 3.dp).size(width = if (i == index) 18.dp else 7.dp, height = 7.dp).clip(CircleShape)
+                                .background(if (i == index) accentC else if (i < index) accentA.copy(alpha = .8f) else Color.White.copy(alpha = .22f))
+                                .clickable { index = i }
+                        )
+                    }
                 }
                 Spacer(Modifier.height(14.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {

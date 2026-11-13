@@ -180,6 +180,8 @@ fun SplashScreen(work: (suspend () -> Unit)? = null, onFinished: () -> Unit) {
                 .background(SPLASH_PINK, CircleShape)
         )
 
+        // v5.2: living constellation + horizon grid shared with the sign-in screen.
+        Box(Modifier.fillMaxSize().alpha(settled)) { LoginNovaLayer(milk = false) }
         // Particle field: tiny rising sparks plus a slow twinkle in the corners.
         Canvas(Modifier.fillMaxSize().alpha(settled)) {
             repeat(34) { index ->

@@ -197,8 +197,10 @@ function mediaFor(message) {
       wallpaperLayer() +
       '<div class="chat-head">' +
         '<button type="button" class="icon-btn" data-action="back" aria-label="Back to chats" style="display:none" id="chat-back">' + U.icon("back") + '</button>' +
+        '<button type="button" class="chat-head-peer" data-action="chat-info" aria-label="Open profile and conversation info">' +
         U.avatar({ name: peer.name, profileImageUrl: peer.profileImageUrl, online: peer.online }, 40) +
         '<div class="who"><strong>' + esc(peer.name) + '</strong><span>' + statusLine(peer, state) + '</span></div>' +
+        '</button>' +
         '<div class="chat-head-actions">' +
           '<button type="button" class="icon-btn" data-action="chat-search" aria-label="Search in conversation">' + U.icon("search") + '</button>' +
           '<button type="button" class="icon-btn" data-action="chat-info" aria-label="Conversation info">' + U.icon("info") + '</button>' +

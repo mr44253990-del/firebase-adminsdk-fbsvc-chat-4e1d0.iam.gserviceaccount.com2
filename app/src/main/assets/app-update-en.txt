@@ -1,3 +1,19 @@
+• NEW 5.2: Permission Center — one page right after sign-in for every permission, with a progress ring; everything can be skipped and is asked again only when a feature needs it. Home no longer opens permission pop-ups. Reopen it from Settings → Permission manager.
+• Chat backup fixed: the backup is now one single file with chats only (no more new files each time). Choose a backup folder once and the file stays readable after the app is removed and installed again. Settings → Chat backup.
+• Profile pictures no longer "load" in front of you: the saved picture stays on screen and a new one is swapped in quietly once it has downloaded.
+• Smarter typing indicator: a live bubble with a wave, the person's name, and "typing…" in the chat top bar.
+• App tour upgraded: swipe the card, tap a dot to jump, "Try it now" buttons, a pointer on the highlighted control, and new steps.
+• Groups home redesigned: totals, search, smart filters, member faces and a pulsing LIVE badge when a call is running.
+• Group profile: change the group name and photo, or leave the group (Group menu → Group profile & smart tools).
+• Posts: new share sheet (Facebook, Messenger, WhatsApp, Telegram, X, copy link, SMS), smart AI tools for any post (translate, summarise, explain, suggest a comment), and you can now tag anyone.
+• Chat tools sheet: new design with animations, plus Video, AI write and AI reply.
+• Notes redesigned as floating thought bubbles with mood colours, quick moods and time left.
+• Files: built-in viewer for photos (pinch-zoom), videos, audio and ZIP archives, next to the PDF and text viewers.
+• Premium page: rotating benefit spotlight, smart plan picker (cheapest plan for how long you will use it) and a shelf of smart tools. A small Premium reminder appears at most once every three days.
+• Home top bar: its own look for admin, staff and Premium members, with a greeting.
+• Settings: new "Backup & permissions" group (Chat backup, Permission manager, Smart Hub, What's new).
+• Launch screen: living constellation background.
+• Web: fixed switching between Sign in / Pair code / QR on the login page, QR now shows on phones, tapping the name in a chat opens the profile info, and a new motion + glass design layer.
 • NEW 5.1: Smart Hub — one search box for people, groups, posts and features, with shortcuts and "online now" (account menu → Smart Hub).
 • Group polls: create a poll from Smart group tools; everyone votes with one tap and sees live results.
 • Group chats now have AI writing tools (polish, shorten, friendly, formal, Bangla, English) like private chats.

@@ -75,6 +75,24 @@ Legend: ✅ done in this branch · 🔧 needs a one-time server step by the admi
 - ✅ M6. AI Studio: Tone check, Plan maker, Quiz me.
 - ✅ M7. Admin Copilot: Undo, command history, sign a user out of every device.
 
+## O. Version 5.2 additions
+- ✅ O1. **Permission Center** page after sign-in (and Settings → Permission manager); Home no longer opens permission pop-ups; the start-up call-readiness dialog is gone.
+- ✅ O2. **Chat backup**: one file, chats only; no more duplicate files; optional backup folder (Storage Access Framework) that survives uninstall; Settings → Chat backup (status, back up now, restore).
+- ✅ O3. Profile pictures swap silently after the new one has been downloaded.
+- ✅ O4. Smart typing indicator (+ "typing…" in the chat top bar).
+- ✅ O5. Tour: swipe, dots, "Try it now", pointer, new steps (shown once again after this update).
+- ✅ O6. Groups home redesign; group list now carries live-call / pinned / admin data.
+- ✅ O7. Group profile: rename, change photo, leave group.
+- ✅ O8. Posts: share sheet (Facebook, Messenger, WhatsApp, Telegram, X, link, SMS), AI tools, tag anyone.
+- ✅ O9. Chat tools sheet redesign + Video, AI write, AI reply.
+- ✅ O10. Notes redesign (thought bubbles, moods, time left).
+- ✅ O11. Universal file viewer: photos, video, audio, ZIP (PDF and text already existed).
+- ✅ O12. Premium page: spotlight, smart plan picker, tools shelf; occasional non-blocking promo (max once per 3 days).
+- ✅ O13. Role-aware Home top bar (admin / staff / Premium) with greeting.
+- ✅ O14. Settings: "Backup & permissions" group.
+- ✅ O15. Web: login tab switching fixed, QR on phones fixed, chat header opens profile info, motion/glass CSS layer. 🔧 Needs the web site to be re-uploaded (`deploy-web-companion.sh`, then Admin → Web app deploy).
+- ⏳ Not done in 5.2: story editor tools/filters, a full redesign of the post composer and post cards, voice-message changes, deeper Settings features.
+
 ## N. Ideas for the next rounds (not built yet)
 - Voice-message transcription and translation (needs a speech-to-text provider key on the Worker).
 - SFU-based group calls for more than 8 people (the Worker already lists an `sfu` route).

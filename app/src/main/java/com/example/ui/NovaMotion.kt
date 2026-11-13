@@ -14,6 +14,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
@@ -103,3 +104,76 @@ fun Modifier.novaGlowEdge(): Modifier = composed {
         )
     }
 }
+
+/**
+ * Home top-bar brand block (v5.2). The look follows who is signed in:
+ *  - Admin: teal/violet command ring and an ADMIN chip
+ *  - Premium: gold ring that slowly turns, with a shimmering PREMIUM chip
+ *  - Everyone else: the brand gradient
+ * The second line greets the user by time of day (or shows the offline state).
+ */
+@Composable
+fun NovaBrandTitle(logo: @Composable () -> Unit, role: String, online: Boolean, firstName: String) {
+    val motion = rememberInfiniteTransition(label = "brand")
+    val spin by motion.animateFloat(0f, 360f, infiniteRepeatable(tween(if (role == "user") 14000 else 6000, easing = LinearEasing)), label = "brand_spin")
+    val sheen by motion.animateFloat(0f, 1f, infiniteRepeatable(tween(3200, easing = LinearEasing)), label = "brand_sheen")
+    val ring = when (role) {
+        "admin" -> listOf(Color(0xFF19E3C2), Color(0xFF6C5CE7), Color(0xFF36D8E6), Color(0xFF19E3C2))
+        "staff" -> listOf(Color(0xFF3AA0FF), Color(0xFF6C5CE7), Color(0xFF3AA0FF))
+        "premium" -> listOf(Color(0xFFFFE08A), Color(0xFFFF9D2E), Color(0xFFFFF3C4), Color(0xFFE2A93B), Color(0xFFFFE08A))
+        else -> listOf(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.tertiary, MaterialTheme.colorScheme.primary)
+    }
+    val titleColors = when (role) {
+        "admin", "staff" -> listOf(Color(0xFF19E3C2), Color(0xFF8B7BFF), Color(0xFF36D8E6))
+        "premium" -> listOf(Color(0xFFFFC233), Color(0xFFFF8A3D), Color(0xFFFFE08A))
+        else -> listOf(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.tertiary, MaterialTheme.colorScheme.primary)
+    }
+    androidx.compose.foundation.layout.Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(42.dp), contentAlignment = Alignment.Center) {
+            Box(Modifier.size(42.dp).graphicsLayer { rotationZ = spin }.clip(CircleShape).background(Brush.sweepGradient(ring)))
+            Box(Modifier.size(37.dp).clip(CircleShape).background(MaterialTheme.colorScheme.background), contentAlignment = Alignment.Center) { logo() }
+        }
+        androidx.compose.foundation.layout.Spacer(Modifier.size(9.dp))
+        androidx.compose.foundation.layout.Column {
+            androidx.compose.foundation.layout.Row(verticalAlignment = Alignment.CenterVertically) {
+                androidx.compose.material3.Text(
+                    "Convo Chat",
+                    style = androidx.compose.ui.text.TextStyle(
+                        brush = Brush.linearGradient(titleColors, start = Offset(sheen * 300f, 0f), end = Offset(sheen * 300f + 260f, 0f), tileMode = androidx.compose.ui.graphics.TileMode.Mirror),
+                        fontWeight = androidx.compose.ui.text.font.FontWeight.Black,
+                        fontSize = androidx.compose.ui.unit.TextUnit(21f, androidx.compose.ui.unit.TextUnitType.Sp),
+                        letterSpacing = androidx.compose.ui.unit.TextUnit(-0.7f, androidx.compose.ui.unit.TextUnitType.Sp)
+                    ),
+                    maxLines = 1
+                )
+                if (role != "user") {
+                    androidx.compose.foundation.layout.Spacer(Modifier.size(6.dp))
+                    val chip = when (role) { "admin" -> "ADMIN"; "staff" -> "STAFF"; else -> "PREMIUM" }
+                    androidx.compose.material3.Text(
+                        chip,
+                        color = if (role == "premium") Color(0xFF3A2A06) else Color.White,
+                        fontWeight = androidx.compose.ui.text.font.FontWeight.Black,
+                        fontSize = androidx.compose.ui.unit.TextUnit(8.5f, androidx.compose.ui.unit.TextUnitType.Sp),
+                        letterSpacing = androidx.compose.ui.unit.TextUnit(1f, androidx.compose.ui.unit.TextUnitType.Sp),
+                        modifier = Modifier.clip(CircleShape)
+                            .background(Brush.linearGradient(if (role == "premium") listOf(Color(0xFFFFE08A), Color(0xFFFF9D2E)) else listOf(Color(0xFF0FA89A), Color(0xFF6C5CE7)), start = Offset(sheen * 120f, 0f), end = Offset(sheen * 120f + 90f, 40f)))
+                            .then(Modifier.androidPaddingChip())
+                    )
+                }
+            }
+            androidx.compose.foundation.layout.Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(7.dp).clip(CircleShape).background(if (online) Color(0xFF26E86F) else Color(0xFFFF5252)))
+                androidx.compose.foundation.layout.Spacer(Modifier.size(6.dp))
+                val hour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+                val greeting = when (hour) { in 5..11 -> "Good morning"; in 12..16 -> "Good afternoon"; in 17..20 -> "Good evening"; else -> "Good night" }
+                androidx.compose.material3.Text(
+                    if (!online) "Offline · showing saved chats" else greeting + (if (firstName.isNotBlank()) ", $firstName" else ""),
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                )
+            }
+        }
+    }
+}
+
+private fun Modifier.androidPaddingChip(): Modifier = this.then(androidx.compose.foundation.layout.PaddingValues(horizontal = 7.dp, vertical = 2.dp).let { Modifier.padding(it) })

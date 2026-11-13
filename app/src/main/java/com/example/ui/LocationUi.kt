@@ -1,5 +1,6 @@
 package com.example.ui
 
+import androidx.compose.ui.graphics.graphicsLayer
 import android.annotation.SuppressLint
 import android.content.Intent
 import android.net.Uri
@@ -472,21 +473,41 @@ data class AttachAction(val key: String, val label: String, val icon: ImageVecto
 fun SmartAttachSheet(actions: List<AttachAction>, onDismiss: () -> Unit, onPick: (String) -> Unit) {
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp).padding(bottom = 26.dp)) {
-            Text("Share", fontWeight = FontWeight.ExtraBold, fontSize = 20.sp)
-            Text("Pick what you want to send", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    Modifier.size(40.dp).clip(RoundedCornerShape(14.dp)).background(Brush.linearGradient(listOf(Color(0xFF8B7BFF), Color(0xFF36D8E6)))),
+                    contentAlignment = Alignment.Center
+                ) { Icon(Icons.Default.Add, null, tint = Color.White) }
+                Spacer(Modifier.width(10.dp))
+                Column {
+                    Text("Share & tools", fontWeight = FontWeight.ExtraBold, fontSize = 20.sp)
+                    Text("${actions.size} things you can send or do", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
             Spacer(Modifier.height(14.dp))
-            actions.chunked(4).forEach { row ->
+            actions.chunked(4).forEachIndexed { rowIndex, row ->
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    row.forEach { a ->
+                    row.forEachIndexed { colIndex, a ->
+                        // Each tile pops in one after another.
+                        val pop = remember(a.key) { androidx.compose.animation.core.Animatable(0f) }
+                        LaunchedEffect(a.key) {
+                            kotlinx.coroutines.delay(35L * (rowIndex * 4 + colIndex))
+                            pop.animateTo(1f, androidx.compose.animation.core.spring(dampingRatio = .55f, stiffness = 420f))
+                        }
                         Column(
-                            Modifier.width(76.dp).clip(RoundedCornerShape(16.dp)).clickable { onPick(a.key) }.padding(vertical = 8.dp),
+                            Modifier.width(76.dp)
+                                .graphicsLayer { val s = .6f + .4f * pop.value; scaleX = s; scaleY = s; alpha = pop.value.coerceIn(0f, 1f) }
+                                .clip(RoundedCornerShape(16.dp)).clickable { onPick(a.key) }.padding(vertical = 8.dp),
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
                             Box(
-                                Modifier.size(56.dp).clip(RoundedCornerShape(18.dp)).background(Brush.linearGradient(a.colors))
-                                    .border(1.dp, Color.White.copy(alpha = .25f), RoundedCornerShape(18.dp)),
+                                Modifier.size(58.dp).clip(RoundedCornerShape(20.dp)).background(Brush.linearGradient(a.colors))
+                                    .border(1.dp, Brush.verticalGradient(listOf(Color.White.copy(alpha = .55f), Color.White.copy(alpha = .08f))), RoundedCornerShape(20.dp)),
                                 contentAlignment = Alignment.Center
-                            ) { Icon(a.icon, null, tint = Color.White, modifier = Modifier.size(26.dp)) }
+                            ) {
+                                Box(Modifier.matchParentSize().background(Brush.verticalGradient(listOf(Color.White.copy(alpha = .22f), Color.Transparent), endY = 60f)))
+                                Icon(a.icon, null, tint = Color.White, modifier = Modifier.size(27.dp))
+                            }
                             Spacer(Modifier.height(6.dp))
                             Text(a.label, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center, maxLines = 1)
                         }

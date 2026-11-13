@@ -13,6 +13,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.calculatePan
 import androidx.compose.foundation.gestures.calculateZoom
@@ -26,6 +27,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.InsertDriveFile
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -308,4 +313,127 @@ fun isTextLikeFile(mime: String, name: String): Boolean {
     val ext = name.substringAfterLast('.', "").lowercase()
     return mime.startsWith("text/") || mime == "application/json" || mime == "application/xml" ||
         ext in setOf("txt", "csv", "json", "xml", "log", "md", "kt", "java", "js", "ts", "py", "html", "css", "yml", "yaml", "ini", "srt")
+}
+
+/** True when the universal in-app viewer can show this file (image, video, audio or zip). */
+fun isInAppPreviewable(mime: String, name: String): Boolean {
+    val ext = name.substringAfterLast('.', "").lowercase()
+    return mime.startsWith("image/") || mime.startsWith("video/") || mime.startsWith("audio/") || mime == "application/zip" ||
+        ext in setOf("jpg", "jpeg", "png", "webp", "gif", "bmp", "heic", "mp4", "mkv", "webm", "3gp", "mov", "mp3", "m4a", "aac", "ogg", "opus", "wav", "flac", "zip")
+}
+
+/**
+ * Universal in-app file viewer (v5.2): photos with pinch-zoom, videos and audio with player
+ * controls, and ZIP archives as a browsable list. PDFs and text files use their own viewers;
+ * anything else still offers "Open with".
+ */
+@Composable
+fun UniversalFileViewerDialog(uri: Uri, name: String, mime: String, onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    val ext = name.substringAfterLast('.', "").lowercase()
+    val kind = when {
+        mime.startsWith("image/") || ext in setOf("jpg", "jpeg", "png", "webp", "gif", "bmp", "heic") -> "image"
+        mime.startsWith("video/") || ext in setOf("mp4", "mkv", "webm", "3gp", "mov") -> "video"
+        mime.startsWith("audio/") || ext in setOf("mp3", "m4a", "aac", "ogg", "opus", "wav", "flac") -> "audio"
+        mime == "application/zip" || ext == "zip" -> "zip"
+        else -> "other"
+    }
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
+        Column(Modifier.fillMaxSize().navigationBarsPadding().background(Color(0xFF07080D))) {
+            Row(
+                Modifier.fillMaxWidth().background(Brush.horizontalGradient(listOf(Color(0xFF1B1548), Color(0xFF0F3D4A)))).windowInsetsPadding(WindowInsets.statusBars).padding(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, "Close", tint = Color.White) }
+                Column(Modifier.weight(1f)) {
+                    Text(name, color = Color.White, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(kind.replaceFirstChar { it.uppercase() } + " · " + ext.uppercase().ifBlank { mime }, color = Color.White.copy(alpha = .6f), fontSize = 11.sp)
+                }
+                IconButton(onClick = { ReceivedFiles.share(context, uri, mime) }) { Icon(Icons.Default.Share, "Share", tint = Color.White) }
+                IconButton(onClick = { ReceivedFiles.openExternally(context, uri, mime) }) { Icon(Icons.Default.OpenInNew, "Open with", tint = Color.White) }
+            }
+            when (kind) {
+                "image" -> {
+                    var scale by remember { mutableFloatStateOf(1f) }
+                    var offset by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
+                    Box(
+                        Modifier.fillMaxSize().pointerInput(Unit) {
+                            detectTransformGestures { _, pan, zoom, _ ->
+                                scale = (scale * zoom).coerceIn(1f, 6f)
+                                offset = if (scale <= 1.01f) androidx.compose.ui.geometry.Offset.Zero else offset + pan
+                            }
+                        },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        coil.compose.AsyncImage(
+                            model = uri, contentDescription = name, contentScale = androidx.compose.ui.layout.ContentScale.Fit,
+                            modifier = Modifier.fillMaxSize().graphicsLayer { scaleX = scale; scaleY = scale; translationX = offset.x; translationY = offset.y }
+                        )
+                    }
+                }
+                "video", "audio" -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    if (kind == "audio") Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(bottom = 120.dp)) {
+                        Box(Modifier.size(132.dp).clip(CircleShape).background(Brush.linearGradient(listOf(Color(0xFF8B7BFF), Color(0xFF36D8E6)))), contentAlignment = Alignment.Center) {
+                            Icon(Icons.Default.MusicNote, null, tint = Color.White, modifier = Modifier.size(64.dp))
+                        }
+                        Spacer(Modifier.height(14.dp))
+                        Text(name, color = Color.White, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(horizontal = 30.dp))
+                    }
+                    androidx.compose.ui.viewinterop.AndroidView(
+                        modifier = if (kind == "audio") Modifier.fillMaxWidth().height(110.dp).align(Alignment.BottomCenter) else Modifier.fillMaxSize(),
+                        factory = { ctx ->
+                            android.widget.VideoView(ctx).apply {
+                                val controller = android.widget.MediaController(ctx)
+                                controller.setAnchorView(this)
+                                setMediaController(controller)
+                                setVideoURI(uri)
+                                setOnPreparedListener { start(); controller.show(0) }
+                                setOnErrorListener { _, _, _ -> android.widget.Toast.makeText(ctx, "This file cannot be played here — use Open with", android.widget.Toast.LENGTH_LONG).show(); true }
+                            }
+                        },
+                        onRelease = { runCatching { it.stopPlayback() } }
+                    )
+                }
+                "zip" -> {
+                    val entries by produceState<List<Pair<String, Long>>?>(null, uri) {
+                        value = withContext(Dispatchers.IO) {
+                            runCatching {
+                                val out = mutableListOf<Pair<String, Long>>()
+                                context.contentResolver.openInputStream(uri)?.use { input ->
+                                    java.util.zip.ZipInputStream(input).use { zip ->
+                                        var entry = zip.nextEntry
+                                        while (entry != null && out.size < 500) { out += entry.name to entry.size; entry = zip.nextEntry }
+                                    }
+                                }
+                                out.toList()
+                            }.getOrDefault(emptyList())
+                        }
+                    }
+                    val list = entries
+                    if (list == null) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+                    else Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(14.dp)) {
+                        Text("${list.size} item${if (list.size == 1) "" else "s"} in this archive", color = Color(0xFF9FE8FF), fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        Spacer(Modifier.height(8.dp))
+                        list.forEach { (entryName, size) ->
+                            Row(Modifier.fillMaxWidth().padding(vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Icon(if (entryName.endsWith("/")) Icons.Default.Folder else Icons.Default.InsertDriveFile, null, tint = Color.White.copy(alpha = .7f), modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(10.dp))
+                                Text(entryName, color = Color.White, fontSize = 13.sp, modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                if (size > 0) Text(android.text.format.Formatter.formatShortFileSize(context, size), color = Color.White.copy(alpha = .55f), fontSize = 11.sp)
+                            }
+                        }
+                    }
+                }
+                else -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(Icons.Default.InsertDriveFile, null, tint = Color.White.copy(alpha = .7f), modifier = Modifier.size(72.dp))
+                        Spacer(Modifier.height(12.dp))
+                        Text("No built-in preview for this file type", color = Color.White)
+                        Spacer(Modifier.height(12.dp))
+                        Button(onClick = { ReceivedFiles.openExternally(context, uri, mime) }) { Text("Open with another app") }
+                    }
+                }
+            }
+        }
+    }
 }

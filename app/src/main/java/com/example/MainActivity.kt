@@ -426,7 +426,7 @@ class MainActivity : FragmentActivity() {
                 val navEntryForLinks by navController.currentBackStackEntryAsState()
                 val routeForLinks = navEntryForLinks?.destination?.route
                 val appReady = splashFinished && (currentUser != null || FirebaseAuth.getInstance().currentUser != null) &&
-                    routeForLinks != null && routeForLinks !in setOf("splash", "language", "onboarding", "auth", "session_gate", "mfa")
+                    routeForLinks != null && routeForLinks !in setOf("splash", "language", "onboarding", "auth", "session_gate", "mfa", "permissions")
                 val knownGroups by viewModel.groupsState.collectAsState()
                 val pendingGroupChat by pendingGroupChatId.collectAsState()
                 val pendingActivity by pendingActivityCenter.collectAsState()
@@ -575,6 +575,8 @@ class MainActivity : FragmentActivity() {
                                 val destination = when {
                                     !gated -> destinationAfterSplash
                                     gateStatus != null -> { pendingMfaStatus = gateStatus; "mfa" }
+                                    // Existing users see the Permission Center once after this update.
+                                    com.example.ui.PermissionCenter.shouldShow(context) -> "permissions"
                                     else -> "home"
                                 }
                                 navController.navigate(destination) { popUpTo("splash") { inclusive = true } }
@@ -621,7 +623,8 @@ class MainActivity : FragmentActivity() {
                         // so Home never flashes and is then covered by the 2FA screen.
                         composable("session_gate") {
                             com.example.ui.SessionGateScreen(
-                                onHome = { navController.navigate("home") { popUpTo("session_gate") { inclusive = true } } },
+                                // Fresh sign-in: the Permission Center comes first (once), then Home.
+                                onHome = { navController.navigate(if (com.example.ui.PermissionCenter.shouldShow(context)) "permissions" else "home") { popUpTo("session_gate") { inclusive = true } } },
                                 onMfa = { status ->
                                     pendingMfaStatus = status
                                     navController.navigate("mfa") { popUpTo("session_gate") { inclusive = true } }
@@ -636,12 +639,22 @@ class MainActivity : FragmentActivity() {
                                 maskedEmail = st?.email.orEmpty().ifBlank { "your e-mail" },
                                 onVerified = {
                                     viewModel.mfaVerified()
-                                    navController.navigate("home") { popUpTo("mfa") { inclusive = true } }
+                                    navController.navigate(if (com.example.ui.PermissionCenter.shouldShow(context)) "permissions" else "home") { popUpTo("mfa") { inclusive = true } }
                                 },
                                 onSignOut = {
                                     viewModel.logout { navController.navigate("auth") { popUpTo("mfa") { inclusive = true } } }
                                 }
                             )
+                        }
+
+                        // Permission Center: once after sign-in, and any time from Settings.
+                        composable("permissions") {
+                            // Opened from inside the app (Settings, menu, tour) → just go back when done.
+                            val cameFromSettings = navController.previousBackStackEntry != null
+                            com.example.ui.PermissionCenterScreen(firstRun = !cameFromSettings) {
+                                if (cameFromSettings) navController.popBackStack()
+                                else navController.navigate("home") { popUpTo("permissions") { inclusive = true } }
+                            }
                         }
 
                         composable("home") {
@@ -915,7 +928,7 @@ class MainActivity : FragmentActivity() {
                     LaunchedEffect(navRequest) {
                         val route = navRequest ?: return@LaunchedEffect
                         com.example.ui.AppNav.consume()
-                        if (FirebaseAuth.getInstance().currentUser != null && route in setOf("ai_studio", "whats_new", "assistant", "smart_hub")) {
+                        if (FirebaseAuth.getInstance().currentUser != null && route in setOf("ai_studio", "whats_new", "assistant", "smart_hub", "permissions")) {
                             navController.navigate(route) { launchSingleTop = true }
                         }
                     }
@@ -957,7 +970,7 @@ class MainActivity : FragmentActivity() {
                     // Two-step verification also guards screens opened from notifications/deep links.
                     val globalMfaGate by viewModel.mfaGate.collectAsState()
                     globalMfaGate?.let { gate ->
-                        if (currentRoute !in listOf("home", "mfa", "session_gate", "auth", "splash", "language", "onboarding")) {
+                        if (currentRoute !in listOf("home", "mfa", "session_gate", "auth", "splash", "language", "onboarding", "permissions")) {
                             com.example.ui.MfaGateDialog(
                                 method = gate.method.ifBlank { "email" },
                                 maskedEmail = gate.email.ifBlank { "your e-mail" },
@@ -1021,9 +1034,8 @@ class MainActivity : FragmentActivity() {
                             )
                         }
                     }
-                    com.example.ui.CallReadinessDialog(
-                        enabled = splashFinished && currentUser != null && currentRoute !in listOf("call", "auth", "onboarding", "splash") && !showOverlayPermissionPrompt
-                    )
+                    // The start-up "call readiness" pop-up was replaced by the Permission Center page
+                    // (after sign-in, and Settings → Permission manager).
                     if (showOverlayPermissionPrompt) {
                         AlertDialog(
                             onDismissRequest = { showOverlayPermissionPrompt = false },

@@ -2099,3 +2099,73 @@ form { display: contents; }
 }
 
 @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
+
+/* ============================================================================
+   Nova 5.2 — motion + glass polish layer (additive; respects reduced motion)
+   ========================================================================== */
+.chat-head-peer {
+  flex: 1; min-width: 0; display: flex; align-items: center; gap: 11px;
+  background: none; border: 0; padding: 4px 8px 4px 4px; margin: -4px 0; color: inherit; font: inherit; text-align: left;
+  border-radius: 16px; cursor: pointer; transition: background var(--speed) var(--ease), transform var(--speed) var(--ease);
+}
+.chat-head-peer:hover { background: color-mix(in srgb, var(--accent-a) 14%, transparent); }
+.chat-head-peer:active { transform: scale(.985); }
+.chat-head-peer:focus-visible { outline: 2px solid var(--accent-b); outline-offset: 2px; }
+
+@keyframes nova-drift { 0% { transform: translate3d(-4%, -3%, 0) scale(1); } 50% { transform: translate3d(5%, 4%, 0) scale(1.12); } 100% { transform: translate3d(-4%, -3%, 0) scale(1); } }
+@keyframes nova-rise { from { opacity: 0; transform: translate3d(0, 14px, 0) scale(.985); } to { opacity: 1; transform: none; } }
+@keyframes nova-sheen { 0% { background-position: 0% 50%; } 100% { background-position: 200% 50%; } }
+@keyframes nova-pop { 0% { transform: scale(.92); opacity: 0; } 70% { transform: scale(1.02); } 100% { transform: scale(1); opacity: 1; } }
+
+/* Living aurora behind the sign-in screen */
+#login-wrap { position: relative; isolation: isolate; }
+#login-wrap::before, #login-wrap::after {
+  content: ""; position: fixed; z-index: -1; width: 62vmax; height: 62vmax; border-radius: 50%;
+  filter: blur(90px); opacity: .42; pointer-events: none; animation: nova-drift 22s var(--ease) infinite;
+}
+#login-wrap::before { top: -22vmax; left: -18vmax; background: radial-gradient(circle, var(--accent-a), transparent 62%); }
+#login-wrap::after { bottom: -26vmax; right: -20vmax; background: radial-gradient(circle, var(--accent-b), transparent 62%); animation-delay: -9s; }
+
+.login-card { animation: nova-rise .55s var(--ease) both; backdrop-filter: blur(22px) saturate(140%); -webkit-backdrop-filter: blur(22px) saturate(140%); }
+.login-title span {
+  background: linear-gradient(90deg, var(--accent-b), var(--accent-a), #ff6fb5, var(--accent-b)); background-size: 200% 100%;
+  -webkit-background-clip: text; background-clip: text; color: transparent; animation: nova-sheen 6s linear infinite;
+}
+.login-tab { transition: transform var(--speed) var(--ease), background var(--speed) var(--ease), box-shadow var(--speed) var(--ease), color var(--speed) var(--ease); }
+.login-tab:hover { transform: translateY(-2px); }
+.login-tab.active { box-shadow: 0 10px 26px -14px var(--accent-a), inset 0 0 0 1px color-mix(in srgb, #fff 22%, transparent); }
+.auth-pane.active { animation: nova-rise .32s var(--ease) both; }
+.login-btn-primary { position: relative; overflow: hidden; transition: transform var(--speed) var(--ease), box-shadow var(--speed) var(--ease), filter var(--speed) var(--ease); }
+.login-btn-primary:hover { transform: translateY(-1px); filter: brightness(1.08); box-shadow: 0 16px 34px -16px var(--accent-a); }
+.login-btn-primary:active { transform: scale(.985); }
+.login-btn-primary::after {
+  content: ""; position: absolute; inset: 0; background: linear-gradient(110deg, transparent 30%, rgba(255,255,255,.28) 50%, transparent 70%);
+  transform: translateX(-120%); transition: transform .7s var(--ease);
+}
+.login-btn-primary:hover::after { transform: translateX(120%); }
+.login-input-group { transition: border-color var(--speed) var(--ease), box-shadow var(--speed) var(--ease); }
+.login-input-group:focus-within { border-color: var(--accent-b); box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent-b) 20%, transparent); }
+.login-qr-code { animation: nova-pop .5s var(--ease) both; }
+
+/* App shell */
+.chat-row { transition: background var(--speed) var(--ease), transform var(--speed) var(--ease); border-radius: 18px; }
+.chat-row:hover { transform: translateX(3px); }
+.chat-row.active { box-shadow: inset 3px 0 0 var(--accent-b); }
+.rail-btn { transition: transform var(--speed) var(--ease), background var(--speed) var(--ease), color var(--speed) var(--ease); }
+.rail-btn:hover { transform: translateY(-2px) scale(1.04); }
+.rail-btn.active { box-shadow: 0 10px 24px -14px var(--accent-a); }
+.msg { animation: nova-rise .26s var(--ease) both; }
+.bubble { transition: box-shadow var(--speed) var(--ease), transform var(--speed) var(--ease); }
+.bubble:hover { box-shadow: 0 10px 26px -18px rgba(0, 0, 0, .65); }
+.icon-btn { transition: transform var(--speed) var(--ease), background var(--speed) var(--ease); }
+.icon-btn:hover { transform: scale(1.08); }
+.icon-btn:active { transform: scale(.94); }
+.btn { transition: transform var(--speed) var(--ease), filter var(--speed) var(--ease), box-shadow var(--speed) var(--ease); }
+.btn:hover { filter: brightness(1.06); }
+.btn:active { transform: scale(.98); }
+.chat-head { backdrop-filter: blur(18px) saturate(140%); -webkit-backdrop-filter: blur(18px) saturate(140%); }
+
+@media (prefers-reduced-motion: reduce) {
+  #login-wrap::before, #login-wrap::after, .login-title span, .login-card, .auth-pane.active, .msg, .login-qr-code { animation: none !important; }
+  .chat-row:hover, .rail-btn:hover, .login-tab:hover, .icon-btn:hover { transform: none; }
+}

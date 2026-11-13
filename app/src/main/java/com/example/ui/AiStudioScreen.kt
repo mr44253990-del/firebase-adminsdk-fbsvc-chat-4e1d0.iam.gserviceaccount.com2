@@ -220,6 +220,9 @@ private data class NovaHighlight(val icon: ImageVector, val title: String, val b
 fun WhatsNewScreen(onBack: () -> Unit, onOpenStudio: () -> Unit) {
     val items = remember {
         listOf(
+            NovaHighlight(Icons.Default.Shield, "Permission Center (5.2)", "One page after sign-in for every permission — all optional, asked again only when needed.", Color(0xFF6C5CE7)),
+            NovaHighlight(Icons.Default.Backup, "One-file chat backup (5.2)", "Chats only, a single file, updated in place. Pick a folder once and it survives an uninstall.", Color(0xFF14A3B8)),
+            NovaHighlight(Icons.Default.Groups, "New groups home, posts and notes (5.2)", "LIVE badges, group profile editing, Facebook sharing, AI tools on posts and floating note bubbles.", Color(0xFFFF6FB5)),
             NovaHighlight(Icons.Default.TravelExplore, "Smart Hub (5.1)", "One search box for people, groups, posts and features, plus shortcuts and who is online now.", Color(0xFF19C37D)),
             NovaHighlight(Icons.Default.Poll, "Group polls, raise hand, writing tools (5.1)", "Vote with one tap and watch live results; raise your hand in group calls; AI writing tools in group chats.", Color(0xFF36D8E6)),
             NovaHighlight(Icons.Default.RocketLaunch, "One launch screen", "The separate \"Securing your session\" step is gone — security checks now happen inside the animated launch screen.", Color(0xFF8B7BFF)),

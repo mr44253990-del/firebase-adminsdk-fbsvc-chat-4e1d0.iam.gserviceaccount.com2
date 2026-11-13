@@ -158,6 +158,7 @@ fun ChatScreen(
         mutableStateOf(chatDraftPrefs.getString("draft_${recipient.uid}", "") ?: "")
     }
     var showAttachmentMenu by remember { mutableStateOf(false) }
+    var showAiWrite by remember { mutableStateOf(false) }
     var showScheduleDialog by remember { mutableStateOf(false) }
     var showWritingTools by remember { mutableStateOf(false) }
     var aiRewriteLoading by remember { mutableStateOf(false) }
@@ -1006,9 +1007,10 @@ fun ChatScreen(
                                 overflow = TextOverflow.Ellipsis
                             )
                             Text(
-                                text = if (updatedRecipient.isOnline) "Active now" else formatLastSeen(updatedRecipient.lastActive),
+                                text = if (isTyping) "typing…" else if (updatedRecipient.isOnline) "Active now" else formatLastSeen(updatedRecipient.lastActive),
                                 style = MaterialTheme.typography.bodySmall,
-                                color = if (updatedRecipient.isOnline) Color(0xFF4CDB6A) else (barColors?.content?.copy(alpha = .72f) ?: MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f))
+                                fontWeight = if (isTyping) FontWeight.Bold else FontWeight.Normal,
+                                color = if (isTyping) MaterialTheme.colorScheme.primary else if (updatedRecipient.isOnline) Color(0xFF4CDB6A) else (barColors?.content?.copy(alpha = .72f) ?: MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f))
                             )
                         }
                     }
@@ -1797,6 +1799,38 @@ fun ChatScreen(
     if (pendingImages.isNotEmpty()) {
         MultiImageSendSheet(pendingImages, updatedRecipient.name, onDismiss = { pendingImages = emptyList() }, onSend = sendAlbum)
     }
+    if (showAiWrite) {
+        var idea by remember { mutableStateOf("") }
+        var writing by remember { mutableStateOf(false) }
+        AlertDialog(
+            onDismissRequest = { if (!writing) showAiWrite = false },
+            icon = { Icon(Icons.Default.AutoAwesome, null, tint = MaterialTheme.colorScheme.primary) },
+            title = { Text("AI write", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Tell Convo AI what you want to say — it writes the message for you to review before sending.", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    OutlinedTextField(idea, { idea = it.take(400) }, placeholder = { Text("e.g. say sorry for being late, politely") }, minLines = 2, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp))
+                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        listOf("Birthday wish", "Say thank you", "Apologise", "Invite to meet", "Good morning", "Congratulate").forEach { preset ->
+                            SuggestionChip(onClick = { idea = preset }, label = { Text(preset, fontSize = 12.sp) })
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(enabled = idea.isNotBlank() && !writing, onClick = {
+                    writing = true
+                    viewModel.askAssistant("Write a short, warm chat message for ${recipient.name.ifBlank { "my friend" }}: ${idea.trim()}. Use the language of my request. Return only the message, no quotes.", emptyList()) { reply ->
+                        writing = false
+                        val cleaned = reply.trim().trim('"')
+                        if (cleaned.isNotBlank() && !cleaned.contains("disabled", true) && !cleaned.contains("not configured", true)) { messageText = cleaned; showAiWrite = false }
+                        else Toast.makeText(context, cleaned.ifBlank { "AI is not available right now" }, Toast.LENGTH_LONG).show()
+                    }
+                }) { if (writing) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = Color.White) else Text("Write it") }
+            },
+            dismissButton = { TextButton(enabled = !writing, onClick = { showAiWrite = false }) { Text(tr("Cancel")) } }
+        )
+    }
     if (showAttachmentMenu) {
         val attachActions = buildList {
             add(AttachAction("photo", "Gallery", Icons.Default.Image, listOf(Color(0xFF7C4DFF), Color(0xFFB388FF))))
@@ -1808,6 +1842,12 @@ fun ChatScreen(
             add(AttachAction("contact", "Contact", Icons.Default.ContactPage, listOf(Color(0xFF00B8D4), Color(0xFF84FFFF))))
             add(AttachAction("schedule", "Schedule", Icons.Default.Schedule, listOf(Color(0xFF6200EA), Color(0xFF9575CD))))
             add(AttachAction("apk", "APK / app", Icons.Default.Android, listOf(Color(0xFF3DDC84), Color(0xFF1B8A4B))))
+            // v5.2 smart tools
+            add(AttachAction("video", "Video", Icons.Default.Videocam, listOf(Color(0xFFE53935), Color(0xFFFF8A65))))
+            if (AppFeatureFlags.aiEnabled.value) {
+                add(AttachAction("ai_write", "AI write", Icons.Default.AutoAwesome, listOf(Color(0xFF8B7BFF), Color(0xFF36D8E6))))
+                add(AttachAction("ai_reply", "AI reply", Icons.Default.QuestionAnswer, listOf(Color(0xFFFF6FB5), Color(0xFF8B7BFF))))
+            }
         }
         SmartAttachSheet(attachActions, onDismiss = { showAttachmentMenu = false }) { key ->
             showAttachmentMenu = false
@@ -1824,6 +1864,24 @@ fun ChatScreen(
                 "scan" -> launchDocumentScanner()
                 "audio" -> filePickerLauncher.launch(arrayOf("audio/*"))
                 "apk" -> filePickerLauncher.launch(arrayOf("application/vnd.android.package-archive"))
+                "video" -> filePickerLauncher.launch(arrayOf("video/*"))
+                "ai_write" -> showAiWrite = true
+                "ai_reply" -> {
+                    val myUid = FirebaseAuth.getInstance().currentUser?.uid
+                    val last = messages.lastOrNull { it.senderId != myUid && it.text.isNotBlank() }
+                    if (last == null) Toast.makeText(context, "There is no message to reply to yet", Toast.LENGTH_SHORT).show()
+                    else {
+                        Toast.makeText(context, "Convo AI is writing a reply…", Toast.LENGTH_SHORT).show()
+                        viewModel.askAssistant(
+                            "Write one short, natural chat reply to this message, in the same language. Return only the reply, no quotes.\n\nMessage: ${last.text.take(1500)}",
+                            messages.takeLast(8).map { (if (it.senderId == myUid) "me: " else "them: ") + it.text.take(300) }
+                        ) { reply ->
+                            val cleaned = reply.trim().trim('"')
+                            if (cleaned.isNotBlank() && !cleaned.contains("disabled", true) && !cleaned.contains("not configured", true)) messageText = cleaned
+                            else Toast.makeText(context, cleaned.ifBlank { "AI is not available right now" }, Toast.LENGTH_LONG).show()
+                        }
+                    }
+                }
                 "location" -> showLocationSheet = true
                 "contact" -> showContactPicker = true
                 "schedule" -> {
@@ -2012,61 +2070,7 @@ private fun VoiceRecordingIndicator(name: String) {
 
 @Composable
 private fun TypingGlassIndicator(name: String) {
-    val motion = rememberInfiniteTransition(label = "typing_indicator")
-    val pulse by motion.animateFloat(
-        initialValue = .72f,
-        targetValue = 1.08f,
-        animationSpec = infiniteRepeatable(tween(760, easing = FastOutSlowInEasing), RepeatMode.Reverse),
-        label = "typing_pulse"
-    )
-    val dotScales = listOf(0, 130, 260).mapIndexed { index, delay ->
-        motion.animateFloat(
-            initialValue = .55f,
-            targetValue = 1.22f,
-            animationSpec = infiniteRepeatable(tween(520, delayMillis = delay, easing = FastOutSlowInEasing), RepeatMode.Reverse),
-            label = "typing_dot_$index"
-        )
-    }
-    val isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
-    Surface(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 6.dp),
-        shape = RoundedCornerShape(24.dp),
-        color = MaterialTheme.colorScheme.surface.copy(alpha = if (isDark) .88f else .96f),
-        tonalElevation = 5.dp,
-        shadowElevation = 3.dp,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = .14f))
-    ) {
-        Row(
-            Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 9.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(
-                Modifier.size(30.dp).graphicsLayer(scaleX = pulse, scaleY = pulse)
-                    .background(MaterialTheme.colorScheme.primary.copy(alpha = .14f), CircleShape),
-                contentAlignment = Alignment.Center
-            ) {
-                Box(Modifier.size(10.dp).background(MaterialTheme.colorScheme.primary, CircleShape))
-            }
-            Spacer(Modifier.width(9.dp))
-            Column(Modifier.weight(1f)) {
-                Text(name.ifBlank { "Someone" }, fontWeight = FontWeight.Bold, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(tr("is composing a message"), fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            Row(Modifier.height(22.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
-                dotScales.forEach { scale ->
-                    Box(Modifier.size(5.dp).graphicsLayer(scaleX = scale.value, scaleY = scale.value).background(MaterialTheme.colorScheme.primary, CircleShape))
-                }
-            }
-            Spacer(Modifier.width(10.dp))
-            Box(Modifier.width(34.dp).height(20.dp).clip(RoundedCornerShape(10.dp)).background(MaterialTheme.colorScheme.primary.copy(alpha = .10f)), contentAlignment = Alignment.Center) {
-                Row(horizontalArrangement = Arrangement.spacedBy(2.dp), verticalAlignment = Alignment.CenterVertically) {
-                    dotScales.forEachIndexed { index, scale ->
-                        Box(Modifier.width(2.dp).height((5 + (scale.value * 5).toInt()).coerceAtMost(10).dp).background(MaterialTheme.colorScheme.primary.copy(alpha = .75f), RoundedCornerShape(2.dp)))
-                    }
-                }
-            }
-        }
-    }
+    SmartTypingIndicator(name)
 }
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -2585,6 +2589,7 @@ private fun GenericFileBubble(message: Message, onConsumed: () -> Unit, accent: 
     var localUri by remember(message.messageId) { mutableStateOf<Uri?>(null) }
     var showPdf by remember(message.messageId) { mutableStateOf(false) }
     var showText by remember(message.messageId) { mutableStateOf(false) }
+    var showUniversal by remember(message.messageId) { mutableStateOf(false) }
     val receivedByMe = remember(message.senderId) { message.senderId != com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid }
     // WhatsApp-style: received files save themselves into Downloads/Convo Chat/<type>.
     LaunchedEffect(message.messageId, autoSaveAllowed) {
@@ -2644,6 +2649,7 @@ private fun GenericFileBubble(message: Message, onConsumed: () -> Unit, accent: 
         if (isPdf && localUri != null) PdfFirstPage(localUri!!)
         if (showPdf && localUri != null) PdfViewerDialog(localUri!!, name) { showPdf = false }
         if (showText && localUri != null) TextFileViewerDialog(localUri!!, name, mime) { showText = false }
+        if (showUniversal && localUri != null) UniversalFileViewerDialog(localUri!!, name, mime) { showUniversal = false }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(
                 Modifier.size(46.dp).clip(RoundedCornerShape(14.dp)).background(Brush.linearGradient(tileColors)),
@@ -2678,6 +2684,7 @@ private fun GenericFileBubble(message: Message, onConsumed: () -> Unit, accent: 
                             when {
                                 isPdf -> showPdf = true
                                 isTextLikeFile(mime, name) -> showText = true
+                                isInAppPreviewable(mime, name) -> showUniversal = true
                                 else -> ReceivedFiles.openExternally(context, uri, mime)
                             }
                         } ?: run {
@@ -2690,6 +2697,7 @@ private fun GenericFileBubble(message: Message, onConsumed: () -> Unit, accent: 
                                 when {
                                     isPdf -> { localUri = uri; showPdf = true }
                                     isTextLikeFile(mime, name) -> { localUri = uri; showText = true }
+                                    isInAppPreviewable(mime, name) -> { localUri = uri; showUniversal = true }
                                     else -> ReceivedFiles.openExternally(context, uri, mime)
                                 }
                             } else {

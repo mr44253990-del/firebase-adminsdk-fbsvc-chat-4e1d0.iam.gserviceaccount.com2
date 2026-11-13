@@ -395,7 +395,7 @@ fun GroupChatScreen(
                             Icon(Icons.Default.MoreVert, contentDescription = "Group menu", tint = barColors?.content ?: MaterialTheme.colorScheme.onSurface)
                         }
                         DropdownMenu(expanded = showGroupMenu, onDismissRequest = { showGroupMenu = false }) {
-                            DropdownMenuItem(text = { Text(tr("Smart group tools")) }, leadingIcon = { Icon(Icons.Default.AutoAwesome, null) }, onClick = { showGroupMenu = false; showSmartTools = true })
+                            DropdownMenuItem(text = { Text(tr("Group profile & smart tools")) }, leadingIcon = { Icon(Icons.Default.AutoAwesome, null) }, onClick = { showGroupMenu = false; showSmartTools = true })
                             DropdownMenuItem(text = { Text(tr("Search messages")) }, leadingIcon = { Icon(Icons.Default.Search, null) }, onClick = { showGroupMenu = false; showMessageSearch = !showMessageSearch })
                             DropdownMenuItem(text = { Text(tr("Add members")) }, leadingIcon = { Icon(Icons.Default.PersonAdd, null) }, onClick = { showGroupMenu = false; showAddMembers = true })
                             DropdownMenuItem(text = { Text(tr("Members")) }, leadingIcon = { Icon(Icons.Default.Group, null) }, onClick = { showGroupMenu = false; showMembers = true })
@@ -782,7 +782,8 @@ fun GroupChatScreen(
             group = group, messages = messages, users = allUsers, currentUser = viewModel.currentUserState.collectAsState().value,
             viewModel = viewModel,
             onMentionEveryone = { messageText = (messageText.trimEnd() + " @everyone ").trimStart() },
-            onDismiss = { showSmartTools = false }
+            onDismiss = { showSmartTools = false },
+            onLeft = onBack
         )
     }
 

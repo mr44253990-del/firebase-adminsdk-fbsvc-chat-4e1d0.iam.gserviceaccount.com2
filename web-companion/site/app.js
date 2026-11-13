@@ -1,4 +1,4 @@
-/* Convo Chat Web — application controller. v4.9.3 */
+/* Convo Chat Web — application controller. v5.2.0 */
 (function () {
   "use strict";
   var S = window.ConvoStore;
@@ -9,7 +9,7 @@
 
   var POLL_CHATS = 20000;
   var POLL_MESSAGES = 7000;
-  var WEB_VERSION = "v4.9.3";
+  var WEB_VERSION = "5.2.0";
   var POLL_PRESENCE = 45000;
   // v4.7.0: premium friends invite vibration handled via ActivityNotification type premium_approved
   var LAUNCH_MIN_MS = 1150;
@@ -696,10 +696,22 @@
     mode=mode||"code";
     state.authMode=mode;
     try{ localStorage.setItem("convo.authMode", mode); }catch(_){}
-    var card=document.getElementById("auth-card"); if(!card) return;
-    card.setAttribute("data-auth-mode", mode);
-    Array.prototype.forEach.call(card.querySelectorAll(".auth-tab"), function(tab){ tab.classList.toggle("active", tab.dataset.mode===mode); });
-    if(mode==="qr") initQrOnLogin(); else stopQr();
+    // v5.2 fix: the login card was redesigned (login-tab / auth-pane) but this function still
+    // looked for the old ids, so switching between E-mail, Code and QR did nothing.
+    var wrap=document.getElementById("login-wrap")||document;
+    var legacy=document.getElementById("auth-card"); if(legacy) legacy.setAttribute("data-auth-mode", mode);
+    Array.prototype.forEach.call(wrap.querySelectorAll(".login-tab, .auth-tab"), function(tab){ tab.classList.toggle("active", tab.dataset.mode===mode); });
+    var panes=wrap.querySelectorAll(".auth-pane");
+    var hasPane=false;
+    Array.prototype.forEach.call(panes, function(pane){
+      var on=pane.getAttribute("data-pane")===mode; if(on) hasPane=true;
+      pane.classList.toggle("active", on); pane.style.display=on?"grid":"none";
+    });
+    // Desktop shows the QR beside the form, so its tab has no pane: keep the code pane visible.
+    if(!hasPane && panes.length){ var first=wrap.querySelector('.auth-pane[data-pane="code"]')||panes[0]; first.classList.add("active"); first.style.display="grid"; }
+    Array.prototype.forEach.call(wrap.querySelectorAll(".pair-error"), function(node){ node.textContent=""; });
+    var desktopQr=!!document.getElementById("qr-canvas");
+    if(mode==="qr" || desktopQr){ if(mode==="qr" || !state.qrId) initQrOnLogin(); } else stopQr();
     // Focus first input of the active pane so keyboard shows on mobile
     setTimeout(function(){
       var focusId = mode==="code" ? "pair-code" : mode==="signin" ? "login-email" : mode==="signup" ? "signup-name" : "";
@@ -740,11 +752,13 @@
   var qrTimer=0, qrPollTimer=0, qrCountdown=0;
   async function initQrOnLogin(){
     stopQr();
-    var canvas=document.getElementById("qr-canvas");
-    var statusText=document.getElementById("qr-status-text");
-    var timerEl=document.getElementById("qr-timer");
-    var dot=document.getElementById("qr-dot");
-    var overlay=document.getElementById("qr-overlay");
+    // Phones render the QR inside its own tab with "-m" ids; pick whichever is on screen.
+    function qrEl(id){ var a=document.getElementById(id), b=document.getElementById(id+"-m"); if(a&&a.offsetParent!==null) return a; if(b&&b.offsetParent!==null) return b; return a||b; }
+    var canvas=qrEl("qr-canvas");
+    var statusText=qrEl("qr-status-text");
+    var timerEl=qrEl("qr-timer-text");
+    var dot=qrEl("qr-dot");
+    var overlay=qrEl("qr-overlay");
     if(statusText) statusText.textContent="Creating secure QR…";
     if(dot) dot.className="qr-dot loading";
     try{

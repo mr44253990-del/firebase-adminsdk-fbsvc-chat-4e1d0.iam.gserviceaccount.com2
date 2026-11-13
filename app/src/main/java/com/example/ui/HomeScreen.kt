@@ -84,6 +84,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.compose.ui.res.painterResource
@@ -349,22 +350,8 @@ fun HomeScreen(
         if (!granted) Toast.makeText(context, "Android 9 and earlier need storage permission for the single-file backup.", Toast.LENGTH_LONG).show()
     }
 
-    LaunchedEffect(currentUser?.uid) {
-        if (currentUser != null && Build.VERSION.SDK_INT <= Build.VERSION_CODES.P &&
-            ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED
-        ) {
-            backupStoragePermissionLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
-        }
-    }
-
-    LaunchedEffect(Unit) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            val permissionCheck = ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS)
-            if (permissionCheck != PackageManager.PERMISSION_GRANTED) {
-                permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-            }
-        }
-    }
+    // v5.2: Home no longer opens permission pop-ups on entry. Everything is offered once on the
+    // Permission Center page right after sign-in, and again only when a feature needs it.
 
     val scaffoldBgColor = Color.Transparent
     var showDeviceLogin by remember { mutableStateOf(false) }
@@ -414,7 +401,7 @@ fun HomeScreen(
                             Icon(Icons.Default.WifiOff, contentDescription = "WiFi No Signal", tint = Color.White, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = "WiFi No Signal | Offline Mode Active (Local Room Database Caching is operational)",
+                                text = "You are offline — saved chats are still available",
                                 color = Color.White,
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold,
@@ -427,30 +414,14 @@ fun HomeScreen(
                 // App branding top bar
                 TopAppBar(
                     title = {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Box(Modifier.size(40.dp).clip(CircleShape).background(Brush.linearGradient(listOf(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.tertiary))).padding(2.dp)) {
-                                Image(painterResource(R.drawable.img_app_logo), contentDescription = "Convo Chat", modifier = Modifier.fillMaxSize().clip(CircleShape))
-                            }
-                            Spacer(Modifier.width(9.dp))
-                            Column {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(
-                                        text = "Convo Chat",
-                                        fontWeight = FontWeight.Black,
-                                        fontSize = 23.sp,
-                                        color = MaterialTheme.colorScheme.primary,
-                                        letterSpacing = (-0.8).sp
-                                    )
-                                    Spacer(Modifier.width(5.dp))
-                                    Icon(Icons.Default.Verified, contentDescription = "Verified", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
-                                }
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Box(Modifier.size(7.dp).clip(CircleShape).background(if (isOnlineState) Color(0xFF26E86F) else Color(0xFFFF5252)))
-                                    Spacer(Modifier.width(6.dp))
-                                    Text(text = if (isOnlineState) "Online" else "Offline Cache Active", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                }
-                            }
-                        }
+                        // Role-aware brand block: admin, staff and Premium members get their own look.
+                        val premiumNow = currentUser?.isPremium == true && (currentUser?.premiumPlan.equals("lifetime", true) || (currentUser?.premiumUntil ?: 0L) > System.currentTimeMillis())
+                        NovaBrandTitle(
+                            logo = { Image(painterResource(R.drawable.img_app_logo), contentDescription = "Convo Chat", modifier = Modifier.fillMaxSize().clip(CircleShape)) },
+                            role = when { isAdmin -> "admin"; isStaff -> "staff"; premiumNow -> "premium"; else -> "user" },
+                            online = isOnlineState,
+                            firstName = currentUser?.name?.substringBefore(' ').orEmpty()
+                        )
                     },
                     actions = {
                         if (currentTab != 1) IconButton(onClick = onPremium) {
@@ -618,6 +589,9 @@ fun HomeScreen(
                                     AccountMenuRow(Icons.Outlined.Explore, listOf(Color(0xFF1E88E5), Color(0xFF1565C0)), tr("Discover people")) {
                                         showAccountMenu = false; viewModel.setCurrentTab(5)
                                     }
+                                    AccountMenuRow(Icons.Outlined.Shield, listOf(Color(0xFF6C5CE7), Color(0xFF14A3B8)), "Permission manager") {
+                                        showAccountMenu = false; AppNav.open("permissions")
+                                    }
                                     AccountMenuRow(Icons.Outlined.TravelExplore, listOf(Color(0xFF19C37D), Color(0xFF14A3B8)), "Smart Hub  •  search everything") {
                                         showAccountMenu = false; AppNav.open("smart_hub")
                                     }
@@ -766,6 +740,14 @@ fun HomeScreen(
                 .padding(innerPadding)
                 .novaTabEntrance(currentTab)
         ) {
+            // Occasional, non-blocking Premium reminder (max once every three days, never for members).
+            Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().zIndex(5f), contentAlignment = Alignment.Center) {
+                PremiumPromoToast(
+                    eligible = currentUser != null && currentUser?.isPremium != true && !isAdmin && flagshipConfig.premiumEnabled && flagshipConfig.premiumUpsellEnabled && currentTab in listOf(0, 1),
+                    userKey = currentUser?.uid.orEmpty(),
+                    onOpen = onPremium
+                )
+            }
             if (incomingAccountBanner != null) {
                 Box(Modifier.align(Alignment.TopCenter).fillMaxWidth()) {
                     AccountSwitchBanner(incomingAccountId = incomingAccountBanner!!.first, incomingMessage = incomingAccountBanner!!.second, rememberedAccounts = rememberedAccounts, onSwitch = { uid -> viewModel.loginRememberedAccount(rememberedAccounts.first { it.uid == uid }) { incomingAccountBanner = null } }, onDismiss = { incomingAccountBanner = null })
@@ -1123,57 +1105,8 @@ fun HomeScreen(
                     }
                 }
                 2 -> {
-                    // GROUPS TAB
-                    Column(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(horizontal = 16.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 12.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = "Your groups",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                            Button(
-                                onClick = { showCreateGroupDialog = true },
-                                shape = RoundedCornerShape(18.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)
-                            ) {
-                                Icon(Icons.Default.GroupAdd, contentDescription = "(Create Group)", modifier = Modifier.size(16.dp))
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text(tr("Create Group"), fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                            }
-                        }
-
-                        if (groups.isEmpty()) {
-                            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                    Icon(Icons.Default.Forum, contentDescription = null, tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.4f), modifier = Modifier.size(56.dp))
-                                    Spacer(modifier = Modifier.height(8.dp))
-                                    Text(tr("You haven't joined any groups yet"), fontWeight = FontWeight.SemiBold)
-                                    Text(tr("Create a new group above to invite friends!"), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                }
-                            }
-                        } else {
-                            LazyColumn(
-                                modifier = Modifier.fillMaxSize(),
-                                verticalArrangement = Arrangement.spacedBy(10.dp),
-                                contentPadding = PaddingValues(bottom = 16.dp)
-                            ) {
-                                items(groups) { group ->
-                                    GroupItemCard(group = group, onClick = { onGroupSelected(group) })
-                                }
-                            }
-                        }
-                    }
+                    // GROUPS TAB (v5.2 redesign)
+                    GroupsHubTab(groups = groups, users = allUsers, me = currentUser, onCreate = { showCreateGroupDialog = true }, onOpen = { onGroupSelected(it) })
                 }
                 3 -> {
                     if (isAdmin || isStaff) {
@@ -1482,6 +1415,43 @@ fun HomeScreen(
                                 subtitle = "Quiet hours, motion, live location and storage",
                                 accent = Color(0xFF00A3A3),
                                 onClick = { settingsPage = "smart" }
+                            )
+                        }
+
+                        var showChatBackup by remember { mutableStateOf(false) }
+                        if (showChatBackup) ChatBackupDialog(viewModel) { showChatBackup = false }
+                        SettingsHubGroup("Backup & permissions") {
+                            SettingsHubRow(
+                                icon = Icons.Default.Backup,
+                                title = "Chat backup",
+                                subtitle = "One file, chats only, survives uninstall",
+                                trailingValue = if (com.example.security.TextBackupManager.folderUri(context) != null) "Protected" else "Set up",
+                                accent = Color(0xFF6C5CE7),
+                                onClick = { showChatBackup = true }
+                            )
+                            SettingsHubDivider()
+                            SettingsHubRow(
+                                icon = Icons.Default.Shield,
+                                title = "Permission manager",
+                                subtitle = "Notifications, microphone, camera, calls, contacts",
+                                accent = Color(0xFF14A3B8),
+                                onClick = { AppNav.open("permissions") }
+                            )
+                            SettingsHubDivider()
+                            SettingsHubRow(
+                                icon = Icons.Default.TravelExplore,
+                                title = "Smart Hub",
+                                subtitle = "Search people, groups, posts and features",
+                                accent = Color(0xFF19C37D),
+                                onClick = { AppNav.open("smart_hub") }
+                            )
+                            SettingsHubDivider()
+                            SettingsHubRow(
+                                icon = Icons.Default.NewReleases,
+                                title = "What's new",
+                                subtitle = "Everything added in this update",
+                                accent = Color(0xFFFF6FB5),
+                                onClick = { AppNav.open("whats_new") }
                             )
                         }
 
@@ -4963,17 +4933,19 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
                     )
                 }
 
-                // Share link Button
+                // Share sheet (Facebook, Messenger, WhatsApp, …) and smart AI tools for the post.
                 val context = LocalContext.current
+                var showPostShare by remember(post.id) { mutableStateOf(false) }
+                var showPostAi by remember(post.id) { mutableStateOf(false) }
+                if (showPostShare) PostShareDialog(post) { showPostShare = false }
+                if (showPostAi) PostAiDialog(post, viewModel, onUseComment = { suggestion ->
+                    if (suggestion.isNotBlank()) { (context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager).setPrimaryClip(android.content.ClipData.newPlainText("Comment", suggestion)); Toast.makeText(context, "Comment copied — paste it below", Toast.LENGTH_SHORT).show() }
+                }) { showPostAi = false }
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
                         .clip(RoundedCornerShape(18.dp))
-                        .clickable {
-                            val link = "https://convo-chat-companion.mr4425390.workers.dev/post/${post.id}"
-                            val shareText = "${post.title.ifBlank { "A post from ${post.senderName}" }}\n${post.text.take(180)}\n\nOpen in Convo Chat: $link"
-                            context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply { type = "text/plain"; putExtra(Intent.EXTRA_TEXT, shareText) }, "Share Convo post"))
-                        }
+                        .clickable { showPostShare = true }
                         .padding(horizontal = 12.dp, vertical = 8.dp)
                 ) {
                     Icon(
@@ -4988,6 +4960,9 @@ fun SocialPostItem(post: Post, viewModel: ChatViewModel, onProfileSelected: (Use
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontSize = 12.sp
                     )
+                }
+                IconButton(onClick = { showPostAi = true }) {
+                    Icon(Icons.Outlined.AutoAwesome, "Smart post tools", tint = MaterialTheme.colorScheme.primary)
                 }
                 IconButton(onClick = { viewModel.toggleSavedPost(post.id) }) {
                     Icon(if (postSaved) Icons.Default.Bookmark else Icons.Outlined.BookmarkBorder, if (postSaved) "Remove saved post" else "Save post", tint = if (postSaved) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)

@@ -42,6 +42,7 @@ import com.example.data.Group
 import com.example.data.GroupMessage
 import com.example.data.User
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /**
  * Live "call in progress" bar shown to every member of a group while a call is running.
@@ -154,7 +155,8 @@ fun GroupSmartToolsDialog(
     currentUser: User?,
     viewModel: ChatViewModel,
     onMentionEveryone: () -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    onLeft: () -> Unit = {}
 ) {
     val myUid = currentUser?.uid.orEmpty()
     val isOwner = group.createdBy == myUid || (group.createdBy.isBlank() && group.members.firstOrNull() == myUid)
@@ -174,6 +176,41 @@ fun GroupSmartToolsDialog(
     var description by remember(group.description) { mutableStateOf(group.description) }
     var saved by remember { mutableStateOf("") }
     LaunchedEffect(saved) { if (saved.isNotBlank()) { delay(1800); saved = "" } }
+    // ---- Group profile (name + photo) ----
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val scope = rememberCoroutineScope()
+    var groupName by remember(group.name) { mutableStateOf(group.name) }
+    var photoBusy by remember { mutableStateOf(false) }
+    var confirmLeave by remember { mutableStateOf(false) }
+    val photoPicker = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) {
+            photoBusy = true
+            scope.launch {
+                val bytes = runCatching { compressChatImage(context, uri, hd = false) }.getOrNull()
+                if (bytes == null) { photoBusy = false; saved = "Could not read that photo" }
+                else viewModel.uploadFileToSupabase(
+                    bucket = "chat_images", fileName = "group_avatar_${group.id}_${System.currentTimeMillis()}.jpg", fileBytes = bytes, contentType = "image/jpeg",
+                    onSuccess = { url ->
+                        photoBusy = false
+                        viewModel.updateGroupSmart(group.id, mapOf("profileUrl" to url), announce = "${currentUser?.name ?: "An admin"} changed the group photo")
+                        saved = "Group photo updated"
+                    },
+                    onFailure = { photoBusy = false; saved = "Photo upload failed" }
+                )
+            }
+        }
+    }
+    if (confirmLeave) AlertDialog(
+        onDismissRequest = { confirmLeave = false },
+        title = { Text("Leave ${group.name}?") },
+        text = { Text("You will stop receiving messages from this group. A member can add you again later.") },
+        confirmButton = { Button(onClick = {
+            confirmLeave = false
+            viewModel.updateGroupSmart(group.id, mapOf("members" to group.members.filter { it != myUid }, "admins" to group.admins.filter { it != myUid }), announce = "${currentUser?.name ?: "A member"} left the group")
+            onDismiss(); onLeft()
+        }, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)) { Text("Leave") } },
+        dismissButton = { TextButton(onClick = { confirmLeave = false }) { Text("Cancel") } }
+    )
 
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(
@@ -206,6 +243,37 @@ fun GroupSmartToolsDialog(
                         StatTile("Members", group.members.size.toString(), Icons.Default.Group, Color(0xFF5B6CFF), Modifier.weight(1f))
                         StatTile("Online", online.toString(), Icons.Default.Circle, Color(0xFF19C37D), Modifier.weight(1f))
                         StatTile("Today", today.toString(), Icons.Default.Forum, Color(0xFFFF8A3D), Modifier.weight(1f))
+                    }
+                    ToolCard("Group profile", Icons.Default.Badge) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                Modifier.size(64.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary.copy(alpha = .16f))
+                                    .border(2.dp, MaterialTheme.colorScheme.primary.copy(alpha = .5f), CircleShape)
+                                    .clickable(enabled = isAdmin && !photoBusy) { photoPicker.launch("image/*") },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(Icons.Default.Group, null, tint = MaterialTheme.colorScheme.primary)
+                                if (group.profileUrl.isNotBlank()) coil.compose.AsyncImage(group.profileUrl, null, contentScale = androidx.compose.ui.layout.ContentScale.Crop, modifier = Modifier.matchParentSize().clip(CircleShape))
+                                if (photoBusy) CircularProgressIndicator(Modifier.size(26.dp), strokeWidth = 3.dp)
+                                else if (isAdmin) Box(Modifier.align(Alignment.BottomEnd).size(22.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary), contentAlignment = Alignment.Center) {
+                                    Icon(Icons.Default.CameraAlt, "Change photo", tint = Color.White, modifier = Modifier.size(13.dp))
+                                }
+                            }
+                            Spacer(Modifier.width(12.dp))
+                            OutlinedTextField(groupName, { groupName = it.take(60) }, enabled = isAdmin, singleLine = true, label = { Text("Group name") }, modifier = Modifier.weight(1f), shape = RoundedCornerShape(14.dp))
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                            if (isAdmin) Button(
+                                enabled = groupName.isNotBlank() && groupName.trim() != group.name,
+                                onClick = {
+                                    viewModel.updateGroupSmart(group.id, mapOf("name" to groupName.trim()), announce = "${currentUser?.name ?: "An admin"} renamed the group to \"${groupName.trim()}\"")
+                                    saved = "Group name updated"
+                                }, shape = RoundedCornerShape(14.dp)
+                            ) { Text("Save name") }
+                            else Text("Only group admins can change the name and photo.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+                            Spacer(Modifier.weight(1f))
+                            TextButton(onClick = { confirmLeave = true }) { Icon(Icons.Default.Logout, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.error); Spacer(Modifier.width(4.dp)); Text("Leave", color = MaterialTheme.colorScheme.error) }
+                        }
                     }
                     if (top.isNotEmpty()) ToolCard("Most active", Icons.Default.EmojiEvents) {
                         top.forEachIndexed { i, e ->
