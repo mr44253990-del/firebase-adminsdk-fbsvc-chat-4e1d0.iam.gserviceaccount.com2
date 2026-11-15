@@ -283,9 +283,9 @@ fun AuthScreen(
             .windowInsetsPadding(WindowInsets.safeDrawing)
     ) {
         // Calm aurora light-field background (no tilt / 3D).
-        LoginAuroraBackground(lp.milk)
-        // v5.0: living constellation + horizon grid on top of the aurora.
-        LoginNovaLayer(lp.milk)
+        // v5.6: the dark look is "liquid glass" (flowing violet / blue glass on black); the light
+        // "milk glass" look keeps its aurora.
+        if (lp.milk) { LoginAuroraBackground(true); LoginNovaLayer(true) } else LiquidGlassBackground()
         Column(
             modifier = Modifier
                 // Tablets / foldables: keep the form a comfortable width and centred.
@@ -317,7 +317,12 @@ fun AuthScreen(
             }
             Spacer(Modifier.height(6.dp))
             // Code-drawn brand mark (vector-sharp, no bitmap) with a soft orbit glow.
-            LoginBrandHero(lp.text, lp.milk)
+            if (lp.milk) LoginBrandHero(lp.text, lp.milk) else {
+                LiquidLogoTile(size = 112.dp, orbit = true)
+                LiquidWordmark(fontSize = 36)
+                Spacer(Modifier.height(8.dp))
+                Box(Modifier.width(230.dp).height(2.dp).background(Brush.horizontalGradient(listOf(Color.Transparent, LiquidViolet, LiquidCyan, Color.Transparent))))
+            }
             Spacer(modifier = Modifier.height(14.dp))
 
             Text(

@@ -126,6 +126,13 @@ Legend: ✅ done in this branch · 🔧 needs a one-time server step by the admi
 - ✅ S12. Web card as a slim strip (stories area + profile menu).
 - ⏳ Not done: redesign of the in-call screen, music on video stories, a GIF search picker, "screenshot on = crash" could not be traced to a specific cause (only the screen-share path was found and fixed).
 
+## T. Version 5.6 — dark liquid glass
+- ✅ T1. Design kit `LiquidGlass.kt`: background ribbons, glass tile, wordmark, waveform, frosted surface.
+- ✅ T2. Launch screen, sign-in (dark look) and audio call screen rebuilt on the kit, following the supplied reference images. Checked with rendered screenshots of the launch screen and the kit components.
+- ✅ T3. Liquid layer on Permission Center, AI Studio, What's new, incoming group call.
+- ✅ T4. Calls blocked while a message request is pending (chat buttons + view-model guard).
+- ⏳ Not yet in the new look: Home, chat list, chat screen, settings, profile, admin.
+
 ## R. Feature ideas — status
 | Idea | Status |
 |---|---|

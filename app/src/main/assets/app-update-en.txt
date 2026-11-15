@@ -1,3 +1,9 @@
+• NEW LOOK 5.6 — "dark liquid glass": flowing violet and blue glass on deep black, a glossy app tile, the two-tone Convo Chat wordmark and a live waveform.
+• Launch screen redesigned in the new look: wide glowing progress bar and a frosted card with Connect · Secure · Sync.
+• Sign-in screen (dark look): liquid-glass background, glass app tile with an orbit ring and the new wordmark. The light "Milk glass" look is unchanged.
+• Call screen: liquid-glass background, "Secure Call" badge, a live voice waveform under the name, a frosted control dock and a glass encryption pill. Incoming group calls use the same background.
+• Permission Center, AI Studio and What's new pages also carry the liquid-glass layer.
+• FIXED: you can no longer call someone who has not accepted your message request yet — calls follow the same rule as messages.
 • FIXED 5.5 (calls): answering a call no longer throws you back to the ringing screen or closes the call. Causes fixed: the same call being announced twice restarted the call screen; rotating the phone reset an answered call; an unreadable answer from the call server crashed the app; and the call service could fail to start on some phones.
 • FIXED: calls now connect even when the call relay server cannot be reached (they fall back to public servers).
 • FIXED (group calls): the host's call screen is no longer blank — black or white — after pressing Call; going back and in again works too.

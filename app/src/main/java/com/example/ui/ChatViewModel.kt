@@ -1076,6 +1076,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun startCall(recipient: User, video: Boolean, onReady: (String) -> Unit) {
         val caller = getCurrentUserOrFallback() ?: return
+        // A pending message request blocks calls too, wherever the call is started from.
+        if (recipient.uid in _pendingMessageRequestRecipients.value) {
+            android.widget.Toast.makeText(getApplication(), "${recipient.name.ifBlank { "This person" }} has not accepted your message request yet", android.widget.Toast.LENGTH_LONG).show()
+            return
+        }
         try {
         CallEngine.startOutgoing(getApplication(), recipient.uid, recipient.name, recipient.profileImageUrl, video = video) { callId ->
             withUserFcmToken(recipient.uid, recipient.fcmToken) { token ->

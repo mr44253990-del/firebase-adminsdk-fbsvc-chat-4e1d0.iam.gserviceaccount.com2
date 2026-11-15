@@ -17,8 +17,8 @@ android {
     applicationId = "com.ebchat"
     minSdk = 24
     targetSdk = 36
-    versionCode = 68
-    versionName = "5.5.0"
+    versionCode = 69
+    versionName = "5.6.0"
 
     // Convo Chat is distributed as a single modern 64-bit APK. This excludes
     // armeabi-v7a/x86/x86_64 native libraries pulled in by WebRTC/Media3.

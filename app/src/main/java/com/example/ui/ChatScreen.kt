@@ -1031,13 +1031,18 @@ fun ChatScreen(
                 actions = {
                     // Only the two call buttons and one menu live here now, so the person's
                     // name keeps most of the bar. Search and theme moved into the menu.
+                    // Calls follow the same rule as messages: not before the other person has accepted.
+                    val callBlocked = requestPending || !conversationAccepted
+                    val explainBlocked = { Toast.makeText(context, "${updatedRecipient.name.ifBlank { "This person" }} has not accepted your message request yet. You can call after they accept.", Toast.LENGTH_LONG).show() }
                     ChatCallPill(
                         onVideo = {
+                            if (callBlocked) { explainBlocked(); return@ChatCallPill }
                             val cameraGranted = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
                             if (audioPermissionGranted && cameraGranted) onVideoCall()
                             else videoPermissionLauncher.launch(arrayOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.CAMERA))
                         },
                         onAudio = {
+                            if (callBlocked) { explainBlocked(); return@ChatCallPill }
                             if (audioPermissionGranted) onCall()
                             else { pendingCall = true; permissionLauncher.launch(Manifest.permission.RECORD_AUDIO) }
                         }

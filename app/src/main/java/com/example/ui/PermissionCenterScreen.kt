@@ -192,6 +192,7 @@ fun PermissionCenterScreen(firstRun: Boolean, onDone: () -> Unit) {
                 }
             }
         }
+        LiquidGlassBackground(baseAlpha = .35f, beads = false)
         Column(
             Modifier.align(Alignment.TopCenter).widthIn(max = 620.dp).fillMaxHeight().statusBarsPadding().navigationBarsPadding(),
             horizontalAlignment = Alignment.CenterHorizontally

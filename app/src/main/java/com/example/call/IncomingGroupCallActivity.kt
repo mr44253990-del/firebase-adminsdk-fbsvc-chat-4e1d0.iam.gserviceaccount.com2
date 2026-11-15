@@ -166,6 +166,7 @@ private fun IncomingGroupCallPrompt(
         Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF0E1330), Color(0xFF1C1F4A), Color(0xFF071A2B)))),
         contentAlignment = Alignment.Center
     ) {
+        com.example.ui.LiquidGlassBackground(violet = accent, baseAlpha = .6f)
         IncomingCallBackdrop(accent)
         Column(
             Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).padding(horizontal = 20.dp, vertical = 28.dp),

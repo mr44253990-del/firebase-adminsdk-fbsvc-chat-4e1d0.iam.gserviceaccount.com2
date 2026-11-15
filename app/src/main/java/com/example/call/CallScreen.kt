@@ -1,5 +1,7 @@
 package com.example.call
 
+import com.example.ui.liquidGlass
+
 import com.example.ui.CallHistory
 
 import com.example.ui.ThemeTextureLayer
@@ -321,8 +323,9 @@ fun CallScreen(
             AsyncImage(remoteImage, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize().blur(70.dp))
             Box(Modifier.fillMaxSize().background(Brush.verticalGradient(callPalette.background.map { it.copy(alpha = .72f) })))
         }
+        // v5.6 dark liquid glass: flowing glass ribbons over the call skin for every audio screen.
+        if (!effectiveVideo) com.example.ui.LiquidGlassBackground(violet = callPalette.accent, baseAlpha = .62f)
         if (!accepted && incoming) IncomingCallBackdrop(callPalette.accent)
-        else if (!effectiveVideo) CallAuroraBackground(callPalette.accent)
         if (effectiveVideo && accepted) {
             if (state.remoteCameraOff) {
                 Box(Modifier.fillMaxSize().background(Brush.verticalGradient(callPalette.background)), contentAlignment = Alignment.Center) {
@@ -422,6 +425,17 @@ fun CallScreen(
             onClick = onMinimize,
             modifier = Modifier.align(Alignment.TopStart).windowInsetsPadding(WindowInsets.statusBars).padding(12.dp).background(Color.Black.copy(.42f), CircleShape)
         ) { Icon(Icons.Default.KeyboardArrowDown, "Minimize call", tint = Color.White, modifier = Modifier.size(30.dp)) }
+        if (!effectiveVideo) Row(
+            Modifier.align(Alignment.TopEnd).windowInsetsPadding(WindowInsets.statusBars).padding(14.dp)
+                .clip(RoundedCornerShape(18.dp)).background(Color.White.copy(alpha = .07f))
+                .border(1.dp, Brush.linearGradient(listOf(Color.White.copy(.4f), callPalette.accent.copy(.5f))), RoundedCornerShape(18.dp))
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(Icons.Default.Shield, null, tint = Color(0xFF39C8FF), modifier = Modifier.size(16.dp))
+            Spacer(Modifier.width(6.dp))
+            Text("Secure Call", color = Color.White, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+        }
         if (accepted) CallReactionsLayer(active = state.status == "connected" || state.status == "reconnecting")
         if (accepted && (controlsVisible || !effectiveVideo)) CallQualityPill(
             connected = state.status == "connected",
@@ -452,6 +466,11 @@ fun CallScreen(
                 }, color = Color.White.copy(.82f), textAlign = TextAlign.Center,
                 modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp)
             )
+            }
+            // Live voice waveform under the status (calm while muted or still connecting).
+            if (!effectiveVideo && (accepted || !incoming)) {
+                Spacer(Modifier.height(8.dp))
+                com.example.ui.LiquidWaveform(lines = true, active = state.status == "connected" && !state.muted)
             }
             Spacer(Modifier.weight(1f))
             if (!accepted && incoming) {
@@ -558,10 +577,8 @@ fun CallScreen(
                     }
                     Row(
                         Modifier.fillMaxWidth()
-                            .clip(RoundedCornerShape(36.dp))
-                            .background(Brush.verticalGradient(listOf(Color.White.copy(.16f), Color.Black.copy(.28f))))
-                            .border(1.dp, Brush.verticalGradient(listOf(Color.White.copy(.45f), callPalette.accent.copy(.25f))), RoundedCornerShape(36.dp))
-                            .padding(horizontal = 4.dp, vertical = 12.dp),
+                            .liquidGlass(RoundedCornerShape(42.dp), callPalette.accent)
+                            .padding(horizontal = 4.dp, vertical = 14.dp),
                         horizontalArrangement = Arrangement.SpaceEvenly,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -579,7 +596,11 @@ fun CallScreen(
                 }
             }
             Spacer(Modifier.height(18.dp))
-            if (controlsVisible || !effectiveVideo) Row(verticalAlignment = Alignment.CenterVertically) {
+            if (controlsVisible || !effectiveVideo) Row(
+                Modifier.clip(CircleShape).background(Color.White.copy(alpha = .05f))
+                    .border(1.dp, callPalette.accent.copy(alpha = .35f), CircleShape).padding(horizontal = 14.dp, vertical = 7.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 Icon(Icons.Default.Lock, null, tint = callPalette.accent.copy(.7f), modifier = Modifier.size(12.dp))
                 Spacer(Modifier.width(5.dp))
                 Text("Encrypted media (WebRTC DTLS-SRTP) • Cloudflare TURN", color = callPalette.accent.copy(.6f), style = MaterialTheme.typography.labelSmall)

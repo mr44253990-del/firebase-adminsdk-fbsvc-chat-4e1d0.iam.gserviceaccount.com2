@@ -118,6 +118,7 @@ fun AiStudioScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenAssistant
                 drawCircle(Brush.radialGradient(listOf(Color(0xFFFF6FB5).copy(alpha = .16f), Color.Transparent), Offset(w * .4f, h * (.98f - .1f * drift)), r * .7f), r * .7f, Offset(w * .4f, h * (.98f - .1f * drift)))
             }
         }
+        LiquidGlassBackground(baseAlpha = .35f, beads = false)
         Column(Modifier.fillMaxSize().statusBarsPadding().windowInsetsPadding(WindowInsets.navigationBars.union(WindowInsets.ime))) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = { if (tool != null) { tool = null; output = ""; input = "" } else onBack() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Color.White) }
@@ -247,6 +248,7 @@ fun WhatsNewScreen(onBack: () -> Unit, onOpenStudio: () -> Unit) {
     val motion = rememberInfiniteTransition(label = "whatsnew")
     val drift by motion.animateFloat(0f, 1f, infiniteRepeatable(tween(10000, easing = LinearEasing), RepeatMode.Reverse), label = "drift")
     Box(Modifier.fillMaxSize().background(Brush.linearGradient(listOf(Color(0xFF080716), Color(0xFF17123F), Color(0xFF06202A)), start = Offset(drift * 500f, 0f), end = Offset(1000f, 2000f)))) {
+        LiquidGlassBackground(baseAlpha = .45f, beads = false)
         Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()) {
             Row(Modifier.padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = Color.White) }
