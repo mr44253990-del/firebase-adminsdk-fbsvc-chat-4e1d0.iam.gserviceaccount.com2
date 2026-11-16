@@ -1,6 +1,7 @@
 package com.example.call
 
 import com.example.ui.liquidGlass
+import androidx.compose.ui.draw.shadow
 
 import com.example.ui.CallHistory
 
@@ -348,7 +349,7 @@ fun CallScreen(
                 val density = androidx.compose.ui.platform.LocalDensity.current
                 val conf = androidx.compose.ui.platform.LocalConfiguration.current
                 // Drag the self-view anywhere; it snaps to the nearest corner when released.
-                val maxX = with(density) { (conf.screenWidthDp.dp - 104.dp - 28.dp).toPx() }.coerceAtLeast(0f)
+                val maxX = with(density) { (conf.screenWidthDp.dp - 111.dp - 28.dp).toPx() }.coerceAtLeast(0f)
                 val maxY = with(density) { (conf.screenHeightDp.dp - 148.dp - 220.dp).toPx() }.coerceAtLeast(0f)
                 var dragging by remember { mutableStateOf(false) }
                 val animatedSelf by animateOffsetAsState(selfOffset, spring(dampingRatio = .72f, stiffness = 420f), label = "self_view")
@@ -356,7 +357,9 @@ fun CallScreen(
                     factory = { ctx -> SurfaceViewRenderer(ctx).also {
                         it.setEnableHardwareScaler(true)
                         it.setZOrderMediaOverlay(true)
-                        it.setScalingType(org.webrtc.RendererCommon.ScalingType.SCALE_ASPECT_FIT)
+                        // Fill the frame: with "fit" the camera picture was a different shape from
+                        // its rounded frame and left empty bands at the sides.
+                        it.setScalingType(org.webrtc.RendererCommon.ScalingType.SCALE_ASPECT_FILL)
                         CallEngine.attachLocalRenderer(it)
                     } },
                     modifier = Modifier.align(Alignment.TopEnd).windowInsetsPadding(WindowInsets.statusBars).padding(14.dp)
@@ -374,7 +377,11 @@ fun CallScreen(
                                 selfOffset = androidx.compose.ui.geometry.Offset((selfOffset.x + drag.x).coerceIn(-maxX, 0f), (selfOffset.y + drag.y).coerceIn(0f, maxY))
                             }
                         }
-                        .size(width = 104.dp, height = 148.dp).clip(RoundedCornerShape(26.dp)).border(1.dp, Color.White.copy(.6f), RoundedCornerShape(26.dp)),
+                        // 3:4 portrait frame, the camera's own shape; an even rounded rim with a glow.
+                        .size(width = 111.dp, height = 148.dp)
+                        .shadow(10.dp, RoundedCornerShape(22.dp), ambientColor = callPalette.accent, spotColor = callPalette.accent)
+                        .clip(RoundedCornerShape(22.dp))
+                        .border(2.dp, Brush.linearGradient(listOf(Color.White.copy(.85f), callPalette.accent, Color.White.copy(.35f))), RoundedCornerShape(22.dp)),
                     onRelease = CallEngine::detachRenderer
                 )
             }

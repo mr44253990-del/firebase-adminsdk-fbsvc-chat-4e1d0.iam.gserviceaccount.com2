@@ -253,7 +253,10 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         val answer = callIntent("com.ebchat.ACCEPT_CALL", (callId + "answer").hashCode())
         val decline = callIntent("com.ebchat.DECLINE_CALL", (callId + "decline").hashCode())
         val fullScreen = callIntent("com.ebchat.SHOW_CALL", (callId + "screen").hashCode())
-        val avatar = loadBitmap(callerImage)
+        // Caller picture: cached photo first (works offline and is instant), then a fresh
+        // download, and finally a coloured initials badge — so a call never shows without a face.
+        val avatar = (runCatching { NotificationAvatarCache.load(this, callerId, callerImage) }.getOrNull() ?: loadBitmap(callerImage))?.let { circleBitmap(it) }
+            ?: ConvoNotificationArt.initialsAvatar(callerName, callerId)
         val personBuilder = Person.Builder().setName(callerName).setImportant(true)
         if (avatar != null) personBuilder.setIcon(IconCompat.createWithBitmap(avatar))
         val person = personBuilder.build()
@@ -272,8 +275,11 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         }
         val builder = NotificationCompat.Builder(this, channelId)
             .setSmallIcon(android.R.drawable.sym_call_incoming)
-            .setContentTitle(if (videoCall) "Incoming Convo Chat video call" else "Incoming Convo Chat audio call")
-            .setContentText(callerName)
+            .setContentTitle(callerName)
+            .setContentText(if (videoCall) "📹 Incoming video call" else "📞 Incoming audio call")
+            .setSubText("Convo Chat")
+            .setLargeIcon(avatar)
+            .setColor(ConvoNotificationArt.accentFor(callerId)).setColorized(true)
             .setCategory(NotificationCompat.CATEGORY_CALL)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setPriority(NotificationCompat.PRIORITY_MAX)

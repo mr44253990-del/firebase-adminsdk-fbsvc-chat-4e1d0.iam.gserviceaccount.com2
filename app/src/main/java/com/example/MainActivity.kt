@@ -355,8 +355,16 @@ class MainActivity : FragmentActivity() {
 
         setContent {
             val currentTheme by viewModel.themeState.collectAsState()
+            // Design switch: "new" = dark liquid glass on every screen, "classic" = the user's own theme.
+            val designChoice by com.example.ui.DesignStyle.choice.collectAsState()
+            val designDefault by com.example.ui.DesignStyle.adminDefault.collectAsState()
+            val designConfig by viewModel.flagshipConfig.collectAsState()
+            LaunchedEffect(Unit) { com.example.ui.DesignStyle.load(this@MainActivity) }
+            LaunchedEffect(designConfig.defaultDesignStyle) { com.example.ui.DesignStyle.setAdminDefault(designConfig.defaultDesignStyle) }
+            LaunchedEffect(designConfig.deleteDeliveredMedia) { com.example.data.LocalImageStore.deleteAfterDelivery.value = designConfig.deleteDeliveredMedia }
+            val newDesign = com.example.ui.DesignStyle.isNew(designChoice, designDefault)
 
-            MyApplicationTheme(themeType = currentTheme) {
+            MyApplicationTheme(themeType = if (newDesign) "dark liquid glass" else currentTheme) {
                 val appLocked by AppLockManager.locked.collectAsState()
                 if (appLocked) {
                     AppLockScreen(this@MainActivity)
@@ -544,7 +552,7 @@ class MainActivity : FragmentActivity() {
                     }
                 }
 
-                PremiumBackground {
+                PremiumBackground(liquid = newDesign) {
                     val privacySettings by com.example.security.PrivacyPreferences.settings.collectAsState()
                     val currentRoute = navController.currentBackStackEntryAsState().value?.destination?.route
                     // Screenshots/recording are blocked only while a chat or call is on screen.

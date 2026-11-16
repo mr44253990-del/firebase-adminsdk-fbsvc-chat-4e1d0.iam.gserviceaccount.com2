@@ -126,6 +126,36 @@ Legend: ✅ done in this branch · 🔧 needs a one-time server step by the admi
 - ✅ S12. Web card as a slim strip (stories area + profile menu).
 - ⏳ Not done: redesign of the in-call screen, music on video stories, a GIF search picker, "screenshot on = crash" could not be traced to a specific cause (only the screen-share path was found and fixed).
 
+## U. Version 5.7 — design switch, chats tab, notes, promotions
+
+**Built (compiles, lint clean; NOT tested on a real phone):**
+- Old/new design switch (user: Settings → Design; admin default: Admin → App design & media). New = theme "dark liquid glass" + liquid backdrop behind every page. Individual screens were not re-laid-out one by one; they take the new colours and backdrop.
+- Chats tab: search in the top bar, slim quick bar instead of the "Tools & filters" card, one strip for notes + online people.
+- Notes with sound, reactions and replies. Reactions/replies are sent as normal chat messages (no new collection).
+- Post photo auto-slide + full-screen viewer (`PostGallery.kt`).
+- Admin app promotions (`AppPromotions.kt`, Firestore `app_config/promotions`).
+- Optional delete-after-delivery for chat photos (`LocalImageStore.kt`, flag `deleteDeliveredMedia`, default off).
+- Comment box, message menu, full-screen composer (1:1 chats only), draft label in chat list.
+- 3 bubble styles, 10 call filters, portrait self-preview, caller picture in the call notification, natural time wording, 5 s presence refresh.
+- Web version removed from the app UI; `web-companion/` and its deploy script deleted from the repo.
+
+**Admin must do:**
+- Publish `firestore.rules` — without it a note's sound is not saved (the note itself still saves).
+- The Cloudflare Pages site `convo-chat-companion.pages.dev` is still online; delete the Pages project in the Cloudflare dashboard to take it down.
+
+**Not done in 5.7:**
+- Faster call ringing / connecting — not changed (needs measurements on real phones).
+- Full-screen composer in group chats; draft label for groups.
+- Delete-after-delivery covers photos only (files already had it); voice messages and videos are not covered. With it on, a reinstall or new phone cannot re-download old photos, and photos sent before it was switched on can disappear for the sender.
+- Unused code left in place: device-login QR screen, admin web pages.
+- Notification redesign beyond the call notification; Home top-bar action redesign beyond the search box.
+
+**Ideas found while working (not built):**
+- Note reactions shown on the note itself (needs a new collection + rules).
+- Promotion click/impression counters for the admin.
+- Per-chat design override when the new design is on.
+- Swipe between chat filters; pin favourite people in the notes strip.
+
 ## T. Version 5.6 — dark liquid glass
 - ✅ T1. Design kit `LiquidGlass.kt`: background ribbons, glass tile, wordmark, waveform, frosted surface.
 - ✅ T2. Launch screen, sign-in (dark look) and audio call screen rebuilt on the kit, following the supplied reference images. Checked with rendered screenshots of the launch screen and the kit components.

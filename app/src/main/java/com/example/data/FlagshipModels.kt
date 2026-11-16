@@ -143,12 +143,17 @@ data class FlagshipConfig(
     val audioFreesoundEnabled: Boolean = true,
     val audioFreesoundKey: String = "",
     /** v5.4 "Convo Chat Web" promo + sponsor card. The admin decides whether it shows, where it opens and what it says. */
-    val webPromoEnabled: Boolean = true,
+    /** v5.7: the web version was retired; these stay only so old configuration documents still load. */
+    val webPromoEnabled: Boolean = false,
     val webVersionUrl: String = "https://convo-chat-companion.pages.dev",
     val webPromoTitle: String = "Convo Chat Web",
     val webPromoBenefits: String = "Chat from your PC or any browser\nBig screen, real keyboard\nSign in by scanning a QR code\nYour phone stays in control",
     /** Shows the card on the Home feed as well (the account menu always follows webPromoEnabled). */
-    val webPromoOnHome: Boolean = true,
+    val webPromoOnHome: Boolean = false,
+    /** v5.7: design every user gets unless they choose one themselves: "classic" or "new". */
+    val defaultDesignStyle: String = "classic",
+    /** v5.7: delete a chat photo from the server once the other person's phone has saved it. */
+    val deleteDeliveredMedia: Boolean = false,
     val updatedAt: Long = 0L,
     val updatedBy: String = ""
 )

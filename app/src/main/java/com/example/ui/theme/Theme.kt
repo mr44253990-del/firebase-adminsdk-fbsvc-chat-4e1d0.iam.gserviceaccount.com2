@@ -151,6 +151,11 @@ fun MyApplicationTheme(
         "frosted light" -> LightColors.copy(primary = Color(0xFF6554D9), secondary = Color(0xFF007F9B), background = Color(0xFFF5F5FF), surface = Color(0xFFFCFAFF), surfaceVariant = Color(0xFFE9E8F4), onSurface = Color(0xFF171522), onBackground = Color(0xFF171522))
         "royal gold" -> themedDark(Color(0xFFFFD166), Color(0xFFFFA62B), Color(0xFF120C02), Color(0xFF241806)).copy(tertiary = Color(0xFFFFE8A3), primaryContainer = Color(0xFF5A4108), onPrimaryContainer = Color.White)
         "cyber lime" -> themedDark(Color(0xFFC8FF4D), Color(0xFF55E6A5), Color(0xFF071006), Color(0xFF102014)).copy(tertiary = Color(0xFFB2F7FF), primaryContainer = Color(0xFF315C12), onPrimaryContainer = Color.White)
+        // v5.7 "new design": deep black with violet / electric-blue glass (matches the launch screen).
+        "dark liquid glass" -> themedDark(Color(0xFFB79CFF), Color(0xFF6FA8FF), Color(0xFF04030B), Color(0xFF0F0C24)).copy(
+            tertiary = Color(0xFF39C8FF), primaryContainer = Color(0xFF2A1A66), onPrimaryContainer = Color(0xFFEDE6FF),
+            surfaceVariant = Color(0xFF1A1636), onSurfaceVariant = Color(0xFFC6C3DC), outline = Color(0xFF4A4470), outlineVariant = Color(0xFF2A2548)
+        )
         // Liquid glass family
         "milk liquid glass" -> LightColors.copy(primary = Color(0xFF6F78F0), onPrimary = Color.White, secondary = Color(0xFF9C8CF5), tertiary = Color(0xFFFFA97A), background = Color(0xFFFBF8F3), surface = Color(0xFFFFFFFF), surfaceVariant = Color(0xFFF1EEF7), onBackground = Color(0xFF1D1B26), onSurface = Color(0xFF1D1B26), onSurfaceVariant = Color(0xFF5E5B6E), primaryContainer = Color(0xFFE6E7FF), onPrimaryContainer = Color(0xFF1E2370), outlineVariant = Color(0xFFE6E1EC))
         "neon glass" -> themedDark(Color(0xFFB794FF), Color(0xFF6E8BFF), Color(0xFF0A0718), Color(0xFF181332)).copy(tertiary = Color(0xFFFF6FD8), primaryContainer = Color(0xFF3A2580), onPrimaryContainer = Color.White)

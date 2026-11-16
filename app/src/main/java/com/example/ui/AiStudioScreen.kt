@@ -227,6 +227,9 @@ private data class NovaHighlight(val icon: ImageVector, val title: String, val b
 fun WhatsNewScreen(onBack: () -> Unit, onOpenStudio: () -> Unit) {
     val items = remember {
         listOf(
+            NovaHighlight(Icons.Default.AutoAwesome, "Old / new design switch (5.7)", "Settings → Design: move the whole app between the classic look and dark liquid glass.", Color(0xFF9B4DFF)),
+            NovaHighlight(Icons.Default.Forum, "New Chats tab and notes (5.7)", "Search in the top bar, a slim tools row, notes with sound, reactions and replies.", Color(0xFF3AA0FF)),
+            NovaHighlight(Icons.Default.Apps, "Photo slides and app shelf (5.7)", "Post photos slide by themselves and open full screen; admin app promotions appear in the feed.", Color(0xFF19C37D)),
             NovaHighlight(Icons.Default.Shield, "Permission Center (5.2)", "One page after sign-in for every permission — all optional, asked again only when needed.", Color(0xFF6C5CE7)),
             NovaHighlight(Icons.Default.Backup, "One-file chat backup (5.2)", "Chats only, a single file, updated in place. Pick a folder once and it survives an uninstall.", Color(0xFF14A3B8)),
             NovaHighlight(Icons.Default.Groups, "New groups home, posts and notes (5.2)", "LIVE badges, group profile editing, Facebook sharing, AI tools on posts and floating note bubbles.", Color(0xFFFF6FB5)),

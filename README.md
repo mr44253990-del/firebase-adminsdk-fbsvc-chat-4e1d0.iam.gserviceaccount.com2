@@ -1,3 +1,5 @@
+> **v5.7 note:** the browser (web) version has been removed. The `web-companion/` folder and its deploy script are no longer in the repository and the app no longer links to it. Sections below that mention the web app describe earlier releases.
+
 # Convo Chat (ফায়ারচ্যাট) Setup & Configuration Guide
 
 ## Premium Aurora UI

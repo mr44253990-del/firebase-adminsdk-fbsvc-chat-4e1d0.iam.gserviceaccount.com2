@@ -217,7 +217,8 @@ fun AdminControlCenterScreen(
     val workerNeedsUpdate = workerReports.firstOrNull()?.let { !it.reachable || it.outdated || !it.serviceAccount } ?: workerOutdatedSeen
     val allMenuItems = listOf(
         AdminMenuEntry("copilot", "Admin AI Copilot", "Type a command: maintenance, features, bans, Premium, broadcast, profiles", Icons.Outlined.AutoAwesome, Color(0xFF7C5CFC), "NEW"),
-        AdminMenuEntry("web_promo", "Web version card", "Show the web address and benefits; tap opens the browser", Icons.Outlined.Language, Color(0xFF3949AB), if (flagshipConfig.webPromoEnabled) "ON" else "OFF"),
+        AdminMenuEntry("design", "App design & media", "Old / new design for everyone, auto-delete delivered photos", Icons.Outlined.AutoAwesome, Color(0xFF9B4DFF), if (flagshipConfig.defaultDesignStyle == "new") "NEW" else "OLD"),
+        AdminMenuEntry("promotions", "App promotions", "Store-style shelf of your apps in the feed, with Download buttons", Icons.Outlined.Campaign, Color(0xFF19C37D), "NEW"),
         AdminMenuEntry("audio", "Audio library", "Music for posts and stories: Audius, iTunes, Radio Browser", Icons.Outlined.LibraryMusic, Color(0xFFCC0FE0), if (flagshipConfig.audioLibraryEnabled) "ON" else "OFF"),
         AdminMenuEntry("server_health", "Server health & updater", "Worker version, secrets, one-tap Worker update", Icons.Outlined.Dns, Color(0xFF00897B), if (workerNeedsUpdate) "FIX" else "OK"),
         AdminMenuEntry("staff", "Sub-admins & roles", "Delegate access: users, posts, reports, Premium…", Icons.Outlined.AdminPanelSettings, Color(0xFF3949AB), users.count { it.staffRole.isNotBlank() }.takeIf { it > 0 }?.toString().orEmpty()),
@@ -228,7 +229,6 @@ fun AdminControlCenterScreen(
         AdminMenuEntry("audit", "Audit log", "Every admin change with time and account", Icons.Outlined.History, Color(0xFF546E7A)),
         AdminMenuEntry("power", "Power tools", "Broadcast push, live switches, reminders, typing sound", Icons.Outlined.Bolt, Color(0xFFFF6D00)),
         AdminMenuEntry("cloud_db", "Cloud backup", "Text messages in Cloudflare D1 · on/off · test", Icons.Outlined.Cloud, Color(0xFFF38020), if (cloudDbOn) "ON" else ""),
-        AdminMenuEntry("web_deploy", "Web app deploy", "Publish the browser app with one Cloudflare token", Icons.Outlined.Language, Color(0xFF0B84F3), viewModel.webDeployState.collectAsState().value.siteUrl.takeIf { it.isNotBlank() }?.let { "LIVE" } ?: ""),
         AdminMenuEntry("ai_autoreply", "AI auto-reply (admin)", "AI answers messages sent to you — server side", Icons.Outlined.SmartToy, Color(0xFF7C4DFF)),
         AdminMenuEntry("ai_providers", "AI providers & keys", "Update keys, test models, custom providers, hide AI", Icons.Outlined.Key, Color(0xFF7A4FE0)),
         AdminMenuEntry("workers", "Smart worker pool", "3-4 workers all active: weighted random + automatic failover", Icons.Outlined.Hub, Color(0xFF2B7FD9)),
@@ -479,6 +479,26 @@ fun AdminControlCenterScreen(
                 when (selectedPage) {
                     "copilot" -> AdminAiCopilotPanel(viewModel, onOpenUser = { selectedAdminUser = it })
                     "web_promo" -> AdminPanelCard("Web version card", "Address, benefits and where the card is shown", Icons.Outlined.Language) { AdminWebPromoPanel(viewModel) }
+                    "design" -> AdminPanelCard("App design & media", "Defaults for every user", Icons.Outlined.AutoAwesome) {
+                        Text("Default design", fontWeight = FontWeight.Bold)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            listOf("classic" to "Old (classic)", "new" to "New (liquid glass)").forEach { (key, label) ->
+                                FilterChip(
+                                    selected = flagshipConfig.defaultDesignStyle == key || (key == "classic" && flagshipConfig.defaultDesignStyle != "new"),
+                                    onClick = { viewModel.updateFlagshipFields(mapOf("defaultDesignStyle" to key)) { ok -> Toast.makeText(context, if (ok) "Default design: $label" else "Could not save", Toast.LENGTH_SHORT).show() } },
+                                    label = { Text(label) }
+                                )
+                            }
+                        }
+                        AdminInlineInfo("Users who picked a design themselves in Settings keep their own choice.")
+                        AdminSwitchRow(
+                            "Delete photos from the server after delivery",
+                            "When the other person's phone has saved a chat photo, the copy on the server is removed. Both phones keep their own copy. A new phone or a reinstall cannot download those photos again.",
+                            flagshipConfig.deleteDeliveredMedia,
+                            { on -> viewModel.updateFlagshipFields(mapOf("deleteDeliveredMedia" to on)) { ok -> Toast.makeText(context, if (ok) (if (on) "Photos are removed from the server after delivery" else "Photos stay on the server") else "Could not save", Toast.LENGTH_SHORT).show() } }
+                        )
+                    }
+                    "promotions" -> AdminPanelCard("App promotions", "Add your apps: picture, name, short text and download link", Icons.Outlined.Campaign) { AdminPromotionsPanel(viewModel) }
                     "audio" -> AdminPanelCard("Audio library", "One switch for everyone, plus the API configuration", Icons.Outlined.LibraryMusic) { AdminAudioLibraryPanel(viewModel) }
                     "users" -> {
                         val now = System.currentTimeMillis()

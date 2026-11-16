@@ -1,3 +1,17 @@
+• NEW 5.7 — App design switch: Settings → Design → "App design" changes the whole app between the Old (classic, your own theme) and the New (dark liquid glass) design. The admin picks the default for everyone in Admin → App design & media.
+• Chats tab rebuilt: the search box now lives in the top bar; "Tools & filters" became one slim row (All · Unread · Archived · Locked · Saved · Calls · Find in chats · Find friends); notes are always visible in one strip together with who is online.
+• Notes: add a sound to your note (tap to play), react to a friend's note with an emoji or write a reply — both arrive in your chat with that person.
+• Post photos: several photos slide by themselves while you scroll; tap a photo for a full-screen viewer you can swipe and zoom.
+• NEW (admin): App promotions — add your apps (picture, name, short text, download link) and switch the shelf on or off. Users see a swipeable, animated store-style shelf in the feed; Download opens the link.
+• NEW (admin, off by default): delete chat photos from the server once the other phone has saved them. Both phones keep their own copy.
+• Comment box redesigned: quick emoji row, one glass pill with an animated send button, clearer "replying to" bar.
+• Message menu redesigned: the pressed text with a one-tap Copy on top, reactions in one row (stickers behind "+"), colour-coded actions.
+• Long message? An expand button opens a full-screen writing page. Unsent text shows as "Draft:" in the chat list.
+• Chat bubbles: 3 new styles (Aurora, Inner glow, Candy stripe). Video calls: 10 new filters (Lavender, Mint, Peach, Arctic, Retro 90s, Moody, Candy, HDR pop, Soft fade, Cocoa).
+• Video call: your own small preview is now a proper portrait frame — no more picture inside black bars.
+• Incoming call notification shows the caller's picture and name.
+• Times read naturally: "1 hr 5 min" instead of "65 min", in last seen, reminders and notifications. The green online dot reacts within 5 seconds.
+• The web (browser) version has been removed from the app.
 • NEW LOOK 5.6 — "dark liquid glass": flowing violet and blue glass on deep black, a glossy app tile, the two-tone Convo Chat wordmark and a live waveform.
 • Launch screen redesigned in the new look: wide glowing progress bar and a frosted card with Connect · Secure · Sync.
 • Sign-in screen (dark look): liquid-glass background, glass app tile with an orbit ring and the new wordmark. The light "Milk glass" look is unchanged.

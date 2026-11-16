@@ -17,7 +17,15 @@ import androidx.compose.ui.graphics.luminance
 
 /** App-wide aurora canvas. Keeps every route visually connected to one design language. */
 @Composable
-fun PremiumBackground(modifier: Modifier = Modifier, content: @Composable BoxScope.() -> Unit) {
+fun PremiumBackground(modifier: Modifier = Modifier, liquid: Boolean = false, content: @Composable BoxScope.() -> Unit) {
+    if (liquid) {
+        // "New design": the dark liquid-glass backdrop sits behind every page.
+        Box(modifier.fillMaxSize().background(com.example.ui.LiquidInk)) {
+            com.example.ui.LiquidGlassBackground(beads = false)
+            content()
+        }
+        return
+    }
     val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
     val base = MaterialTheme.colorScheme.background
     val gradient = Brush.linearGradient(

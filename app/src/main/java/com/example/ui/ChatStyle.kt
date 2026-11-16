@@ -83,7 +83,7 @@ data class ChatAppearance(
         SimpleDateFormat(if (use24h) "HH:mm" else "hh:mm a", Locale.getDefault()).format(Date(timestamp))
 
     companion object {
-        val STYLES = listOf("auto", "liquid", "neon", "gradient", "frosted", "depth", "outline", "solid", "minimal")
+        val STYLES = listOf("auto", "liquid", "neon", "gradient", "frosted", "depth", "aurora", "glow", "candy", "outline", "solid", "minimal")
         val ANIMATIONS = listOf("none", "fade", "slide", "pop", "bounce", "swing")
         fun animationLabel(id: String) = when (id) {
             "none" -> "Off"
@@ -104,6 +104,9 @@ data class ChatAppearance(
             "outline" -> "Outline"
             "solid" -> "Solid"
             "minimal" -> "No border"
+            "aurora" -> "Aurora"
+            "glow" -> "Inner glow"
+            "candy" -> "Candy stripe"
             else -> style
         }
     }
@@ -261,6 +264,19 @@ fun Modifier.chatBubble(style: String, shape: Shape, palette: BubblePalette, app
                     cornerRadius = CornerRadius(2.dp.toPx())
                 )
             }
+        // v5.7 styles
+        "aurora" -> m.background(Brush.linearGradient(listOf(lerpColor(palette.fill, Color(0xFF39C8FF), .45f), palette.fill, lerpColor(palette.fill, Color(0xFFB45CFF), .5f), lerpColor(palette.fill, Color(0xFFFF6FB5), .4f))))
+        "glow" -> m.background(palette.fill).drawBehind {
+            drawRect(Brush.radialGradient(listOf(Color.White.copy(alpha = .30f), Color.Transparent), center = Offset(size.width * .22f, 0f), radius = size.maxDimension * .8f))
+        }
+        "candy" -> m.background(Brush.linearGradient(listOf(palette.fillTop, palette.fill))).drawBehind {
+            val step = 14.dp.toPx()
+            var x = -size.height
+            while (x < size.width) {
+                drawLine(Color.White.copy(alpha = .09f), Offset(x, size.height), Offset(x + size.height, 0f), strokeWidth = step * .45f)
+                x += step
+            }
+        }
         "frosted" -> m.background(palette.fill)
             .background(Brush.verticalGradient(listOf(Color.White.copy(alpha = .16f), Color.Transparent, Color.White.copy(alpha = .05f))))
         else -> m.background(palette.fill)

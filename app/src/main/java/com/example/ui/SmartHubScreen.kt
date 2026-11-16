@@ -46,7 +46,6 @@ private val HUB_ACTIONS = listOf(
     HubAction("AI Studio", "Rewrite, translate, captions", Icons.Default.AutoFixHigh, Color(0xFF36D8E6), "ai_studio", "studio rewrite translate caption grammar bio summary অনুবাদ"),
     HubAction("New post", "Share a photo, video or thought", Icons.Default.AddBox, Color(0xFFFF6FB5), "compose_post", "post create share upload story পোস্ট"),
     HubAction("Scan / my QR", "Add people with a QR code", Icons.Default.QrCodeScanner, Color(0xFF19C37D), "qr_contacts", "qr scan code add contact friend কিউআর"),
-    HubAction("Link a computer", "Sign in on the web with QR", Icons.Default.Computer, Color(0xFF3AA0FF), "device_login", "web pc computer browser device login linked ওয়েব"),
     HubAction("Premium", "Plans and benefits", Icons.Default.WorkspacePremium, Color(0xFFE2A93B), "premium", "premium plan pay upgrade vip প্রিমিয়াম"),
     HubAction("What's new", "Everything in this update", Icons.Default.NewReleases, Color(0xFFB07CFF), "whats_new", "new update changes release notes আপডেট")
 )

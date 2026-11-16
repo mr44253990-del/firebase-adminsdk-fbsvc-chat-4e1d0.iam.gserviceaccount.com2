@@ -154,9 +154,11 @@ fun ChatScreen(
     val updatedRecipient = users.find { it.uid == recipient.uid } ?: recipient
 
     val chatDraftPrefs = remember(context) { context.getSharedPreferences("chat_drafts", Context.MODE_PRIVATE) }
+    var showExpandedComposer by remember { mutableStateOf(false) }
     var messageText by remember(recipient.uid) {
         mutableStateOf(chatDraftPrefs.getString("draft_${recipient.uid}", "") ?: "")
     }
+    if (showExpandedComposer) ExpandedComposerDialog(messageText, "Message to ${recipient.name.substringBefore(' ')}", onText = { messageText = it }, onDismiss = { showExpandedComposer = false })
     var showAttachmentMenu by remember { mutableStateOf(false) }
     var showAiWrite by remember { mutableStateOf(false) }
     var showScheduleDialog by remember { mutableStateOf(false) }
@@ -468,6 +470,7 @@ fun ChatScreen(
                     preview = uri.toString()
                 ) { lateUrl -> viewModel.sendMessage(recipientUser = recipient, text = "", imageUrl = lateUrl) }
                 if (url != null) {
+                    com.example.data.LocalImageStore.save(context, url, bytes)
                     viewModel.sendMessage(
                         recipientUser = recipient,
                         text = "",
@@ -1286,6 +1289,7 @@ fun ChatScreen(
                                 viewModel.acknowledgeVoicePlayed(msg.messageId, msg.remoteVoiceUrl)
                             },
                             onFileConsumed = { viewModel.acknowledgeFileConsumed(msg.messageId, msg.remoteFileUrl) },
+                            onImageDelivered = { url -> viewModel.acknowledgeImageDelivered(url) },
                             onForward = { forwardingMessage = msg },
                             onSaveMessage = { val saved = SavedMessages.toggle(context, msg, recipient.uid, recipient.name); Toast.makeText(context, if (saved) "Saved on this device" else "Removed from Saved", Toast.LENGTH_SHORT).show() },
                             onPinMessage = { if (PinnedMessages.get(context, recipient.uid)?.id == msg.messageId) PinnedMessages.unpin(context, recipient.uid) else PinnedMessages.pin(context, recipient.uid, msg) },
@@ -1642,6 +1646,12 @@ fun ChatScreen(
                     }
 
                     if (!isRecording) {
+                        // Long message? Open the full-screen writing page.
+                        if (messageText.length > 60 || messageText.count { it == '\n' } >= 2) {
+                            IconButton(onClick = { showExpandedComposer = true }, modifier = Modifier.size(36.dp)) {
+                                Icon(Icons.Default.OpenInFull, "Write in full screen", tint = composerAccent, modifier = Modifier.size(19.dp))
+                            }
+                        }
                         Spacer(modifier = Modifier.width(6.dp))
                         if (hasText || editingMessage != null) {
                             IconButton(
@@ -2109,6 +2119,7 @@ fun MessageBubbleItem(
     onRetry: () -> Unit = {},
     onVoicePlayed: () -> Unit,
     onFileConsumed: () -> Unit,
+    onImageDelivered: (String) -> Unit = {},
     onForward: () -> Unit,
     onTranslate: (Message) -> Unit = {},
     onSaveMessage: () -> Unit = {},
@@ -2145,6 +2156,18 @@ fun MessageBubbleItem(
     val isStickerOnly = ConvoStickers.isSticker(message.text) && message.imageUrl.isNullOrBlank() && message.voiceUrl.isNullOrBlank() && message.fileUrl.isNullOrBlank()
 
     val timeString = remember(message.timestamp, appearance.use24h) { appearance.formatTime(message.timestamp) }
+    // "Delete photos from the server after delivery" (admin switch): once THIS phone — the
+    // receiver — has its own copy, the server copy is removed. The sender kept its copy at upload.
+    val deleteDelivered by com.example.data.LocalImageStore.deleteAfterDelivery.collectAsState()
+    LaunchedEffect(message.messageId, message.imageUrl, deleteDelivered) {
+        val img = message.imageUrl
+        if (deleteDelivered && img != null && img.startsWith("http")) {
+            // Both sides first make sure they hold their own copy; only the receiver then asks
+            // for the server copy to be removed.
+            val saved = com.example.data.LocalImageStore.download(context, img)
+            if (saved && !isSentByMe) onImageDelivered(img)
+        }
+    }
     LaunchedEffect(message.messageId, message.imageUrl, autoSaveAllowed) {
         val img = message.imageUrl
         if (autoSaveAllowed && !isSentByMe && img != null && img.startsWith("http")) {
@@ -2152,7 +2175,7 @@ fun MessageBubbleItem(
         }
     }
     if (showImageViewer && !message.imageUrl.isNullOrBlank()) {
-        FullScreenChatImage(message.imageUrl, onDismiss = { showImageViewer = false })
+        FullScreenChatImage(com.example.data.LocalImageStore.existing(context, message.imageUrl)?.let { android.net.Uri.fromFile(it).toString() } ?: message.imageUrl, onDismiss = { showImageViewer = false })
     }
     if (showSelectText && message.text.isNotBlank()) {
         SelectableMessageDialog(message.text, "", onDismiss = { showSelectText = false })
@@ -2437,29 +2460,45 @@ fun MessageBubbleItem(
         DropdownMenu(
             expanded = showMenu && !selectionMode,
             onDismissRequest = { showMenu = false },
-            modifier = Modifier.background(MaterialTheme.colorScheme.surface)
+            modifier = Modifier.background(MaterialTheme.colorScheme.surface).widthIn(min = 290.dp)
         ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(8.dp),
-                horizontalArrangement = Arrangement.SpaceEvenly
-            ) {
-                listOf("❤️", "😂", "😮", "😢", "👍").forEach { emoji ->
-                    Text(
-                        text = emoji,
-                        fontSize = 24.sp,
-                        modifier = Modifier
-                            .clickable {
-                                onReactSelect(emoji)
-                                showMenu = false
-                            }
-                            .padding(4.dp)
-                    )
+            // v5.7 menu: what you pressed + one-tap Copy on top, reactions in one pill, stickers
+            // behind "+", then colour-coded actions.
+            var moreStickers by remember { mutableStateOf(false) }
+            val copyNow = {
+                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                clipboard.setPrimaryClip(ClipData.newPlainText("Convo Chat message", message.text))
+                Toast.makeText(context, "Copied", Toast.LENGTH_SHORT).show()
+                showMenu = false
+            }
+            if (message.text.isNotBlank() && !isStickerOnly) {
+                Row(
+                    Modifier.widthIn(min = 280.dp).fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp).clip(RoundedCornerShape(18.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .6f)).clickable { copyNow() }.padding(start = 12.dp, end = 6.dp, top = 8.dp, bottom = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(message.text, fontSize = 13.sp, maxLines = 2, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.weight(1f))
+                    Spacer(Modifier.width(8.dp))
+                    Row(Modifier.clip(CircleShape).background(MaterialTheme.colorScheme.primary).padding(horizontal = 12.dp, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.ContentCopy, null, tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(15.dp))
+                        Spacer(Modifier.width(5.dp))
+                        Text(tr("Copy"), color = MaterialTheme.colorScheme.onPrimary, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    }
                 }
             }
-            Text(tr("Convo stickers"), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 12.dp))
-            ConvoStickers.all.chunked(5).forEach { rowStickers ->
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 4.dp).clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .6f)).padding(horizontal = 6.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically
+            ) {
+                listOf("❤️", "😂", "😮", "😢", "👍", "🔥").forEach { emoji ->
+                    Text(emoji, fontSize = 25.sp, modifier = Modifier.clip(CircleShape).clickable { onReactSelect(emoji); showMenu = false }.padding(5.dp))
+                }
+                Box(Modifier.size(34.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary.copy(alpha = .16f)).clickable { moreStickers = !moreStickers }, contentAlignment = Alignment.Center) {
+                    Icon(if (moreStickers) Icons.Default.ExpandLess else Icons.Default.Add, "More stickers", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(19.dp))
+                }
+            }
+            if (moreStickers) ConvoStickers.all.chunked(5).forEach { rowStickers ->
                 Row(Modifier.fillMaxWidth().padding(horizontal = 6.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
                     rowStickers.forEach { sticker ->
                         Box(
@@ -2472,30 +2511,21 @@ fun MessageBubbleItem(
                     }
                 }
             }
-            // Quick actions — one tap, big targets.
             Row(
                 Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
                 horizontalArrangement = Arrangement.SpaceEvenly
             ) {
-                MenuQuickAction(Icons.Default.Reply, "Reply") { onReplySelect(); showMenu = false }
-                if (message.text.isNotBlank()) {
-                    MenuQuickAction(Icons.Default.ContentCopy, "Copy") {
-                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                        clipboard.setPrimaryClip(ClipData.newPlainText("Convo Chat message", message.text))
-                        Toast.makeText(context, "Copied", Toast.LENGTH_SHORT).show()
-                        showMenu = false
-                    }
-                }
-                MenuQuickAction(Icons.AutoMirrored.Filled.Forward, "Forward") { showMenu = false; onForward() }
+                MenuQuickAction(Icons.Default.Reply, "Reply", Color(0xFF3AA0FF)) { onReplySelect(); showMenu = false }
+                MenuQuickAction(Icons.AutoMirrored.Filled.Forward, "Forward", Color(0xFF19C37D)) { showMenu = false; onForward() }
                 if (isSentByMe && message.text.isNotBlank() && !isStickerOnly) {
-                    MenuQuickAction(Icons.Default.Edit, "Edit") { onEditSelect(); showMenu = false }
+                    MenuQuickAction(Icons.Default.Edit, "Edit", Color(0xFFFFB03A)) { onEditSelect(); showMenu = false }
                 }
+                MenuQuickAction(if (isMessageSaved) Icons.Default.Bookmark else Icons.Default.BookmarkBorder, if (isMessageSaved) "Unsave" else "Save", Color(0xFFFF6FB5)) { onSaveMessage(); showMenu = false }
             }
             Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
-                MenuQuickAction(if (isMessageSaved) Icons.Default.Bookmark else Icons.Default.BookmarkBorder, if (isMessageSaved) "Unsave" else "Save") { onSaveMessage(); showMenu = false }
-                MenuQuickAction(Icons.Default.PushPin, "Pin") { onPinMessage(); showMenu = false }
-                MenuQuickAction(Icons.Default.NotificationsActive, "Remind") { onRemindMessage(); showMenu = false }
-                MenuQuickAction(Icons.Default.Checklist, "Select") { onSelectMessage(); showMenu = false }
+                MenuQuickAction(Icons.Default.PushPin, "Pin", Color(0xFF8B7BFF)) { onPinMessage(); showMenu = false }
+                MenuQuickAction(Icons.Default.NotificationsActive, "Remind", Color(0xFFFF8A3D)) { onRemindMessage(); showMenu = false }
+                MenuQuickAction(Icons.Default.Checklist, "Select", Color(0xFF2DD4BF)) { onSelectMessage(); showMenu = false }
             }
             HorizontalDivider(Modifier.padding(horizontal = 12.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = .5f))
             if (message.text.isNotBlank()) {
@@ -2526,15 +2556,15 @@ fun MessageBubbleItem(
 }
 
 @Composable
-private fun MenuQuickAction(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, onClick: () -> Unit) {
+private fun MenuQuickAction(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, accent: Color = Color(0xFF8B7BFF), onClick: () -> Unit) {
     Column(
         Modifier.clip(RoundedCornerShape(14.dp)).clickable(onClick = onClick).padding(horizontal = 8.dp, vertical = 6.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Box(
-            Modifier.size(40.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary.copy(alpha = .12f)),
+            Modifier.size(42.dp).clip(RoundedCornerShape(15.dp)).background(accent.copy(alpha = .16f)).border(1.dp, accent.copy(alpha = .3f), RoundedCornerShape(15.dp)),
             contentAlignment = Alignment.Center
-        ) { Icon(icon, label, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp)) }
+        ) { Icon(icon, label, tint = accent, modifier = Modifier.size(20.dp)) }
         Spacer(Modifier.height(3.dp))
         Text(label, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface)
     }
@@ -2741,13 +2771,7 @@ private fun GenericFileBubble(message: Message, onConsumed: () -> Unit, accent: 
 
 private fun formatLastSeen(lastActive: Long): String {
     if (lastActive <= 0L) return "Offline"
-    val minutes = ((System.currentTimeMillis() - lastActive).coerceAtLeast(0L) / 60_000L)
-    return when {
-        minutes < 1 -> "Last seen just now"
-        minutes < 60 -> "Last seen ${minutes}m ago"
-        minutes < 24 * 60 -> "Last seen ${minutes / 60}h ago"
-        else -> "Last seen ${SimpleDateFormat("dd MMM, hh:mm a", Locale.getDefault()).format(Date(lastActive))}"
-    }
+    return "Last seen " + SmartTime.ago(lastActive)
 }
 
 @Composable

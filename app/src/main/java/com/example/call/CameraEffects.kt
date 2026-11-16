@@ -19,7 +19,11 @@ enum class CallFilter(val label: String, val emoji: String) {
     // v5.0 looks, modelled on the popular Google Photos / Meet styles.
     PORTRAIT("Portrait light", "💡"), GOLDEN("Golden hour", "🌇"), ROSE("Bloom", "🌷"), FILM("Film", "🎞️"),
     DRAMA("Drama", "🎭"), NOIR("Noir", "🎬"), PASTEL("Pastel", "🍬"), OCEAN("Ocean", "🌊"),
-    EMERALD("Emerald", "🌿"), SUNSET("Sunset", "🔥"), CYBER("Neon 2050", "🪩"), CRISP("Crisp HD", "🔎")
+    EMERALD("Emerald", "🌿"), SUNSET("Sunset", "🔥"), CYBER("Neon 2050", "🪩"), CRISP("Crisp HD", "🔎"),
+    // v5.7 looks
+    LAVENDER("Lavender", "💜"), MINT("Mint", "🍃"), PEACH("Peach", "🍑"), ARCTIC("Arctic", "🧊"),
+    RETRO("Retro 90s", "📼"), MOODY("Moody", "🌫️"), CANDY("Candy", "🍭"), HDR("HDR pop", "⚡"),
+    FADE("Soft fade", "☁️"), COCOA("Cocoa", "☕")
 }
 
 /**
@@ -92,6 +96,16 @@ class CallFilterProcessor : VideoProcessor {
         CallFilter.SUNSET -> saturate(12, -14, 22)
         CallFilter.CYBER -> saturate(16, 14, 10)
         CallFilter.CRISP -> saturate(12, 0, 0)
+        CallFilter.LAVENDER -> saturate(9, 12, 8)
+        CallFilter.MINT -> saturate(10, -6, -12)
+        CallFilter.PEACH -> saturate(10, -10, 14)
+        CallFilter.ARCTIC -> saturate(7, 18, -8)
+        CallFilter.RETRO -> saturate(7, -12, 10)
+        CallFilter.MOODY -> saturate(6, 6, -4)
+        CallFilter.CANDY -> saturate(15, 6, 12)
+        CallFilter.HDR -> saturate(14, 0, 0)
+        CallFilter.FADE -> saturate(7, 0, 2)
+        CallFilter.COCOA -> saturate(5, -10, 12)
         else -> ({ b: Byte -> b }) to ({ b: Byte -> b })
     }
 
@@ -123,6 +137,16 @@ class CallFilterProcessor : VideoProcessor {
         CallFilter.SUNSET -> curve(.4, gamma = 1.05)
         CallFilter.CYBER -> curve(.7, gamma = .95)
         CallFilter.CRISP -> curve(.5, gamma = .96)
+        CallFilter.LAVENDER -> curve(.15, lift = 16, gamma = .92)
+        CallFilter.MINT -> curve(.2, lift = 10, gamma = .94)
+        CallFilter.PEACH -> curve(.12, lift = 14, gamma = .88)
+        CallFilter.ARCTIC -> curve(.35, lift = 6, gamma = .9)
+        CallFilter.RETRO -> curve(.3, lift = 26)
+        CallFilter.MOODY -> curve(.6, lift = 4, gamma = 1.15)
+        CallFilter.CANDY -> curve(.25, lift = 8, gamma = .9)
+        CallFilter.HDR -> curve(1.0, gamma = .9)
+        CallFilter.FADE -> curve(-.2, lift = 30, gamma = .92)
+        CallFilter.COCOA -> curve(.35, lift = 10, gamma = 1.02)
         // Lifts shadows and softens contrast for a flattering "glow".
         CallFilter.BEAUTY -> ByteArray(256) { i -> clamp((i * 0.86 + 30).toInt()) }
         // Gamma brighten for dark rooms.

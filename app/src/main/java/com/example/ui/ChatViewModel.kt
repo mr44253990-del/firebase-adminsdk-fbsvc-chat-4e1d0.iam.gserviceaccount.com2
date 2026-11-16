@@ -221,7 +221,7 @@ private class ProgressUriRequestBody(
     }
 }
 
-data class UserNote(val text: String = "", val updatedAt: Long = 0L)
+data class UserNote(val text: String = "", val updatedAt: Long = 0L, val audioUrl: String = "", val audioTitle: String = "", val audioArtist: String = "")
 
 class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -1739,24 +1739,31 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             noteListeners[uid] = FirebaseFirestore.getInstance().collection("user_notes").document(uid)
                 .addSnapshotListener { doc, error ->
                     if (error != null) return@addSnapshotListener
-                    val note = if (doc?.exists() == true) UserNote(doc.getString("note").orEmpty().take(80), doc.getLong("noteAt") ?: 0L) else UserNote()
+                    val note = if (doc?.exists() == true) UserNote(
+                        doc.getString("note").orEmpty().take(80), doc.getLong("noteAt") ?: 0L,
+                        doc.getString("audioUrl").orEmpty(), doc.getString("audioTitle").orEmpty(), doc.getString("audioArtist").orEmpty()
+                    ) else UserNote()
                     _friendNotesState.value = _friendNotesState.value + (uid to note)
                 }
         }
     }
 
     /** Update a short-lived note stored separately so Firestore rules can enforce friend-only reads. */
-    fun publishNote(text: String, onComplete: (Boolean) -> Unit = {}) {
+    fun publishNote(text: String, audio: com.example.data.AudioTrack? = null, onComplete: (Boolean) -> Unit = {}) {
         val user = FirebaseAuth.getInstance().currentUser ?: return onComplete(false)
         val clean = text.trim().take(80)
         val at = if (clean.isBlank()) 0L else System.currentTimeMillis()
-        FirebaseFirestore.getInstance().collection("user_notes").document(user.uid)
-            .set(mapOf("note" to clean, "noteAt" to at), SetOptions.merge())
-            .addOnSuccessListener {
-                _friendNotesState.value = _friendNotesState.value + (user.uid to UserNote(clean, at))
-                onComplete(true)
+        val ref = FirebaseFirestore.getInstance().collection("user_notes").document(user.uid)
+        val plain = mapOf("note" to clean, "noteAt" to at)
+        val sound = audio?.takeIf { clean.isNotBlank() && it.url.startsWith("http") }
+        val withSound = plain + mapOf("audioUrl" to sound?.url.orEmpty().take(600), "audioTitle" to sound?.title.orEmpty().take(80), "audioArtist" to sound?.artist.orEmpty().take(80))
+        fun done(saved: UserNote) { _friendNotesState.value = _friendNotesState.value + (user.uid to saved); onComplete(true) }
+        // A note with a sound uses three extra fields. If the server still has the older security
+        // rules (which only allow the two original fields) the note is saved without the sound.
+        ref.set(withSound).addOnSuccessListener { done(UserNote(clean, at, sound?.url.orEmpty(), sound?.title.orEmpty(), sound?.artist.orEmpty())) }
+            .addOnFailureListener {
+                ref.set(plain).addOnSuccessListener { done(UserNote(clean, at)) }.addOnFailureListener { onComplete(false) }
             }
-            .addOnFailureListener { onComplete(false) }
     }
 
     fun submitFeatureRequest(title: String, description: String, onComplete: (Boolean) -> Unit = {}) {
@@ -2900,7 +2907,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         presenceTicker?.cancel()
         presenceTicker = viewModelScope.launch {
             while (true) {
-                kotlinx.coroutines.delay(20_000L)
+                kotlinx.coroutines.delay(5_000L) // v5.7: was 20 s — the green dot now reacts within 5 s
                 if (rawPresence.isNotEmpty()) applyPresence()
             }
         }
@@ -4654,6 +4661,18 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     withContext(Dispatchers.Main) { onSuccess(publicUrl) }
                 }
             } catch (e: Throwable) { withContext(Dispatchers.Main) { onFailure(e.localizedMessage ?: "File upload failed") } }
+        }
+    }
+
+    private val deliveredImageDeletes = java.util.Collections.newSetFromMap(java.util.concurrent.ConcurrentHashMap<String, Boolean>())
+
+    /** The receiver's phone has saved this chat photo: remove the server copy (admin switch). */
+    fun acknowledgeImageDelivered(remoteUrl: String) {
+        if (!_flagshipConfig.value.deleteDeliveredMedia || !remoteUrl.startsWith("http") || !deliveredImageDeletes.add(remoteUrl)) return
+        viewModelScope.launch(Dispatchers.IO) {
+            if (com.example.data.LocalImageStore.existing(getApplication(), remoteUrl) == null) { deliveredImageDeletes.remove(remoteUrl); return@launch }
+            val removed = runCatching { deleteSupabaseObject(remoteUrl) }.getOrDefault(false)
+            if (!removed) deliveredImageDeletes.remove(remoteUrl)
         }
     }
 

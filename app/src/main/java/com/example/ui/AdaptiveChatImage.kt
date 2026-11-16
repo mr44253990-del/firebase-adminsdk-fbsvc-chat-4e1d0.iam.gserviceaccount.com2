@@ -39,6 +39,9 @@ fun AdaptiveChatImage(
     modifier: Modifier = Modifier,
     corner: Dp = 18.dp
 ) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    // Prefer the copy saved on this phone (it keeps working after the server copy is removed).
+    val model: Any = remember(url) { com.example.data.LocalImageStore.existing(context, url) ?: url }
     var ratio by remember(url) { mutableFloatStateOf(imageRatioCache[url] ?: 0f) }
     // Until the size is known use a gentle 4:3 placeholder; extremes are clamped so a very long
     // screenshot or panorama cannot take over the whole screen.
@@ -49,7 +52,7 @@ fun AdaptiveChatImage(
         else -> 300.dp              // landscape
     }
     AsyncImage(
-        model = url,
+        model = model,
         contentDescription = "Image attachment",
         contentScale = ContentScale.Crop,
         onSuccess = { state ->
