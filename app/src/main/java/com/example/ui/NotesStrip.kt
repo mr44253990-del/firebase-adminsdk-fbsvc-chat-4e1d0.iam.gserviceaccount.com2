@@ -166,7 +166,7 @@ fun NotesStrip(
                 var reacted by remember(note.updatedAt) { mutableStateOf("") }
                 var reply by remember(note.updatedAt) { mutableStateOf("") }
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    listOf("❤️", "😂", "😮", "😢", "🔥", "👍").forEach { emoji ->
+                    listOf("❤️", "😂", "😢", "🔥", "👍", "🥰", "😍", "🤣").forEach { emoji ->
                         Box(
                             Modifier.size(40.dp).graphicsLayer { val s = if (reacted == emoji) 1.25f else 1f; scaleX = s; scaleY = s }
                                 .clip(CircleShape).background(Color.White.copy(alpha = if (reacted == emoji) .38f else .18f))

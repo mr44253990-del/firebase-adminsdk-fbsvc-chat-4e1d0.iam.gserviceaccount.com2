@@ -45,7 +45,9 @@ import com.google.firebase.firestore.SetOptions
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlin.math.absoluteValue
 
 /** One promoted app: picture, name, a short line and where "Download" leads. */
@@ -205,6 +207,21 @@ fun AdminPromotionsPanel(viewModel: ChatViewModel) {
                     OutlinedTextField(title, { title = it.take(40) }, label = { Text("App name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                     OutlinedTextField(subtitle, { subtitle = it.take(90) }, label = { Text("Short description") }, maxLines = 2, modifier = Modifier.fillMaxWidth())
                     OutlinedTextField(link, { link = it.trim().take(300) }, label = { Text("Download link (https://…)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    val apkPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+                        if (uri != null) {
+                            uploading = true
+                            scope.launch {
+                                val bytes = withContext(Dispatchers.IO) { runCatching { context.contentResolver.openInputStream(uri).use { it?.readBytes() } }.getOrNull() }
+                                if (bytes == null) { uploading = false; Toast.makeText(context, "Could not read that APK", Toast.LENGTH_SHORT).show() }
+                                else viewModel.uploadFileToSupabase("chat_files", "promo_${System.currentTimeMillis()}.apk", bytes, "application/vnd.android.package-archive",
+                                    onSuccess = { url -> link = url; uploading = false; Toast.makeText(context, "APK uploaded — download link set", Toast.LENGTH_SHORT).show() },
+                                    onFailure = { uploading = false; Toast.makeText(context, "Upload failed: $it", Toast.LENGTH_LONG).show() })
+                            }
+                        }
+                    }
+                    OutlinedButton(enabled = !uploading, onClick = { apkPicker.launch(arrayOf("application/vnd.android.package-archive")) }, shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()) {
+                        Icon(Icons.Default.UploadFile, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text(if (uploading) "Uploading APK…" else "Upload APK here")
+                    }
                     OutlinedTextField(badge, { badge = it.take(10) }, label = { Text("Badge (optional: NEW, FREE…)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 }
             },

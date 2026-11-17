@@ -378,11 +378,9 @@ fun HomeScreen(
         contentWindowInsets = androidx.compose.foundation.layout.WindowInsets(0, 0, 0, 0),
         topBar = {
             if (currentTab != 6) {
-                AnimatedVisibility(
-                    visible = currentTab != 1 || !chatChromeCollapsed,
-                    enter = expandVertically(expandFrom = Alignment.Top) + fadeIn() + slideInVertically { -it / 3 },
-                    exit = shrinkVertically(shrinkTowards = Alignment.Top) + fadeOut() + slideOutVertically { -it / 3 }
-                ) {
+                // v5.8: the top bar (search box) always stays in place while scrolling; only the
+                // notes / quick tools header below it collapses.
+                Column(Modifier.fillMaxWidth()) {
                     Column(modifier = Modifier.fillMaxWidth()) {
                 // WiFi Offline Mode indicator banner
                 if (!isOnlineState) {
@@ -595,9 +593,6 @@ fun HomeScreen(
                     )
                 )
                     }
-                }
-                if (currentTab == 1 && chatChromeCollapsed) {
-                    Spacer(Modifier.fillMaxWidth().windowInsetsTopHeight(androidx.compose.foundation.layout.WindowInsets.statusBars))
                 }
             }
         },

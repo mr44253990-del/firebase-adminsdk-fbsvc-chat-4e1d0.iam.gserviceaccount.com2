@@ -36,6 +36,12 @@ import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
 import com.example.data.Post
 import kotlinx.coroutines.delay
+import android.app.DownloadManager
+import android.content.Context
+import android.net.Uri
+import android.os.Environment
+import android.widget.Toast
+import androidx.compose.ui.platform.LocalContext
 
 /**
  * While a multi-photo post is the one in view, its photos turn by themselves (like a photo
@@ -98,6 +104,7 @@ fun PostGalleryViewer(post: Post, images: List<String>, startIndex: Int, onDismi
     val pager = rememberPagerState(initialPage = startIndex.coerceIn(0, (images.size - 1).coerceAtLeast(0)), pageCount = { images.size })
     var chrome by remember { mutableStateOf(true) }
     var captionOpen by remember { mutableStateOf(false) }
+    val context = LocalContext.current
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
         Box(Modifier.fillMaxSize().background(Color.Black)) {
             HorizontalPager(state = pager, modifier = Modifier.fillMaxSize(), beyondViewportPageCount = 1) { page ->
@@ -146,6 +153,21 @@ fun PostGalleryViewer(post: Post, images: List<String>, startIndex: Int, onDismi
                         modifier = Modifier.clip(CircleShape).background(Color.White.copy(alpha = .16f)).padding(horizontal = 11.dp, vertical = 5.dp)
                     )
                     Spacer(Modifier.width(8.dp))
+                    val downloading = remember { mutableStateOf(false) }
+                    IconButton(
+                        onClick = {
+                            val url = images[pager.currentPage]
+                            if (!url.startsWith("http")) { Toast.makeText(context, "Photo is already saved", Toast.LENGTH_SHORT).show(); return@IconButton }
+                            downloading.value = true
+                            val request = DownloadManager.Request(Uri.parse(url))
+                                .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+                                .setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, "Convo_${System.currentTimeMillis()}.jpg")
+                            (context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager).enqueue(request)
+                            downloading.value = false
+                            Toast.makeText(context, "Download started", Toast.LENGTH_SHORT).show()
+                        },
+                        modifier = Modifier.background(Color.Black.copy(alpha = .45f), CircleShape).size(38.dp)
+                    ) { if (downloading.value) CircularProgressIndicator(Modifier.size(16.dp), color = Color.White, strokeWidth = 2.dp) else Icon(Icons.Default.Download, "Download", modifier = Modifier.size(19.dp), tint = Color.White) }
                 }
                 Column(
                     Modifier.align(Alignment.BottomCenter).fillMaxWidth()

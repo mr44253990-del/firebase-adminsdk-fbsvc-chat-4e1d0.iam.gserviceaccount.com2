@@ -8,6 +8,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -24,6 +25,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
+
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -58,8 +60,8 @@ fun CompactTopSearch(query: String, onQuery: (String) -> Unit, placeholder: Stri
 }
 
 /**
- * One slim, sideways-scrolling row that replaces the old "Tools & filters" card: chat filters
- * first, then the tools as small glass pills.
+ * One compact row that replaces the old "Tools & filters" card. Every item is just an icon
+ * (no text), so they all fit in a single row and tapping one takes you straight inside.
  */
 @Composable
 fun ChatQuickBar(
@@ -67,33 +69,29 @@ fun ChatQuickBar(
     discoveryOpen: Boolean, onToggleDiscovery: () -> Unit,
     onSaved: () -> Unit, onCalls: () -> Unit, onSearchChats: () -> Unit
 ) {
-    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(7.dp), verticalAlignment = Alignment.CenterVertically) {
-        listOf(
-            Triple("all", "All", Icons.Default.Forum), Triple("unread", "Unread", Icons.Default.MarkChatUnread),
-            Triple("archived", "Archived", Icons.Default.Archive), Triple("locked", "Locked", Icons.Default.Lock)
-        ).forEach { (key, label, icon) -> QuickPill(label, icon, selected = filter == key, accent = MaterialTheme.colorScheme.primary) { onFilter(key) } }
-        Box(Modifier.height(22.dp).width(1.dp).background(MaterialTheme.colorScheme.outlineVariant))
-        QuickPill("Saved", Icons.Default.Star, false, Color(0xFFFFB03A), onSaved)
-        QuickPill("Calls", Icons.Default.Call, false, Color(0xFF19C37D), onCalls)
-        QuickPill("Find in chats", Icons.Default.ManageSearch, false, Color(0xFF3AA0FF), onSearchChats)
-        QuickPill("Find friends", Icons.Default.PersonSearch, discoveryOpen, Color(0xFFFF6FB5), onToggleDiscovery)
+    Row(Modifier.fillMaxWidth().padding(horizontal = 2.dp), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
+        QuickIcon("All chats", Icons.Default.Forum, selected = filter == "all", accent = MaterialTheme.colorScheme.primary) { onFilter("all") }
+        QuickIcon("Unread", Icons.Default.MarkChatUnread, selected = filter == "unread", accent = Color(0xFF3AA0FF)) { onFilter("unread") }
+        QuickIcon("Archived", Icons.Default.Archive, selected = filter == "archived", accent = Color(0xFF8B7BFF)) { onFilter("archived") }
+        QuickIcon("Locked", Icons.Default.Lock, selected = filter == "locked", accent = Color(0xFFFFB03A)) { onFilter("locked") }
+        QuickIcon("Saved", Icons.Default.Star, false, Color(0xFFFFB03A), onSaved)
+        QuickIcon("Calls", Icons.Default.Call, false, Color(0xFF19C37D), onCalls)
+        QuickIcon("Find in chats", Icons.Default.ManageSearch, false, Color(0xFF3AA0FF), onSearchChats)
+        QuickIcon("Find friends", Icons.Default.PersonSearch, discoveryOpen, Color(0xFFFF6FB5), onToggleDiscovery)
     }
 }
 
 @Composable
-private fun QuickPill(label: String, icon: ImageVector, selected: Boolean, accent: Color, onClick: () -> Unit) {
-    val bg by animateColorAsState(if (selected) accent else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .55f), label = "pill_bg")
-    val ink by animateColorAsState(if (selected) Color.White else MaterialTheme.colorScheme.onSurface, label = "pill_ink")
-    Row(
-        Modifier.clip(CircleShape).background(bg).border(1.dp, accent.copy(alpha = if (selected) 0f else .28f), CircleShape).clickable(onClick = onClick).padding(horizontal = 12.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Icon(icon, null, tint = if (selected) Color.White else accent, modifier = Modifier.size(15.dp))
-        Spacer(Modifier.width(6.dp))
-        Text(label, color = ink, fontSize = 12.5.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium, maxLines = 1)
-    }
+private fun QuickIcon(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, selected: Boolean, accent: Color, onClick: () -> Unit) {
+    val bg by animateColorAsState(if (selected) accent else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .5f), label = "qicon_bg")
+    val ink by animateColorAsState(if (selected) Color.White else accent, label = "qicon_ink")
+    Box(
+        Modifier.size(38.dp).clip(RoundedCornerShape(13.dp)).background(bg)
+            .border(1.dp, accent.copy(alpha = if (selected) 0f else .25f), RoundedCornerShape(13.dp))
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) { Icon(icon, label, tint = ink, modifier = Modifier.size(19.dp)) }
 }
-
 
 /** Full-screen writing page for long messages; the text goes back into the normal message box. */
 @Composable

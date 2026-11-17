@@ -1,3 +1,11 @@
+• NEW 5.8 — Tools row is now icon-only: All · Unread · Archived · Locked · Saved · Calls · Find in chats · Find friends, each one just an icon, all fit in one row.
+• Chats tab: the top bar (search box) now stays put while you scroll — only the notes and quick tools header slides away.
+• Admin → App promotions: upload an APK right there and its download link is set automatically; the Download button then serves that APK.
+• Post photos: a new download button on the full-screen photo viewer saves the photo to your phone.
+• Loading screen: no more app icon — it goes straight to the connecting bar.
+• Video calls: 3 more filters (Ruby, Lagoon, Champagne).
+• Reaction menu now offers more emoji: cheering, heart-eyes, rolling-laugh, crying and a few more.
+• Media auto-delete (already in 5.7): photos are removed from the server after the other phone saves them (admin switch); voice messages are removed after they are played; files after download.
 • NEW 5.7 — App design switch: Settings → Design → "App design" changes the whole app between the Old (classic, your own theme) and the New (dark liquid glass) design. The admin picks the default for everyone in Admin → App design & media.
 • Chats tab rebuilt: the search box now lives in the top bar; "Tools & filters" became one slim row (All · Unread · Archived · Locked · Saved · Calls · Find in chats · Find friends); notes are always visible in one strip together with who is online.
 • Notes: add a sound to your note (tap to play), react to a friend's note with an emoji or write a reply — both arrive in your chat with that person.

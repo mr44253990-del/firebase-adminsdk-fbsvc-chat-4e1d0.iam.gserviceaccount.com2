@@ -2491,7 +2491,7 @@ fun MessageBubbleItem(
                     .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .6f)).padding(horizontal = 6.dp, vertical = 4.dp),
                 horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically
             ) {
-                listOf("❤️", "😂", "😮", "😢", "👍", "🔥").forEach { emoji ->
+                listOf("❤️", "😂", "😮", "😢", "👍", "🔥", "🥰", "😍", "🤣", "😭", "👏", "💯").forEach { emoji ->
                     Text(emoji, fontSize = 25.sp, modifier = Modifier.clip(CircleShape).clickable { onReactSelect(emoji); showMenu = false }.padding(5.dp))
                 }
                 Box(Modifier.size(34.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary.copy(alpha = .16f)).clickable { moreStickers = !moreStickers }, contentAlignment = Alignment.Center) {

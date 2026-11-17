@@ -23,7 +23,9 @@ enum class CallFilter(val label: String, val emoji: String) {
     // v5.7 looks
     LAVENDER("Lavender", "💜"), MINT("Mint", "🍃"), PEACH("Peach", "🍑"), ARCTIC("Arctic", "🧊"),
     RETRO("Retro 90s", "📼"), MOODY("Moody", "🌫️"), CANDY("Candy", "🍭"), HDR("HDR pop", "⚡"),
-    FADE("Soft fade", "☁️"), COCOA("Cocoa", "☕")
+    FADE("Soft fade", "☁️"), COCOA("Cocoa", "☕"),
+    // v5.8 looks
+    RUBY("Ruby", "❤️‍🔥"), LAGOON("Lagoon", "🩵"), CHAMPAGNE("Champagne", "🥂")
 }
 
 /**
@@ -106,6 +108,9 @@ class CallFilterProcessor : VideoProcessor {
         CallFilter.HDR -> saturate(14, 0, 0)
         CallFilter.FADE -> saturate(7, 0, 2)
         CallFilter.COCOA -> saturate(5, -10, 12)
+        CallFilter.RUBY -> saturate(8, 14, -4)
+        CallFilter.LAGOON -> saturate(8, -14, 10)
+        CallFilter.CHAMPAGNE -> saturate(5, -14, 6)
         else -> ({ b: Byte -> b }) to ({ b: Byte -> b })
     }
 
@@ -147,6 +152,9 @@ class CallFilterProcessor : VideoProcessor {
         CallFilter.HDR -> curve(1.0, gamma = .9)
         CallFilter.FADE -> curve(-.2, lift = 30, gamma = .92)
         CallFilter.COCOA -> curve(.35, lift = 10, gamma = 1.02)
+        CallFilter.RUBY -> curve(.3, lift = 8, gamma = .95)
+        CallFilter.LAGOON -> curve(.25, gamma = .94)
+        CallFilter.CHAMPAGNE -> curve(-.1, lift = 22, gamma = .96)
         // Lifts shadows and softens contrast for a flattering "glow".
         CallFilter.BEAUTY -> ByteArray(256) { i -> clamp((i * 0.86 + 30).toInt()) }
         // Gamma brighten for dark rooms.

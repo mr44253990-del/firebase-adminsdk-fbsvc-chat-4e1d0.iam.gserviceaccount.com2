@@ -126,6 +126,26 @@ Legend: ✅ done in this branch · 🔧 needs a one-time server step by the admi
 - ✅ S12. Web card as a slim strip (stories area + profile menu).
 - ⏳ Not done: redesign of the in-call screen, music on video stories, a GIF search picker, "screenshot on = crash" could not be traced to a specific cause (only the screen-share path was found and fixed).
 
+## V. Version 5.8 — icon tools row, persistent top bar, APK promotions, gallery download
+
+**Built (compiles; NOT tested on a real phone):**
+- Chats tab tools are icon-only (no text), so they fit one row. The old "Tools & filters" card is gone.
+- The top bar stays visible while scrolling; only the notes/quick-tools header collapses.
+- Admin promotions: upload an APK; the download link is set from the upload (Supabase `chat_files`, APK mime).
+- Full-screen post viewer: download button for the current photo.
+- Loading screen no longer shows the app icon tile (straight to the connecting bar).
+- 3 more call filters (Ruby, Lagoon, Champagne); more emojis in the message reaction menu and note reactions.
+
+**Not done / caveats:**
+- The "smooth photo switching" in the full-screen viewer already uses an animated pager; pinch-zoom still pans the image once zoomed in.
+- Media auto-delete unchanged from 5.7: photos need the admin switch ON; voice/files delete after play/download regardless.
+- Call screen receive side kept the 5.7 layout with the new filters; no full re-architecture.
+
+**Ideas found while working (not built):**
+- APK promotions should show file size and a progress bar during upload.
+- Per-photo caption/sticker in the post viewer.
+- A "new design" preview thumbnail in the design switch.
+
 ## U. Version 5.7 — design switch, chats tab, notes, promotions
 
 **Built (compiles, lint clean; NOT tested on a real phone):**

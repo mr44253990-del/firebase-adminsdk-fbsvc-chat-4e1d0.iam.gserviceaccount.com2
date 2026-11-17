@@ -111,16 +111,12 @@ private fun splashStatus(progress: Float, securing: Boolean = false): String = w
 @Composable
 fun SplashScreen(work: (suspend () -> Unit)? = null, onFinished: () -> Unit) {
     var workDone by remember { mutableStateOf(work == null) }
-    val markScale = remember { Animatable(.6f) }
-    val markAlpha = remember { Animatable(0f) }
     val progress = remember { Animatable(0f) }
     val content = remember { Animatable(0f) }
     val tip = remember { splashTip() }
 
     LaunchedEffect(Unit) {
-        launch { markAlpha.animateTo(1f, tween(260)) }
-        launch { markScale.animateTo(1f, spring(dampingRatio = .6f, stiffness = 380f)) }
-        launch { delay(120); content.animateTo(1f, tween(520, easing = FastOutSlowInEasing)) }
+        launch { delay(60); content.animateTo(1f, tween(420, easing = FastOutSlowInEasing)) }
         launch { progress.animateTo(if (work == null) 1f else .86f, tween(820, easing = FastOutSlowInEasing)) }
         val job = if (work != null) launch { runCatching { work() }; workDone = true } else null
         delay(1050)
@@ -136,17 +132,8 @@ fun SplashScreen(work: (suspend () -> Unit)? = null, onFinished: () -> Unit) {
             Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.navigationBars).padding(horizontal = 26.dp),
             horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center
         ) {
-            Box(Modifier.scale(markScale.value).alpha(markAlpha.value)) { LiquidLogoTile(size = 150.dp) }
-            Spacer(Modifier.height(6.dp))
-            LiquidWordmark(fontSize = 42, modifier = Modifier.alpha(content.value))
-            Spacer(Modifier.height(6.dp))
-            LiquidWaveform(Modifier.alpha(content.value))
-            Spacer(Modifier.height(4.dp))
-            Text(
-                "CHAT   •   CONNECT   •   MORE", color = Color.White.copy(alpha = .55f * content.value),
-                fontSize = 11.sp, fontWeight = FontWeight.Medium, letterSpacing = 3.sp
-            )
-            Spacer(Modifier.height(34.dp))
+            // v5.8: no app icon on the loading screen — straight to the connecting state.
+            Spacer(Modifier.height(18.dp))
 
             // One wide glowing progress bar.
             Box(
@@ -164,7 +151,7 @@ fun SplashScreen(work: (suspend () -> Unit)? = null, onFinished: () -> Unit) {
                 )
             }
             Spacer(Modifier.height(10.dp))
-            Text(if (progress.value >= .999f) "Ready" else "Loading…", color = Color.White.copy(alpha = .8f), fontSize = 13.sp, fontWeight = FontWeight.Medium)
+            Text(if (progress.value >= .999f) "Connecting…" else "Loading…", color = Color.White.copy(alpha = .8f), fontSize = 13.sp, fontWeight = FontWeight.Medium)
             Spacer(Modifier.height(30.dp))
 
             // Frosted status card with the three launch stages.
