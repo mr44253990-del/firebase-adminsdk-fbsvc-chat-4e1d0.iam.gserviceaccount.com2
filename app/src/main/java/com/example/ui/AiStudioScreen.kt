@@ -227,6 +227,7 @@ private data class NovaHighlight(val icon: ImageVector, val title: String, val b
 fun WhatsNewScreen(onBack: () -> Unit, onOpenStudio: () -> Unit) {
     val items = remember {
         listOf(
+            NovaHighlight(Icons.Default.Palette, "Swipe chat filters + 6 new themes (6.0)", "Swipe the chat list left/right to change filters; a fresh 'New 2050' theme set in Settings → Theme.", Color(0xFF6EE7FF)),
             NovaHighlight(Icons.Default.FilterAlt, "Tools in one clean menu (5.9)", "Chat filters and tools now open from a funnel icon in the top bar — a tidier chat list.", Color(0xFF8B7BFF)),
             NovaHighlight(Icons.Default.Apps, "Icon tools row & steady top bar (5.8)", "Chat tools are now icon-only and stay in one row; the search bar no longer scrolls away.", Color(0xFF3AA0FF)),
             NovaHighlight(Icons.Default.Download, "APK promotions & photo download (5.8)", "Admins upload an APK for their app shelf; the photo viewer saves photos.", Color(0xFF19C37D)),

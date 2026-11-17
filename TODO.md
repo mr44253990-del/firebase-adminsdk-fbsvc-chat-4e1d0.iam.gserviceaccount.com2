@@ -126,6 +126,21 @@ Legend: ✅ done in this branch · 🔧 needs a one-time server step by the admi
 - ✅ S12. Web card as a slim strip (stories area + profile menu).
 - ⏳ Not done: redesign of the in-call screen, music on video stories, a GIF search picker, "screenshot on = crash" could not be traced to a specific cause (only the screen-share path was found and fixed).
 
+## X. Version 6.0 — chat-filter swipe + 6 new themes + full feature audit
+
+**Built new (compiles; NOT tested on a real phone):**
+- Swipe left/right on the chat list to cycle All · Unread · Archived · Locked (with a toast).
+- 6 new "New 2050" themes (Aurora Prism, Black Opal, Cherry Cola, Ice Glacier, Ember Glow, Orchid Noir).
+
+**Audit result — these idea-list items ALREADY exist (so they were not re-added):**
+- Scheduled messages (composer → Schedule), disappearing messages (auto + per-chat timer), read-receipt toggle + hide-my-typing, online/last-seen/show typing privacy, post bookmarks ("Saved" feed filter + bookmark button), pin chats, archive, app lock, notification-content hiding, screenshot protection on sensitive screens, admin app promotions + APK upload, media auto-delete after delivery, post photo viewer + download, 20+ themes, camera filters, notes with sound/reactions/replies, groups hub, audio library, AI Studio / assistant tools, Permission Center, chat backup, Qr contact.
+
+**Still genuinely not built (short list):**
+- GIF picker (needs a GIF-provider key), music on video stories, call recording, noise-cancel, live captions, admin live dashboard, bulk broadcast, per-chat theme override UI, nested comment replies, emoji/label reactions shown on the note itself, tablets multi-pane.
+- Several need server/rule changes and admin action.
+
+**Admin steps still pending:** publish `firestore.rules` (note sound), publish `database.rules.json`, remove the Pages site, rotate tokens.
+
 ## W. Version 5.9 — tools into a menu, top bar clean, loading screen restored
 
 **Built (compiles; NOT tested on a real phone):**

@@ -993,7 +993,24 @@ fun HomeScreen(
                         } else {
                             LazyColumn(
                                 state = chatListState,
-                                modifier = Modifier.weight(1f),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    // v6.0: swipe left/right on the list to switch filters.
+                                    .pointerInput(chatFilter) {
+                                        var acc = 0f
+                                        detectHorizontalDragGestures(
+                                            onDragStart = { acc = 0f },
+                                            onHorizontalDrag = { change, amount -> change.consume(); acc += amount },
+                                            onDragEnd = {
+                                                if (kotlin.math.abs(acc) > 140f) {
+                                                    val order = listOf("all", "unread", "archived", "locked")
+                                                    val i = order.indexOf(chatFilter).coerceAtLeast(0)
+                                                    chatFilter = order[(i + if (acc < 0f) 1 else order.size - 1) % order.size]
+                                                    Toast.makeText(context, "Filter: " + chatFilter.replaceFirstChar { it.uppercase() }, Toast.LENGTH_SHORT).show()
+                                                }
+                                            }
+                                        )
+                                    },
                                 verticalArrangement = Arrangement.spacedBy(10.dp),
                                 contentPadding = PaddingValues(bottom = 16.dp)
                             ) {
@@ -1484,6 +1501,14 @@ fun HomeScreen(
                                 AppThemePreview("Matrix", Color(0xFF000502), Color(0xFF07140C), Color(0xFF39FF88)),
                                 AppThemePreview("Dream Pink", Color(0xFFFFF4F9), Color.White, Color(0xFFE94B9A)),
                                 AppThemePreview("Ocean Glass", Color(0xFF031523), Color(0xFF0A2840), Color(0xFF66C2FF))
+                            )),
+                            Triple("New 2050", "Fresh neon and stone looks for the new design", listOf(
+                                AppThemePreview("Aurora Prism", Color(0xFF050B18), Color(0xFF0D1630), Color(0xFF6EE7FF)),
+                                AppThemePreview("Black Opal", Color(0xFF020505), Color(0xFF08130F), Color(0xFF53E6B8)),
+                                AppThemePreview("Cherry Cola", Color(0xFF120308), Color(0xFF260814), Color(0xFFFF7A9C)),
+                                AppThemePreview("Ice Glacier", Color(0xFF020B15), Color(0xFF081B30), Color(0xFF9BE7FF)),
+                                AppThemePreview("Ember Glow", Color(0xFF140402), Color(0xFF2B0E06), Color(0xFFFFA25C)),
+                                AppThemePreview("Orchid Noir", Color(0xFF0A0514), Color(0xFF1C0F2C), Color(0xFFE2A9FF))
                             )),
                             Triple("Light", "Bright, clean and easy on the eyes in daylight", listOf(
                                 AppThemePreview("Aurora Light", Color(0xFFF7F5FF), Color.White, Color(0xFF765BFF)),

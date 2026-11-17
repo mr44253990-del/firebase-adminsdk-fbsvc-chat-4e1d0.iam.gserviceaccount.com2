@@ -1,3 +1,6 @@
+• NEW 6.0 — Swipe the chat list left or right to switch filters (All · Unread · Archived · Locked); the filter name pops up as you change it.
+• 6 new themes in Settings → Theme → "New 2050": Aurora Prism, Black Opal, Cherry Cola, Ice Glacier, Ember Glow, Orchid Noir.
+• Audit of the feature list: scheduled messages, disappearing messages, read receipts, presence privacy (online/last seen/typing), post bookmarks, pin chats, app lock and much more were already present.
 • NEW 5.9 — Chats "tools & filters" moved into a tidy menu in the top bar (the funnel icon). The chat list is now cleaner: just the announcement, your notes and who is online.
 • The filters (All · Unread · Archived · Locked) and the tools (Saved · Calls · Find in chats · Find friends) all live in that one menu.
 • Loading screen is back to the familiar look with the app icon.
