@@ -1,4 +1,4 @@
-• NEW 6.1 — Floating glass bottom bar: the navigation bar is now a rounded capsule that floats with a soft glow instead of sitting flush at the screen edge.
+• 6.1.1 — Modern glass top bar: transparent glass with a soft colour glow and a fine accent hairline under it (instead of the old flat bar).• NEW 6.1 — Floating glass bottom bar: the navigation bar is now a rounded capsule that floats with a soft glow instead of sitting flush at the screen edge.
 • Calls: a long caller name now scales down and ellipses cleanly instead of overflowing.
 • Full audit of the remaining feature list (B–F): group polls already show animated result bars and percentages; scheduled messages, disappearing messages, read receipts, presence privacy, post bookmarks, voice-message speed control, AI summarise/rewrite tools, admin announcements and gifts, and more were already shipped in earlier versions.
 • NEW 6.0 — Swipe the chat list left or right to switch filters (All · Unread · Archived · Locked); the filter name pops up as you change it.

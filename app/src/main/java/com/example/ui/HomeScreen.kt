@@ -406,6 +406,9 @@ fun HomeScreen(
                     }
                 }
 
+                val glassPrimary = MaterialTheme.colorScheme.primary
+                val glassTertiary = MaterialTheme.colorScheme.tertiary
+                val glassSurface = MaterialTheme.colorScheme.surface
                 // App branding top bar
                 TopAppBar(
                     title = {
@@ -607,8 +610,30 @@ fun HomeScreen(
                         }
                     },
                     colors = TopAppBarDefaults.topAppBarColors(
-                        containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.72f)
-                    )
+                        containerColor = Color.Transparent,
+                        scrolledContainerColor = Color.Transparent
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(glassSurface.copy(alpha = 0.55f))
+                        .drawBehind {
+                            // Modern glass top bar: a soft colour glow and a fine accent hairline
+                            // along the bottom edge instead of a flat solid bar.
+                            drawRect(
+                                Brush.verticalGradient(
+                                    listOf(glassPrimary.copy(alpha = 0.10f), Color.Transparent),
+                                    endY = size.height
+                                )
+                            )
+                            val h = 1.6f.dp.toPx()
+                            drawRect(
+                                Brush.horizontalGradient(
+                                    listOf(Color.Transparent, glassPrimary.copy(alpha = .8f), glassTertiary.copy(alpha = .65f), Color.Transparent)
+                                ),
+                                topLeft = androidx.compose.ui.geometry.Offset(0f, size.height - h),
+                                size = androidx.compose.ui.geometry.Size(size.width, h)
+                            )
+                        }
                 )
                     }
                 }
