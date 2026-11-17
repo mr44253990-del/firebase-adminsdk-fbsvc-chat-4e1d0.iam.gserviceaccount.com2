@@ -1,3 +1,7 @@
+• NEW 5.9 — Chats "tools & filters" moved into a tidy menu in the top bar (the funnel icon). The chat list is now cleaner: just the announcement, your notes and who is online.
+• The filters (All · Unread · Archived · Locked) and the tools (Saved · Calls · Find in chats · Find friends) all live in that one menu.
+• Loading screen is back to the familiar look with the app icon.
+• Top bar cleaned up: the duplicate search icon no longer sits next to the search box on the Chats tab.
 • NEW 5.8 — Tools row is now icon-only: All · Unread · Archived · Locked · Saved · Calls · Find in chats · Find friends, each one just an icon, all fit in one row.
 • Chats tab: the top bar (search box) now stays put while you scroll — only the notes and quick tools header slides away.
 • Admin → App promotions: upload an APK right there and its download link is set automatically; the Download button then serves that APK.

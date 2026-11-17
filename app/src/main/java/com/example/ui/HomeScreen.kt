@@ -273,6 +273,7 @@ fun HomeScreen(
     var searchQuery by remember { mutableStateOf("") }
     var chatFilter by rememberSaveable { mutableStateOf("all") }
     var showChatTools by rememberSaveable { mutableStateOf(false) }
+    var showFilterMenu by remember { mutableStateOf(false) }
     var feedFilter by rememberSaveable { mutableStateOf("All Posts") }
     var showAnalytics by remember { mutableStateOf(false) }
     var showAccountMenu by remember { mutableStateOf(false) }
@@ -424,10 +425,27 @@ fun HomeScreen(
                         )
                     },
                     actions = {
+                        if (currentTab == 1) Box {
+                            IconButton(onClick = { showFilterMenu = true }) {
+                                Icon(if (chatFilter != "all") Icons.Default.FilterAlt else Icons.Default.Tune, contentDescription = "Chat filters & tools", tint = if (chatFilter != "all") MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
+                            }
+                            DropdownMenu(
+                                expanded = showFilterMenu,
+                                onDismissRequest = { showFilterMenu = false },
+                                modifier = Modifier.shadow(16.dp, RoundedCornerShape(18.dp)).clip(RoundedCornerShape(18.dp)).background(MaterialTheme.colorScheme.surface)
+                            ) {
+                                ChatFilterMenu(
+                                    filter = chatFilter, onFilter = { chatFilter = it },
+                                    discoveryOpen = showChatTools, onToggleDiscovery = { showChatTools = !showChatTools },
+                                    onSaved = { ProTools.open("saved") }, onCalls = { ProTools.open("calls") }, onSearchChats = { ProTools.open("search") },
+                                    onDone = { showFilterMenu = false }
+                                )
+                            }
+                        }
                         if (currentTab != 1) IconButton(onClick = onPremium) {
                             Icon(Icons.Default.WorkspacePremium, contentDescription = "Convo Chat Premium", tint = Color(0xFFFFB300))
                         }
-                        IconButton(onClick = { showGlobalSearch = true }) {
+                        if (currentTab != 1) IconButton(onClick = { showGlobalSearch = true }) {
                             Icon(Icons.Outlined.Search, contentDescription = "Search people and media")
                         }
                         if (currentTab == 1) IconButton(onClick = { if (lockEnabled) showLockDisableConfirm = true else showLockSetup = true }) {
@@ -943,12 +961,7 @@ fun HomeScreen(
                                 exit = shrinkVertically(shrinkTowards = Alignment.Top) + fadeOut()
                             ) {
                                 Column(Modifier.fillMaxWidth()) {
-                                    ChatQuickBar(
-                                        filter = chatFilter, onFilter = { chatFilter = it },
-                                        discoveryOpen = showChatTools, onToggleDiscovery = { showChatTools = !showChatTools },
-                                        onSaved = { ProTools.open("saved") }, onCalls = { ProTools.open("calls") }, onSearchChats = { ProTools.open("search") }
-                                    )
-                                    AnnouncementBanner(Modifier.fillMaxWidth().padding(top = 6.dp))
+                                    AnnouncementBanner(Modifier.fillMaxWidth())
                                     AnimatedVisibility(visible = showChatTools, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
                                         Box(Modifier.padding(top = 6.dp)) { ContactsDiscoveryCard(viewModel, users, onUserSelected) }
                                     }

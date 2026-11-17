@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -12,6 +13,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -121,3 +123,48 @@ fun ExpandedComposerDialog(text: String, title: String, onText: (String) -> Unit
     }
 }
 
+
+/**
+ * Content for the top-bar menu that replaced the old in-feed tools row (v5.9): chat filters,
+ * then the tools below a divider. Tapping a filter closes the menu and applies it.
+ */
+@Composable
+fun ChatFilterMenu(
+    filter: String, onFilter: (String) -> Unit,
+    discoveryOpen: Boolean, onToggleDiscovery: () -> Unit,
+    onSaved: () -> Unit, onCalls: () -> Unit, onSearchChats: () -> Unit,
+    onDone: () -> Unit
+) {
+    Column(
+        Modifier.width(246.dp).heightIn(max = 480.dp).verticalScroll(androidx.compose.foundation.rememberScrollState()).padding(vertical = 6.dp)
+    ) {
+        Text("Filter chats", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp))
+        ChatFilterMenuRow("All chats", Icons.Default.Forum, MaterialTheme.colorScheme.primary, selected = filter == "all") { onFilter("all"); onDone() }
+        ChatFilterMenuRow("Unread", Icons.Default.MarkChatUnread, Color(0xFF3AA0FF), selected = filter == "unread") { onFilter("unread"); onDone() }
+        ChatFilterMenuRow("Archived", Icons.Default.Archive, Color(0xFF8B7BFF), selected = filter == "archived") { onFilter("archived"); onDone() }
+        ChatFilterMenuRow("Locked", Icons.Default.Lock, Color(0xFFFFB03A), selected = filter == "locked") { onFilter("locked"); onDone() }
+        HorizontalDivider(Modifier.padding(horizontal = 12.dp, vertical = 2.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = .5f))
+        Text("Tools", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp))
+        ChatFilterMenuRow("Saved", Icons.Default.Star, Color(0xFFFFB03A), false) { onSaved(); onDone() }
+        ChatFilterMenuRow("Calls", Icons.Default.Call, Color(0xFF19C37D), false) { onCalls(); onDone() }
+        ChatFilterMenuRow("Find in chats", Icons.Default.ManageSearch, Color(0xFF3AA0FF), false) { onSearchChats(); onDone() }
+        ChatFilterMenuRow("Find friends", Icons.Default.PersonSearch, Color(0xFFFF6FB5), discoveryOpen) { onToggleDiscovery(); onDone() }
+    }
+}
+
+@Composable
+private fun ChatFilterMenuRow(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, tint: Color, selected: Boolean, onClick: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 12.dp, vertical = 9.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            Modifier.size(34.dp).clip(RoundedCornerShape(11.dp))
+                .background(if (selected) tint else tint.copy(alpha = .14f)),
+            contentAlignment = Alignment.Center
+        ) { Icon(icon, label, tint = if (selected) Color.White else tint, modifier = Modifier.size(18.dp)) }
+        Spacer(Modifier.width(11.dp))
+        Text(label, color = MaterialTheme.colorScheme.onSurface, fontSize = 14.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium, modifier = Modifier.weight(1f))
+        if (selected) Icon(Icons.Default.Check, null, tint = tint, modifier = Modifier.size(18.dp))
+    }
+}

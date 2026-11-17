@@ -126,6 +126,27 @@ Legend: ✅ done in this branch · 🔧 needs a one-time server step by the admi
 - ✅ S12. Web card as a slim strip (stories area + profile menu).
 - ⏳ Not done: redesign of the in-call screen, music on video stories, a GIF search picker, "screenshot on = crash" could not be traced to a specific cause (only the screen-share path was found and fixed).
 
+## W. Version 5.9 — tools into a menu, top bar clean, loading screen restored
+
+**Built (compiles; NOT tested on a real phone):**
+- Removed the in-feed tools/filter row. A new funnel icon in the top bar opens one menu with the filters and tools (ChatFilterMenu).
+- Loading screen restored to the app-icon look (LiquidLogoTile + wordmark + waveform).
+- Removed the duplicate global-search icon on the Chats tab (the inline search bar is the search).
+
+**Complete idea list — what else can be added (not built):**
+- Chat: swipe row between filters; pin/favourite contacts at the top of the list; per-chat theme override; chat themes with auto-cycling colors; scheduled messages; self-destructing messages already exist (expiresAt) but no UI timer picker; message translation already exists.
+- Calls: full redesign of the receiving call screen; call queue; call recording (needs permissions + storage); voice-isolating "noise cancel" toggle; live captions; hold music; multi-device handoff.
+- Groups: group voice/video already exist — add group polls (done 5.1), group surveys with result charts, recurring group calls, group file vault, mod-only announcements, slow mode, auto-mod word filter.
+- Posts/stories: video stories with music (left over), GIF picker (left over), stickers on stories, comments with nested replies, post bookmark collections, view-count analytics for the author.
+- AI: AI reply suggestions per chat, AI summariser for long chats/groups, AI composer (rewrite/expand/tone), image captioning for accessibility, voice-to-text in every language, admin AI scheduled reports.
+- Privacy/settings: passcode pattern unlock, per-app folder lock, screenshot warning, "who can see my online" control, read-receipt toggle, data usage meter, account deactivation flow.
+- Admin: live dashboard (DAU, messages/day, storage used), bulk message broadcast, user-generated uptake charts, remote feature toggles already exist (FlagshipConfig) — extend menu, APK update rollback, staff audit log export.
+- Design: animated home feed with scroll-linked parallax, RTL perfect layout, tablet/multi-window tweaks, per-user accent colour, dark AMOLED "true black" extra theme, custom app icon packs.
+- Reliability: offline queue already exists — add retry indicator; media compression on send; resumable uploads; presence kick-out accuracy; background call wake-up on more OEMs.
+- Monetisation/premium: premium wall with animations, one-time tips, regional pricing, subscription gift cards.
+
+**Still pending admin steps (unchanged):** publish `firestore.rules` (note sound), publish `database.rules.json`, remove the Pages site, rotate tokens.
+
 ## V. Version 5.8 — icon tools row, persistent top bar, APK promotions, gallery download
 
 **Built (compiles; NOT tested on a real phone):**
