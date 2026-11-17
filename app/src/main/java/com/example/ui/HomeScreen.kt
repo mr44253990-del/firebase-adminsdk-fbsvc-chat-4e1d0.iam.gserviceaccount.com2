@@ -615,14 +615,23 @@ fun HomeScreen(
             }
         },
         bottomBar = {
-            if (currentTab != 6) NavigationBar(
-                containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.82f),
-                tonalElevation = 0.dp,
-                modifier = Modifier
+            if (currentTab != 6) Box(
+                Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(topStart = 30.dp, topEnd = 30.dp))
-                    .novaGlowEdge()
+                    .windowInsetsPadding(androidx.compose.foundation.layout.WindowInsets.navigationBars)
+                    .padding(horizontal = 14.dp, vertical = 8.dp)
             ) {
+                NavigationBar(
+                    containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f),
+                    tonalElevation = 0.dp,
+                    windowInsets = androidx.compose.foundation.layout.WindowInsets(0, 0, 0, 0),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(30.dp))
+                        .shadow(18.dp, RoundedCornerShape(30.dp), ambientColor = MaterialTheme.colorScheme.primary.copy(alpha = .35f), spotColor = MaterialTheme.colorScheme.primary.copy(alpha = .35f))
+                        .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = .18f), RoundedCornerShape(30.dp))
+                        .novaGlowEdge()
+                ) {
                 NavigationBarItem(
                     selected = currentTab == 0,
                     onClick = { viewModel.setCurrentTab(0) },
@@ -668,6 +677,7 @@ fun HomeScreen(
                     icon = { NovaNavIcon(Icons.Default.PeopleAlt, "Friends", selected = currentTab == 5) },
                     label = { Text(tr("Friends"), fontSize = 10.sp) }
                 )
+            }
             }
         },
         floatingActionButton = {

@@ -126,6 +126,24 @@ Legend: ✅ done in this branch · 🔧 needs a one-time server step by the admi
 - ✅ S12. Web card as a slim strip (stories area + profile menu).
 - ⏳ Not done: redesign of the in-call screen, music on video stories, a GIF search picker, "screenshot on = crash" could not be traced to a specific cause (only the screen-share path was found and fixed).
 
+## Y. Version 6.1 — floating nav capsule, call-name fix, B–F audit
+
+**Built new (compiles + lint; NOT tested on a real phone):**
+- Floating glass capsule bottom navigation bar (GlowGlass style).
+- Call screen: long caller names scale down + ellipsis.
+
+**B–F audit (these already exist — found while tracing, not re-added):**
+- B chat: scheduled messages, disappearing messages, read receipts, voice speed (0.5–2x), draft labels, full-screen composer, per-chat lock/archive, message menu.
+- C group: animated poll results with percentages, polls builder, group AI tools, catch-up summaries.
+- D posts/stories: post bookmarks ("Saved"), photo viewer + download, audio library on posts, tag friends, reactions.
+- E AI: AI Studio tools (summarise/rewrite/ideas/translate), admin AI copilot, group summariser.
+- F admin: announcements (broadcast) panel, insights dashboard, premium gifts, app promotions + APK upload, remote feature flags.
+
+**Genuinely still missing (needs external key / backend / real-device):**
+- GIF picker (provider key), music on video stories, call recording, noise-cancel, live captions, admin live-DAU metrics, APK rollback, voice-to-text (paid), nested comment replies, per-chat theme override UI.
+
+**Admin steps still pending:** publish `firestore.rules` (note sound), publish `database.rules.json`, remove the Pages site, rotate tokens.
+
 ## X. Version 6.0 — chat-filter swipe + 6 new themes + full feature audit
 
 **Built new (compiles; NOT tested on a real phone):**

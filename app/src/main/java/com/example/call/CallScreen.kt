@@ -457,7 +457,12 @@ fun CallScreen(
                     if (!accepted && incoming) IncomingCallerAvatar(remoteImage, remoteName, callPalette.accent)
                     else CallAvatarAura(remoteImage, remoteName, callPalette.accent, state.status, state.muted)
                     Spacer(Modifier.height(6.dp))
-                    Text(remoteName, color = Color.White, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.ExtraBold, textAlign = TextAlign.Center)
+                    val nameSize = if (remoteName.length > 13) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.headlineMedium
+                    Text(
+                        remoteName, color = Color.White, style = nameSize, fontWeight = FontWeight.ExtraBold,
+                        textAlign = TextAlign.Center, maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                        modifier = Modifier.fillMaxWidth(.92f)
+                    )
                 }
             }
             Surface(color = Color.Black.copy(alpha = if (effectiveVideo && accepted) .45f else 0f), shape = CircleShape) {
