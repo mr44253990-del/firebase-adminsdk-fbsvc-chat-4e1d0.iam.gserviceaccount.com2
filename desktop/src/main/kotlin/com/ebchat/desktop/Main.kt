@@ -1,7 +1,7 @@
 package com.ebchat.desktop
 
-import androidx.compose.desktop.ui.window.Window
-import androidx.compose.desktop.ui.window.application
+import androidx.compose.ui.window.Window
+import androidx.compose.ui.window.application
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
