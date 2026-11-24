@@ -1,0 +1,96 @@
+{
+  "name": "convo-chat-desktop",
+  "productName": "Convo Chat",
+  "version": "1.0.0",
+  "description": "Convo Chat desktop client for Windows and Linux (same experience as the Android app)",
+  "main": "main.js",
+  "homepage": "https://github.com/mr44253990-del/firebase-adminsdk-fbsvc-chat-4e1d0.iam.gserviceaccount.com2",
+  "author": {
+    "name": "Convo Chat",
+    "email": "mr44253990-del@users.noreply.github.com"
+  },
+  "license": "SEE LICENSE IN ../README.md",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "prepare-site": "node prepare-site.mjs",
+    "dist": "npm run prepare-site && electron-builder --publish never",
+    "dist:win": "npm run prepare-site && electron-builder --win --x64 --publish never",
+    "dist:linux-arm64": "npm run prepare-site && electron-builder --linux --arm64 --publish never"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "mr44253990-del",
+        "repo": "firebase-adminsdk-fbsvc-chat-4e1d0.iam.gserviceaccount.com2"
+      }
+    ],
+    "appId": "com.ebchat.desktop",
+    "productName": "Convo Chat",
+    "copyright": "Copyright © 2025 Convo Chat",
+    "asar": true,
+    "files": [
+      "main.js",
+      "preload.js",
+      "desktop-map.js",
+      "package.json",
+      "!site/**"
+    ],
+    "extraResources": [
+      {
+        "from": "site",
+        "to": "site"
+      }
+    ],
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "win": {
+      "icon": "build/icon.png",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        },
+        {
+          "target": "zip",
+          "arch": ["x64"]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Convo Chat"
+    },
+    "linux": {
+      "maintainer": "Convo Chat <mr44253990-del@users.noreply.github.com>",
+      "icon": "build/icon.png",
+      "category": "Network;InstantMessaging",
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": ["arm64"]
+        },
+        {
+          "target": "deb",
+          "arch": ["arm64"]
+        }
+      ],
+      "desktop": {
+        "Name": "Convo Chat",
+        "Comment": "Convo Chat — fast, WhatsApp-style messaging",
+        "StartupWMClass": "Convo Chat"
+      }
+    }
+  }
+}

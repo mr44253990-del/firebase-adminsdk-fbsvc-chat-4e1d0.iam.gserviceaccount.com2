@@ -23,3 +23,8 @@ supabase/.env
 supabase/.temp/
 supabase/.branches/
 service-account*.json
+
+# Desktop build output (generated at build time)
+desktop/site/
+desktop/node_modules/
+desktop/dist/
