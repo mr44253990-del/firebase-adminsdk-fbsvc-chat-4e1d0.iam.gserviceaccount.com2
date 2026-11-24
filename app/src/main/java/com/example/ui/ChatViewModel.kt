@@ -384,6 +384,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     // Group Messages state
     private val _groupMessagesState = MutableStateFlow<List<GroupMessage>>(emptyList())
+    private val GROUP_LISTEN_WINDOW = 100L
     val groupMessagesState: StateFlow<List<GroupMessage>> = _groupMessagesState.asStateFlow()
     private val _groupVoiceRecorders = MutableStateFlow<Set<String>>(emptySet())
     val groupVoiceRecorders: StateFlow<Set<String>> = _groupVoiceRecorders.asStateFlow()
@@ -736,6 +737,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     val storageSetupHealth: StateFlow<StorageSetupHealth> = _storageSetupHealth.asStateFlow()
 
     private var activeChatListener: ValueEventListener? = null
+    private val CHAT_LISTEN_WINDOW = 300L
+    private val ackedMessageIds = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
     private var activeChatId: String? = null
     private var activeTypingListener: ValueEventListener? = null
     private var activeTypingChatId: String? = null
@@ -3066,6 +3069,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             .child("messages")
 
         activeChatListener = chatRef.orderByChild("timestamp")
+            .limitToLast(CHAT_LISTEN_WINDOW)
             .addValueEventListener(object : ValueEventListener {
                 override fun onDataChange(snapshot: DataSnapshot) {
                     val messages = mutableListOf<Message>()
@@ -3144,14 +3148,14 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         val resolvedMessages = messages.mapNotNull { m ->
                             if (m.cloudText && m.text.isBlank()) fetchedCloud[m.messageId]?.let { m.copy(text = it) } else m
                         }
-                        val localized = resolvedMessages.map { remote ->
+                        val localized = resolvedMessages.filter { it.messageId !in localById }.map { remote ->
                             if (remote.senderId != currentUid) localizeIncomingMedia(remote, chatId)
                             else _chatMessagesState.value.find { it.messageId == remote.messageId } ?: remote
                         }
-                        cacheMessagesPreservingReceipts(localized, chatId)
+                        if (localized.isNotEmpty()) cacheMessagesPreservingReceipts(localized, chatId)
                         _chatMessagesState.value = (_chatMessagesState.value + localized)
                             .associateBy { it.messageId }.values.sortedBy { it.timestamp }
-                        localized.filter { it.senderId != currentUid }.forEach { incoming ->
+                        localized.filter { it.senderId != currentUid && ackedMessageIds.add(it.messageId) }.forEach { incoming ->
                             // The open-chat listener is also a delivery acknowledgement path. This
                             // covers devices where a background notification payload does not wake
                             // FirebaseMessagingService. Persist the message first, then acknowledge
@@ -3169,6 +3173,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                                 )
                                 .addOnSuccessListener { chatRef.child(incoming.messageId).removeValue() }
                                 .addOnFailureListener { error ->
+                                    ackedMessageIds.remove(incoming.messageId)
                                     Log.w("DELIVERY_RECEIPT", "Failed to acknowledge ${incoming.messageId}", error)
                                 }
                         }
@@ -3262,6 +3267,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         activeChatListener = null
         activeReceiptListener = null
         activeChatId = null
+        ackedMessageIds.clear()
     }
 
     // Typing Status Handling
@@ -3769,16 +3775,26 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     /** token → uid it was resolved for, so every push can carry who it is addressed to. */
     private val fcmTokenOwners = java.util.concurrent.ConcurrentHashMap<String, String>()
+    private val fcmTokenByUid = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, String>>()
 
     private fun withUserFcmToken(uid: String, knownToken: String = "", onToken: (String) -> Unit) {
         if (knownToken.isNotBlank()) {
             fcmTokenOwners[knownToken] = uid
+            fcmTokenByUid[uid] = System.currentTimeMillis() to knownToken
             onToken(knownToken)
             return
+        }
+        fcmTokenByUid[uid]?.let { (at, token) ->
+            val ttl = if (token.isBlank()) 60_000L else 10 * 60_000L
+            if (System.currentTimeMillis() - at < ttl) {
+                if (token.isNotBlank()) { fcmTokenOwners[token] = uid; onToken(token) }
+                return
+            }
         }
         FirebaseFirestore.getInstance().collection("users").document(uid).get()
             .addOnSuccessListener { document ->
                 val token = document.getString("fcmToken").orEmpty()
+                fcmTokenByUid[uid] = System.currentTimeMillis() to token
                 if (token.isBlank()) {
                     Log.w("FCM_GATEWAY", "Recipient $uid has no FCM token")
                     _gatewayHealth.value = GatewayHealth(message = "Recipient has not registered an FCM token yet")
@@ -4071,12 +4087,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             .addOnSuccessListener {
                 _messageDeliveryStates.update { it + (messageId to "sent") }
                 // Update unread count for recipient
-                val unreadRef = getDatabaseInstance().getReference("unread_counts")
+                getDatabaseInstance().getReference("unread_counts")
                     .child(recipientUser.uid).child(currentUser.uid)
-                unreadRef.get().addOnSuccessListener { snapshot ->
-                    val currentCount = snapshot.getValue(Int::class.java) ?: 0
-                    unreadRef.setValue(currentCount + 1)
-                }
+                    .setValue(ServerValue.increment(1.0))
 
                 // Instantly notify recipient under /notifications RTDB key
                 getDatabaseInstance().getReference("notifications").child(recipientUser.uid)
@@ -6134,6 +6147,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
         FirebaseFirestore.getInstance().collection("groups").document(groupId)
             .collection("messages")
+            .orderBy("timestamp", Query.Direction.DESCENDING)
+            .limit(GROUP_LISTEN_WINDOW)
             .addSnapshotListener { snapshot, error ->
                 if (error != null) {
                     Log.e("FIRESTORE_GROUP_MSGS", "Listen failed: ${error.message}")
@@ -6161,13 +6176,16 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                             if (isVisibleMessage(msg.expiresAt)) messages.add(msg)
                         } catch (e: Exception) {}
                     }
-                    // Sort locally
                     messages.sortBy { it.timestamp }
-                    _groupMessagesState.value = messages
+                    val snapshotIds = messages.map { it.messageId }.toSet()
+                    val existingById = _groupMessagesState.value.associateBy { it.messageId }
+                    _groupMessagesState.value = (messages + _groupMessagesState.value.filter { it.messageId !in snapshotIds })
+                        .distinctBy { it.messageId }
+                        .sortedBy { it.timestamp }
 
-                    // Cache locally
-                    viewModelScope.launch(Dispatchers.IO) {
-                        cacheDao.insertGroupMessages(messages.map { CachedGroupMessage.fromGroupMessage(it) })
+                    val fresh = messages.filter { it.messageId !in existingById }
+                    if (fresh.isNotEmpty()) viewModelScope.launch(Dispatchers.IO) {
+                        cacheDao.insertGroupMessages(fresh.map { CachedGroupMessage.fromGroupMessage(it) })
                     }
                 }
             }

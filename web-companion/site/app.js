@@ -7,9 +7,9 @@
   var Screens = window.ConvoScreens;
   var Chat = window.ConvoChat;
 
-  var POLL_CHATS = 20000;
-  var POLL_MESSAGES = 7000;
-  var WEB_VERSION = "v4.9.3";
+  var POLL_CHATS = 6000;
+  var POLL_MESSAGES = 2500;
+  var WEB_VERSION = "v4.9.4";
   var POLL_PRESENCE = 45000;
   // v4.7.0: premium friends invite vibration handled via ActivityNotification type premium_approved
   var LAUNCH_MIN_MS = 1150;

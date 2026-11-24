@@ -1,5 +1,12 @@
 # Convo Chat 5.0 "Nova" — plan & status (A → Z)
 
+## v6.2 "Fast Lane" — speed round (see docs/deep-recharge-v6.2-bn.md)
+- ✅ Worker: OAuth2 access-token cache in `getGoogleAccessToken` (all push/RTDB/AI routes) + JWKS cache in `verifyFirebaseIdToken`.
+- ✅ App: unread counter via `ServerValue.increment` (no lost counts); chat listener bounded to `limitToLast(300)`; only fresh messages persisted to Room; delivery-ack deduped per chat.
+- ✅ App: group message listener `orderBy(timestamp DESC).limit(100)` merged with Room cache; FCM token uid-cache (10 min TTL).
+- ✅ Web: chat poll 20 s → 6 s, message poll 7 s → 2.5 s.
+- ⏳ Next: worker-side push-token lookup (hide `fcmToken` from public `users` doc), RTDB-streaming web companion, chat-list index `user_chats/{uid}`, pagination UI, CI for worker tests.
+
 Branch: `feature/nova-2050-mega-update` · version 5.0.0 (code 63) · Worker API 55
 
 Legend: ✅ done in this branch · 🔧 needs a one-time server step by the admin (see bottom) · 📱 needs a check on a real phone

@@ -2725,10 +2725,8 @@ async function verifyFirebaseIdToken(request, projectId) {
         payload.iss !== `https://securetoken.google.com/${projectId}` ||
         payload.exp <= now || payload.iat > now + 60 || !payload.sub) return null;
 
-    const jwksResponse = await fetch("https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com");
-    if (!jwksResponse.ok) return null;
-    const jwks = await jwksResponse.json();
-    const jwk = jwks.keys?.find(key => key.kid === header.kid);
+    let jwk = (await getSecureTokenJwks()).get(header.kid);
+    if (!jwk) jwk = (await getSecureTokenJwks(true)).get(header.kid);
     if (!jwk) return null;
     const cryptoKey = await crypto.subtle.importKey(
       "jwk", jwk, { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, false, ["verify"]
@@ -2743,6 +2741,22 @@ async function verifyFirebaseIdToken(request, projectId) {
   } catch (_) {
     return null;
   }
+}
+
+/** Google's Secure Token JWKS rotates rarely; caching it by kid removes one network round trip
+ *  from every authenticated request. A forced refresh happens on an unknown kid. */
+const __jwksCache = { at: 0, byKid: new Map() };
+async function getSecureTokenJwks(force = false) {
+  const now = Date.now();
+  if (!force && __jwksCache.byKid.size && now - __jwksCache.at < 6 * 3600 * 1000) return __jwksCache.byKid;
+  try {
+    const jwksResponse = await fetch("https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com");
+    if (!jwksResponse.ok) return __jwksCache.byKid;
+    const jwks = await jwksResponse.json();
+    __jwksCache.byKid = new Map((jwks.keys || []).map(key => [key.kid, key]));
+    __jwksCache.at = now;
+  } catch (_) {}
+  return __jwksCache.byKid;
 }
 
 function base64UrlToBytes(value) {
@@ -2817,8 +2831,19 @@ async function updateFirebaseAccount(env,uid,changes){const a=JSON.parse(env.FIR
 /**
  * Signs a RS256 JWT claim and exchanges it for a Google OAuth2 access token.
  */
+/** OAuth2 access tokens live 1 h; caching them per (account, scope, sub) removes a full
+ *  RS256 sign + token round trip from every push / RTDB / AI call. In-flight calls share one fetch. */
+const __oauthTokenCache = new Map();
 async function getGoogleAccessToken(clientEmail, privateKeyPem, scope = "https://www.googleapis.com/auth/firebase.messaging", sub = "") {
-  const iat = Math.floor(Date.now() / 1000);
+  const cacheKey = `${clientEmail}|${scope}|${sub}`;
+  const nowMs = Date.now();
+  const cached = __oauthTokenCache.get(cacheKey);
+  if (cached) {
+    if (cached.pending) return cached.pending;
+    if (cached.exp > nowMs + 60_000) return cached.token;
+  }
+  const pending = (async () => {
+    const iat = Math.floor(Date.now() / 1000);
   const exp = iat + 3600; // 1 hour token validity
 
   const header = {
@@ -2864,7 +2889,17 @@ async function getGoogleAccessToken(clientEmail, privateKeyPem, scope = "https:/
     throw new Error(`Google OAuth error: ${JSON.stringify(tokenResult)}`);
   }
 
+  const tokenExpMs = nowMs + Math.max(60, Number(tokenResult.expires_in || 3600) - 120) * 1000;
+  __oauthTokenCache.set(cacheKey, { token: tokenResult.access_token, exp: tokenExpMs });
   return tokenResult.access_token;
+  })();
+  __oauthTokenCache.set(cacheKey, { token: "", exp: 0, pending });
+  try {
+    return await pending;
+  } catch (error) {
+    __oauthTokenCache.delete(cacheKey);
+    throw error;
+  }
 }
 
 /**
