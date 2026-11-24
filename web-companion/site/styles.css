@@ -2099,3 +2099,29 @@ form { display: contents; }
 }
 
 @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
+
+/* ===== v6.3 "Prism" accents — violet → blue → cyan signature ===== */
+:root {
+  --prism-a: #7c5cfc;
+  --prism-b: #3d8bff;
+  --prism-c: #35d6c7;
+}
+.btn.primary {
+  background: linear-gradient(120deg, var(--prism-a), var(--prism-b) 55%, var(--prism-c));
+  box-shadow: 0 12px 28px -12px var(--prism-b);
+}
+.badge { background: linear-gradient(135deg, var(--prism-a), var(--prism-b) 60%, var(--prism-c)); }
+.send-btn {
+  background: linear-gradient(135deg, var(--prism-a), var(--prism-b) 55%, var(--prism-c));
+  box-shadow: 0 10px 24px -10px var(--prism-b);
+}
+.rail-btn.active .avatar, .avatar-btn.active .avatar {
+  border-color: var(--prism-b);
+  box-shadow: 0 0 0 1px var(--prism-a), 0 0 16px -4px var(--prism-b);
+}
+.chat-head { border-bottom: 1px solid transparent; }
+.chat-head::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 1px;
+  background: linear-gradient(90deg, transparent, var(--prism-a), var(--prism-b), transparent);
+  opacity: .55;
+}

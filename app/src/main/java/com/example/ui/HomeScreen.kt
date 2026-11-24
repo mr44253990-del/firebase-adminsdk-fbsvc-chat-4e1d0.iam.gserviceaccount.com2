@@ -1543,7 +1543,9 @@ fun HomeScreen(
                                 AppThemePreview("Cherry Cola", Color(0xFF120308), Color(0xFF260814), Color(0xFFFF7A9C)),
                                 AppThemePreview("Ice Glacier", Color(0xFF020B15), Color(0xFF081B30), Color(0xFF9BE7FF)),
                                 AppThemePreview("Ember Glow", Color(0xFF140402), Color(0xFF2B0E06), Color(0xFFFFA25C)),
-                                AppThemePreview("Orchid Noir", Color(0xFF0A0514), Color(0xFF1C0F2C), Color(0xFFE2A9FF))
+                                AppThemePreview("Orchid Noir", Color(0xFF0A0514), Color(0xFF1C0F2C), Color(0xFFE2A9FF)),
+                                AppThemePreview("Prism Night", Color(0xFF05060E), Color(0xFF0D0F1E), Color(0xFFB9A5FF)),
+                                AppThemePreview("Prism Dawn", Color(0xFFF4F5FF), Color.White, Color(0xFF6A4DFF))
                             )),
                             Triple("Light", "Bright, clean and easy on the eyes in daylight", listOf(
                                 AppThemePreview("Aurora Light", Color(0xFFF7F5FF), Color.White, Color(0xFF765BFF)),

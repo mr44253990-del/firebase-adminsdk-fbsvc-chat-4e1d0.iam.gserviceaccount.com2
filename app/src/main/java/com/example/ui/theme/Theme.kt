@@ -34,7 +34,7 @@ fun Modifier.glassmorphic(
     } else {
         Color.White.copy(alpha = .72f)
     }
-    val border = borderColor ?: if (dark) Color.White.copy(alpha = .13f) else Color.White.copy(alpha = .88f)
+    val border = borderColor ?: if (dark) Color.White.copy(alpha = .16f) else Color.White.copy(alpha = .88f)
     return shadow(18.dp, shape, ambientColor = Color.Black.copy(alpha = .16f), spotColor = Color.Black.copy(alpha = .10f))
         .background(background, shape)
         .border(1.dp, border, shape)
@@ -205,7 +205,10 @@ fun MyApplicationTheme(
         "cyberpunk" -> themedDark(Color(0xFFFFE600), Color(0xFFFF2E88), Color(0xFF07010D), Color(0xFF1A0626)).copy(tertiary = Color(0xFF00F0FF), primaryContainer = androidx.compose.ui.graphics.lerp(Color(0xFF1A0626), Color(0xFFFFE600), .38f), onPrimaryContainer = Color.White)
         "deep forest" -> themedDark(Color(0xFF8BD17C), Color(0xFFC5E1A5), Color(0xFF030B06), Color(0xFF0D1F14)).copy(tertiary = Color(0xFFFFCC80), primaryContainer = androidx.compose.ui.graphics.lerp(Color(0xFF0D1F14), Color(0xFF8BD17C), .38f), onPrimaryContainer = Color.White)
         "graphite" -> themedDark(Color(0xFFE0E3E8), Color(0xFF9AA4B2), Color(0xFF0E0F11), Color(0xFF1B1D21)).copy(tertiary = Color(0xFF64B5F6), primaryContainer = androidx.compose.ui.graphics.lerp(Color(0xFF1B1D21), Color(0xFFE0E3E8), .38f), onPrimaryContainer = Color.White)
-        "arctic light" -> LightColors.copy(primary = Color(0xFF0277BD), onPrimary = Color.White, secondary = Color(0xFF00897B), tertiary = Color(0xFF5E35B1), background = Color(0xFFF2F8FC), surface = Color(0xFFFFFFFF), surfaceVariant = androidx.compose.ui.graphics.lerp(Color(0xFFF2F8FC), Color(0xFF0277BD), .08f), primaryContainer = androidx.compose.ui.graphics.lerp(Color.White, Color(0xFF0277BD), .2f), onPrimaryContainer = androidx.compose.ui.graphics.lerp(Color.Black, Color(0xFF0277BD), .35f))
+        "arctic light" -> LightColors.copy(primary = Color(0xFF0277BD), onPrimary = Color.White, secondary = Color(0xFF00897B), tertiary = Color(0xFF5E35B1), background = Color(0xFFF2F8FC), surface = Color(0xFFFFFFFF), surfaceVariant = androidx.compose.ui.graphics.lerp(Color(0xFFF2F8FC), Color(0xFF0277BD), .08f), primaryContainer = androidx.compose.ui.graphics.lerp(Color.White, Color(0xFF0277BD), .2f), onPrimaryContainer = androidx.compose.ui.graphics.lerp(Color.Black, Color(0xFF0277BD), .35f)),
+        // v6.3 "Prism" family — aurora mesh + gradient-rim glass on deep ink / daylight prism
+        "prism night" -> themedDark(Color(0xFFB9A5FF), Color(0xFF5AA2FF), Color(0xFF05060E), Color(0xFF0D0F1E)).copy(tertiary = Color(0xFF35D6C7), primaryContainer = Color(0xFF241E5C), onPrimaryContainer = Color.White),
+        "prism dawn" -> LightColors.copy(primary = Color(0xFF6A4DFF), onPrimary = Color.White, secondary = Color(0xFF2E7CF6), tertiary = Color(0xFFE0559A), background = Color(0xFFF4F5FF), surface = Color(0xFFFFFFFF), surfaceVariant = Color(0xFFE9EAF8), primaryContainer = Color(0xFFE4DEFF), onPrimaryContainer = Color(0xFF1D1660))
         "lemonade light" -> LightColors.copy(primary = Color(0xFFC28A00), onPrimary = Color.White, secondary = Color(0xFF43A047), tertiary = Color(0xFFE65100), background = Color(0xFFFFFCEE), surface = Color(0xFFFFFFFF), surfaceVariant = androidx.compose.ui.graphics.lerp(Color(0xFFFFFCEE), Color(0xFFC28A00), .08f), primaryContainer = androidx.compose.ui.graphics.lerp(Color.White, Color(0xFFC28A00), .2f), onPrimaryContainer = androidx.compose.ui.graphics.lerp(Color.Black, Color(0xFFC28A00), .35f))
         "paper light" -> LightColors.copy(primary = Color(0xFF3E4A59), onPrimary = Color.White, secondary = Color(0xFF8D6E63), tertiary = Color(0xFF00796B), background = Color(0xFFFAF8F3), surface = Color(0xFFFFFFFF), surfaceVariant = androidx.compose.ui.graphics.lerp(Color(0xFFFAF8F3), Color(0xFF3E4A59), .08f), primaryContainer = androidx.compose.ui.graphics.lerp(Color.White, Color(0xFF3E4A59), .2f), onPrimaryContainer = androidx.compose.ui.graphics.lerp(Color.Black, Color(0xFF3E4A59), .35f))
         else -> if (darkTheme) DarkColors else LightColors

@@ -14,6 +14,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.unit.dp
 
 /** App-wide aurora canvas. Keeps every route visually connected to one design language. */
 @Composable
@@ -60,6 +61,12 @@ fun PremiumBackground(modifier: Modifier = Modifier, liquid: Boolean = false, co
             drawCircle(Brush.radialGradient(listOf(orbA, Color.Transparent), center = a, radius = r * .75f), radius = r * .75f, center = a)
             drawCircle(Brush.radialGradient(listOf(orbB, Color.Transparent), center = b, radius = r * .7f), radius = r * .7f, center = b)
             drawCircle(Brush.radialGradient(listOf(orbC, Color.Transparent), center = c, radius = r * .8f), radius = r * .8f, center = c)
+            // v6.3 Prism: faint grid over the aurora mesh.
+            val step = 54.dp.toPx()
+            var gx = 0f
+            while (gx <= size.width) { drawLine(Color.White.copy(alpha = .04f), Offset(gx, 0f), Offset(gx, size.height), 1f); gx += step }
+            var gy = 0f
+            while (gy <= size.height) { drawLine(Color.White.copy(alpha = .04f), Offset(0f, gy), Offset(size.width, gy), 1f); gy += step }
         },
         content = content
     )
