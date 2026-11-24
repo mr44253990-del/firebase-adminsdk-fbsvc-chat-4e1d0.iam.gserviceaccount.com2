@@ -94,12 +94,28 @@ jobs:
           cd desktop
           npm install --no-audit --no-fund
 
+      # electron-builder ships an x86-only fpm tool for .deb packaging; the
+      # arm64 runner needs a native system fpm instead.
+      - name: Install native fpm (Linux arm64)
+        if: matrix.os == 'ubuntu-24.04-arm'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ruby-full gcc 
+          sudo gem install fpm --no-document
+          fpm --version
+
       - name: Build ${{ matrix.artifact }}
+        shell: bash
+        env:
+          USE_SYSTEM_FPM: ${{ matrix.os == 'ubuntu-24.04-arm' && 'true' || '' }}
         run: |
           cd desktop
           npm run prepare-site
-          npm exec electron-builder -- --publish never \
-            ${{ matrix.os == 'windows-latest' && '--win --x64' || '--linux --arm64' }}
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            npm exec electron-builder -- --publish never --win --x64
+          else
+            npm exec electron-builder -- --publish never --linux --arm64
+          fi
 
       - name: Checksum and collect artifacts
         shell: bash
