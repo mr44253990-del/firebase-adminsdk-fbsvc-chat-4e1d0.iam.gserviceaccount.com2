@@ -68,6 +68,7 @@ jobs:
 
       - name: Build desktop app
         working-directory: desktop
+        shell: bash
         run: ./gradlew ${{ matrix.gradle-tasks }} --no-daemon --stacktrace
 
       - name: Upload distributables
