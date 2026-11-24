@@ -62,8 +62,6 @@ compose.desktop {
             }
 
             linux {
-                menu = true
-                menuGroup = "Network"
                 packageName = "convochat"
             }
 
