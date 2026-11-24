@@ -14,6 +14,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 /**
@@ -37,6 +38,16 @@ fun Modifier.modernBackdrop(): Modifier {
             Brush.radialGradient(listOf(tertiary.copy(alpha = .14f), Color.Transparent), center = Offset(size.width * .05f, size.height * .55f), radius = size.width * .6f),
             radius = size.width * .6f, center = Offset(size.width * .05f, size.height * .55f)
         )
+        // v6.3 Prism: third orb (secondary) + faint grid so older screens join the new language.
+        drawCircle(
+            Brush.radialGradient(listOf(scheme.secondary.copy(alpha = .12f), Color.Transparent), center = Offset(size.width * .5f, size.height * .95f), radius = size.width * .55f),
+            radius = size.width * .55f, center = Offset(size.width * .5f, size.height * .95f)
+        )
+        val step = 54.dp.toPx()
+        var gx = 0f
+        while (gx <= size.width) { drawLine(Color.White.copy(alpha = .035f), Offset(gx, 0f), Offset(gx, size.height), 1f); gx += step }
+        var gy = 0f
+        while (gy <= size.height) { drawLine(Color.White.copy(alpha = .035f), Offset(0f, gy), Offset(size.width, gy), 1f); gy += step }
     }
 }
 
@@ -44,7 +55,7 @@ fun Modifier.modernBackdrop(): Modifier {
 @Composable
 fun modernTopBarColors(): TopAppBarColors = TopAppBarDefaults.topAppBarColors(
     containerColor = Color.Transparent,
-    scrolledContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = .92f),
+    scrolledContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = .85f),
     titleContentColor = MaterialTheme.colorScheme.onBackground,
     navigationIconContentColor = MaterialTheme.colorScheme.onBackground,
     actionIconContentColor = MaterialTheme.colorScheme.onBackground

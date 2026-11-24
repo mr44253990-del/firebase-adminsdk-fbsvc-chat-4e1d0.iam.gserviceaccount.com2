@@ -72,7 +72,9 @@ fun LiquidGlassBackground(
     blue: Color = LiquidBlue,
     /** 1 = solid black base (splash, sign-in); lower lets a screen's own colour show through. */
     baseAlpha: Float = 1f,
-    beads: Boolean = true
+    beads: Boolean = true,
+    /** v6.3 Prism: faint grid over the mesh (skipped on call screens that pass false). */
+    grid: Boolean = true
 ) {
     val motion = rememberInfiniteTransition(label = "liquid")
     val t by motion.animateFloat(0f, (2 * PI).toFloat(), infiniteRepeatable(tween(26_000, easing = LinearEasing)), label = "liquid_t")
@@ -131,6 +133,14 @@ fun LiquidGlassBackground(
                 cubicTo(sx(.70f + i * .05f, i.toFloat()), sy(.96f - i * .03f, i + 1f), sx(.88f, i + 2f), sy(.84f - i * .04f, i.toFloat()), w * 1.08f, sy(.72f - i * .05f, i + 3f))
             }
             drawPath(arc, Brush.linearGradient(listOf(Color.Transparent, blue.copy(alpha = .8f - i * .2f), LiquidCyan.copy(alpha = .6f - i * .15f)), Offset(w * .5f, h), Offset(w, h * .7f)), style = Stroke(rimW * (1.3f - i * .25f), cap = StrokeCap.Round))
+        }
+        // v6.3 Prism grid — hairlines over the mesh, very low alpha.
+        if (grid) {
+            val step = 54.dp.toPx()
+            var gx = 0f
+            while (gx <= w) { drawLine(Color.White.copy(alpha = .045f), Offset(gx, 0f), Offset(gx, h), 1f); gx += step }
+            var gy = 0f
+            while (gy <= h) { drawLine(Color.White.copy(alpha = .045f), Offset(0f, gy), Offset(w, gy), 1f); gy += step }
         }
         // Floating glass beads.
         if (beads) listOf(Triple(.90f, .12f, 13f), Triple(.08f, .26f, 12f), Triple(.10f, .44f, 17f), Triple(.93f, .17f, 9f)).forEachIndexed { i, (bx, by, br) ->

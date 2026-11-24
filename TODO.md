@@ -1,5 +1,13 @@
 # Convo Chat 5.0 "Nova" — plan & status (A → Z)
 
+## v6.3 "Prism" — design overhaul round (see docs/design-overhaul-v6.3-bn.md + docs/design-v6.3/ mockups)
+- ✅ New design kit `ui/PrismKit.kt`: PrismMeshBackground (aurora orbs + faint grid), `prismGlass` gradient-rim surfaces, `PrismGradientButton`, `PrismFab`, `PrismTopBar` (gradient title), `PrismBadge`.
+- ✅ Global backdrops now carry the Prism signature on every page: grid + 3rd orb in `LiquidGlassBackground`, `PremiumBackground`, `modernBackdrop`; stronger glass rim in `glassmorphic`; frosted top-bar scrolled state.
+- ✅ New app themes "Prism Night" + "Prism Dawn" (Theme.kt + picker previews in HomeScreen).
+- ✅ Web companion: prism 3-stop gradients on primary buttons / badges / send FAB, avatar glow ring, gradient hairline under chat header.
+- ✅ Version 6.1.1 (75) → 6.3.0 (76). Mockups generated + reviewed in `docs/design-v6.3/`.
+- ⏳ Next: per-screen rewiring to PrismTopBar/PrismGradientButton/gradient bubbles (device-verified), pulse-ring incoming call, conic story rings.
+
 ## v6.2 "Fast Lane" — speed round (see docs/deep-recharge-v6.2-bn.md)
 - ✅ Worker: OAuth2 access-token cache in `getGoogleAccessToken` (all push/RTDB/AI routes) + JWKS cache in `verifyFirebaseIdToken`.
 - ✅ App: unread counter via `ServerValue.increment` (no lost counts); chat listener bounded to `limitToLast(300)`; only fresh messages persisted to Room; delivery-ack deduped per chat.
