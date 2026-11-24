@@ -41,7 +41,7 @@ jobs:
           set -euo pipefail
           cd desktop
           npm run prepare-site
-          npm exec electron-builder -- --publish never --linux --arm64 AppImage
+          npx electron-builder --publish never --linux AppImage --arm64
 
       - name: Install & launch app on a virtual display
         run: |
@@ -121,7 +121,7 @@ jobs:
           set -euo pipefail
           cd desktop
           npm run prepare-site
-          npm exec electron-builder -- --publish never --win --x64 zip
+          npx electron-builder --publish never --win zip --x64
 
       - name: Extract, launch app and capture screenshots
         shell: pwsh
