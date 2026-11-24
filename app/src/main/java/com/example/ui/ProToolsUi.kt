@@ -79,6 +79,7 @@ fun ProToolsOverlay(users: List<User>, onOpenChat: (String) -> Unit, onStartCall
     }
 
     if (page != null) {
+        KeyboardResizeMode()
         Surface(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding(), color = MaterialTheme.colorScheme.background) {
             Column(Modifier.fillMaxSize()) {
                 Row(

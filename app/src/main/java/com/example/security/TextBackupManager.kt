@@ -73,8 +73,8 @@ object TextBackupManager {
             put("messages", merged("messages", "messageId", buildMessages(dao)))
             put("groups", merged("groups", "id", dao.getAllGroups().first().map(::groupJson)))
             put("groupMessages", merged("groupMessages", "messageId", buildGroupMessages(dao)))
-            put("stories", merged("stories", "id", dao.getAllStories().first().map(::storyJson)))
-            put("posts", merged("posts", "id", dao.getAllPosts().first().map(::postJson)))
+            // Chats only (v5.2): stories and posts are no longer written to the backup. They are
+            // re-downloaded from the server anyway, and leaving them out keeps the single file small.
         }
         val bytes = encrypt(root.toString().toByteArray(StandardCharsets.UTF_8), uid)
         // The public encrypted file is the single source of truth. Never silently report
@@ -82,11 +82,108 @@ object TextBackupManager {
         // the in-place public write succeeds.
         writePublic(context, uid, bytes)
         deleteLegacyPrivate(context, uid)
+        prefs(context).edit().putLong("last_backup_at", System.currentTimeMillis()).putLong("last_backup_bytes", bytes.size.toLong())
+            .putInt("last_backup_messages", (root.optJSONArray("messages")?.length() ?: 0) + (root.optJSONArray("groupMessages")?.length() ?: 0)).apply()
         Result(restored = false, itemCount = root.optJSONArray("messages")?.length() ?: 0)
     }.getOrElse { Result(false, reason = it.message ?: "backup failed") }
 
     /** Where the single backup file lives, for the Settings screen. */
     fun publicLocation(uid: String): String = "Documents/Convo Chat Backups/$FILE_PREFIX$uid$FILE_SUFFIX"
+
+    // ---- Backup folder chosen by the user (Storage Access Framework) ------------------------
+    //
+    // Android 10+ hides files an app created before it was uninstalled: after a reinstall the
+    // app can neither read nor overwrite its old backup in Documents, so every backup run made
+    // another "…(1)", "…(2)" copy and nothing could be restored. A folder the user picks once
+    // does not have that problem: the app is granted that folder, always finds the SAME file in
+    // it, overwrites it in place, and can read it again after a reinstall (the user re-selects
+    // the folder once, because Android forgets grants on uninstall).
+    private fun prefs(context: Context) = context.getSharedPreferences("convo_backup", Context.MODE_PRIVATE)
+
+    data class Status(val folderLabel: String, val folderConnected: Boolean, val lastBackupAt: Long, val bytes: Long, val messages: Int)
+
+    fun status(context: Context): Status {
+        val tree = folderUri(context)
+        val p = prefs(context)
+        return Status(
+            folderLabel = tree?.let { runCatching { android.provider.DocumentsContract.getTreeDocumentId(it).substringAfter(':').ifBlank { "Selected folder" } }.getOrDefault("Selected folder") }
+                ?: "Documents/$PUBLIC_DIR",
+            folderConnected = tree != null,
+            lastBackupAt = p.getLong("last_backup_at", 0L), bytes = p.getLong("last_backup_bytes", 0L), messages = p.getInt("last_backup_messages", 0)
+        )
+    }
+
+    /** The granted folder, or null when none is set or the grant is gone. */
+    fun folderUri(context: Context): Uri? {
+        val saved = prefs(context).getString("tree_uri", null)?.let(Uri::parse) ?: return null
+        val granted = context.contentResolver.persistedUriPermissions.any { it.uri == saved && it.isWritePermission }
+        return saved.takeIf { granted }
+    }
+
+    fun setFolder(context: Context, tree: Uri) {
+        runCatching {
+            context.contentResolver.takePersistableUriPermission(
+                tree, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            )
+        }
+        // The folder may already hold this account's backup (fresh install): restore it once
+        // before the next automatic backup writes to it.
+        prefs(context).edit().putString("tree_uri", tree.toString()).putBoolean("pending_restore", true).apply()
+    }
+
+    /** True once after a folder was connected; the caller should restore before backing up. */
+    fun consumePendingRestore(context: Context): Boolean {
+        val p = prefs(context)
+        if (!p.getBoolean("pending_restore", false)) return false
+        p.edit().putBoolean("pending_restore", false).apply()
+        return true
+    }
+
+    fun clearFolder(context: Context) {
+        prefs(context).getString("tree_uri", null)?.let { saved ->
+            runCatching { context.contentResolver.releasePersistableUriPermission(Uri.parse(saved), android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION) }
+        }
+        prefs(context).edit().remove("tree_uri").apply()
+    }
+
+    /** All backup documents of this account inside the granted folder (document uri → name). */
+    private fun treeFiles(context: Context, tree: Uri, uid: String): List<Pair<Uri, String>> = runCatching {
+        val dc = android.provider.DocumentsContract.getTreeDocumentId(tree)
+        val children = android.provider.DocumentsContract.buildChildDocumentsUriUsingTree(tree, dc)
+        val out = mutableListOf<Triple<Uri, String, Long>>()
+        context.contentResolver.query(
+            children,
+            arrayOf(android.provider.DocumentsContract.Document.COLUMN_DOCUMENT_ID, android.provider.DocumentsContract.Document.COLUMN_DISPLAY_NAME, android.provider.DocumentsContract.Document.COLUMN_LAST_MODIFIED),
+            null, null, null
+        )?.use { c ->
+            while (c.moveToNext()) {
+                val name = c.getString(1).orEmpty()
+                if (name.startsWith("$FILE_PREFIX$uid") && name.endsWith(FILE_SUFFIX)) {
+                    out += Triple(android.provider.DocumentsContract.buildDocumentUriUsingTree(tree, c.getString(0)), name, c.getLong(2))
+                }
+            }
+        }
+        // Exact name first, then the most recently modified copy.
+        out.sortedWith(compareByDescending<Triple<Uri, String, Long>> { it.second == "$FILE_PREFIX$uid$FILE_SUFFIX" }.thenByDescending { it.third }).map { it.first to it.second }
+    }.getOrDefault(emptyList())
+
+    private fun writeTree(context: Context, tree: Uri, uid: String, bytes: ByteArray): Boolean = runCatching {
+        val name = "$FILE_PREFIX$uid$FILE_SUFFIX"
+        val files = treeFiles(context, tree, uid)
+        val target = files.firstOrNull()?.first ?: run {
+            val parent = android.provider.DocumentsContract.buildDocumentUriUsingTree(tree, android.provider.DocumentsContract.getTreeDocumentId(tree))
+            android.provider.DocumentsContract.createDocument(context.contentResolver, parent, "application/octet-stream", name) ?: error("Could not create the backup file")
+        }
+        (context.contentResolver.openOutputStream(target, "wt") ?: error("Could not open the backup file")).use { it.write(bytes); it.flush() }
+        // One file only: remove any older duplicates of this account in the folder.
+        files.drop(1).forEach { extra -> runCatching { android.provider.DocumentsContract.deleteDocument(context.contentResolver, extra.first) } }
+        true
+    }.getOrDefault(false)
+
+    private fun readTree(context: Context, tree: Uri, uid: String): ByteArray? =
+        treeFiles(context, tree, uid).firstOrNull()?.let { file ->
+            runCatching { context.contentResolver.openInputStream(file.first)?.use(InputStream::readBytes) }.getOrNull()?.takeIf { it.isNotEmpty() }
+        }
 
     suspend fun restoreLatest(context: Context, uid: String): Result = runCatching {
         val bytes = readLatest(context, uid) ?: return@runCatching Result(false, reason = "no backup found")
@@ -305,9 +402,13 @@ object TextBackupManager {
 
     private fun writePublic(context: Context, uid: String, bytes: ByteArray) {
         val name = "$FILE_PREFIX$uid$FILE_SUFFIX"
+        // Preferred: the folder the user granted — always the same single file, survives reinstall.
+        folderUri(context)?.let { tree -> if (writeTree(context, tree, uid, bytes)) return }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             val found = queryPublic(context, uid)
-            val existing = found.firstOrNull { it.second == name }
+            // Reuse ANY backup file this install already owns (after a reinstall Android names the
+            // new one "…(1).cbackup"); matching only the exact name created a new file every time.
+            val existing = found.firstOrNull { it.second == name } ?: found.firstOrNull()
             var keepUri: Uri? = null
             val wroteExisting = existing != null && runCatching {
                 val stream = context.contentResolver.openOutputStream(existing.first, "wt") ?: error("Could not open backup file")
@@ -370,6 +471,7 @@ object TextBackupManager {
                 root.optString("magic") == MAGIC && root.optString("uid") == uid
             }.getOrDefault(false)
         ) return legacy
+        folderUri(context)?.let { tree -> readTree(context, tree, uid)?.let { return it } }
         val name = "$FILE_PREFIX$uid$FILE_SUFFIX"
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             val found = queryPublic(context, uid)

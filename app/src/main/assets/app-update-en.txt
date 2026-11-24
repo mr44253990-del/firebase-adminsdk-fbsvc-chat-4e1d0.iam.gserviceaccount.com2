@@ -1,3 +1,105 @@
+• 6.1.1 — Modern glass top bar: transparent glass with a soft colour glow and a fine accent hairline under it (instead of the old flat bar).• NEW 6.1 — Floating glass bottom bar: the navigation bar is now a rounded capsule that floats with a soft glow instead of sitting flush at the screen edge.
+• Calls: a long caller name now scales down and ellipses cleanly instead of overflowing.
+• Full audit of the remaining feature list (B–F): group polls already show animated result bars and percentages; scheduled messages, disappearing messages, read receipts, presence privacy, post bookmarks, voice-message speed control, AI summarise/rewrite tools, admin announcements and gifts, and more were already shipped in earlier versions.
+• NEW 6.0 — Swipe the chat list left or right to switch filters (All · Unread · Archived · Locked); the filter name pops up as you change it.
+• 6 new themes in Settings → Theme → "New 2050": Aurora Prism, Black Opal, Cherry Cola, Ice Glacier, Ember Glow, Orchid Noir.
+• Audit of the feature list: scheduled messages, disappearing messages, read receipts, presence privacy (online/last seen/typing), post bookmarks, pin chats, app lock and much more were already present.
+• NEW 5.9 — Chats "tools & filters" moved into a tidy menu in the top bar (the funnel icon). The chat list is now cleaner: just the announcement, your notes and who is online.
+• The filters (All · Unread · Archived · Locked) and the tools (Saved · Calls · Find in chats · Find friends) all live in that one menu.
+• Loading screen is back to the familiar look with the app icon.
+• Top bar cleaned up: the duplicate search icon no longer sits next to the search box on the Chats tab.
+• NEW 5.8 — Tools row is now icon-only: All · Unread · Archived · Locked · Saved · Calls · Find in chats · Find friends, each one just an icon, all fit in one row.
+• Chats tab: the top bar (search box) now stays put while you scroll — only the notes and quick tools header slides away.
+• Admin → App promotions: upload an APK right there and its download link is set automatically; the Download button then serves that APK.
+• Post photos: a new download button on the full-screen photo viewer saves the photo to your phone.
+• Loading screen: no more app icon — it goes straight to the connecting bar.
+• Video calls: 3 more filters (Ruby, Lagoon, Champagne).
+• Reaction menu now offers more emoji: cheering, heart-eyes, rolling-laugh, crying and a few more.
+• Media auto-delete (already in 5.7): photos are removed from the server after the other phone saves them (admin switch); voice messages are removed after they are played; files after download.
+• NEW 5.7 — App design switch: Settings → Design → "App design" changes the whole app between the Old (classic, your own theme) and the New (dark liquid glass) design. The admin picks the default for everyone in Admin → App design & media.
+• Chats tab rebuilt: the search box now lives in the top bar; "Tools & filters" became one slim row (All · Unread · Archived · Locked · Saved · Calls · Find in chats · Find friends); notes are always visible in one strip together with who is online.
+• Notes: add a sound to your note (tap to play), react to a friend's note with an emoji or write a reply — both arrive in your chat with that person.
+• Post photos: several photos slide by themselves while you scroll; tap a photo for a full-screen viewer you can swipe and zoom.
+• NEW (admin): App promotions — add your apps (picture, name, short text, download link) and switch the shelf on or off. Users see a swipeable, animated store-style shelf in the feed; Download opens the link.
+• NEW (admin, off by default): delete chat photos from the server once the other phone has saved them. Both phones keep their own copy.
+• Comment box redesigned: quick emoji row, one glass pill with an animated send button, clearer "replying to" bar.
+• Message menu redesigned: the pressed text with a one-tap Copy on top, reactions in one row (stickers behind "+"), colour-coded actions.
+• Long message? An expand button opens a full-screen writing page. Unsent text shows as "Draft:" in the chat list.
+• Chat bubbles: 3 new styles (Aurora, Inner glow, Candy stripe). Video calls: 10 new filters (Lavender, Mint, Peach, Arctic, Retro 90s, Moody, Candy, HDR pop, Soft fade, Cocoa).
+• Video call: your own small preview is now a proper portrait frame — no more picture inside black bars.
+• Incoming call notification shows the caller's picture and name.
+• Times read naturally: "1 hr 5 min" instead of "65 min", in last seen, reminders and notifications. The green online dot reacts within 5 seconds.
+• The web (browser) version has been removed from the app.
+• NEW LOOK 5.6 — "dark liquid glass": flowing violet and blue glass on deep black, a glossy app tile, the two-tone Convo Chat wordmark and a live waveform.
+• Launch screen redesigned in the new look: wide glowing progress bar and a frosted card with Connect · Secure · Sync.
+• Sign-in screen (dark look): liquid-glass background, glass app tile with an orbit ring and the new wordmark. The light "Milk glass" look is unchanged.
+• Call screen: liquid-glass background, "Secure Call" badge, a live voice waveform under the name, a frosted control dock and a glass encryption pill. Incoming group calls use the same background.
+• Permission Center, AI Studio and What's new pages also carry the liquid-glass layer.
+• FIXED: you can no longer call someone who has not accepted your message request yet — calls follow the same rule as messages.
+• FIXED 5.5 (calls): answering a call no longer throws you back to the ringing screen or closes the call. Causes fixed: the same call being announced twice restarted the call screen; rotating the phone reset an answered call; an unreadable answer from the call server crashed the app; and the call service could fail to start on some phones.
+• FIXED: calls now connect even when the call relay server cannot be reached (they fall back to public servers).
+• FIXED (group calls): the host's call screen is no longer blank — black or white — after pressing Call; going back and in again works too.
+• FIXED (screen sharing): starting screen sharing no longer crashes on Android 14+; group calls can share the screen from audio calls as well; screenshot protection is lifted while you share so the other person does not see black.
+• Video-call flashlight: the light request now matches the camera's own settings, which should stop the picture going black when the light is on.
+• FIXED (sharing from other apps): choosing a person now opens that chat and shows the upload with percent and time left.
+• Sign-in screen: no more 2–3 second freeze while it searched for saved passwords; saved accounts appear as you type the e-mail.
+• FIXED (web QR login): scanning the QR on Convo Chat Web now shows which account will sign in and asks for one confirmation — then the browser signs in.
+• Posts: "Add music" sits right under your photo; music on a post starts by itself while the post is in view. New key-based catalogue: Freesound (plus Jamendo) — the admin pastes the free key and saves.
+• Animated GIFs (and animated WebP) now play everywhere and are sent without losing their animation.
+• The web-version card is now a slim strip under the stories and in the profile menu.
+• FIXED 5.4: "Open Web Version" in the profile-picture menu now really opens the browser. The card shows the web address and its benefits, and the admin can change the address, the text, or switch it off (Admin → Web version card).
+• Calls are more reliable: if the other phone has not started ringing after a few seconds the call request is sent again with a fresh device address, and people who have the app open also receive the call through a second, instant channel.
+• FIXED: swiping a group message to reply — the reply preview now sits above the text box instead of overlapping it.
+• Chat motion is calmer: softer message animations, messages glide into place, and gentler transitions when opening a chat.
+• Floating call bubble: now the same design as the call card inside the app, with an X that hides it (the call keeps running). The in-app call card has the X too.
+• Audio library: 3 more catalogues — Deezer (previews), Openverse (free music and sounds) and Jamendo (full indie tracks, needs a free client id) — and an "All" tab that searches every catalogue at once. The admin master switch now turns every catalogue on or off together.
+• Convo AI: a tools drawer (swipe from the left edge or tap the grid icon) with every AI Studio tool, Smart Hub and quick prompts, plus AI Studio and Smart Hub buttons at the top.
+• FIXED 5.3: in chats and group chats the message box is no longer hidden behind the keyboard — it now sits right on top of the keyboard while you type (the 5.0 AI-chat keyboard fix had left the whole app in the wrong keyboard mode after the AI screen was opened once). Comment boxes are back to normal too.
+• Reactions redrawn: Like, Love, Haha, Wow, Sad and Angry are now hand-drawn, animated faces — in the reaction tray, on the Like button and in the "who reacted" summary.
+• Chat quick-reaction button: glowing halo, gentle wobble, and a "Send once" tray (long-press) for a different emoji without changing the chat's default.
+• NEW audio library for posts and photo stories: Audius (full indie tracks), iTunes (30-second song previews) and Radio Browser (live radio). Search, preview, then "Use". Posts show a mini player; story music plays while the story is open.
+• Admin → Audio library: one master switch (on = on for everyone, off = off for everyone), per-catalogue switches, API settings (Audius app name and host, iTunes country), Save, Test APIs and Preview. The Admin Copilot also understands "audio library on / off".
+• NEW 5.2: Permission Center — one page right after sign-in for every permission, with a progress ring; everything can be skipped and is asked again only when a feature needs it. Home no longer opens permission pop-ups. Reopen it from Settings → Permission manager.
+• Chat backup fixed: the backup is now one single file with chats only (no more new files each time). Choose a backup folder once and the file stays readable after the app is removed and installed again. Settings → Chat backup.
+• Profile pictures no longer "load" in front of you: the saved picture stays on screen and a new one is swapped in quietly once it has downloaded.
+• Smarter typing indicator: a live bubble with a wave, the person's name, and "typing…" in the chat top bar.
+• App tour upgraded: swipe the card, tap a dot to jump, "Try it now" buttons, a pointer on the highlighted control, and new steps.
+• Groups home redesigned: totals, search, smart filters, member faces and a pulsing LIVE badge when a call is running.
+• Group profile: change the group name and photo, or leave the group (Group menu → Group profile & smart tools).
+• Posts: new share sheet (Facebook, Messenger, WhatsApp, Telegram, X, copy link, SMS), smart AI tools for any post (translate, summarise, explain, suggest a comment), and you can now tag anyone.
+• Chat tools sheet: new design with animations, plus Video, AI write and AI reply.
+• Notes redesigned as floating thought bubbles with mood colours, quick moods and time left.
+• Files: built-in viewer for photos (pinch-zoom), videos, audio and ZIP archives, next to the PDF and text viewers.
+• Premium page: rotating benefit spotlight, smart plan picker (cheapest plan for how long you will use it) and a shelf of smart tools. A small Premium reminder appears at most once every three days.
+• Home top bar: its own look for admin, staff and Premium members, with a greeting.
+• Settings: new "Backup & permissions" group (Chat backup, Permission manager, Smart Hub, What's new).
+• Launch screen: living constellation background.
+• Web: fixed switching between Sign in / Pair code / QR on the login page, QR now shows on phones, tapping the name in a chat opens the profile info, and a new motion + glass design layer.
+• NEW 5.1: Smart Hub — one search box for people, groups, posts and features, with shortcuts and "online now" (account menu → Smart Hub).
+• Group polls: create a poll from Smart group tools; everyone votes with one tap and sees live results.
+• Group chats now have AI writing tools (polish, shorten, friendly, formal, Bangla, English) like private chats.
+• Group calls: raise your hand ✋ to ask for a turn to speak.
+• Connection pill: shows at once when the phone is offline and when it is back online.
+• AI Studio: 3 more tools — Tone check, Plan maker and Quiz me (12 in total).
+• Admin Copilot: one-tap Undo after every switch change, recent command history, and "sign out @user" from every device.
+• NEW 5.0 "Nova": one launch screen — the separate "Securing your session" step is gone; the check now runs inside the animated launch screen (with live stages and tips).
+• Group calls rebuilt: pressing Call opens the call screen at once, and every member sees a live "Join" bar at the top of the group while the call is running.
+• Group calls: when the host hangs up the call ends for everyone; other people can leave without ending it.
+• Group calls: add more people during the call, and switch an audio call to video without hanging up (also in 1-to-1 calls).
+• Smart group tools: AI catch-up summary, pinned announcement, group description, admins-only mode, slow mode, co-admins, member stats, @everyone and roll call.
+• Calls follow you: during an audio call a floating call bubble stays on top of every app, and a call bar with a timer shows in the status bar.
+• New incoming-call screen: Decline, Message and Answer are aligned on a clean grid; tap or swipe up to answer.
+• Fixed: turning the loudspeaker on no longer freezes the call animations.
+• Video calls: 12 new camera looks (Portrait light, Golden hour, Bloom, Film, Drama, Noir, Pastel, Ocean, Emerald, Sunset, Neon 2050, Crisp HD) and a selfie light for the front camera.
+• Several accounts on one phone: a call or message for another saved account now shows "Switch account" — one tap signs in and opens it.
+• Fixed: opening a profile link now shows that profile, and tapping a message notification opens that conversation instead of the home screen.
+• Photos in chats keep their real shape: wide photos are wide, tall photos are tall.
+• Chat top bar tidied: the name has room again; search and theme moved into the menu.
+• Convo AI can search profiles and read community facts from the database; new AI Studio with 9 tools (rewrite, translate, reply ideas, captions, summary, grammar, bio, ideas, explain).
+• Fixed: the AI chat box no longer jumps far above the keyboard.
+• Activity box redesigned: live counters, filters, time groups and colour-coded cards.
+• New sign-in screen details: living constellation background, greeting, typewriter line and feature carousel; better layout on tablets.
+• Admin: AI Copilot (type a command such as "maintenance on for 30 minutes"), user e-mails in User management and smart search operators.
 • Fixed: web messages failed with "Message send failed (401)" — the server now talks to the database with the right credentials, so web ↔ Android chat works live in both directions.
 • Fixed: web chats showed "Say hello" even when messages existed — message history, last message previews and unread counts now load correctly.
 • Web: the message box is pinned to the bottom, stays above the keyboard, and inputs no longer zoom or hide behind the keyboard.

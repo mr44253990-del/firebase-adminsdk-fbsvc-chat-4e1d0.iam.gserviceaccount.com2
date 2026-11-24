@@ -46,7 +46,26 @@ class CallForegroundService : Service() {
             Intent(this, CallEndReceiver::class.java).putExtra("callId", callId),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-        val notification = NotificationCompat.Builder(this, CHANNEL)
+        // Remember when this call started so the status-bar call chip keeps one continuous timer.
+        if (startedCallId != callId) { startedCallId = callId; startedAt = System.currentTimeMillis() }
+        val builder = NotificationCompat.Builder(this, CHANNEL)
+            .setSmallIcon(if (video) android.R.drawable.presence_video_online else android.R.drawable.sym_call_outgoing)
+            .setContentTitle(if (groupId.isNotBlank()) name else if (video) "Convo Chat video call" else "Convo Chat audio call")
+            .setContentText(if (groupId.isNotBlank()) "Group call in progress • tap to return" else "On call with $name • tap to return")
+            .setCategory(NotificationCompat.CATEGORY_CALL).setOngoing(true).setSilent(true)
+            .setColor(0xFF19C37D.toInt()).setColorized(true)
+            .setWhen(startedAt).setShowWhen(true).setUsesChronometer(true)
+            .setContentIntent(content)
+        // Android 12+: "ongoing call" style puts a green call bar/chip with a live timer in the
+        // status bar on top of every app, so it is always obvious that a call is running.
+        val styled = runCatching {
+            val person = androidx.core.app.Person.Builder().setName(name).setImportant(true).build()
+            builder.setStyle(NotificationCompat.CallStyle.forOngoingCall(person, endIntent))
+        }.isSuccess
+        if (!styled) builder.addAction(android.R.drawable.sym_call_missed, "End call", endIntent)
+        val notification = builder.build()
+        // A plain notification without the call style, used when Android rejects the styled one.
+        val plain = NotificationCompat.Builder(this, CHANNEL)
             .setSmallIcon(if (video) android.R.drawable.presence_video_online else android.R.drawable.sym_call_outgoing)
             .setContentTitle(if (video) "Convo Chat video call" else "Convo Chat audio call")
             .setContentText("Connected with $name")
@@ -55,20 +74,39 @@ class CallForegroundService : Service() {
             .addAction(android.R.drawable.sym_call_missed, "End call", endIntent)
             .build()
         if (Build.VERSION.SDK_INT >= 29) {
-            var type = android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE or android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL
-            if (video && !screenShare) type = type or android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
-            if (screenShare && Build.VERSION.SDK_INT >= 29) type = type or android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
-            try {
-                startForeground(NOTIFICATION_ID, notification, type)
-                projectionForegroundAt = if (screenShare) System.currentTimeMillis() else 0L
-            } catch (error: Exception) {
-                android.util.Log.e("CALL_FGS", "startForeground failed (screenShare=$screenShare)", error)
+            val mic = android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+            val phone = android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL
+            val camera = android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
+            val projection = android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+            // Android refuses a foreground-service type when its permission is missing or the app
+            // is in the wrong state. Try the ideal combination first, then step down — the service
+            // must ALWAYS reach the foreground, otherwise Android kills the app a few seconds later
+            // (this was one of the "call screen closes by itself" crashes).
+            val attempts = buildList {
+                if (screenShare) {
+                    add(notification to (mic or phone or projection)); add(plain to (mic or phone or projection))
+                    add(plain to (phone or projection)); add(plain to projection)
+                } else if (video) {
+                    add(notification to (mic or phone or camera)); add(plain to (mic or phone or camera))
+                }
+                add(notification to (mic or phone)); add(plain to (mic or phone)); add(plain to phone); add(plain to mic)
+            }
+            var started = false
+            for ((candidate, type) in attempts) {
+                val ok = runCatching { startForeground(NOTIFICATION_ID, candidate, type) }
+                    .onFailure { android.util.Log.w("CALL_FGS", "startForeground type=$type failed: ${it.message}") }.isSuccess
+                if (ok) {
+                    started = true
+                    projectionForegroundAt = if (screenShare && (type and projection) != 0) System.currentTimeMillis() else 0L
+                    break
+                }
+            }
+            if (!started) {
                 projectionForegroundAt = 0L
-                // Fall back to a plain call service so the call itself keeps running.
-                runCatching { startForeground(NOTIFICATION_ID, notification, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE or android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL) }
+                runCatching { startForeground(NOTIFICATION_ID, plain) }.onFailure { android.util.Log.e("CALL_FGS", "No foreground type accepted", it) }
             }
         } else {
-            startForeground(NOTIFICATION_ID, notification)
+            runCatching { startForeground(NOTIFICATION_ID, notification) }.recoverCatching { startForeground(NOTIFICATION_ID, plain) }
             projectionForegroundAt = if (screenShare) System.currentTimeMillis() else 0L
         }
         // Keep the foreground call service eligible for restart if Android recreates
@@ -86,6 +124,8 @@ class CallForegroundService : Service() {
          * mediaProjection is running. The engine waits for this timestamp before capturing.
          */
         @Volatile var projectionForegroundAt: Long = 0L
+        @Volatile private var startedCallId: String = ""
+        @Volatile private var startedAt: Long = 0L
         fun start(
             context: Context,
             callId: String,

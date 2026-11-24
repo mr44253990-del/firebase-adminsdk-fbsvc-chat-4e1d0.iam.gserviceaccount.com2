@@ -151,6 +151,11 @@ fun MyApplicationTheme(
         "frosted light" -> LightColors.copy(primary = Color(0xFF6554D9), secondary = Color(0xFF007F9B), background = Color(0xFFF5F5FF), surface = Color(0xFFFCFAFF), surfaceVariant = Color(0xFFE9E8F4), onSurface = Color(0xFF171522), onBackground = Color(0xFF171522))
         "royal gold" -> themedDark(Color(0xFFFFD166), Color(0xFFFFA62B), Color(0xFF120C02), Color(0xFF241806)).copy(tertiary = Color(0xFFFFE8A3), primaryContainer = Color(0xFF5A4108), onPrimaryContainer = Color.White)
         "cyber lime" -> themedDark(Color(0xFFC8FF4D), Color(0xFF55E6A5), Color(0xFF071006), Color(0xFF102014)).copy(tertiary = Color(0xFFB2F7FF), primaryContainer = Color(0xFF315C12), onPrimaryContainer = Color.White)
+        // v5.7 "new design": deep black with violet / electric-blue glass (matches the launch screen).
+        "dark liquid glass" -> themedDark(Color(0xFFB79CFF), Color(0xFF6FA8FF), Color(0xFF04030B), Color(0xFF0F0C24)).copy(
+            tertiary = Color(0xFF39C8FF), primaryContainer = Color(0xFF2A1A66), onPrimaryContainer = Color(0xFFEDE6FF),
+            surfaceVariant = Color(0xFF1A1636), onSurfaceVariant = Color(0xFFC6C3DC), outline = Color(0xFF4A4470), outlineVariant = Color(0xFF2A2548)
+        )
         // Liquid glass family
         "milk liquid glass" -> LightColors.copy(primary = Color(0xFF6F78F0), onPrimary = Color.White, secondary = Color(0xFF9C8CF5), tertiary = Color(0xFFFFA97A), background = Color(0xFFFBF8F3), surface = Color(0xFFFFFFFF), surfaceVariant = Color(0xFFF1EEF7), onBackground = Color(0xFF1D1B26), onSurface = Color(0xFF1D1B26), onSurfaceVariant = Color(0xFF5E5B6E), primaryContainer = Color(0xFFE6E7FF), onPrimaryContainer = Color(0xFF1E2370), outlineVariant = Color(0xFFE6E1EC))
         "neon glass" -> themedDark(Color(0xFFB794FF), Color(0xFF6E8BFF), Color(0xFF0A0718), Color(0xFF181332)).copy(tertiary = Color(0xFFFF6FD8), primaryContainer = Color(0xFF3A2580), onPrimaryContainer = Color.White)
@@ -174,6 +179,13 @@ fun MyApplicationTheme(
         "galaxy" -> themedDark(Color(0xFFB69CFF), Color(0xFFFF8BD3), Color(0xFF05030F), Color(0xFF140C2A)).copy(tertiary = Color(0xFF7DF9FF), primaryContainer = Color(0xFF3B2580), onPrimaryContainer = Color.White)
         "diamond" -> themedDark(Color(0xFFA9B8FF), Color(0xFFE0E7FF), Color(0xFF070A1C), Color(0xFF131A3A)).copy(tertiary = Color(0xFF9FFFE0), primaryContainer = Color(0xFF2B3A85), onPrimaryContainer = Color.White)
         "rose quartz" -> themedDark(Color(0xFFFFB3CF), Color(0xFFE5A5FF), Color(0xFF140810), Color(0xFF2A1423)).copy(tertiary = Color(0xFFFFD1DC), primaryContainer = Color(0xFF69324F), onPrimaryContainer = Color.White)
+        // v6.0 "2050" collection
+        "aurora prism" -> themedDark(Color(0xFF6EE7FF), Color(0xFFB78CFF), Color(0xFF050B18), Color(0xFF0D1630)).copy(tertiary = Color(0xFF7CFFC4), primaryContainer = Color(0xFF1B2A55))
+        "black opal" -> themedDark(Color(0xFF53E6B8), Color(0xFF8C9EFF), Color(0xFF020505), Color(0xFF08130F)).copy(tertiary = Color(0xFFFFD28A), primaryContainer = Color(0xFF0F2A24))
+        "cherry cola" -> themedDark(Color(0xFFFF7A9C), Color(0xFFB03A5B), Color(0xFF120308), Color(0xFF260814)).copy(tertiary = Color(0xFFFFC46B), primaryContainer = Color(0xFF3A0F1E))
+        "ice glacier" -> themedDark(Color(0xFF9BE7FF), Color(0xFF7FA8FF), Color(0xFF020B15), Color(0xFF081B30)).copy(tertiary = Color(0xFFB7FFF0), primaryContainer = Color(0xFF102A44))
+        "ember glow" -> themedDark(Color(0xFFFFA25C), Color(0xFFE05C4A), Color(0xFF140402), Color(0xFF2B0E06)).copy(tertiary = Color(0xFFFFE08A), primaryContainer = Color(0xFF3F1508))
+        "orchid noir" -> themedDark(Color(0xFFE2A9FF), Color(0xFF7A5CFF), Color(0xFF0A0514), Color(0xFF1C0F2C)).copy(tertiary = Color(0xFF7EF0FF), primaryContainer = Color(0xFF2C1A4D))
         // Anime & vivid (new)
         "sakura night" -> themedDark(Color(0xFFFF9EC4), Color(0xFFC3A6FF), Color(0xFF120A16), Color(0xFF261729)).copy(tertiary = Color(0xFFFFE3A3), primaryContainer = Color(0xFF5E2A4A), onPrimaryContainer = Color.White)
         "neo tokyo" -> themedDark(Color(0xFFFF4FD8), Color(0xFF00F5FF), Color(0xFF05010F), Color(0xFF160B2C)).copy(tertiary = Color(0xFFFFE066), primaryContainer = Color(0xFF4E1A5E), onPrimaryContainer = Color.White)

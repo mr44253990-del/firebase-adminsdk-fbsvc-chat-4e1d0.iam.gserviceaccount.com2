@@ -271,7 +271,7 @@ fun AdminPowerToolsPanel(viewModel: ChatViewModel) {
         PowerSwitch("Typing sound", "Looping sound while the chat partner is typing (users can still mute it in Settings).", typingSound) { typingSound = it }
         PowerSwitch("Unread message reminder", "One reminder on the recipient's phone if a message stays unread.", reminders) { reminders = it }
         if (reminders) {
-            Text("Remind after ${reminderMinutes.toInt()} minutes", fontSize = 12.sp)
+            Text("Remind after ${SmartTime.minutesLabel(reminderMinutes.toInt())}", fontSize = 12.sp)
             Slider(reminderMinutes, { reminderMinutes = it }, valueRange = 2f..60f, steps = 28)
         }
         Button(onClick = {

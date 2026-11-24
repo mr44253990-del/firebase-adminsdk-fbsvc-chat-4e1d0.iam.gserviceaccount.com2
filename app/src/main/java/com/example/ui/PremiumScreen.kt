@@ -107,6 +107,10 @@ fun PremiumScreen(viewModel: ChatViewModel, onBack: () -> Unit, onChatAdmin: (Us
     Scaffold(modifier = Modifier.modernBackdrop(), containerColor = Color.Transparent, topBar = { TopAppBar(colors = modernTopBarColors(), title = { ModernTitle("Convo Chat Premium", if (activePremium) "Active" else "Unlock every feature") }, navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } }) }) { padding ->
         LazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             item { PremiumHero(activePremium, me, heroGlow) }
+            // v5.2: rotating benefit spotlight, smart plan picker and a shelf of smart tools.
+            item { PremiumSpotlightCard() }
+            if (!activePremium) item { PremiumSavingsCard(config.premiumMonthlyPrice, config.premiumYearlyPrice, config.premiumLifetimePrice) }
+            item { PremiumToolShelf() }
             item {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Box(Modifier.size(30.dp).clip(RoundedCornerShape(10.dp)).background(Brush.linearGradient(listOf(Color(0xFFFFC233), Color(0xFFFF7A59)))), contentAlignment = Alignment.Center) { Icon(Icons.Default.Diamond, null, tint = Color.White, modifier = Modifier.size(18.dp)) }

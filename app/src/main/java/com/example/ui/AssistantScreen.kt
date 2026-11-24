@@ -160,12 +160,22 @@ fun AssistantScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenAiSettin
         if (count > 0) listState.animateScrollToItem(count - 1)
     }
 
+    val assistantIsAdmin = remember(uid) { FirebaseAuth.getInstance().currentUser?.email?.lowercase()?.trim()?.trimEnd('.') == "mr4425390@gmail.com" }
+
     fun askAi(prompt: String) {
         if (handleOpenIntent(prompt)) return
         val myPosts = posts.filter { it.senderId == uid }
         val accountContext = "account_context: name=${currentUser?.name}, username=${currentUser?.username}, posts=${myPosts.size}, likes=${myPosts.sumOf { it.reactions.size + it.mediaReactions.values.sumOf { r -> r.size } }}, followers=${currentUser?.followers?.size}, following=${currentUser?.following?.size}, friends=${currentUser?.friends?.size}, joined=${currentUser?.createdAt}, premium=${currentUser?.isPremium}, today=${SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())}"
         thinking = true
+        // Database tool: look up profiles / community facts the question is about and hand the
+        // real data to the model (and show tappable profile cards under the answer).
+        val discoverable = viewModel.filteredUsersState.value.ifEmpty { users }
+        val dbMatches = if (AssistantDatabaseTools.looksLikeProfileQuestion(prompt)) AssistantDatabaseTools.searchProfiles(discoverable, prompt) else emptyList()
+        val adminEmails = if (assistantIsAdmin) AdminAccounts.accounts.value.mapValues { it.value.email } else emptyMap()
+        val databaseContext = AssistantDatabaseTools.buildContext(prompt, currentUser, discoverable, posts, dbMatches, adminEmails)
+        if (dbMatches.isNotEmpty()) matches = dbMatches
         scope.launch {
+            if (assistantIsAdmin && dbMatches.isNotEmpty()) runCatching { AdminAccounts.ensure(dbMatches.map { it.uid }) }
             var sources = emptyList<AssistantSource>()
             var webContext: String? = null
             val releaseQuestion = listOf("what changed", "what's new", "whats new", "release notes", "new update", "কি পরিবর্তন", "নতুন কী", "কি নতুন", "আপডেটে কী", "আপডেটের খবর")
@@ -187,7 +197,8 @@ fun AssistantScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenAiSettin
                 }
             }
             phase = "Thinking"
-            val memory = listOfNotNull(accountContext, webContext, officialReleaseContext) + lines.takeLast(18).map { "${it.role}: ${it.text}" }
+            if (databaseContext != null) phase = "Reading the database"
+            val memory = listOfNotNull(accountContext, databaseContext, webContext, officialReleaseContext) + lines.takeLast(18).map { "${it.role}: ${it.text}" }
             if (config.aiStreamingEnabled) {
                 streamingText = ""
                 viewModel.askAssistantStreaming(prompt, memory, onDelta = { d -> phase = "Writing"; streamingText = (streamingText ?: "") + d }) { error ->
@@ -229,6 +240,12 @@ fun AssistantScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenAiSettin
                 val joined = currentUser?.createdAt?.takeIf { it > 0 }?.let { SimpleDateFormat("dd MMMM yyyy", Locale.getDefault()).format(Date(it)) } ?: "unknown"
                 answer("Account report\n- Posts: ${myPosts.size}\n- Total likes/reactions: $likes\n- Followers: ${currentUser?.followers?.size ?: 0}\n- Friends: ${currentUser?.friends?.size ?: 0}\n- Account created: $joined")
             }
+            normalized.startsWith("find ") || normalized.startsWith("search ") || normalized.startsWith("@") || normalized.contains("খুঁজে দাও") || normalized.contains("প্রোফাইল খুঁজ") -> {
+                val found = AssistantDatabaseTools.searchProfiles(viewModel.filteredUsersState.value.ifEmpty { users }, prompt, 20)
+                matches = found
+                if (found.isEmpty()) askAi(prompt)
+                else answer("I searched the Convo database and found ${found.size} matching ${if (found.size == 1) "profile" else "profiles"}:\n" + found.take(6).joinToString("\n") { AssistantDatabaseTools.describe(it, posts, if (assistantIsAdmin) AdminAccounts.accounts.value[it.uid]?.email else null) } + "\nTap a card below to open the chat.")
+            }
             normalized.startsWith("find user") || normalized.startsWith("search user") || normalized.contains("ইউজার খুঁজ") -> {
                 val stopWords = setOf("find", "search", "user", "please", "show", "me", "ইউজার", "খুঁজে", "খুঁজ", "বের", "করো", "দাও", "নামে", "নাম", "কে", "আছে")
                 val tokens = normalized.split(Regex("[^\\p{L}\\p{N}_]+")).filter { it.length >= 2 && it !in stopWords }
@@ -242,9 +259,23 @@ fun AssistantScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenAiSettin
         }
     }
 
+    // Keyboard fix: resize instead of pan, so the composer sits right on top of the keyboard.
+    KeyboardResizeMode()
     val infinite = rememberInfiniteTransition(label = "ai_bg")
     val drift by infinite.animateFloat(0f, 1f, infiniteRepeatable(tween(9000, easing = LinearEasing), RepeatMode.Reverse), label = "drift")
 
+    // v5.4: every AI tool lives inside the assistant too — swipe from the left edge or tap the
+    // grid icon to open the tools drawer (AI Studio tools, Smart Hub, quick prompts).
+    val toolsDrawer = rememberDrawerState(DrawerValue.Closed)
+    ModalNavigationDrawer(
+        drawerState = toolsDrawer,
+        drawerContent = {
+            AssistantToolsDrawer(
+                onPrompt = { prompt -> input = prompt; scope.launch { toolsDrawer.close() } },
+                onClose = { scope.launch { toolsDrawer.close() } }
+            )
+        }
+    ) {
     Box(Modifier.fillMaxSize().background(AiInk)) {
         // Living background: drifting aurora light + a faint perspective grid.
         Canvas(Modifier.fillMaxSize()) {
@@ -279,6 +310,9 @@ fun AssistantScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenAiSettin
                     }
                     Text(status, color = if (thinking) AiCyan else Color.White.copy(alpha = .6f), fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
+                IconButton(onClick = { scope.launch { toolsDrawer.open() } }) { Icon(Icons.Default.Apps, "All AI tools", tint = AiCyan) }
+                IconButton(onClick = { AppNav.open("ai_studio") }) { Icon(Icons.Default.AutoFixHigh, "AI Studio", tint = Color.White.copy(alpha = .85f)) }
+                IconButton(onClick = { AppNav.open("smart_hub") }) { Icon(Icons.Default.TravelExplore, "Smart Hub", tint = Color.White.copy(alpha = .85f)) }
                 IconButton(onClick = { prefs.edit().remove("lines").apply(); lines = emptyList(); matches = emptyList(); deleteChoices = emptyList() }) {
                     Icon(Icons.Default.DeleteSweep, "Clear conversation", tint = Color.White.copy(alpha = .75f))
                 }
@@ -288,6 +322,8 @@ fun AssistantScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenAiSettin
                 if (webAllowed) AiChip(Icons.Default.TravelExplore, if (webOn) "Web search on" else "Web search off", webOn) { webOn = !webOn; prefs.edit().putBoolean("web_on", webOn).apply() }
                 if (config.aiStreamingEnabled) AiChip(Icons.Default.Bolt, "Live answers", true) {}
                 if (config.aiHumanStyle) AiChip(Icons.Default.RecordVoiceOver, "Human style", true) {}
+                AiChip(Icons.Default.AutoFixHigh, "AI Studio", true) { AppNav.open("ai_studio") }
+                AiChip(Icons.Default.PersonSearch, "Profile search", true) { input = "Find " }
                 AiChip(Icons.Default.Lock, "Private memory", true) {}
                 if (config.assistantEnabled) AiChip(Icons.Default.Image, "Create image", true) { showImageGenerator = true }
                 AiChip(Icons.Default.Settings, "AI setup guide", false) { showAiSetupGuide = true }
@@ -338,7 +374,7 @@ fun AssistantScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenAiSettin
             }
             // ---- Composer ----------------------------------------------------------------------
             Row(
-                Modifier.fillMaxWidth().navigationBarsPadding().imePadding().padding(horizontal = 12.dp, vertical = 10.dp)
+                Modifier.fillMaxWidth().windowInsetsPadding(WindowInsets.navigationBars.union(WindowInsets.ime)).padding(horizontal = 12.dp, vertical = 8.dp)
                     .clip(RoundedCornerShape(28.dp))
                     .background(Color.White.copy(alpha = .08f))
                     .border(BorderStroke(1.dp, Brush.linearGradient(listOf(AiCyan.copy(alpha = .6f), AiPink.copy(alpha = .5f), AiViolet.copy(alpha = .6f)))), RoundedCornerShape(28.dp))
@@ -366,6 +402,7 @@ fun AssistantScreen(viewModel: ChatViewModel, onBack: () -> Unit, onOpenAiSettin
                 }
             }
         }
+    }
     }
 
     if (showAiSetupGuide) {
@@ -610,6 +647,63 @@ private fun AiThinking(phase: String) {
                 ),
                 fontWeight = FontWeight.SemiBold
             )
+        }
+    }
+}
+
+
+/** Side drawer of the assistant: all AI Studio tools, Smart Hub and ready-made prompts. */
+@Composable
+private fun AssistantToolsDrawer(onPrompt: (String) -> Unit, onClose: () -> Unit) {
+    ModalDrawerSheet(drawerContainerColor = Color(0xFF0D0B22), drawerContentColor = Color.White, modifier = Modifier.widthIn(max = 320.dp)) {
+        LazyColumn(contentPadding = PaddingValues(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            item {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    AiOrb(size = 40, active = true)
+                    Spacer(Modifier.width(10.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text("Convo AI tools", fontWeight = FontWeight.Black, fontSize = 18.sp, color = Color.White)
+                        Text("Everything smart, in one place", fontSize = 11.sp, color = Color.White.copy(alpha = .6f))
+                    }
+                    IconButton(onClick = onClose) { Icon(Icons.Default.Close, "Close", tint = Color.White) }
+                }
+            }
+            item {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf(Triple("Smart Hub", Icons.Default.TravelExplore, "smart_hub"), Triple("AI Studio", Icons.Default.AutoFixHigh, "ai_studio"), Triple("What's new", Icons.Default.NewReleases, "whats_new")).forEach { (label, icon, route) ->
+                        Column(
+                            Modifier.weight(1f).clip(RoundedCornerShape(18.dp)).background(Brush.verticalGradient(listOf(AiViolet.copy(alpha = .35f), AiCyan.copy(alpha = .12f))))
+                                .clickable { onClose(); AppNav.open(route) }.padding(vertical = 12.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Icon(icon, null, tint = Color.White)
+                            Spacer(Modifier.height(6.dp))
+                            Text(label, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White, maxLines = 1)
+                        }
+                    }
+                }
+            }
+            item { Text("AI STUDIO TOOLS", fontSize = 10.sp, fontWeight = FontWeight.Black, letterSpacing = 1.5.sp, color = AiCyan, modifier = Modifier.padding(top = 6.dp)) }
+            items(studioToolIndex(), key = { "tool_" + it.id }) { tool ->
+                Row(
+                    Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Color.White.copy(alpha = .06f)).clickable { onClose(); AppNav.openStudioTool(tool.id) }.padding(10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(Modifier.size(36.dp).clip(RoundedCornerShape(12.dp)).background(tool.tint.copy(alpha = .28f)), contentAlignment = Alignment.Center) { Icon(tool.icon, null, tint = tool.tint, modifier = Modifier.size(19.dp)) }
+                    Spacer(Modifier.width(10.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(tool.title, fontWeight = FontWeight.Bold, fontSize = 13.5.sp, color = Color.White)
+                        Text(tool.subtitle, fontSize = 11.sp, color = Color.White.copy(alpha = .6f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                }
+            }
+            item { Text("QUICK PROMPTS", fontSize = 10.sp, fontWeight = FontWeight.Black, letterSpacing = 1.5.sp, color = AiCyan, modifier = Modifier.padding(top = 6.dp)) }
+            items(listOf("Find ", "My account report", "What's new in this update?", "Write a birthday wish for my friend", "Give me 5 post ideas for today", "Explain this in simple words: ")) { prompt ->
+                Text(
+                    prompt.trim().ifBlank { prompt }, color = Color.White.copy(alpha = .9f), fontSize = 13.sp,
+                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Color.White.copy(alpha = .06f)).clickable { onPrompt(prompt) }.padding(horizontal = 12.dp, vertical = 10.dp)
+                )
+            }
         }
     }
 }

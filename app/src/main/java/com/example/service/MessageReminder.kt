@@ -107,10 +107,10 @@ class MessageReminderReceiver : BroadcastReceiver() {
             .setColor(0xFFFF8A3D.toInt())
             .setLargeIcon(ConvoNotificationArt.initialsAvatar(name, senderId))
             .setContentTitle("⏰ Unread message from $name")
-            .setContentText(if (hide) "Sent $minutes min ago — tap to open" else intent.getStringExtra("preview").orEmpty().ifBlank { "Sent $minutes min ago" })
+            .setContentText(if (hide) "Sent ${com.example.ui.SmartTime.span(minutes * 60_000L)} ago — tap to open" else intent.getStringExtra("preview").orEmpty().ifBlank { "Sent ${com.example.ui.SmartTime.span(minutes * 60_000L)} ago" })
             .setSubText("Reminder")
             .setStyle(NotificationCompat.BigTextStyle().bigText(
-                (if (hide) "" else intent.getStringExtra("preview").orEmpty() + "\n") + "Sent $minutes min ago and not opened yet."
+                (if (hide) "" else intent.getStringExtra("preview").orEmpty() + "\n") + "Sent ${com.example.ui.SmartTime.span(minutes * 60_000L)} ago and not opened yet."
             ))
             .setWhen(sentAt).setShowWhen(true)
             .setAutoCancel(true)

@@ -32,6 +32,13 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.background
+import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.launch
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.QrCode2
@@ -343,6 +350,13 @@ private fun extractPairCode(raw: String): String? {
     return null
 }
 
+/** Extract the web login session id from the QR shown by Convo Chat Web: convo-qr://<id> */
+private fun extractWebQrId(raw: String): String? {
+    val value = raw.trim()
+    if (!value.startsWith("convo-qr://", ignoreCase = true)) return null
+    return value.substring("convo-qr://".length).trim().trim('/').takeIf { it.length in 8..64 && it.all { c -> c.isLetterOrDigit() } }
+}
+
 /** Device login screen: scans the Convo Chat Web login QR and links this phone to the browser session. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -354,6 +368,14 @@ fun QrDeviceLoginScreen(
     val context = LocalContext.current
     var scannerMode by remember { mutableStateOf(false) }
     val pairCode = viewModel.pendingQrPairCode
+    // v5.5: the web QR (convo-qr://…) is now understood. After scanning, the phone shows WHICH
+    // account will be signed in on the browser and asks for one confirmation.
+    val scope = rememberCoroutineScope()
+    val me by viewModel.currentUserState.collectAsState()
+    var webQrId by remember { mutableStateOf<String?>(null) }
+    var approving by remember { mutableStateOf(false) }
+    var approved by remember { mutableStateOf(false) }
+    var approveError by remember { mutableStateOf("") }
 
     Scaffold(
         modifier = Modifier.modernBackdrop(),
@@ -371,7 +393,9 @@ fun QrDeviceLoginScreen(
                 QrScannerView(
                     modifier = Modifier.fillMaxWidth().weight(1f),
                     onScanned = { raw ->
-                        extractPairCode(raw)?.let { code ->
+                        val qrId = extractWebQrId(raw)
+                        if (qrId != null) { webQrId = qrId; approved = false; approveError = ""; scannerMode = false }
+                        else extractPairCode(raw)?.let { code ->
                             viewModel.setPendingQrPairCode(code)
                             scannerMode = false
                             onLinked()
@@ -391,6 +415,46 @@ fun QrDeviceLoginScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
+            webQrId?.let { qrId ->
+                Card(shape = RoundedCornerShape(28.dp), modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = if (approved) androidx.compose.ui.graphics.Color(0xFF19C37D).copy(alpha = .16f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .6f))
+                ) {
+                    Column(Modifier.fillMaxWidth().padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Box(Modifier.size(84.dp).clip(androidx.compose.foundation.shape.CircleShape).background(MaterialTheme.colorScheme.primary.copy(alpha = .18f)), contentAlignment = Alignment.Center) {
+                            Text(me?.name?.take(1)?.uppercase().orEmpty().ifBlank { "C" }, fontWeight = FontWeight.Black, fontSize = 30.sp, color = MaterialTheme.colorScheme.primary)
+                            if (!me?.profileImageUrl.isNullOrBlank()) coil.compose.AsyncImage(me?.profileImageUrl, null, contentScale = androidx.compose.ui.layout.ContentScale.Crop, modifier = Modifier.matchParentSize().clip(androidx.compose.foundation.shape.CircleShape))
+                        }
+                        Text(if (approved) "Browser signed in" else "Sign in on the browser as", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(me?.name.orEmpty().ifBlank { "Your account" }, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold)
+                        if (!me?.username.isNullOrBlank()) Text("@${me?.username}", color = MaterialTheme.colorScheme.primary)
+                        if (approved) {
+                            Icon(Icons.Default.CheckCircle, null, tint = androidx.compose.ui.graphics.Color(0xFF19C37D), modifier = Modifier.size(40.dp))
+                            Text("Convo Chat Web opens with this account in a moment. You can sign that browser out any time from Devices.", textAlign = TextAlign.Center, style = MaterialTheme.typography.bodySmall)
+                            Button(onClick = { webQrId = null; onBack() }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp)) { Text("Done") }
+                        } else {
+                            Text("Only confirm if this QR is on your own screen. The browser gets access to your chats.", textAlign = TextAlign.Center, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            if (approveError.isNotBlank()) Text(approveError, color = MaterialTheme.colorScheme.error, textAlign = TextAlign.Center, style = MaterialTheme.typography.bodySmall)
+                            Button(enabled = !approving, onClick = {
+                                approving = true; approveError = ""
+                                scope.launch {
+                                    val (code, json) = runCatching { convoWorkerPost("web-pair", "/web-pair/qr/approve", org.json.JSONObject().put("qrId", qrId)) }.getOrElse { 0 to org.json.JSONObject() }
+                                    approving = false
+                                    if (code in 200..299 && !json.has("error")) approved = true
+                                    else approveError = when (code) {
+                                        404, 410 -> "This QR has expired. Refresh the QR on the browser and scan again."
+                                        0 -> "No connection. Check the internet and try again."
+                                        else -> json.optString("error").ifBlank { "Could not sign in (HTTP $code)" }
+                                    }
+                                }
+                            }, modifier = Modifier.fillMaxWidth().height(52.dp), shape = RoundedCornerShape(16.dp)) {
+                                if (approving) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = androidx.compose.ui.graphics.Color.White)
+                                else { Icon(Icons.Default.Login, null); Spacer(Modifier.size(8.dp)); Text("Confirm sign-in", fontWeight = FontWeight.Bold) }
+                            }
+                            TextButton(enabled = !approving, onClick = { webQrId = null }) { Text("Cancel") }
+                        }
+                    }
+                }
+            }
             Card(shape = RoundedCornerShape(28.dp), modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = .55f))
             ) {

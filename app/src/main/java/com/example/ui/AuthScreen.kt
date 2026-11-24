@@ -129,7 +129,7 @@ fun AuthScreen(
                 if (credential is PasswordCredential) {
                     email = credential.id
                     password = credential.password
-                    viewModel.login(credential.id, credential.password, onAuthSuccess)
+                    viewModel.login(credential.id, credential.password, onSuccess = onAuthSuccess)
                 }
             }.onFailure {
                 if (!silentIfNone) Toast.makeText(context, "No saved passwords for Convo Chat yet", Toast.LENGTH_SHORT).show()
@@ -137,7 +137,10 @@ fun AuthScreen(
         }
     }
     LaunchedEffect(Unit) {
-        if (!savedPasswordOffered) { savedPasswordOffered = true; offerSavedPasswords(silentIfNone = true) }
+        // v5.5: no automatic search for saved passwords when the screen opens. It froze the
+        // sign-in screen for 2-3 seconds with nothing on screen. Saved accounts are listed below
+        // and the password manager opens only when the user taps "Use a saved password".
+        savedPasswordOffered = true
     }
     var name by remember { mutableStateOf("") }
     var dob by remember { mutableStateOf("") }
@@ -280,10 +283,15 @@ fun AuthScreen(
             .windowInsetsPadding(WindowInsets.safeDrawing)
     ) {
         // Calm aurora light-field background (no tilt / 3D).
-        LoginAuroraBackground(lp.milk)
+        // v5.6: the dark look is "liquid glass" (flowing violet / blue glass on black); the light
+        // "milk glass" look keeps its aurora.
+        if (lp.milk) { LoginAuroraBackground(true); LoginNovaLayer(true) } else LiquidGlassBackground()
         Column(
             modifier = Modifier
-                .fillMaxSize()
+                // Tablets / foldables: keep the form a comfortable width and centred.
+                .align(Alignment.TopCenter)
+                .widthIn(max = 560.dp)
+                .fillMaxHeight()
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 18.dp, vertical = 14.dp)
                 .alpha(enterAlpha)
@@ -309,7 +317,12 @@ fun AuthScreen(
             }
             Spacer(Modifier.height(6.dp))
             // Code-drawn brand mark (vector-sharp, no bitmap) with a soft orbit glow.
-            LoginBrandHero(lp.text, lp.milk)
+            if (lp.milk) LoginBrandHero(lp.text, lp.milk) else {
+                LiquidLogoTile(size = 112.dp, orbit = true)
+                LiquidWordmark(fontSize = 36)
+                Spacer(Modifier.height(8.dp))
+                Box(Modifier.width(230.dp).height(2.dp).background(Brush.horizontalGradient(listOf(Color.Transparent, LiquidViolet, LiquidCyan, Color.Transparent))))
+            }
             Spacer(modifier = Modifier.height(14.dp))
 
             Text(
@@ -329,7 +342,9 @@ fun AuthScreen(
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
             )
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(6.dp))
+            LoginGreetingTypewriter(lp.text, lp.textSoft)
+            Spacer(modifier = Modifier.height(10.dp))
 
             // Three quiet promise chips: they answer "why this app" before the user types anything.
             Row(
@@ -356,7 +371,10 @@ fun AuthScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(18.dp))
+            Spacer(modifier = Modifier.height(12.dp))
+            // Rotating highlights of what is new inside the app.
+            LoginFeatureCarousel(lp.text, lp.textSoft, Modifier.fillMaxWidth().widthIn(max = 520.dp))
+            Spacer(modifier = Modifier.height(14.dp))
 
             // Firebase Configuration Warning banner
             if (!isFirebaseConfigured) {
@@ -706,6 +724,28 @@ fun AuthScreen(
                     )
 
                     // Forgot password trigger (only in login mode)
+                    // Saved accounts appear as you type the e-mail: one tap fills it in (and signs in
+                    // when this phone already knows the password).
+                    if (isLoginMode && email.length >= 2) {
+                        val suggestions = rememberedAccounts.filter { it.email.isNotBlank() && it.email.contains(email.trim(), ignoreCase = true) && !it.email.equals(email.trim(), true) }.take(3)
+                        suggestions.forEach { account ->
+                            Row(
+                                Modifier.fillMaxWidth().padding(top = 6.dp).clip(RoundedCornerShape(16.dp))
+                                    .background(lp.text.copy(alpha = .06f)).border(1.dp, lp.text.copy(alpha = .12f), RoundedCornerShape(16.dp))
+                                    .clickable { email = account.email; viewModel.loginRememberedAccount(account, onAuthSuccess) }
+                                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(Icons.Default.AccountCircle, null, tint = ConvoBrand.Cyan, modifier = Modifier.size(22.dp))
+                                Spacer(Modifier.width(9.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text(account.name.ifBlank { account.email.substringBefore('@') }, color = lp.text, fontWeight = FontWeight.Bold, fontSize = 13.sp, maxLines = 1)
+                                    Text(account.email, color = lp.textSoft, fontSize = 11.sp, maxLines = 1)
+                                }
+                                Text("Use", color = ConvoBrand.Cyan, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                            }
+                        }
+                    }
                     if (isLoginMode) {
                         Box(
                             modifier = Modifier.fillMaxWidth(),

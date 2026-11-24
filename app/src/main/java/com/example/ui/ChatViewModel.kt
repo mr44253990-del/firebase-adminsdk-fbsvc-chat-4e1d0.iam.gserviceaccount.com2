@@ -221,7 +221,7 @@ private class ProgressUriRequestBody(
     }
 }
 
-data class UserNote(val text: String = "", val updatedAt: Long = 0L)
+data class UserNote(val text: String = "", val updatedAt: Long = 0L, val audioUrl: String = "", val audioTitle: String = "", val audioArtist: String = "")
 
 class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -308,9 +308,22 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             }
     }
 
+    /** Manual restore from the single backup file (Settings → Chat backup). */
+    fun restoreTextBackupNow(onDone: (restored: Boolean, count: Int, reason: String) -> Unit) {
+        val uid = FirebaseAuth.getInstance().currentUser?.uid ?: return onDone(false, 0, "not signed in")
+        viewModelScope.launch(Dispatchers.IO) {
+            val result = TextBackupManager.restoreLatest(getApplication(), uid)
+            withContext(Dispatchers.Main) { onDone(result.restored, result.itemCount, result.reason) }
+        }
+    }
+
     fun exportTextBackup(onComplete: (TextBackupManager.Result) -> Unit = {}) {
         val uid = FirebaseAuth.getInstance().currentUser?.uid ?: return
         viewModelScope.launch(Dispatchers.IO) {
+            // A backup folder was just connected: bring its chats back first, then back up.
+            if (TextBackupManager.consumePendingRestore(getApplication())) {
+                runCatching { TextBackupManager.restoreLatest(getApplication(), uid) }
+            }
             val result = TextBackupManager.export(getApplication(), uid)
             withContext(Dispatchers.Main) { onComplete(result) }
         }
@@ -610,7 +623,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             _authError.value = "For security, enter this account password once"
             return
         }
-        login(account.email, password, onSuccess)
+        login(account.email, password, onSuccess = onSuccess)
     }
 
     private val _authLoading = MutableStateFlow(false)
@@ -1063,6 +1076,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun startCall(recipient: User, video: Boolean, onReady: (String) -> Unit) {
         val caller = getCurrentUserOrFallback() ?: return
+        // A pending message request blocks calls too, wherever the call is started from.
+        if (recipient.uid in _pendingMessageRequestRecipients.value) {
+            android.widget.Toast.makeText(getApplication(), "${recipient.name.ifBlank { "This person" }} has not accepted your message request yet", android.widget.Toast.LENGTH_LONG).show()
+            return
+        }
         try {
         CallEngine.startOutgoing(getApplication(), recipient.uid, recipient.name, recipient.profileImageUrl, video = video) { callId ->
             withUserFcmToken(recipient.uid, recipient.fcmToken) { token ->
@@ -1089,6 +1107,34 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 cacheDao.insertMessage(CachedMessage.fromMessage(historyMessage, chatId))
             }
             onReady(callId)
+            // Second delivery path for people who have the app open: a realtime signal that does
+            // not depend on push delivery at all (pushes are sometimes delayed by the phone).
+            runCatching {
+                getDatabaseInstance().getReference("notifications").child(recipient.uid).setValue(
+                    mapOf(
+                        "senderId" to caller.uid, "senderName" to caller.name, "senderImage" to caller.profileImageUrl,
+                        "text" to (if (video) "Incoming video call" else "Incoming audio call"), "timestamp" to System.currentTimeMillis(),
+                        "type" to "incoming_call", "callId" to callId, "video" to video
+                    )
+                )
+            }
+            // Push retry: if the phone has not reported "ringing" after a few seconds, send the push
+            // again with a freshly loaded device token (the cached one may be out of date).
+            viewModelScope.launch {
+                for (attempt in 1..2) {
+                    kotlinx.coroutines.delay(if (attempt == 1) 5_000 else 7_000)
+                    val state = CallEngine.state.value
+                    if (state.callId != callId || state.status != "calling") break
+                    withUserFcmToken(recipient.uid) { token ->
+                        triggerFcmGatewayNotification(
+                            gatewayUrl = routed("calls"), targetToken = token, senderName = caller.name,
+                            messageBody = if (video) "Incoming Convo Chat video call" else "Incoming Convo Chat audio call",
+                            senderId = caller.uid, senderProfileUrl = caller.profileImageUrl,
+                            notificationType = if (video) "incoming_video_call" else "incoming_call", targetId = callId
+                        )
+                    }
+                }
+            }
             viewModelScope.launch {
                 kotlinx.coroutines.delay(30_000)
                 if (CallEngine.state.value.callId == callId && CallEngine.state.value.status == "ringing") {
@@ -1693,24 +1739,31 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             noteListeners[uid] = FirebaseFirestore.getInstance().collection("user_notes").document(uid)
                 .addSnapshotListener { doc, error ->
                     if (error != null) return@addSnapshotListener
-                    val note = if (doc?.exists() == true) UserNote(doc.getString("note").orEmpty().take(80), doc.getLong("noteAt") ?: 0L) else UserNote()
+                    val note = if (doc?.exists() == true) UserNote(
+                        doc.getString("note").orEmpty().take(80), doc.getLong("noteAt") ?: 0L,
+                        doc.getString("audioUrl").orEmpty(), doc.getString("audioTitle").orEmpty(), doc.getString("audioArtist").orEmpty()
+                    ) else UserNote()
                     _friendNotesState.value = _friendNotesState.value + (uid to note)
                 }
         }
     }
 
     /** Update a short-lived note stored separately so Firestore rules can enforce friend-only reads. */
-    fun publishNote(text: String, onComplete: (Boolean) -> Unit = {}) {
+    fun publishNote(text: String, audio: com.example.data.AudioTrack? = null, onComplete: (Boolean) -> Unit = {}) {
         val user = FirebaseAuth.getInstance().currentUser ?: return onComplete(false)
         val clean = text.trim().take(80)
         val at = if (clean.isBlank()) 0L else System.currentTimeMillis()
-        FirebaseFirestore.getInstance().collection("user_notes").document(user.uid)
-            .set(mapOf("note" to clean, "noteAt" to at), SetOptions.merge())
-            .addOnSuccessListener {
-                _friendNotesState.value = _friendNotesState.value + (user.uid to UserNote(clean, at))
-                onComplete(true)
+        val ref = FirebaseFirestore.getInstance().collection("user_notes").document(user.uid)
+        val plain = mapOf("note" to clean, "noteAt" to at)
+        val sound = audio?.takeIf { clean.isNotBlank() && it.url.startsWith("http") }
+        val withSound = plain + mapOf("audioUrl" to sound?.url.orEmpty().take(600), "audioTitle" to sound?.title.orEmpty().take(80), "audioArtist" to sound?.artist.orEmpty().take(80))
+        fun done(saved: UserNote) { _friendNotesState.value = _friendNotesState.value + (user.uid to saved); onComplete(true) }
+        // A note with a sound uses three extra fields. If the server still has the older security
+        // rules (which only allow the two original fields) the note is saved without the sound.
+        ref.set(withSound).addOnSuccessListener { done(UserNote(clean, at, sound?.url.orEmpty(), sound?.title.orEmpty(), sound?.artist.orEmpty())) }
+            .addOnFailureListener {
+                ref.set(plain).addOnSuccessListener { done(UserNote(clean, at)) }.addOnFailureListener { onComplete(false) }
             }
-            .addOnFailureListener { onComplete(false) }
     }
 
     fun submitFeatureRequest(title: String, description: String, onComplete: (Boolean) -> Unit = {}) {
@@ -2079,7 +2132,20 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun login(email: String, password: String, onSuccess: () -> Unit) {
+    /**
+     * One-tap switch to another account saved on this phone (used by the "Switch account"
+     * notification when a message or call arrives for a different saved account).
+     */
+    fun switchToRememberedAccount(uid: String, onResult: (Boolean) -> Unit) {
+        val account = _rememberedAccounts.value.firstOrNull { it.uid == uid }
+        val password = account?.takeIf { !it.provider.equals("google", ignoreCase = true) && it.email.isNotBlank() }
+            ?.let { AccountCredentialVault.load(getApplication(), it.email) }
+        if (account == null || password.isNullOrBlank()) { onResult(false); return }
+        logout { }
+        login(account.email, password, onSuccess = { onResult(true) }, onFailure = { onResult(false) })
+    }
+
+    fun login(email: String, password: String, onFailure: (() -> Unit)? = null, onSuccess: () -> Unit) {
         if (!_isFirebaseConfigured.value) {
             _authError.value = "Firebase is not configured properly."
             return
@@ -2112,10 +2178,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     .addOnFailureListener { exception ->
                         _authError.value = exception.localizedMessage ?: "Login failed"
                         _authLoading.value = false
+                        onFailure?.invoke()
                     }
             } catch (e: Exception) {
                 _authError.value = e.localizedMessage ?: "Login Error"
                 _authLoading.value = false
+                onFailure?.invoke()
             }
         }
     }
@@ -2639,6 +2707,19 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                             allUsersList.add(hydratedUser)
                         }
                     }
+                    // Profile pictures never "load" in front of the user: keep the cached picture
+                    // on screen and swap to a new one only after it has been downloaded.
+                    val app = getApplication<Application>()
+                    for (index in allUsersList.indices) {
+                        val person = allUsersList[index]
+                        val display = com.example.data.AvatarSwap.display(app, person.uid, person.profileImageUrl) { readyUid, readyUrl ->
+                            viewModelScope.launch(Dispatchers.Main) {
+                                _usersState.value = _usersState.value.map { if (it.uid == readyUid) it.copy(profileImageUrl = readyUrl) else it }
+                                _filteredUsersState.value = _filteredUsersState.value.map { if (it.uid == readyUid) it.copy(profileImageUrl = readyUrl) else it }
+                            }
+                        }
+                        if (display != person.profileImageUrl) allUsersList[index] = person.copy(profileImageUrl = display)
+                    }
                     _usersState.value = allUsersList
 
                     val myBlocked = _currentUserState.value?.blockedUsers ?: emptyList()
@@ -2826,7 +2907,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         presenceTicker?.cancel()
         presenceTicker = viewModelScope.launch {
             while (true) {
-                kotlinx.coroutines.delay(20_000L)
+                kotlinx.coroutines.delay(5_000L) // v5.7: was 20 s — the green dot now reacts within 5 s
                 if (rawPresence.isNotEmpty()) applyPresence()
             }
         }
@@ -3532,6 +3613,42 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     val text = snapshot.child("text").value as? String ?: ""
                     val timestamp = snapshot.child("timestamp").value as? Long ?: 0L
 
+                    // Realtime incoming-call signal (works even when the push is late or lost).
+                    if (snapshot.child("type").value == "incoming_call") {
+                        val callId = snapshot.child("callId").value as? String ?: ""
+                        val fresh = System.currentTimeMillis() - timestamp < 40_000L
+                        if (!isFirstLoad && fresh && callId.isNotBlank() && senderId.isNotBlank()) {
+                            val video = snapshot.child("video").value == true
+                            val image = snapshot.child("senderImage").value as? String ?: ""
+                            viewModelScope.launch {
+                                // Give the normal push a moment; act only if it has not arrived.
+                                kotlinx.coroutines.delay(2500)
+                                val idle = CallEngine.state.value.status in listOf("idle", "ended", "declined", "missed", "failed")
+                                if (idle && com.example.service.IncomingCallRegistry.firstTime(callId)) {
+                                    val app = getApplication<Application>()
+                                    runCatching {
+                                        getDatabaseInstance().getReference("calls").child(callId).child("status").get().addOnSuccessListener { status ->
+                                            if (status.getValue(String::class.java) in listOf("calling", "ringing")) {
+                                                getDatabaseInstance().getReference("calls").child(callId).child("status").setValue("ringing")
+                                                com.example.service.CallRingtoneController.start(app, callId)
+                                                app.startActivity(
+                                                    android.content.Intent(app, com.example.call.IncomingCallActivity::class.java).apply {
+                                                        action = "com.ebchat.SHOW_CALL"
+                                                        flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP
+                                                        putExtra("callId", callId); putExtra("callerId", senderId)
+                                                        putExtra("callerName", senderName.ifBlank { "Convo Chat user" }); putExtra("callerImage", image); putExtra("videoCall", video)
+                                                    }
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        isFirstLoad = false
+                        return
+                    }
+
                     // Skip first load or notifications from the current active chat
                     if (!isFirstLoad && senderId.isNotBlank() && senderId != activeRecipientUser.value?.uid) {
                         _inAppNotification.value = InAppNotificationData(senderId, senderName, text, timestamp)
@@ -3650,8 +3767,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             }
     }
 
+    /** token → uid it was resolved for, so every push can carry who it is addressed to. */
+    private val fcmTokenOwners = java.util.concurrent.ConcurrentHashMap<String, String>()
+
     private fun withUserFcmToken(uid: String, knownToken: String = "", onToken: (String) -> Unit) {
         if (knownToken.isNotBlank()) {
+            fcmTokenOwners[knownToken] = uid
             onToken(knownToken)
             return
         }
@@ -3661,7 +3782,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 if (token.isBlank()) {
                     Log.w("FCM_GATEWAY", "Recipient $uid has no FCM token")
                     _gatewayHealth.value = GatewayHealth(message = "Recipient has not registered an FCM token yet")
-                } else onToken(token)
+                } else { fcmTokenOwners[token] = uid; onToken(token) }
             }
             .addOnFailureListener {
                 Log.e("FCM_GATEWAY", "Could not load recipient token: ${it.message}")
@@ -4090,7 +4211,23 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val resolver=getApplication<Application>().contentResolver;var name="shared_${System.currentTimeMillis()}";var size=-1L
         resolver.query(uri,arrayOf(android.provider.OpenableColumns.DISPLAY_NAME,android.provider.OpenableColumns.SIZE),null,null,null)?.use{if(it.moveToFirst()){name=it.getString(0)?:name;if(!it.isNull(1))size=it.getLong(1)}}
         val mime=resolver.getType(uri)?:payload.mimeType
-        uploadUriToSupabase(uri,name,mime,size,{_,_->},{url->if(mime.startsWith("image/"))write(payload.text,imageUrl=url)else write(payload.text,url,name,mime,size)},{onComplete(false,it)})
+        // v5.5: the shared file gets a live upload bubble (percent + time left) inside the chat it
+        // is going to, exactly like files picked from inside the chat. Before, nothing was shown.
+        val shareChatId = listOf(me.uid, target.uid).sorted().joinToString("_")
+        val uploadId = "up_${System.currentTimeMillis()}_${(1000..9999).random()}"
+        val kind = if (mime.startsWith("image/")) "photo" else "file"
+        _outgoingUploads.update { it + OutgoingUpload(uploadId, shareChatId, kind, name, uri.toString().takeIf { mime.startsWith("image/") }, size.coerceAtLeast(0L)) }
+        fun run() {
+            uploadUriToSupabase(uri, name, mime, size,
+                { percent, eta -> updateOutgoingUpload(uploadId, percent, eta) },
+                { url ->
+                    dismissOutgoingUpload(uploadId)
+                    if (mime.startsWith("image/")) write(payload.text, imageUrl = url) else write(payload.text, url, name, mime, size)
+                },
+                { error -> failOutgoingUpload(uploadId, error) { run() }; onComplete(false, error) }
+            )
+        }
+        run()
     }
 
     fun sendPostToUser(target: User, post: Post, onComplete: (Boolean) -> Unit = {}) {
@@ -4527,6 +4664,18 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private val deliveredImageDeletes = java.util.Collections.newSetFromMap(java.util.concurrent.ConcurrentHashMap<String, Boolean>())
+
+    /** The receiver's phone has saved this chat photo: remove the server copy (admin switch). */
+    fun acknowledgeImageDelivered(remoteUrl: String) {
+        if (!_flagshipConfig.value.deleteDeliveredMedia || !remoteUrl.startsWith("http") || !deliveredImageDeletes.add(remoteUrl)) return
+        viewModelScope.launch(Dispatchers.IO) {
+            if (com.example.data.LocalImageStore.existing(getApplication(), remoteUrl) == null) { deliveredImageDeletes.remove(remoteUrl); return@launch }
+            val removed = runCatching { deleteSupabaseObject(remoteUrl) }.getOrDefault(false)
+            if (!removed) deliveredImageDeletes.remove(remoteUrl)
+        }
+    }
+
     fun acknowledgeFileConsumed(messageId: String, remoteUrl: String?) {
         if (remoteUrl.isNullOrBlank() || !remoteUrl.startsWith("http")) return
         viewModelScope.launch(Dispatchers.IO) {
@@ -4779,6 +4928,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         val authUser = FirebaseAuth.getInstance().currentUser ?: return
+        // Captured synchronously: several accounts on one phone share a token, so the owner
+        // must be read before another lookup can overwrite it.
+        val recipientUid = fcmTokenOwners[targetToken].orEmpty()
         authUser.getIdToken(false).addOnSuccessListener { tokenResult ->
             val callerToken = tokenResult.token ?: return@addOnSuccessListener
             viewModelScope.launch {
@@ -4803,6 +4955,13 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     put("targetId", targetId)
                     put("timestamp", System.currentTimeMillis())
                     put("formattedTime", formattedTime)
+                    if (recipientUid.isNotBlank() && notificationType != "gateway_test") {
+                        put("recipientUid", recipientUid)
+                        // Older Workers only forward whitelisted keys; chatId is one of them.
+                        if (!extraData.containsKey("chatId") && senderId.isNotBlank() && senderId != recipientUid) {
+                            put("chatId", listOf(senderId, recipientUid).sorted().joinToString("_"))
+                        }
+                    }
                     extraData.forEach { (key, value) -> put(key, value) }
                 }
 
@@ -4829,7 +4988,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         if (done.size >= 3) return false
                         val next = WorkerRouter.candidates("push", primary).firstOrNull { it !in done }
                             ?: primary.takeIf { it !in done } ?: return false
-                        triggerFcmGatewayNotification(next, targetToken, senderName, messageBody, senderId, senderProfileUrl, notificationType, targetId, extraData, done)
+                        triggerFcmGatewayNotification(next, targetToken, senderName, messageBody, senderId, senderProfileUrl, notificationType, targetId, if (recipientUid.isBlank()) extraData else extraData + ("recipientUid" to recipientUid), done)
                         return true
                     }
 
@@ -4986,7 +5145,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             }
     }
 
-    fun uploadStory(text: String, imageUrl: String, videoUrl: String, onComplete: () -> Unit) {
+    fun uploadStory(text: String, imageUrl: String, videoUrl: String, audio: com.example.data.AudioTrack? = null, onComplete: () -> Unit) {
         val user = getCurrentUserOrFallback() ?: return
         val storyId = UUID.randomUUID().toString()
         val story = Story(
@@ -4997,7 +5156,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             imageUrl = imageUrl,
             videoUrl = videoUrl,
             text = text,
-            timestamp = System.currentTimeMillis()
+            timestamp = System.currentTimeMillis(),
+            audioUrl = audio?.url.orEmpty(), audioTitle = audio?.title.orEmpty(), audioArtist = audio?.artist.orEmpty()
         )
 
         FirebaseFirestore.getInstance().collection("stories").document(storyId)
@@ -5428,7 +5588,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         r2ObjectKeys: List<String> = emptyList(),
         isReel: Boolean = false,
         expiresAt: Long = 0L,
-        imageUrls: List<String> = emptyList()
+        imageUrls: List<String> = emptyList(),
+        audio: com.example.data.AudioTrack? = null
     ) {
         val user = getCurrentUserOrFallback() ?: return
         val postId = UUID.randomUUID().toString()
@@ -5439,7 +5600,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             senderProfilePic = user.profileImageUrl,
             text = text,
             imageUrl = imageUrl,
-            audioUrl = "",
+            // Only tracks picked from the admin-enabled audio library are attached.
+            audioUrl = audio?.url.orEmpty(),
+            audioTitle = audio?.title.orEmpty(), audioArtist = audio?.artist.orEmpty(), audioArtwork = audio?.artwork.orEmpty(), audioSource = audio?.source.orEmpty(),
             videoUrl = videoUrl,
             timestamp = System.currentTimeMillis(),
             isPrivate = isPrivate,
@@ -5628,7 +5791,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         try {
                             val members = (doc.get("members") as? List<*>)?.mapNotNull { it as? String } ?: emptyList()
                             if (members.contains(currentUid)) {
-                                val group = Group(
+                                // Full record first (live call, pinned note, admins, polls…); the
+                                // hand-built copy is only a fallback for unusual documents.
+                                val group = runCatching { doc.toObject(Group::class.java)?.copy(id = doc.id, members = members) }.getOrNull() ?: Group(
                                     id = doc.id,
                                     name = doc.getString("name") ?: "",
                                     profileUrl = doc.getString("profileUrl") ?: "",
@@ -5767,11 +5932,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         val callType = if (video) "video" else "audio"
-        val roster = group.members.distinct().take(6).joinToString(",")
+        val roster = group.members.distinct().take(30).joinToString(",")
         val recipients = if (includeCaller) {
-            group.members.distinct().take(6)
+            group.members.distinct().take(30)
         } else {
-            group.members.filterNot { it == caller.uid }.distinct().take(5)
+            group.members.filterNot { it == caller.uid }.distinct().take(30)
         }
         recipients.forEach { memberUid ->
             withUserFcmToken(memberUid) { token ->
@@ -5796,9 +5961,125 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    // ---- Live group call bar ---------------------------------------------------------------
+    private val _activeGroupCall = MutableStateFlow<com.example.data.ActiveGroupCallInfo?>(null)
+    /** Non-null while a call is running in the open group: drives the Join bar for every member. */
+    val activeGroupCall: StateFlow<com.example.data.ActiveGroupCallInfo?> = _activeGroupCall.asStateFlow()
+    private var groupDocListener: ListenerRegistration? = null
+    private var groupDocListenerId: String = ""
+    private var groupCallRoomRef: com.google.firebase.database.DatabaseReference? = null
+    private var groupCallRoomListener: ValueEventListener? = null
+
+    private fun stopWatchingGroupCallRoom() {
+        groupCallRoomListener?.let { groupCallRoomRef?.removeEventListener(it) }
+        groupCallRoomListener = null; groupCallRoomRef = null
+    }
+
+    private fun watchGroupLive(groupId: String) {
+        if (groupId.isBlank()) return
+        if (groupDocListenerId == groupId && groupDocListener != null) return
+        groupDocListener?.remove(); stopWatchingGroupCallRoom(); _activeGroupCall.value = null
+        groupDocListenerId = groupId
+        groupDocListener = FirebaseFirestore.getInstance().collection("groups").document(groupId)
+            .addSnapshotListener { doc, _ ->
+                if (doc == null || !doc.exists() || groupDocListenerId != groupId) return@addSnapshotListener
+                // Keep the open group fresh (members, pinned message, admin settings).
+                runCatching { doc.toObject(Group::class.java) }.getOrNull()?.let { fresh ->
+                    if (_activeGroup.value?.id == groupId) _activeGroup.value = fresh.copy(id = groupId)
+                }
+                val roomId = doc.getString("activeCallRoomId").orEmpty()
+                val startedAt = doc.getLong("activeCallStartedAt") ?: 0L
+                val fresh = roomId.isNotBlank() && System.currentTimeMillis() - startedAt < 3 * 60 * 60 * 1000L
+                if (!fresh) { stopWatchingGroupCallRoom(); _activeGroupCall.value = null; return@addSnapshotListener }
+                val base = com.example.data.ActiveGroupCallInfo(
+                    roomId = roomId,
+                    hostId = doc.getString("activeCallHostId").orEmpty(),
+                    hostName = doc.getString("activeCallHostName").orEmpty(),
+                    video = doc.getBoolean("activeCallVideo") ?: false,
+                    startedAt = startedAt
+                )
+                if (groupCallRoomRef?.key == roomId) return@addSnapshotListener
+                stopWatchingGroupCallRoom()
+                _activeGroupCall.value = base
+                val ref = getDatabaseInstance().getReference("groupCalls").child(roomId)
+                groupCallRoomRef = ref
+                groupCallRoomListener = ref.addValueEventListener(object : ValueEventListener {
+                    override fun onDataChange(snapshot: DataSnapshot) {
+                        val status = snapshot.child("status").getValue(String::class.java)
+                        val people = snapshot.child("participants").children.count { it.child("removed").getValue(Boolean::class.java) != true }
+                        val abandoned = people == 0 && System.currentTimeMillis() - startedAt > 60_000L
+                        if (!snapshot.exists() || status == "ended" || abandoned) {
+                            _activeGroupCall.value = null
+                            // Tidy a stale pointer so the bar disappears for everyone.
+                            com.example.call.GroupCallEngine.clearGroupPointer(groupId, roomId)
+                            if (abandoned && status != "ended") runCatching { ref.child("status").setValue("ended") }
+                        } else {
+                            _activeGroupCall.value = base.copy(
+                                participantCount = people,
+                                video = snapshot.child("video").getValue(Boolean::class.java) ?: base.video,
+                                hostId = snapshot.child("hostId").getValue(String::class.java) ?: base.hostId
+                            )
+                        }
+                    }
+                    override fun onCancelled(error: DatabaseError) {
+                        // No read access to the room (older rules): trust the group record for one hour.
+                        _activeGroupCall.value = base.takeIf { System.currentTimeMillis() - startedAt < 60 * 60 * 1000L }
+                    }
+                })
+            }
+    }
+
+    private fun stopWatchingGroupLive() {
+        groupDocListener?.remove(); groupDocListener = null; groupDocListenerId = ""
+        stopWatchingGroupCallRoom(); _activeGroupCall.value = null
+    }
+
+    /** One vote per member per poll; voting again moves the vote. */
+    fun voteGroupPoll(groupId: String, messageId: String, optionIndex: Int) {
+        val uid = FirebaseAuth.getInstance().currentUser?.uid ?: return
+        if (groupId.isBlank() || messageId.isBlank()) return
+        FirebaseFirestore.getInstance().collection("groups").document(groupId)
+            .update(com.google.firebase.firestore.FieldPath.of("pollVotes", messageId, uid), optionIndex.toLong())
+            .addOnFailureListener { Log.w("GROUP_POLL", "Vote failed: ${it.message}") }
+    }
+
+    /** Smart group settings (pin, description, admin-only, slow mode, co-admins). */
+    fun updateGroupSmart(groupId: String, fields: Map<String, Any>, announce: String? = null) {
+        if (groupId.isBlank() || fields.isEmpty()) return
+        val ref = FirebaseFirestore.getInstance().collection("groups").document(groupId)
+        ref.update(fields).addOnSuccessListener {
+            if (!announce.isNullOrBlank()) {
+                val messageId = UUID.randomUUID().toString()
+                ref.collection("messages").document(messageId).set(
+                    GroupMessage(messageId = messageId, groupId = groupId, senderId = "system", senderName = "SYSTEM", text = announce, timestamp = System.currentTimeMillis())
+                )
+            }
+        }.addOnFailureListener { Log.w("GROUP_SMART", "Group update failed: ${it.message}") }
+    }
+
+    /** Ring specific people into a running group call (also used for "Add people"). */
+    fun inviteUsersToGroupCall(group: Group, userIds: List<String>, video: Boolean, roomId: String) {
+        val caller = getCurrentUserOrFallback() ?: return
+        if (roomId.isBlank()) return
+        val callType = if (video) "video" else "audio"
+        val roster = (group.members + userIds).distinct().take(30).joinToString(",")
+        userIds.filter { it != caller.uid }.distinct().forEach { memberUid ->
+            withUserFcmToken(memberUid) { token ->
+                triggerFcmGatewayNotification(
+                    gatewayUrl = routed("calls"), targetToken = token, senderName = caller.name,
+                    messageBody = "${caller.name} invited you to a group $callType call in ${group.name}",
+                    senderId = caller.uid, senderProfileUrl = caller.profileImageUrl,
+                    notificationType = "group_call", targetId = group.id,
+                    extraData = mapOf("roomId" to roomId, "groupId" to group.id, "groupName" to group.name, "memberIds" to roster, "videoCall" to video.toString())
+                )
+            }
+        }
+    }
+
     fun selectGroup(group: Group?) {
         stopListeningToGroupVoice()
         _activeGroup.value = group
+        if (group != null) watchGroupLive(group.id) else stopWatchingGroupLive()
         if (group != null) {
             startListeningToGroupMessages(group.id)
             startListeningToGroupVoice(group.id)

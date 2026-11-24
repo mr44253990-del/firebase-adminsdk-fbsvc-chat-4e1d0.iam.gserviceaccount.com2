@@ -33,10 +33,17 @@ import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.VerifiedUser
+import androidx.compose.material.icons.filled.Sync
+import androidx.compose.material.icons.filled.Lightbulb
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -76,8 +83,18 @@ private fun splashGreeting(): String = when (Calendar.getInstance().get(Calendar
     else -> "শুভ রাত্রি"
 }
 
+private fun splashTip(): String = listOf(
+    "Tip · Long-press a message for reactions, reply and translate",
+    "Tip · Ask Convo AI to find any profile for you",
+    "Tip · Group calls now show a Join bar for everyone in the group",
+    "Tip · Minimise a call — the floating bubble follows you everywhere",
+    "Tip · Swipe up on the green button to answer a call",
+    "Tip · Try the new camera looks inside a video call"
+).random()
+
 /** Small rotating status line so the wait feels intentional and short. */
-private fun splashStatus(progress: Float): String = when {
+private fun splashStatus(progress: Float, securing: Boolean = false): String = when {
+    securing && progress >= .80f -> "Securing your session…"
     progress < .22f -> "Waking up your workspace…"
     progress < .45f -> "Restoring your chats…"
     progress < .68f -> "Checking secure sign-in…"
@@ -86,307 +103,108 @@ private fun splashStatus(progress: Float): String = when {
 }
 
 /**
- * Launch screen, rebuilt for a fast, premium first impression:
- *
- *  - A liquid-glass brand mark that settles in with a spring and keeps breathing.
- *  - Two counter-rotating light arcs plus a thin gradient progress ring = one smooth gesture
- *    instead of a stack of unrelated spinners.
- *  - Floating aurora orbs and a drifting particle field for depth.
- *  - Letter-by-letter wordmark, greeting, and a single changing status line.
- *  - Deliberately quick: the whole sequence completes in ~1.05 s, and it lets the first frame
- *    of the app render underneath so navigation feels instant rather than delayed.
+ * Launch screen — "dark liquid glass" (v5.6): flowing violet / blue glass on black, the glossy
+ * app tile with a floor reflection, the two-tone wordmark with a live waveform, one wide
+ * glowing progress bar and a frosted card whose three stages (Connect · Secure · Sync) light
+ * up as the launch moves forward. The optional [work] (session / 2FA check) runs inside it.
  */
 @Composable
-fun SplashScreen(onFinished: () -> Unit) {
-    val motion = rememberInfiniteTransition(label = "splash_motion")
-    val orbit by motion.animateFloat(0f, 360f, infiniteRepeatable(tween(7200, easing = LinearEasing)), label = "orbit")
-    val counter by motion.animateFloat(360f, 0f, infiniteRepeatable(tween(5200, easing = LinearEasing)), label = "counter")
-    val breathe by motion.animateFloat(.94f, 1.06f, infiniteRepeatable(tween(2100, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "breathe")
-    val drift by motion.animateFloat(-14f, 18f, infiniteRepeatable(tween(2600, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "drift")
-    val sparkle by motion.animateFloat(0f, 1f, infiniteRepeatable(tween(3600, easing = LinearEasing)), label = "sparkle")
-
-    val markScale = remember { Animatable(.55f) }
+fun SplashScreen(work: (suspend () -> Unit)? = null, onFinished: () -> Unit) {
+    var workDone by remember { mutableStateOf(work == null) }
+    val markScale = remember { Animatable(.6f) }
     val markAlpha = remember { Animatable(0f) }
-    val halo = remember { Animatable(0f) }
     val progress = remember { Animatable(0f) }
-    var lettersShown by remember { mutableIntStateOf(0) }
-    val title = "Convo Chat"
-    val greeting = remember { splashGreeting() }
+    val content = remember { Animatable(0f) }
+    val tip = remember { splashTip() }
 
     LaunchedEffect(Unit) {
-        launch {
-            // Everything overlaps: the mark, halo, letters and bar animate at the same time.
-            launch { markAlpha.animateTo(1f, tween(260)) }
-            launch { markScale.animateTo(1f, spring(dampingRatio = .55f, stiffness = 420f)) }
-            launch { delay(90); halo.animateTo(1f, tween(620, easing = FastOutSlowInEasing)) }
-            launch {
-                delay(140)
-                for (i in 1..title.length) { lettersShown = i; delay(32) }
-            }
-            progress.animateTo(1f, tween(820, easing = FastOutSlowInEasing))
-        }
+        launch { markAlpha.animateTo(1f, tween(260)) }
+        launch { markScale.animateTo(1f, spring(dampingRatio = .6f, stiffness = 380f)) }
+        launch { delay(120); content.animateTo(1f, tween(520, easing = FastOutSlowInEasing)) }
+        launch { progress.animateTo(if (work == null) 1f else .86f, tween(820, easing = FastOutSlowInEasing)) }
+        val job = if (work != null) launch { runCatching { work() }; workDone = true } else null
         delay(1050)
+        job?.join()
+        if (work != null) progress.animateTo(1f, tween(240, easing = FastOutSlowInEasing))
         onFinished()
     }
+    val shimmer by rememberInfiniteTransition(label = "splash_bar").animateFloat(0f, 1f, infiniteRepeatable(tween(1300, easing = LinearEasing)), label = "shimmer")
 
-    val settled by animateFloatAsState(if (markAlpha.value > .5f) 1f else 0f, tween(400), label = "settled")
-
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(
-                Brush.linearGradient(
-                    listOf(Color(0xFF080711), Color(0xFF151238), Color(0xFF0A1024), Color(0xFF06060F)),
-                    start = Offset.Zero,
-                    end = Offset(1400f, 1800f)
-                )
-            ),
-        contentAlignment = Alignment.Center
-    ) {
-        // Aurora depth.
-        Box(
-            Modifier.align(Alignment.TopStart).padding(top = 60.dp)
-                .size(240.dp).blur(70.dp)
-                .alpha(.55f * settled)
-                .background(SPLASH_VIOLET, CircleShape)
-        )
-        Box(
-            Modifier.align(Alignment.BottomEnd).padding(bottom = 40.dp)
-                .size(260.dp).blur(80.dp)
-                .alpha(.38f * settled)
-                .background(SPLASH_CYAN, CircleShape)
-        )
-        Box(
-            Modifier.align(Alignment.CenterEnd).padding(end = 10.dp)
-                .size(150.dp).blur(60.dp)
-                .alpha(.30f * settled)
-                .background(SPLASH_PINK, CircleShape)
-        )
-
-        // Particle field: tiny rising sparks plus a slow twinkle in the corners.
-        Canvas(Modifier.fillMaxSize().alpha(settled)) {
-            repeat(34) { index ->
-                val seed = ((index * 61) % 100) / 100f
-                val phase = (sparkle + seed) % 1f
-                val x = size.width * ((seed * 2.3f + index * .029f) % 1f)
-                val y = size.height * (1.04f - phase * 1.08f)
-                val alpha = (sin(phase * PI.toFloat()) * .45f).coerceAtLeast(0f)
-                drawCircle(
-                    color = Color.White.copy(alpha = alpha),
-                    radius = 1.1f + (index % 4) * .8f,
-                    center = Offset(x, y)
-                )
-            }
-            // Soft light rays behind the mark.
-            val center = Offset(size.width / 2f, size.height * .42f)
-            repeat(3) { ray ->
-                val radius = 120f + ray * 46f
-                drawCircle(
-                    brush = Brush.radialGradient(
-                        listOf(SPLASH_VIOLET.copy(alpha = .12f - ray * .03f), Color.Transparent),
-                        center,
-                        radius
-                    ),
-                    radius = radius,
-                    center = center
-                )
-            }
-        }
-
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Box(Modifier.size(236.dp), contentAlignment = Alignment.Center) {
-                // Progress ring: draws once, tracks the real loading progress.
-                Canvas(Modifier.fillMaxSize()) {
-                    val radius = size.minDimension / 2f - 6f
-                    drawCircle(
-                        color = Color.White.copy(alpha = .10f),
-                        radius = radius,
-                        style = Stroke(width = 2.4.dp.toPx())
-                    )
-                    drawArc(
-                        brush = Brush.sweepGradient(listOf(SPLASH_VIOLET, SPLASH_CYAN, SPLASH_PINK, SPLASH_VIOLET)),
-                        startAngle = -90f,
-                        sweepAngle = 360f * progress.value.coerceIn(0f, 1f),
-                        useCenter = false,
-                        style = Stroke(width = 2.4.dp.toPx(), cap = StrokeCap.Round)
-                    )
-                }
-                // Two counter-rotating orbit arcs.
-                Canvas(Modifier.fillMaxSize().scale(breathe)) {
-                    val c = center
-                    val r = size.minDimension / 2f - 26f
-                    rotate(orbit) {
-                        drawArc(
-                            brush = Brush.sweepGradient(
-                                listOf(Color.Transparent, Color.White.copy(alpha = .55f), Color.Transparent),
-                                c
-                            ),
-                            startAngle = 0f, sweepAngle = 150f, useCenter = false,
-                            topLeft = Offset(c.x - r, c.y - r),
-                            size = androidx.compose.ui.geometry.Size(r * 2, r * 2),
-                            style = Stroke(width = 1.2.dp.toPx(), cap = StrokeCap.Round)
-                        )
-                    }
-                    rotate(counter) {
-                        drawArc(
-                            brush = Brush.sweepGradient(
-                                listOf(Color.Transparent, SPLASH_CYAN.copy(alpha = .75f), Color.Transparent),
-                                c
-                            ),
-                            startAngle = 0f, sweepAngle = 96f, useCenter = false,
-                            topLeft = Offset(c.x - r * .82f, c.y - r * .82f),
-                            size = androidx.compose.ui.geometry.Size(r * 1.64f, r * 1.64f),
-                            style = Stroke(width = 1.6.dp.toPx(), cap = StrokeCap.Round)
-                        )
-                    }
-                }
-                // Orbiting glass dots.
-                repeat(3) { index ->
-                    val angle = (orbit + index * 120f) * (PI.toFloat() / 180f)
-                    val radius = 96f
-                    Box(
-                        Modifier
-                            .offsetPx(x = cos(angle) * radius, y = sin(angle) * radius * .9f)
-                            .size(9.dp)
-                            .alpha(.75f * settled)
-                            .clip(CircleShape)
-                            .background(
-                                Brush.linearGradient(
-                                    listOf(SPLASH_VIOLET, SPLASH_PINK),
-                                    start = Offset.Zero,
-                                    end = Offset(20f, 20f)
-                                )
-                            )
-                            .border(1.dp, Color.White.copy(alpha = .55f), CircleShape)
-                    )
-                }
-                // The mark itself.
-                Box(
-                    modifier = Modifier
-                        .size(126.dp)
-                        .scale(markScale.value * (0.99f + (breathe - 1f) * .1f))
-                        .alpha(markAlpha.value)
-                        .clip(RoundedCornerShape(40.dp))
-                        .background(
-                            Brush.linearGradient(
-                                listOf(Color.White.copy(alpha = .20f), Color.White.copy(alpha = .05f)),
-                                start = Offset.Zero,
-                                end = Offset(180f, 180f)
-                            )
-                        )
-                        .border(1.dp, Color.White.copy(alpha = .34f), RoundedCornerShape(40.dp)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    ConvoLogo(Modifier.fillMaxSize().padding(16.dp), size = 96.dp)
-                    // Glass specular sweep.
-                    Box(
-                        Modifier.align(Alignment.TopCenter)
-                            .fillMaxWidth(.82f)
-                            .height(34.dp)
-                            .padding(top = 8.dp)
-                            .clip(RoundedCornerShape(20.dp))
-                            .alpha(.5f)
-                            .background(
-                                Brush.verticalGradient(
-                                    listOf(Color.White.copy(alpha = .34f), Color.Transparent)
-                                )
-                            )
-                    )
-                }
-            }
-
-            Spacer(Modifier.height(16.dp))
-
-            // Wordmark: letters cascade, the second word carries the gradient.
-            Row(verticalAlignment = Alignment.Bottom) {
-                title.forEachIndexed { index, char ->
-                    val shown = index < lettersShown
-                    val letterAlpha by animateFloatAsState(if (shown) 1f else 0f, tween(220), label = "letter_alpha")
-                    val letterOffset by animateFloatAsState(if (shown) 0f else 12f, spring(dampingRatio = .6f, stiffness = 520f), label = "letter_y")
-                    Text(
-                        text = char.toString(),
-                        color = if (index >= 6) Color.Transparent else Color.White,
-                        style = MaterialTheme.typography.headlineLarge.copy(
-                            fontWeight = FontWeight.ExtraBold,
-                            fontSize = 34.sp,
-                            letterSpacing = (-1).sp,
-                            brush = if (index >= 6) {
-                                Brush.linearGradient(listOf(SPLASH_CYAN, SPLASH_VIOLET, SPLASH_PINK))
-                            } else null
-                        ),
-                        modifier = Modifier.alpha(letterAlpha).offsetPx(y = letterOffset)
-                    )
-                }
-            }
-
+    Box(Modifier.fillMaxSize().background(LiquidInk), contentAlignment = Alignment.Center) {
+        LiquidGlassBackground()
+        Column(
+            Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.navigationBars).padding(horizontal = 26.dp),
+            horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center
+        ) {
+            Box(Modifier.scale(markScale.value).alpha(markAlpha.value)) { LiquidLogoTile(size = 150.dp) }
             Spacer(Modifier.height(6.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.width(18.dp).height(1.5.dp).background(SPLASH_CYAN.copy(alpha = .8f), CircleShape))
-                Spacer(Modifier.width(7.dp))
-                Text(
-                    text = greeting,
-                    color = Color.White.copy(alpha = .82f * settled),
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    letterSpacing = .4.sp
-                )
-                Spacer(Modifier.width(7.dp))
-                Box(Modifier.width(18.dp).height(1.5.dp).background(SPLASH_PINK.copy(alpha = .8f), CircleShape))
-            }
+            LiquidWordmark(fontSize = 42, modifier = Modifier.alpha(content.value))
+            Spacer(Modifier.height(6.dp))
+            LiquidWaveform(Modifier.alpha(content.value))
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "CHAT   •   CONNECT   •   MORE", color = Color.White.copy(alpha = .55f * content.value),
+                fontSize = 11.sp, fontWeight = FontWeight.Medium, letterSpacing = 3.sp
+            )
+            Spacer(Modifier.height(34.dp))
 
-            Spacer(Modifier.height(26.dp))
-
-            // Slim determinate bar mirrors the ring so progress is obvious at a glance.
+            // One wide glowing progress bar.
             Box(
-                Modifier.width(176.dp).height(4.dp).clip(CircleShape)
-                    .background(Color.White.copy(alpha = .10f))
+                Modifier.fillMaxWidth(.82f).height(9.dp).clip(CircleShape)
+                    .background(Color.White.copy(alpha = .06f)).border(1.dp, Color.White.copy(alpha = .16f), CircleShape)
             ) {
                 Box(
-                    Modifier
-                        .fillMaxWidth(progress.value.coerceIn(0.02f, 1f))
-                        .height(4.dp)
-                        .clip(CircleShape)
-                        .background(Brush.horizontalGradient(listOf(SPLASH_VIOLET, SPLASH_CYAN, SPLASH_PINK)))
+                    Modifier.fillMaxWidth(progress.value.coerceIn(0.03f, 1f)).height(9.dp).clip(CircleShape)
+                        .background(
+                            Brush.horizontalGradient(
+                                listOf(LiquidViolet, LiquidBlue, LiquidCyan, Color.White, LiquidCyan),
+                                startX = shimmer * 500f - 250f, endX = shimmer * 500f + 420f
+                            )
+                        )
                 )
             }
             Spacer(Modifier.height(10.dp))
-            Text(
-                text = splashStatus(progress.value),
-                color = Color.White.copy(alpha = .62f),
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Medium,
-                textAlign = TextAlign.Center
-            )
-        }
+            Text(if (progress.value >= .999f) "Ready" else "Loading…", color = Color.White.copy(alpha = .8f), fontSize = 13.sp, fontWeight = FontWeight.Medium)
+            Spacer(Modifier.height(30.dp))
 
-        Column(
-            modifier = Modifier.align(Alignment.BottomCenter)
-                .windowInsetsPadding(WindowInsets.navigationBars)
-                .padding(bottom = 22.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(5.dp).clip(CircleShape).background(SPLASH_CYAN))
-                Spacer(Modifier.width(6.dp))
-                Text(
-                    "Private · Secure · Always yours",
-                    color = Color.White.copy(alpha = .40f),
-                    fontSize = 10.sp,
-                    letterSpacing = .5.sp
-                )
+            // Frosted status card with the three launch stages.
+            Column(
+                Modifier.fillMaxWidth().alpha(content.value).liquidGlass(RoundedCornerShape(30.dp)).padding(horizontal = 14.dp, vertical = 18.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(splashStatus(progress.value, securing = !workDone), color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center)
+                Spacer(Modifier.height(14.dp))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf(Triple("Connect", .20f, LiquidCyan), Triple("Secure", .62f, LiquidViolet), Triple("Sync", .99f, LiquidBlue)).forEachIndexed { index, (label, at, tint) ->
+                        val on = progress.value >= at
+                        val a by animateFloatAsState(if (on) 1f else .42f, tween(260), label = "stage_alpha")
+                        Row(
+                            Modifier.weight(1f).alpha(a).clip(CircleShape)
+                                .background(Color.White.copy(alpha = if (on) .10f else .04f))
+                                .border(1.dp, if (on) tint.copy(alpha = .8f) else Color.White.copy(alpha = .14f), CircleShape)
+                                .padding(vertical = 10.dp),
+                            horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                when (index) { 0 -> Icons.Default.Bolt; 1 -> Icons.Default.VerifiedUser; else -> Icons.Default.Sync },
+                                null, tint = tint, modifier = Modifier.size(17.dp)
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text(label, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                        }
+                    }
+                }
+            }
+            Spacer(Modifier.height(20.dp))
+            Row(Modifier.alpha(content.value), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.Lightbulb, null, tint = Color.White.copy(alpha = .55f), modifier = Modifier.size(15.dp))
+                Spacer(Modifier.width(7.dp))
+                Text(tip, color = Color.White.copy(alpha = .55f), fontSize = 11.5.sp, textAlign = TextAlign.Center, maxLines = 2)
             }
         }
+        Text(
+            "—  v" + com.example.BuildConfig.VERSION_NAME + "  —", color = Color.White.copy(alpha = .45f), fontSize = 12.sp, letterSpacing = 1.sp,
+            modifier = Modifier.align(Alignment.BottomCenter).windowInsetsPadding(WindowInsets.navigationBars).padding(bottom = 20.dp)
+        )
     }
 }
-
-/** Offset in pixels without converting to dp, so orbit radii stay physically constant. */
-private fun Modifier.offsetPx(x: Float = 0f, y: Float = 0f) = this.then(
-    Modifier.layout { measurable, constraints ->
-        val placeable = measurable.measure(constraints)
-        layout(placeable.width, placeable.height) {
-            placeable.place(x.toInt(), y.toInt())
-        }
-    }
-)
-

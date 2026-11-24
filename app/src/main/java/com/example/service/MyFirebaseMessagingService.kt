@@ -92,6 +92,21 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         // messages that arrived while it was offline so senders see ✓✓ without opening the chat.
         runCatching { DeliveryAck.ackAllPending() }
         if (notificationType == "presence_probe") return
+        // Multi-account phones: a push addressed to a different saved account becomes a
+        // "Switch account" notification; pushes for accounts no longer on this phone are dropped.
+        val intendedUid = AccountSwitchNotifier.intendedRecipient(remoteMessage.data)
+        val activeUid = FirebaseAuth.getInstance().currentUser?.uid.orEmpty()
+        if (intendedUid.isNotBlank() && intendedUid != activeUid) {
+            if (notificationType == "call_cancelled") {
+                runCatching { (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).cancel(("switch_" + intendedUid + "_call").hashCode()) }
+                return
+            }
+            val saved = AccountSwitchNotifier.savedAccounts(this).firstOrNull { it.uid == intendedUid }
+            if (saved != null) {
+                AccountSwitchNotifier.show(this, saved, remoteMessage.data, notificationType, plainNotificationText(remoteMessage.data["senderName"] ?: "Someone").ifBlank { "Someone" })
+            }
+            return
+        }
         val sentAt = (remoteMessage.data["sentAt"]?.toLongOrNull() ?: remoteMessage.sentTime.takeIf { it > 0L } ?: System.currentTimeMillis())
             .coerceAtMost(System.currentTimeMillis())
         // Text only: the timestamp is shown by Android via setWhen() and keeps updating
@@ -128,9 +143,14 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
             return
         }
         if (notificationType == "incoming_call" || notificationType == "incoming_video_call") {
-            if (targetId.isNotBlank()) {
-                FirebaseDatabase.getInstance().getReference("calls").child(targetId).child("status").setValue("ringing")
-            }
+            // The same call can be announced more than once (push retry, realtime channel). A repeat
+            // used to restart the incoming screen and write "ringing" over a call that was already
+            // connected — which threw the user out of the call they had just answered.
+            if (targetId.isBlank() || !IncomingCallRegistry.firstTime(targetId)) return
+            val engine = com.example.call.CallEngine.state.value
+            if (engine.callId == targetId && engine.status in listOf("connecting", "connected", "reconnecting")) return
+            val statusRef = FirebaseDatabase.getInstance().getReference("calls").child(targetId).child("status")
+            statusRef.get().addOnSuccessListener { current -> if (current.getValue(String::class.java) == "calling") statusRef.setValue("ringing") }
             sendIncomingCallNotification(targetId, senderId, senderName, senderProfileUrl, notificationType == "incoming_video_call")
         } else if (notificationType == "group_call") {
             sendIncomingGroupCallNotification(
@@ -233,7 +253,10 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         val answer = callIntent("com.ebchat.ACCEPT_CALL", (callId + "answer").hashCode())
         val decline = callIntent("com.ebchat.DECLINE_CALL", (callId + "decline").hashCode())
         val fullScreen = callIntent("com.ebchat.SHOW_CALL", (callId + "screen").hashCode())
-        val avatar = loadBitmap(callerImage)
+        // Caller picture: cached photo first (works offline and is instant), then a fresh
+        // download, and finally a coloured initials badge — so a call never shows without a face.
+        val avatar = (runCatching { NotificationAvatarCache.load(this, callerId, callerImage) }.getOrNull() ?: loadBitmap(callerImage))?.let { circleBitmap(it) }
+            ?: ConvoNotificationArt.initialsAvatar(callerName, callerId)
         val personBuilder = Person.Builder().setName(callerName).setImportant(true)
         if (avatar != null) personBuilder.setIcon(IconCompat.createWithBitmap(avatar))
         val person = personBuilder.build()
@@ -252,8 +275,11 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         }
         val builder = NotificationCompat.Builder(this, channelId)
             .setSmallIcon(android.R.drawable.sym_call_incoming)
-            .setContentTitle(if (videoCall) "Incoming Convo Chat video call" else "Incoming Convo Chat audio call")
-            .setContentText(callerName)
+            .setContentTitle(callerName)
+            .setContentText(if (videoCall) "📹 Incoming video call" else "📞 Incoming audio call")
+            .setSubText("Convo Chat")
+            .setLargeIcon(avatar)
+            .setColor(ConvoNotificationArt.accentFor(callerId)).setColorized(true)
             .setCategory(NotificationCompat.CATEGORY_CALL)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setPriority(NotificationCompat.PRIORITY_MAX)

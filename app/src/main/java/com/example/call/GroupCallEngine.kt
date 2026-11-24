@@ -38,7 +38,9 @@ data class GroupCallParticipant(
     val connected: Boolean = false,
     val hostMuted: Boolean = false,
     val quality: String = "unknown",
-    val iceState: String = "new"
+    val iceState: String = "new",
+    /** "Raise hand": asks for a turn to speak without interrupting. */
+    val hand: Boolean = false
 )
 
 data class GroupCallState(
@@ -56,12 +58,17 @@ data class GroupCallState(
     val hostId: String = "",
     val captionsEnabled: Boolean = false,
     val recording: Boolean = false,
-    val error: String? = null
+    val error: String? = null,
+    /** True when the room was closed by its host (everyone is disconnected together). */
+    val endedByHost: Boolean = false,
+    val handRaised: Boolean = false
 )
 
 object GroupCallEngine {
     private const val TAG = "GROUP_CALL"
-    private const val MAX_PARTICIPANTS = 6
+    private const val MAX_PARTICIPANTS = 8
+    /** Everyone in the group may join; only [MAX_PARTICIPANTS] can be connected at once (mesh). */
+    private const val MAX_ROOM_MEMBERS = 60
     private const val DEFAULT_WORKER = "https://convo-chat-companion.mr4425390.workers.dev"
     /** TURN credentials follow the admin's "calls" worker routing; primary/default otherwise. */
     private val GATEWAY: String get() = com.example.data.WorkerRouter.resolve("calls", com.example.data.WorkerRouter.primary.value.ifBlank { DEFAULT_WORKER }) + "/turn-credentials"
@@ -74,8 +81,13 @@ object GroupCallEngine {
         val uid: String,
         val peer: PeerConnection,
         var remoteVideo: VideoTrack? = null,
-        var connected: Boolean = false
+        var connected: Boolean = false,
+        @Volatile var needsRenegotiation: Boolean = false
     )
+
+    /** Profile name/photo from the app's own user record (Firebase Auth often has neither). */
+    @Volatile var localName: String = ""
+    @Volatile var localImage: String = ""
 
     private var context: Context? = null
     private var factory: PeerConnectionFactory? = null
@@ -137,7 +149,7 @@ object GroupCallEngine {
         if (user == null) { onReady(false); return }
         val selected = memberIds.distinct().toMutableList().apply {
             if (!contains(user.uid)) add(0, user.uid)
-        }.take(MAX_PARTICIPANTS)
+        }.take(MAX_ROOM_MEMBERS)
         val roomId = UUID.randomUUID().toString()
         joinInternal(app, roomId, groupId, groupName, selected, video, createRoom = true, onReady)
     }
@@ -151,7 +163,7 @@ object GroupCallEngine {
         video: Boolean,
         onReady: (Boolean) -> Unit
     ) {
-        val selected = memberIds.distinct().take(MAX_PARTICIPANTS)
+        val selected = memberIds.distinct().take(MAX_ROOM_MEMBERS)
         joinInternal(app, roomId, groupId, groupName, selected, video, createRoom = false, onReady)
     }
 
@@ -179,9 +191,10 @@ object GroupCallEngine {
         fetchIceServers { servers, error ->
             if (error != null) { fail(error); onReady(false); return@fetchIceServers }
             if (!createLocalMedia(video)) { fail("Could not start microphone/camera"); onReady(false); return@fetchIceServers }
+            val displayName = localName.ifBlank { user.displayName.orEmpty() }.ifBlank { "Convo Chat user" }
             val me = mapOf(
-                "uid" to myUid, "name" to (user.displayName ?: "Convo Chat user"),
-                "image" to (user.photoUrl?.toString() ?: ""), "video" to video,
+                "uid" to myUid, "name" to displayName,
+                "image" to localImage.ifBlank { user.photoUrl?.toString() ?: "" }, "video" to video,
                 "muted" to false, "joinedAt" to System.currentTimeMillis()
             )
             val roomData = mapOf(
@@ -194,9 +207,16 @@ object GroupCallEngine {
             val write = if (createRoom) ref.setValue(roomData) else ref.get()
             write.addOnSuccessListener { result ->
                 if (!createRoom) {
-                    hostId = (result as? DataSnapshot)?.child("hostId")?.getValue(String::class.java).orEmpty()
+                    val room = result as? DataSnapshot
+                    hostId = room?.child("hostId")?.getValue(String::class.java).orEmpty()
                     _state.value = _state.value.copy(hostId = hostId)
-                }
+                    if (room?.child("status")?.getValue(String::class.java) == "ended") {
+                        clearGroupPointer(groupId, roomId)
+                        fail("This call has already ended"); onReady(false); return@addOnSuccessListener
+                    }
+                    val live = room?.child("participants")?.children?.count { it.child("removed").getValue(Boolean::class.java) != true && it.key != myUid } ?: 0
+                    if (live >= MAX_PARTICIPANTS) { fail("This call is full ($MAX_PARTICIPANTS people)"); onReady(false); return@addOnSuccessListener }
+                } else publishGroupPointer(groupId, roomId, displayName, video)
                 ref.child("participants").child(myUid).setValue(me).addOnSuccessListener {
                     if (!createRoom && memberIds.isNotEmpty()) {
                         ref.child("participants").get().addOnSuccessListener { snapshot ->
@@ -208,7 +228,8 @@ object GroupCallEngine {
                         watchRoom(ref, servers)
                         onReady(true)
                     }
-                    ref.child("status").onDisconnect().setValue("ended")
+                    // Losing the connection only removes this participant. The room itself is
+                    // closed explicitly: by the host (ends it for everyone) or by the last person.
                     ref.child("participants").child(myUid).onDisconnect().removeValue()
                     ref.child("lastActiveAt").setValue(ServerValue.TIMESTAMP)
                 }.addOnFailureListener { fail(it.localizedMessage ?: "Could not join group call"); onReady(false) }
@@ -219,6 +240,13 @@ object GroupCallEngine {
     private fun watchRoom(ref: DatabaseReference, servers: List<PeerConnection.IceServer>) {
         roomValueListener = ref.addValueEventListener(object : ValueEventListener {
             override fun onDataChange(snapshot: DataSnapshot) {
+                if (!isClosing && snapshot.child("status").getValue(String::class.java) == "ended") {
+                    // The host hung up: the whole group call ends for every participant.
+                    val byHost = hostId.isNotBlank() && hostId != myUid
+                    cleanup("ended")
+                    if (byHost) _state.value = _state.value.copy(endedByHost = true, error = "The host ended the call")
+                    return
+                }
                 val remoteHostId = snapshot.child("hostId").getValue(String::class.java).orEmpty()
                 if (remoteHostId.isNotBlank()) {
                     hostId = remoteHostId
@@ -288,6 +316,7 @@ object GroupCallEngine {
             muted = snapshot.child("muted").getValue(Boolean::class.java) ?: false,
             connected = uid == myUid || peers[uid]?.connected == true,
             hostMuted = snapshot.child("hostMuted").getValue(Boolean::class.java) ?: false,
+            hand = snapshot.child("hand").getValue(Boolean::class.java) ?: false,
             quality = if (uid == myUid) "good" else "unknown",
             iceState = if (uid == myUid) "local" else "new"
         )
@@ -413,22 +442,37 @@ object GroupCallEngine {
         when (kind) {
             "offer" -> {
                 val sdp = snapshot.child("sdp").getValue(String::class.java) ?: return
-                slot.peer.setRemoteDescription(object : SimpleSdpObserver() {
-                    override fun onSetSuccess() {
-                        flushPendingCandidates(from, slot.peer)
-                        slot.peer.createAnswer(object : SimpleSdpObserver() {
-                            override fun onCreateSuccess(answer: SessionDescription) {
-                                slot.peer.setLocalDescription(SimpleSdpObserver(), answer)
-                                sendSignal(from, mapOf("kind" to "answer", "from" to myUid, "sdp" to answer.description))
-                            }
-                        }, MediaConstraints())
-                    }
-                }, SessionDescription(SessionDescription.Type.OFFER, sdp))
+                val applyOffer = {
+                    slot.peer.setRemoteDescription(object : SimpleSdpObserver() {
+                        override fun onSetSuccess() {
+                            flushPendingCandidates(from, slot.peer)
+                            slot.peer.createAnswer(object : SimpleSdpObserver() {
+                                override fun onCreateSuccess(answer: SessionDescription) {
+                                    slot.peer.setLocalDescription(object : SimpleSdpObserver() {
+                                        override fun onSetSuccess() { mainHandler.post { renegotiateIfNeeded(slot) } }
+                                    }, answer)
+                                    sendSignal(from, mapOf("kind" to "answer", "from" to myUid, "sdp" to answer.description))
+                                }
+                            }, MediaConstraints())
+                        }
+                    }, SessionDescription(SessionDescription.Type.OFFER, sdp))
+                }
+                if (slot.peer.signalingState() == PeerConnection.SignalingState.HAVE_LOCAL_OFFER) {
+                    // Both sides offered at once (e.g. both switched to video). The lower uid wins;
+                    // the other side rolls back, answers, then re-offers its own change.
+                    if (myUid < from) return
+                    slot.needsRenegotiation = true
+                    slot.peer.setLocalDescription(object : SimpleSdpObserver() {
+                        override fun onSetSuccess() { applyOffer() }
+                        override fun onSetFailure(error: String) { applyOffer() }
+                    }, SessionDescription(SessionDescription.Type.ROLLBACK, ""))
+                } else applyOffer()
             }
             "answer" -> snapshot.child("sdp").getValue(String::class.java)?.let {
                 slot.peer.setRemoteDescription(object : SimpleSdpObserver() {
                     override fun onSetSuccess() {
                         flushPendingCandidates(from, slot.peer)
+                        mainHandler.post { renegotiateIfNeeded(slot) }
                     }
                 }, SessionDescription(SessionDescription.Type.ANSWER, it))
             }
@@ -518,6 +562,12 @@ object GroupCallEngine {
         roomRef?.child("participants")?.child(uid)?.child("removed")?.setValue(true)
     }
 
+    fun toggleHand() {
+        val raised = !_state.value.handRaised
+        roomRef?.child("participants")?.child(myUid)?.child("hand")?.setValue(raised)
+        _state.value = _state.value.copy(handRaised = raised)
+    }
+
     fun toggleMute() {
         val muted = !_state.value.muted
         localAudio?.setEnabled(!muted)
@@ -527,6 +577,8 @@ object GroupCallEngine {
 
     fun toggleCamera() {
         if (_state.value.screenSharing) return
+        // Turning the camera on when none has been started yet (call began as audio / screen share).
+        if (_state.value.cameraOff && videoCapturer == null) { recoverLocalVideo(); return }
         val off = !_state.value.cameraOff
         localVideo?.setEnabled(!off)
         roomRef?.child("participants")?.child(myUid)?.child("video")?.setValue(!off)
@@ -568,48 +620,208 @@ object GroupCallEngine {
         }.onFailure { Log.e(TAG, "Local video recovery failed", it) }.getOrDefault(false)
     }
 
+    private fun renegotiate(slot: PeerSlot) {
+        if (isClosing) return
+        if (slot.peer.signalingState() != PeerConnection.SignalingState.STABLE) { slot.needsRenegotiation = true; return }
+        slot.needsRenegotiation = false
+        slot.peer.createOffer(object : SimpleSdpObserver() {
+            override fun onCreateSuccess(sdp: SessionDescription) {
+                slot.peer.setLocalDescription(SimpleSdpObserver(), sdp)
+                sendSignal(slot.uid, mapOf("kind" to "offer", "from" to myUid, "sdp" to sdp.description))
+            }
+            override fun onCreateFailure(error: String) { Log.w(TAG, "Renegotiation offer failed for ${slot.uid}: $error") }
+        }, MediaConstraints())
+    }
+
+    private fun renegotiateIfNeeded(slot: PeerSlot) {
+        if (slot.needsRenegotiation && slot.peer.signalingState() == PeerConnection.SignalingState.STABLE) renegotiate(slot)
+    }
+
+    /**
+     * Audio → video upgrade during a live group call. Starts the camera, publishes the new
+     * track to every connected peer and renegotiates, so nobody has to hang up and call again.
+     */
+    fun upgradeToVideo(): Boolean {
+        if (_state.value.video) return true
+        val app = context ?: return false
+        val f = factory ?: return false
+        if (_state.value.status !in listOf("connected", "reconnecting", "active")) return false
+        return runCatching {
+            val camera = createCameraCapturer(app) ?: error("No camera available")
+            surfaceTextureHelper = SurfaceTextureHelper.create("Convo Group Camera", eglBase!!.eglBaseContext)
+            val source = f.createVideoSource(false)
+            camera.initialize(surfaceTextureHelper, app, source.capturerObserver)
+            camera.startCapture(720, 1280, 24)
+            videoCapturer = camera
+            videoSource = source
+            val track = f.createVideoTrack("group_video_$myUid", source)
+            track.setEnabled(true)
+            localVideo = track
+            peers.values.forEach { slot ->
+                runCatching { slot.peer.addTrack(track, listOf("group")) }
+                    .onFailure { Log.w(TAG, "Could not publish video to ${slot.uid}", it) }
+                renegotiate(slot)
+            }
+            roomRef?.child("participants")?.child(myUid)?.child("video")?.setValue(true)
+            _state.value = _state.value.copy(video = true, cameraOff = false, error = null)
+            upsertParticipantVideo(myUid, true)
+            CallForegroundService.start(
+                app, "group:${_state.value.roomId}", _state.value.groupName, true,
+                groupId = _state.value.groupId, roomId = _state.value.roomId,
+                groupName = _state.value.groupName, memberIds = activeMemberIds
+            )
+            refreshLocalRenderer()
+            if (!_state.value.speaker) toggleSpeaker()
+            true
+        }.onFailure { Log.e(TAG, "Video upgrade failed", it) }.getOrDefault(false)
+    }
+
+    private fun upsertParticipantVideo(uid: String, video: Boolean) {
+        _state.value = _state.value.copy(participants = _state.value.participants.map { if (it.uid == uid) it.copy(video = video) else it })
+    }
+
+    /** Lets more people into the running call (ring them with [onInvite]). Host rights not required. */
+    fun addMembers(uids: List<String>, onDone: (Boolean) -> Unit = {}) {
+        val ref = roomRef ?: return onDone(false)
+        val fresh = uids.filter { it.isNotBlank() && it != myUid }.distinct()
+        if (fresh.isEmpty()) return onDone(false)
+        ref.child("memberIds").updateChildren(fresh.associateWith { true })
+            .addOnSuccessListener { activeMemberIds = (activeMemberIds + fresh).distinct(); onDone(true) }
+            .addOnFailureListener { Log.w(TAG, "Could not add call members: ${it.message}"); onDone(false) }
+    }
+
+    fun memberIds(): List<String> = activeMemberIds
+
+    private val audioRouteExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
+
+    private fun publishGroupPointer(groupId: String, roomId: String, hostName: String, video: Boolean) {
+        if (groupId.isBlank()) return
+        runCatching {
+            com.google.firebase.firestore.FirebaseFirestore.getInstance().collection("groups").document(groupId).update(
+                mapOf(
+                    "activeCallRoomId" to roomId, "activeCallHostId" to myUid, "activeCallHostName" to hostName,
+                    "activeCallVideo" to video, "activeCallStartedAt" to System.currentTimeMillis()
+                )
+            )
+        }
+    }
+
+    /** Removes the "Join call" bar from the group chat, but only if it still points at [roomId]. */
+    fun clearGroupPointer(groupId: String, roomId: String) {
+        if (groupId.isBlank() || roomId.isBlank()) return
+        runCatching {
+            val doc = com.google.firebase.firestore.FirebaseFirestore.getInstance().collection("groups").document(groupId)
+            doc.get().addOnSuccessListener { snap ->
+                if (snap.getString("activeCallRoomId") == roomId) {
+                    doc.update(mapOf("activeCallRoomId" to "", "activeCallStartedAt" to 0L))
+                }
+            }
+        }
+    }
+
     fun toggleSpeaker() {
         val app = context ?: return
         val manager = app.getSystemService(Context.AUDIO_SERVICE) as AudioManager
         val enabled = !_state.value.speaker
-        @Suppress("DEPRECATION") manager.isSpeakerphoneOn = enabled
+        // Update the UI first; audio routing can block for a while on some phones, so it runs
+        // off the main thread (this is what used to freeze the call animations).
         _state.value = _state.value.copy(speaker = enabled)
+        audioRouteExecutor.execute {
+            runCatching {
+                manager.mode = AudioManager.MODE_IN_COMMUNICATION
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                    if (enabled) manager.availableCommunicationDevices.firstOrNull { it.type == android.media.AudioDeviceInfo.TYPE_BUILTIN_SPEAKER }?.let(manager::setCommunicationDevice)
+                    else manager.clearCommunicationDevice()
+                } else @Suppress("DEPRECATION") run { manager.isSpeakerphoneOn = enabled }
+            }
+        }
     }
 
+    /** True when screen sharing was started from an audio-only call (no camera to return to). */
+    private var screenShareWithoutCamera = false
+
+    /**
+     * Screen sharing in a group call — works from video AND audio calls. Android 14+ only allows
+     * capture once the media-projection foreground service is running, so this waits for it
+     * (capturing earlier used to crash the app from a background thread).
+     */
     fun startScreenShare(permissionData: Intent): Boolean {
         val app = context ?: return false
-        val source = videoSource ?: return false
-        return runCatching {
-            videoCapturer?.stopCapture(); videoCapturer?.dispose()
-            CallForegroundService.start(
-                app,
-                "group:${_state.value.roomId}",
-                _state.value.groupName,
-                _state.value.video,
-                screenShare = true,
-                groupId = _state.value.groupId,
-                roomId = _state.value.roomId,
-                groupName = _state.value.groupName,
-                memberIds = activeMemberIds
-            )
-            val capturer = ScreenCapturerAndroid(permissionData, object : MediaProjection.Callback() {
-                override fun onStop() { mainHandler.post { stopScreenShare() } }
-            })
-            val metrics = app.resources.displayMetrics
-            capturer.initialize(surfaceTextureHelper, app, source.capturerObserver)
-            capturer.startCapture(metrics.widthPixels.coerceAtLeast(720), metrics.heightPixels.coerceAtLeast(1280), 15)
-            videoCapturer = capturer
-            localVideo?.setEnabled(true)
-            roomRef?.child("participants")?.child(myUid)?.child("video")?.setValue(true)
-            _state.value = _state.value.copy(screenSharing = true, cameraOff = false)
-            true
-        }.onFailure { Log.e(TAG, "Screen share failed", it) }.getOrDefault(false)
+        val f = factory ?: return false
+        if (_state.value.status !in listOf("connected", "reconnecting", "active")) return false
+        val requestedAt = System.currentTimeMillis()
+        val startService: (Boolean, Boolean) -> Unit = { video, share ->
+            runCatching {
+                CallForegroundService.start(
+                    app, "group:${_state.value.roomId}", _state.value.groupName, video, screenShare = share,
+                    groupId = _state.value.groupId, roomId = _state.value.roomId, groupName = _state.value.groupName, memberIds = activeMemberIds
+                )
+            }
+        }
+        startService(true, true)
+        fun attempt(triesLeft: Int) {
+            val ready = android.os.Build.VERSION.SDK_INT < 34 || CallForegroundService.projectionForegroundAt >= requestedAt
+            if (!ready && triesLeft > 0) { mainHandler.postDelayed({ attempt(triesLeft - 1) }, 100); return }
+            val ok = ready && beginScreenCapture(app, f, permissionData)
+            if (!ok) {
+                android.widget.Toast.makeText(app, "Screen sharing could not start on this phone", android.widget.Toast.LENGTH_LONG).show()
+                startService(_state.value.video && !screenShareWithoutCamera, false)
+            }
+        }
+        mainHandler.postDelayed({ attempt(40) }, 120)
+        return true
     }
+
+    private fun beginScreenCapture(app: Context, f: PeerConnectionFactory, permissionData: Intent): Boolean = runCatching {
+        runCatching { videoCapturer?.stopCapture() }
+        videoCapturer?.dispose(); videoCapturer = null
+        if (surfaceTextureHelper == null) surfaceTextureHelper = SurfaceTextureHelper.create("Convo Group Camera", eglBase!!.eglBaseContext)
+        val source = videoSource ?: f.createVideoSource(true).also { videoSource = it }
+        val capturer = ScreenCapturerAndroid(permissionData, object : MediaProjection.Callback() {
+            override fun onStop() { mainHandler.post { stopScreenShare() } }
+        })
+        val metrics = app.resources.displayMetrics
+        val scale = (720f / metrics.widthPixels.coerceAtLeast(1)).coerceAtMost(1f)
+        capturer.initialize(surfaceTextureHelper, app, source.capturerObserver)
+        capturer.startCapture((metrics.widthPixels * scale).toInt().coerceAtLeast(360) / 2 * 2, (metrics.heightPixels * scale).toInt().coerceAtLeast(640) / 2 * 2, 15)
+        videoCapturer = capturer
+        val existing = localVideo
+        screenShareWithoutCamera = existing == null || !_state.value.video
+        val track = existing ?: f.createVideoTrack("group_video_$myUid", source).also { localVideo = it }
+        track.setEnabled(true)
+        if (existing == null) peers.values.forEach { slot ->
+            // Audio call: publish the new screen track to everyone and renegotiate.
+            runCatching { slot.peer.addTrack(track, listOf("group")) }
+            renegotiate(slot)
+        }
+        roomRef?.child("participants")?.child(myUid)?.child("video")?.setValue(true)
+        _state.value = _state.value.copy(video = true, screenSharing = true, cameraOff = false)
+        upsertParticipantVideo(myUid, true)
+        refreshLocalRenderer()
+        true
+    }.onFailure { Log.e(TAG, "Screen share failed", it) }.getOrDefault(false)
 
     fun stopScreenShare(): Boolean {
         val app = context ?: return false
         val source = videoSource ?: return false
         if (!_state.value.screenSharing) return true
+        if (screenShareWithoutCamera) {
+            // The call had no camera before sharing: just stop the screen, do not start a camera.
+            screenShareWithoutCamera = false
+            return runCatching {
+                runCatching { videoCapturer?.stopCapture() }
+                videoCapturer?.dispose(); videoCapturer = null
+                localVideo?.setEnabled(false)
+                roomRef?.child("participants")?.child(myUid)?.child("video")?.setValue(false)
+                _state.value = _state.value.copy(screenSharing = false, cameraOff = true)
+                upsertParticipantVideo(myUid, false)
+                CallForegroundService.start(
+                    app, "group:${_state.value.roomId}", _state.value.groupName, false,
+                    groupId = _state.value.groupId, roomId = _state.value.roomId, groupName = _state.value.groupName, memberIds = activeMemberIds
+                )
+                true
+            }.getOrDefault(false)
+        }
         return runCatching {
             videoCapturer?.stopCapture(); videoCapturer?.dispose()
             val camera = createCameraCapturer(app) ?: error("No camera available")
@@ -754,9 +966,27 @@ object GroupCallEngine {
         }
     }
 
+    /**
+     * Hang up. The host ends the call for the whole group; anyone else only leaves, and the
+     * call keeps running for the others. The last person to leave also closes the room.
+     */
     fun end() {
+        if (isClosing || _state.value.status in listOf("idle", "ended", "failed")) return
+        val current = _state.value
+        val others = current.participants.count { it.uid != myUid }
+        val closesRoom = isHost() || others == 0
         roomRef?.child("participants")?.child(myUid)?.removeValue()
-        roomRef?.child("status")?.setValue("ended")
+        if (closesRoom) {
+            roomRef?.child("status")?.setValue("ended")
+            clearGroupPointer(current.groupId, current.roomId)
+        }
+        cleanup("ended")
+    }
+
+    /** Leave without closing the room even when hosting (the next participant keeps talking). */
+    fun leave() {
+        if (isClosing || _state.value.status in listOf("idle", "ended", "failed")) return
+        roomRef?.child("participants")?.child(myUid)?.removeValue()
         cleanup("ended")
     }
 
@@ -810,7 +1040,17 @@ object GroupCallEngine {
         context?.let(CallForegroundService::stop)
         activeMemberIds = emptyList()
         hostId = ""
-        _state.value = _state.value.copy(status = finalStatus, hostId = "", captionsEnabled = false, recording = false)
+        runCatching {
+            val manager = context?.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+            if (manager != null) audioRouteExecutor.execute {
+                runCatching {
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) manager.clearCommunicationDevice()
+                    else @Suppress("DEPRECATION") run { manager.isSpeakerphoneOn = false }
+                    manager.mode = AudioManager.MODE_NORMAL
+                }
+            }
+        }
+        _state.value = _state.value.copy(status = finalStatus, hostId = "", captionsEnabled = false, recording = false, speaker = false, screenSharing = false)
     }
 
     private fun fail(message: String) {
@@ -825,28 +1065,52 @@ object GroupCallEngine {
         return enumerator.deviceNames.firstOrNull()?.let { name -> enumerator.createCapturer(name, null) }
     }
 
+    /** Public STUN servers used when the TURN gateway cannot be reached; most networks connect with these. */
+    private fun fallbackIceServers(): List<PeerConnection.IceServer> = listOf(
+        PeerConnection.IceServer.builder(listOf("stun:stun.cloudflare.com:3478", "stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302")).createIceServer()
+    )
+
+    /**
+     * Loads TURN credentials. v5.5: this can no longer fail a call or crash the app — a network
+     * error, an HTTP error or an unreadable answer (which used to throw on a background thread)
+     * now falls back to public STUN servers, so answering always continues.
+     */
     private fun fetchIceServers(callback: (List<PeerConnection.IceServer>, String?) -> Unit) {
         val user = FirebaseAuth.getInstance().currentUser ?: return callback(emptyList(), "Please sign in again")
+        var delivered = false
+        fun deliver(servers: List<PeerConnection.IceServer>) { mainHandler.post { if (!delivered) { delivered = true; callback(servers, null) } } }
         user.getIdToken(false).addOnSuccessListener { result ->
-            val token = result.token ?: return@addOnSuccessListener callback(emptyList(), "Could not authenticate TURN request")
-            val request = Request.Builder().url(GATEWAY).header("Authorization", "Bearer $token")
-                .post("{}".toRequestBody("application/json".toMediaType())).build()
-            OkHttpClient.Builder().callTimeout(15, TimeUnit.SECONDS).build().newCall(request).enqueue(object : Callback {
-                override fun onFailure(call: Call, e: java.io.IOException) { mainHandler.post { callback(emptyList(), e.localizedMessage ?: "TURN unavailable") } }
-                override fun onResponse(call: Call, response: Response) {
-                    response.use {
-                        if (!it.isSuccessful) { mainHandler.post { callback(emptyList(), "TURN gateway HTTP ${it.code}") }; return }
-                        val root = JSONObject(it.body?.string().orEmpty()); val array = root.optJSONArray("iceServers") ?: JSONArray(); val list = mutableListOf<PeerConnection.IceServer>()
-                        for (i in 0 until array.length()) {
-                            val item = array.getJSONObject(i); val urlsJson = item.optJSONArray("urls")
-                            val urls = if (urlsJson != null) (0 until urlsJson.length()).map { n -> urlsJson.getString(n) } else listOf(item.optString("urls"))
-                            list += PeerConnection.IceServer.builder(urls).setUsername(item.optString("username")).setPassword(item.optString("credential")).createIceServer()
-                        }
-                        mainHandler.post { callback(list.ifEmpty { listOf(PeerConnection.IceServer.builder("stun:stun.cloudflare.com:3478").createIceServer()) }, null) }
+            val token = result.token
+            if (token.isNullOrBlank()) { deliver(fallbackIceServers()); return@addOnSuccessListener }
+            runCatching {
+                val request = Request.Builder().url(GATEWAY).header("Authorization", "Bearer $token")
+                    .post("{}".toRequestBody("application/json".toMediaType())).build()
+                OkHttpClient.Builder().callTimeout(8, TimeUnit.SECONDS).build().newCall(request).enqueue(object : Callback {
+                    override fun onFailure(call: Call, e: java.io.IOException) {
+                        Log.w("GROUP_CALL", "TURN gateway unreachable, using STUN: ${e.message}")
+                        deliver(fallbackIceServers())
                     }
-                }
-            })
-        }.addOnFailureListener { callback(emptyList(), it.localizedMessage ?: "TURN authentication failed") }
+                    override fun onResponse(call: Call, response: Response) {
+                        val servers = runCatching {
+                            response.use {
+                                if (!it.isSuccessful) error("TURN gateway HTTP ${it.code}")
+                                val root = JSONObject(it.body?.string().orEmpty())
+                                val list = mutableListOf<PeerConnection.IceServer>()
+                                val array = root.optJSONArray("iceServers") ?: JSONArray()
+                                for (i in 0 until array.length()) {
+                                    val item = array.getJSONObject(i); val urlsJson = item.optJSONArray("urls")
+                                    val urls = (if (urlsJson != null) (0 until urlsJson.length()).map { index -> urlsJson.getString(index) } else listOf(item.optString("urls"))).filter { u -> u.isNotBlank() }
+                                    if (urls.isEmpty()) continue
+                                    list += PeerConnection.IceServer.builder(urls).setUsername(item.optString("username")).setPassword(item.optString("credential")).createIceServer()
+                                }
+                                list
+                            }
+                        }.onFailure { Log.w("GROUP_CALL", "TURN answer unusable, using STUN: ${it.message}") }.getOrDefault(mutableListOf())
+                        deliver(servers.ifEmpty { fallbackIceServers() } + if (servers.isNotEmpty()) fallbackIceServers() else emptyList())
+                    }
+                })
+            }.onFailure { deliver(fallbackIceServers()) }
+        }.addOnFailureListener { deliver(fallbackIceServers()) }
     }
 }
 

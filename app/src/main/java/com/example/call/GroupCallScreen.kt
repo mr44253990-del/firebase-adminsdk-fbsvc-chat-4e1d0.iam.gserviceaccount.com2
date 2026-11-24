@@ -64,7 +64,11 @@ fun GroupCallScreen(
     onPipCallOver: () -> Unit = {},
     onRoomReady: (String) -> Unit = {},
     joinRoomId: String? = null,
-    autoStart: Boolean = true
+    autoStart: Boolean = true,
+    /** People who can be added while the call is running (friends / group members). */
+    candidates: List<com.example.data.User> = emptyList(),
+    /** Ring the picked people: (userIds, roomId, video). */
+    onInvite: (List<String>, String, Boolean) -> Unit = { _, _, _ -> }
 ) {
     val context = LocalContext.current
     val callSkinId by CallSkinPreferences.selectedId.collectAsState()
@@ -77,6 +81,91 @@ fun GroupCallScreen(
     var showDiagnostics by remember { mutableStateOf(false) }
     var showMoreControls by remember { mutableStateOf(false) }
     BackHandler(enabled = started && state.status !in listOf("idle", "ended", "failed")) { onMinimize() }
+    var showAddPeople by remember { mutableStateOf(false) }
+    // The call is over (host ended it for everyone, we were removed, or the last person left):
+    // tell the user why and close the screen instead of leaving frozen tiles behind.
+    var sawLiveCall by remember { mutableStateOf(false) }
+    LaunchedEffect(state.status) {
+        if (state.status in listOf("connected", "reconnecting", "active")) sawLiveCall = true
+        if (sawLiveCall && state.status in listOf("ended", "removed")) {
+            val reason = when {
+                state.endedByHost -> "The host ended the call for everyone"
+                state.status == "removed" -> "You were removed from the call"
+                else -> "Call ended"
+            }
+            Toast.makeText(context, reason, Toast.LENGTH_SHORT).show()
+            kotlinx.coroutines.delay(350)
+            onClose()
+        }
+    }
+    // Tell everyone when someone raises a hand.
+    val raisedNames = state.participants.filter { it.hand && it.uid != localUidForPicker() }.map { it.name }
+    LaunchedEffect(raisedNames.size) {
+        if (raisedNames.isNotEmpty()) Toast.makeText(context, "✋ ${raisedNames.last()} raised a hand", Toast.LENGTH_SHORT).show()
+    }
+    val upgradeCameraLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) { if (!GroupCallEngine.upgradeToVideo()) Toast.makeText(context, "Could not start the camera", Toast.LENGTH_SHORT).show() }
+        else Toast.makeText(context, "Camera permission is needed for video", Toast.LENGTH_SHORT).show()
+    }
+    val switchToVideo: () -> Unit = {
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+            if (!GroupCallEngine.upgradeToVideo()) Toast.makeText(context, "Could not start the camera", Toast.LENGTH_SHORT).show()
+        } else upgradeCameraLauncher.launch(Manifest.permission.CAMERA)
+    }
+    if (showAddPeople) {
+        val inCall = remember(state.participants) { state.participants.map { it.uid }.toSet() }
+        var query by remember { mutableStateOf("") }
+        var picked by remember { mutableStateOf(setOf<String>()) }
+        val options = remember(candidates, inCall, query, group.members) {
+            candidates.filter { it.uid !in inCall && it.uid != localUidForPicker() }
+                .filter { query.isBlank() || it.name.contains(query, true) || it.username.contains(query, true) }
+                .sortedWith(compareByDescending<com.example.data.User> { it.uid in group.members }.thenByDescending { it.isOnline }.thenBy { it.name.lowercase() })
+                .take(40)
+        }
+        AlertDialog(
+            onDismissRequest = { showAddPeople = false },
+            title = { Text("Add people to this call", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("They get a call invitation and can join right away.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    OutlinedTextField(query, { query = it }, singleLine = true, label = { Text("Search people") }, modifier = Modifier.fillMaxWidth())
+                    if (options.isEmpty()) Text("No one else to add.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    LazyColumn(Modifier.heightIn(max = 300.dp)) {
+                        items(options, key = { it.uid }) { person ->
+                            val on = person.uid in picked
+                            Row(
+                                Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).clickable { picked = if (on) picked - person.uid else picked + person.uid }.padding(horizontal = 6.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Box(Modifier.size(38.dp).clip(androidx.compose.foundation.shape.CircleShape).background(MaterialTheme.colorScheme.primary.copy(alpha = .16f)), contentAlignment = Alignment.Center) {
+                                    Text(person.name.take(1).uppercase(), fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                                    if (person.profileImageUrl.isNotBlank()) coil.compose.AsyncImage(person.profileImageUrl, null, contentScale = androidx.compose.ui.layout.ContentScale.Crop, modifier = Modifier.matchParentSize().clip(androidx.compose.foundation.shape.CircleShape))
+                                }
+                                Spacer(Modifier.width(10.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text(person.name.ifBlank { "Convo Chat user" }, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text(if (person.uid in group.members) "Group member" + (if (person.isOnline) " · online" else "") else "@${person.username}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                                Checkbox(checked = on, onCheckedChange = { picked = if (on) picked - person.uid else picked + person.uid })
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(enabled = picked.isNotEmpty(), onClick = {
+                    val ids = picked.toList()
+                    val roomId = state.roomId
+                    showAddPeople = false
+                    GroupCallEngine.addMembers(ids) { ok ->
+                        if (ok) { onInvite(ids, roomId, state.video); Toast.makeText(context, "Invitation sent to ${ids.size}", Toast.LENGTH_SHORT).show() }
+                        else Toast.makeText(context, "Only the host can add people on this server version", Toast.LENGTH_LONG).show()
+                    }
+                }) { Text("Invite ${picked.size.takeIf { it > 0 } ?: ""}".trim()) }
+            },
+            dismissButton = { TextButton(onClick = { showAddPeople = false }) { Text("Cancel") } }
+        )
+    }
     val localUid = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid.orEmpty()
     val isHost = state.hostId.isNotBlank() && state.hostId == localUid
 
@@ -233,7 +322,7 @@ fun GroupCallScreen(
                             Text("REC", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
                         }
                     }
-                                                Text("${state.participants.size}/6", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(end = 10.dp))
+                                                Text("${state.participants.size}/8", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(end = 10.dp))
 
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -259,6 +348,7 @@ fun GroupCallScreen(
                 ) {
                     GroupDockButton(if (state.muted) Icons.Default.MicOff else Icons.Default.Mic, if (state.muted) "Unmute" else "Mute", state.muted, callPalette.accent) { GroupCallEngine.toggleMute() }
                     if (state.video) GroupDockButton(if (state.cameraOff) Icons.Default.VideocamOff else Icons.Default.Videocam, "Camera", state.cameraOff, callPalette.accent) { GroupCallEngine.toggleCamera() }
+                    else GroupDockButton(Icons.Default.Videocam, "Video", false, callPalette.accent) { switchToVideo() }
                     GroupDockButton(if (state.speaker) Icons.Default.VolumeUp else Icons.Default.Hearing, if (state.speaker) "Speaker" else "Earpiece", state.speaker, callPalette.accent) { GroupCallEngine.toggleSpeaker() }
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         FilledIconButton(
@@ -269,7 +359,7 @@ fun GroupCallScreen(
                         ) {
                             Icon(Icons.Default.CallEnd, "End call")
                         }
-                        Text("End", style = MaterialTheme.typography.labelSmall, color = Color.White.copy(alpha = .8f))
+                        Text(if (isHost) "End all" else "Leave", style = MaterialTheme.typography.labelSmall, color = Color.White.copy(alpha = .8f))
                     }
                     Box {
                         GroupDockButton(Icons.Default.MoreHoriz, "More", showMoreControls, callPalette.accent) { showMoreControls = true }
@@ -277,6 +367,26 @@ fun GroupCallScreen(
                             expanded = showMoreControls,
                             onDismissRequest = { showMoreControls = false }
                         ) {
+                            DropdownMenuItem(
+                                text = { Text(if (state.handRaised) "Lower hand" else "Raise hand ✋") },
+                                leadingIcon = { Icon(Icons.Default.PanTool, null) },
+                                onClick = { GroupCallEngine.toggleHand(); showMoreControls = false }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Add people") },
+                                leadingIcon = { Icon(Icons.Default.PersonAdd, null) },
+                                onClick = { showAddPeople = true; showMoreControls = false }
+                            )
+                            if (!state.video) DropdownMenuItem(
+                                text = { Text("Switch to video call") },
+                                leadingIcon = { Icon(Icons.Default.Videocam, null) },
+                                onClick = { showMoreControls = false; switchToVideo() }
+                            )
+                            if (isHost) DropdownMenuItem(
+                                text = { Text("Leave (keep call running)") },
+                                leadingIcon = { Icon(Icons.Default.Logout, null) },
+                                onClick = { showMoreControls = false; GroupCallEngine.leave(); onClose() }
+                            )
                             DropdownMenuItem(
                                 text = { Text(if (state.speaker) "Use earpiece" else "Use speaker") },
                                 leadingIcon = { Icon(if (state.speaker) Icons.Default.Hearing else Icons.Default.VolumeUp, null) },
@@ -289,6 +399,9 @@ fun GroupCallScreen(
                                     onClick = { GroupCallEngine.switchCamera(); showMoreControls = false },
                                     enabled = !state.screenSharing
                                 )
+                            }
+                            // Screen sharing works in audio and video group calls.
+                            run {
                                 DropdownMenuItem(
                                     text = { Text(if (state.screenSharing) "Stop screen share" else "Share screen") },
                                     leadingIcon = { Icon(if (state.screenSharing) Icons.Default.StopScreenShare else Icons.Default.ScreenShare, null) },
@@ -428,7 +541,7 @@ fun GroupCallScreen(
                 ) {
                     item(key = "local-tile") {
                         CallVideoTile(
-                            name = "You",
+                            name = if (state.handRaised) "✋ You" else "You",
                             connected = state.status == "connected" || state.status == "reconnecting",
                             muted = state.muted,
                             cameraOff = state.cameraOff || !state.video,
@@ -447,7 +560,7 @@ fun GroupCallScreen(
                     }
                     items(remoteParticipants, key = { it.uid }) { participant ->
                         CallVideoTile(
-                            name = participant.name,
+                            name = (if (participant.hand) "✋ " else "") + participant.name,
                             image = participant.image,
                             accent = callPalette.accent,
                             connected = participant.connected,
@@ -472,7 +585,7 @@ fun GroupCallScreen(
                     if (focusedLocal) {
                         CallVideoTile(
                             modifier = Modifier.fillMaxSize(),
-                            name = "You",
+                            name = if (state.handRaised) "✋ You" else "You",
                             connected = state.status == "connected" || state.status == "reconnecting",
                             muted = state.muted,
                             cameraOff = state.cameraOff || !state.video,
@@ -492,7 +605,7 @@ fun GroupCallScreen(
                         val focused = focusedRemote!!
                         CallVideoTile(
                             modifier = Modifier.fillMaxSize(),
-                            name = focused.name,
+                            name = (if (focused.hand) "✋ " else "") + focused.name,
                             image = focused.image,
                             accent = callPalette.accent,
                             connected = focused.connected,
@@ -518,7 +631,7 @@ fun GroupCallScreen(
                 ) {
                     if (!focusedLocal) CallVideoTile(
                         modifier = Modifier.width(112.dp).fillMaxHeight(),
-                        name = "You",
+                        name = if (state.handRaised) "✋ You" else "You",
                         connected = state.status == "connected" || state.status == "reconnecting",
                         muted = state.muted,
                         cameraOff = state.cameraOff || !state.video,
@@ -537,7 +650,7 @@ fun GroupCallScreen(
                     remoteParticipants.filter { it.uid != focusedParticipantId }.forEach { participant ->
                         CallVideoTile(
                             modifier = Modifier.width(112.dp).fillMaxHeight(),
-                            name = participant.name,
+                            name = (if (participant.hand) "✋ " else "") + participant.name,
                             image = participant.image,
                             accent = callPalette.accent,
                             connected = participant.connected,
@@ -669,3 +782,5 @@ private fun qualityColor(quality: String): Color = when (quality) {
     "poor", "offline" -> Color(0xFFB3261E)
     else -> Color.Gray
 }
+
+private fun localUidForPicker(): String = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid.orEmpty()

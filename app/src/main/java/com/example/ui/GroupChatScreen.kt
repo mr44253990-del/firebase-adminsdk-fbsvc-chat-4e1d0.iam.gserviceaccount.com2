@@ -86,6 +86,14 @@ fun GroupChatScreen(
     val otherVoiceRecorders = remember(groupVoiceRecorders, currentUserId) { groupVoiceRecorders.filter { it != currentUserId } }
     var showAddMembers by remember { mutableStateOf(false) }
     var showMembers by remember { mutableStateOf(false) }
+    var showGroupMenu by remember { mutableStateOf(false) }
+    var showSmartTools by remember { mutableStateOf(false) }
+    // Live call in this group (anyone started it): every member sees the Join bar.
+    val liveGroupCall by viewModel.activeGroupCall.collectAsState()
+    val myGroupCall by com.example.call.GroupCallEngine.state.collectAsState()
+    val insideThisCall = myGroupCall.groupId == group.id && myGroupCall.status !in listOf("idle", "ended", "failed")
+    val joinRoomId = liveGroupCall?.roomId ?: pendingCallRoomId
+    val joinVideo = liveGroupCall?.video ?: pendingCallVideo
     var showMessageSearch by remember { mutableStateOf(false) }
     var messageSearchQuery by remember { mutableStateOf("") }
     val visibleGroupMessages = remember(messages, messageSearchQuery) {
@@ -319,6 +327,7 @@ fun GroupChatScreen(
     )
 
     val barColors = chatBarColors(groupThemeSpec, false)
+    KeyboardResizeMode()
     Box(Modifier.fillMaxSize()) {
     ChatBackdrop(groupThemeSpec, null, chatGradientBg, chatAppearance.backgroundDim)
     Scaffold(
@@ -340,7 +349,7 @@ fun GroupChatScreen(
                                 contentDescription = group.name,
                                 contentScale = ContentScale.Crop,
                                 modifier = Modifier
-                                    .size(40.dp)
+                                    .size(36.dp)
                                     .clip(CircleShape)
                                     .border(1.5.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f), CircleShape)
                             )
@@ -356,7 +365,7 @@ fun GroupChatScreen(
                             }
                         }
 
-                        Spacer(modifier = Modifier.width(12.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
 
                         Column {
                             Text(
@@ -380,21 +389,18 @@ fun GroupChatScreen(
                     }
                 },
                 actions = {
-                    IconButton(onClick = {
-                        onGroupCall(false)
-                    }) {
-                        Icon(Icons.Default.Call, contentDescription = "Start group audio call", tint = MaterialTheme.colorScheme.primary)
-                    }
-                    IconButton(onClick = {
-                        onGroupCall(true)
-                    }) {
-                        Icon(Icons.Default.Videocam, contentDescription = "Start group video call", tint = MaterialTheme.colorScheme.primary)
-                    }
-                    IconButton(onClick = { showMessageSearch = !showMessageSearch }) {
-                        Icon(Icons.Default.Search, contentDescription = "Search group messages", tint = MaterialTheme.colorScheme.primary)
-                    }
-                    IconButton(onClick = { showAddMembers = true }) {
-                        Icon(Icons.Default.PersonAdd, contentDescription = "Add members", tint = MaterialTheme.colorScheme.primary)
+                    // Two compact call buttons + one menu, so the group name always has room.
+                    ChatCallPill(onVideo = { onGroupCall(true) }, onAudio = { onGroupCall(false) })
+                    Box {
+                        IconButton(onClick = { showGroupMenu = true }, modifier = Modifier.size(40.dp)) {
+                            Icon(Icons.Default.MoreVert, contentDescription = "Group menu", tint = barColors?.content ?: MaterialTheme.colorScheme.onSurface)
+                        }
+                        DropdownMenu(expanded = showGroupMenu, onDismissRequest = { showGroupMenu = false }) {
+                            DropdownMenuItem(text = { Text(tr("Group profile & smart tools")) }, leadingIcon = { Icon(Icons.Default.AutoAwesome, null) }, onClick = { showGroupMenu = false; showSmartTools = true })
+                            DropdownMenuItem(text = { Text(tr("Search messages")) }, leadingIcon = { Icon(Icons.Default.Search, null) }, onClick = { showGroupMenu = false; showMessageSearch = !showMessageSearch })
+                            DropdownMenuItem(text = { Text(tr("Add members")) }, leadingIcon = { Icon(Icons.Default.PersonAdd, null) }, onClick = { showGroupMenu = false; showAddMembers = true })
+                            DropdownMenuItem(text = { Text(tr("Members")) }, leadingIcon = { Icon(Icons.Default.Group, null) }, onClick = { showGroupMenu = false; showMembers = true })
+                        }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -410,36 +416,19 @@ fun GroupChatScreen(
                 .fillMaxSize()
                 .padding(innerPadding)
         ) {
-            AnimatedVisibility(
-                visible = !pendingCallRoomId.isNullOrBlank(),
-                enter = fadeIn() + expandVertically(),
-                exit = fadeOut() + shrinkVertically()
-            ) {
-                Surface(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
-                    shape = RoundedCornerShape(20.dp),
-                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.94f),
-                    tonalElevation = 4.dp
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(Icons.Default.Call, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                        Spacer(Modifier.width(10.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text(tr("Group call available"), fontWeight = FontWeight.Bold)
-                            Text("Join ${group.name} when you are ready", style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        }
-                        TextButton(onClick = { pendingCallRoomId?.let { onJoinPendingCall(it, pendingCallVideo) } }) {
-                            Text(tr("Join Call"), fontWeight = FontWeight.Bold)
-                        }
-                        IconButton(onClick = onDismissPendingCall) {
-                            Icon(Icons.Default.Close, contentDescription = "Dismiss call")
-                        }
-                    }
-                }
-            }
+            GroupLiveCallBar(
+                visible = !joinRoomId.isNullOrBlank() || insideThisCall,
+                groupName = group.name,
+                hostName = liveGroupCall?.hostName.orEmpty(),
+                video = if (insideThisCall) myGroupCall.video else joinVideo,
+                people = if (insideThisCall) myGroupCall.participants.size else (liveGroupCall?.participantCount ?: 0),
+                startedAt = liveGroupCall?.startedAt ?: 0L,
+                inside = insideThisCall,
+                dismissible = liveGroupCall == null && !insideThisCall,
+                onJoin = { (if (insideThisCall) myGroupCall.roomId else joinRoomId)?.let { onJoinPendingCall(it, joinVideo) } },
+                onDismiss = onDismissPendingCall
+            )
+            GroupPinnedBar(group = group, canEdit = group.createdBy == currentUserId || currentUserId in group.admins, onUnpin = { viewModel.updateGroupSmart(group.id, mapOf("pinnedMessage" to "", "pinnedBy" to "")) })
 
             AnimatedVisibility(
                 visible = otherVoiceRecorders.isNotEmpty(),
@@ -561,7 +550,7 @@ fun GroupChatScreen(
                 ) {
                     items(visibleGroupMessages.reversed(), key = { it.messageId }) { msg ->
                         val entranceAnimate = remember(msg.messageId) { msg.timestamp > chatOpenedAt - 1500L && enteredMessageIds.add(msg.messageId) }
-                        Box(Modifier.fillMaxWidth().messageEntrance(chatAppearance.messageAnimation, entranceAnimate, msg.senderId == currentUserId)) {
+                        Box(Modifier.fillMaxWidth().animateItem(fadeInSpec = null, fadeOutSpec = null, placementSpec = androidx.compose.animation.core.spring(dampingRatio = .85f, stiffness = 320f)).messageEntrance(chatAppearance.messageAnimation, entranceAnimate, msg.senderId == currentUserId)) {
                         if (msg.senderId == "system") {
                             // System Log message
                             Box(
@@ -584,6 +573,8 @@ fun GroupChatScreen(
                                     )
                                 }
                             }
+                        } else if (GroupPolls.parse(msg.text) != null) {
+                            GroupPollCard(GroupPolls.parse(msg.text)!!, msg, group, currentUserId) { option -> viewModel.voteGroupPoll(group.id, msg.messageId, option) }
                         } else {
                             val isSentByMe = msg.senderId == currentUserId
                             GroupMessageBubbleItem(
@@ -624,15 +615,19 @@ fun GroupChatScreen(
                 tonalElevation = 8.dp,
                 modifier = Modifier
                     .fillMaxWidth()
-                    // Keep the composer above the gesture/navigation bar. The keyboard is handled by
-                    // the window itself (same as direct chats); adding an extra IME inset here made
-                    // the box jump far above the keyboard while typing.
-                    .windowInsetsPadding(WindowInsets.navigationBars.only(WindowInsetsSides.Bottom))
+                    // The composer rides exactly on top of the keyboard (or the navigation bar when
+                    // the keyboard is closed). The screen is in resize mode, so this is the only
+                    // keyboard offset that applies — no double jump, and never hidden.
+                    .windowInsetsPadding(WindowInsets.navigationBars.only(WindowInsetsSides.Bottom).union(WindowInsets.ime))
                     .glassmorphic(
                         isDark = isDark,
                         shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
                     )
             ) {
+                // Reply preview and composer are stacked in ONE column. They used to be siblings
+                // inside the Surface (a Box), so the reply bar was drawn on top of / under the
+                // text box instead of above it.
+                Column {
                 AnimatedVisibility(
                     visible = replyingToGroupMessage != null,
                     enter = expandVertically() + fadeIn(),
@@ -671,13 +666,13 @@ fun GroupChatScreen(
                     }
                 }
 
-                Column {
                 val mentionQuery = remember(messageText) { Mentions.activeQuery(messageText) }
                 val mentionSuggestions = remember(mentionQuery, groupMemberUsers) {
                     mentionQuery?.let { Mentions.suggestions(it, groupMemberUsers, currentUserId) }.orEmpty()
                 }
                 MentionSuggestionBar(mentionSuggestions, onPick = { user -> messageText = Mentions.complete(messageText, user) })
                 val hasText = messageText.isNotBlank()
+                if (hasText && AppFeatureFlags.aiEnabled.collectAsState().value) AiWritingToolsRow(messageText, viewModel) { messageText = it }
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -730,7 +725,14 @@ fun GroupChatScreen(
                         if (hasText) {
                             IconButton(
                                 onClick = {
-                                    if (messageText.isNotBlank()) {
+                                    val meIsGroupAdmin = group.createdBy == currentUserId || currentUserId in group.admins
+                                    val lastMine = messages.lastOrNull { it.senderId == currentUserId }?.timestamp ?: 0L
+                                    val waitSec = if (group.slowModeSeconds > 0 && !meIsGroupAdmin) group.slowModeSeconds - ((System.currentTimeMillis() - lastMine) / 1000L) else 0L
+                                    if (group.onlyAdminsCanPost && !meIsGroupAdmin) {
+                                        Toast.makeText(context, "Only admins can send messages in this group", Toast.LENGTH_SHORT).show()
+                                    } else if (waitSec > 0) {
+                                        Toast.makeText(context, "Slow mode: wait ${waitSec}s", Toast.LENGTH_SHORT).show()
+                                    } else if (messageText.isNotBlank()) {
                                         viewModel.sendGroupMessage(
                                             groupId = group.id,
                                             text = messageText,
@@ -752,6 +754,7 @@ fun GroupChatScreen(
                                 Modifier
                                     .size(46.dp)
                                     .graphicsLayer { scaleX = reactionScale.value; scaleY = reactionScale.value }
+                                    .quickReactionGlow(MaterialTheme.colorScheme.primary)
                                     .clip(CircleShape)
                                     .clickable {
                                         viewModel.playLikeSound()
@@ -767,7 +770,7 @@ fun GroupChatScreen(
                                 contentAlignment = Alignment.Center
                             ) {
                                 if (ConvoStickers.isSticker(quickReaction)) ConvoStickerView(quickReaction, 40.dp, animate = chatAppearance.animateReactions)
-                                else Text(quickReaction, fontSize = 27.sp)
+                                else if (chatAppearance.animateReactions) WobbleEmoji(quickReaction) else Text(quickReaction, fontSize = 27.sp)
                             }
                         }
                     }
@@ -777,6 +780,16 @@ fun GroupChatScreen(
         }
     }
     ReactionFxOverlay()
+    }
+
+    if (showSmartTools) {
+        GroupSmartToolsDialog(
+            group = group, messages = messages, users = allUsers, currentUser = viewModel.currentUserState.collectAsState().value,
+            viewModel = viewModel,
+            onMentionEveryone = { messageText = (messageText.trimEnd() + " @everyone ").trimStart() },
+            onDismiss = { showSmartTools = false },
+            onLeft = onBack
+        )
     }
 
     if (showMembers) {
@@ -1000,15 +1013,9 @@ fun GroupMessageBubbleItem(
                     }
 
                     if (!msg.imageUrl.isNullOrBlank()) {
-                        AsyncImage(
-                            model = msg.imageUrl,
-                            contentDescription = "Image attachment",
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(160.dp)
-                                .clip(RoundedCornerShape(14.dp)),
-                            contentScale = ContentScale.Crop
-                        )
+                        var showGroupImage by remember { mutableStateOf(false) }
+                        if (showGroupImage) FullScreenChatImage(msg.imageUrl, onDismiss = { showGroupImage = false })
+                        AdaptiveChatImage(url = msg.imageUrl, onClick = { showGroupImage = true }, corner = 14.dp)
                         Spacer(modifier = Modifier.height(4.dp))
                     }
 

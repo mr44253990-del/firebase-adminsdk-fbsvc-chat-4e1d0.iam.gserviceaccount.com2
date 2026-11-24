@@ -34,10 +34,8 @@ fun relativeTimeLabel(timestamp: Long, now: Long = System.currentTimeMillis()): 
     val minutes = ((now - timestamp).coerceAtLeast(0L) / 60_000L)
     return when {
         minutes < 1 -> "now"
-        minutes < 60 -> "$minutes min ago"
-        minutes < 1440 -> "${minutes / 60} hr ago"
-        minutes < 2880 -> "yesterday"
-        else -> "${minutes / 1440} days ago"
+        minutes in 1440 until 2880 -> "yesterday"
+        else -> SmartTime.ago(timestamp, now)
     }
 }
 

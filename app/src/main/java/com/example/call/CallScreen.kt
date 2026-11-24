@@ -1,5 +1,8 @@
 package com.example.call
 
+import com.example.ui.liquidGlass
+import androidx.compose.ui.draw.shadow
+
 import com.example.ui.CallHistory
 
 import com.example.ui.ThemeTextureLayer
@@ -171,6 +174,14 @@ class IncomingCallActivity : ComponentActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        val newId = intent.getStringExtra("callId").orEmpty()
+        val currentId = this.intent?.getStringExtra("callId").orEmpty()
+        val engine = CallEngine.state.value
+        val engineBusyWithIt = engine.callId == newId && engine.status in listOf("connecting", "connected", "reconnecting")
+        // Same call announced again: keep the screen exactly as it is. Re-creating it here used to
+        // reset an answered call back to the ringing screen (or close it).
+        if (newId == currentId && (intent.action == "com.ebchat.SHOW_CALL" || engineBusyWithIt)) return
+        if (newId == currentId && intent.action == "com.ebchat.ACCEPT_CALL" && engineBusyWithIt) return
         setIntent(intent)
         recreate()
     }
@@ -239,7 +250,12 @@ fun CallScreen(
             kotlinx.coroutines.delay(1000)
         }
     }
-    var accepted by remember { mutableStateOf(initiallyAccepted || !incoming) }
+    // "Answered" is also read from the call engine, so a rotation, theme change or any other
+    // re-creation of the screen can never drop an answered call back to the ringing screen.
+    var accepted by remember {
+        val live = CallEngine.state.value
+        mutableStateOf(initiallyAccepted || !incoming || (live.callId == callId && live.status in listOf("connecting", "connected", "reconnecting")))
+    }
     // Minimize (mini bubble / PiP) only while a call is really running; otherwise just leave.
     val canMinimize = accepted && activeForLock
     BackHandler(enabled = true) { if (canMinimize) onMinimize() else if (!activeForLock) onClose() }
@@ -272,6 +288,17 @@ fun CallScreen(
             CallEngine.acceptIncoming(context, callId, remoteUid, remoteName, remoteImage, effectiveVideo)
         } else pendingAccept = false
     }
+    // Audio → video switch and "camera on" both need the camera permission first.
+    var cameraPermissionAction by remember { mutableStateOf("") }
+    val videoUpgradeLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) { if (cameraPermissionAction == "toggle") CallEngine.toggleCamera() else CallEngine.upgradeToVideo() }
+        else android.widget.Toast.makeText(context, "Camera permission is needed for video", android.widget.Toast.LENGTH_SHORT).show()
+        cameraPermissionAction = ""
+    }
+    val toggleCameraSafely: () -> Unit = {
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) CallEngine.toggleCamera()
+        else { cameraPermissionAction = "toggle"; videoUpgradeLauncher.launch(Manifest.permission.CAMERA) }
+    }
     // Close the call UI whenever the call is over, including when the engine resets straight to "idle"
     // (remote hang-up during PiP) so a frozen frame never stays on screen.
     var wasLive by remember { mutableStateOf(false) }
@@ -297,8 +324,9 @@ fun CallScreen(
             AsyncImage(remoteImage, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize().blur(70.dp))
             Box(Modifier.fillMaxSize().background(Brush.verticalGradient(callPalette.background.map { it.copy(alpha = .72f) })))
         }
+        // v5.6 dark liquid glass: flowing glass ribbons over the call skin for every audio screen.
+        if (!effectiveVideo) com.example.ui.LiquidGlassBackground(violet = callPalette.accent, baseAlpha = .62f)
         if (!accepted && incoming) IncomingCallBackdrop(callPalette.accent)
-        else if (!effectiveVideo) CallAuroraBackground(callPalette.accent)
         if (effectiveVideo && accepted) {
             if (state.remoteCameraOff) {
                 Box(Modifier.fillMaxSize().background(Brush.verticalGradient(callPalette.background)), contentAlignment = Alignment.Center) {
@@ -321,7 +349,7 @@ fun CallScreen(
                 val density = androidx.compose.ui.platform.LocalDensity.current
                 val conf = androidx.compose.ui.platform.LocalConfiguration.current
                 // Drag the self-view anywhere; it snaps to the nearest corner when released.
-                val maxX = with(density) { (conf.screenWidthDp.dp - 104.dp - 28.dp).toPx() }.coerceAtLeast(0f)
+                val maxX = with(density) { (conf.screenWidthDp.dp - 111.dp - 28.dp).toPx() }.coerceAtLeast(0f)
                 val maxY = with(density) { (conf.screenHeightDp.dp - 148.dp - 220.dp).toPx() }.coerceAtLeast(0f)
                 var dragging by remember { mutableStateOf(false) }
                 val animatedSelf by animateOffsetAsState(selfOffset, spring(dampingRatio = .72f, stiffness = 420f), label = "self_view")
@@ -329,7 +357,9 @@ fun CallScreen(
                     factory = { ctx -> SurfaceViewRenderer(ctx).also {
                         it.setEnableHardwareScaler(true)
                         it.setZOrderMediaOverlay(true)
-                        it.setScalingType(org.webrtc.RendererCommon.ScalingType.SCALE_ASPECT_FIT)
+                        // Fill the frame: with "fit" the camera picture was a different shape from
+                        // its rounded frame and left empty bands at the sides.
+                        it.setScalingType(org.webrtc.RendererCommon.ScalingType.SCALE_ASPECT_FILL)
                         CallEngine.attachLocalRenderer(it)
                     } },
                     modifier = Modifier.align(Alignment.TopEnd).windowInsetsPadding(WindowInsets.statusBars).padding(14.dp)
@@ -347,7 +377,11 @@ fun CallScreen(
                                 selfOffset = androidx.compose.ui.geometry.Offset((selfOffset.x + drag.x).coerceIn(-maxX, 0f), (selfOffset.y + drag.y).coerceIn(0f, maxY))
                             }
                         }
-                        .size(width = 104.dp, height = 148.dp).clip(RoundedCornerShape(26.dp)).border(1.dp, Color.White.copy(.6f), RoundedCornerShape(26.dp)),
+                        // 3:4 portrait frame, the camera's own shape; an even rounded rim with a glow.
+                        .size(width = 111.dp, height = 148.dp)
+                        .shadow(10.dp, RoundedCornerShape(22.dp), ambientColor = callPalette.accent, spotColor = callPalette.accent)
+                        .clip(RoundedCornerShape(22.dp))
+                        .border(2.dp, Brush.linearGradient(listOf(Color.White.copy(.85f), callPalette.accent, Color.White.copy(.35f))), RoundedCornerShape(22.dp)),
                     onRelease = CallEngine::detachRenderer
                 )
             }
@@ -373,15 +407,42 @@ fun CallScreen(
                     GlassCallButton(Icons.Default.Cameraswitch, if (state.frontCamera) "Back cam" else "Selfie", accent = callPalette.accent, size = 52) {
                         CallEngine.switchCamera(); view.performHapticFeedback(android.view.HapticFeedbackConstants.VIRTUAL_KEY)
                     }
-                    if (!state.frontCamera) GlassCallButton(if (state.torchOn) Icons.Default.FlashlightOn else Icons.Default.FlashlightOff, "Light", active = state.torchOn, accent = callPalette.accent, size = 46) { CallEngine.toggleTorch() }
+                    GlassCallButton(if (state.torchOn || state.screenFlash) Icons.Default.FlashlightOn else Icons.Default.FlashlightOff, if (state.frontCamera) "Selfie light" else "Light", active = state.torchOn || state.screenFlash, accent = callPalette.accent, size = 46) { CallEngine.toggleTorch() }
                     GlassCallButton(Icons.Default.AutoFixHigh, "Filters", active = showFilters || state.filter != CallFilter.NONE, accent = callPalette.accent, size = 46) { showFilters = !showFilters }
                 }
             }
         }
+        // Selfie light: a bright frame around the picture lights the face (front cameras rarely
+        // have an LED). Screen brightness is pushed to maximum while it is on.
+        val flashOn = state.screenFlash && effectiveVideo && accepted
+        DisposableEffect(flashOn) {
+            val window = (view.context as? Activity)?.window
+            val previous = window?.attributes?.screenBrightness
+            if (flashOn && window != null) window.attributes = window.attributes.apply { screenBrightness = 1f }
+            onDispose {
+                if (flashOn && window != null && previous != null) window.attributes = window.attributes.apply { screenBrightness = previous }
+            }
+        }
+        if (flashOn) Box(
+            Modifier.fillMaxSize()
+                .border(34.dp, Color.White, RoundedCornerShape(0.dp))
+                .border(72.dp, Brush.radialGradient(listOf(Color.Transparent, Color(0xFFFFF4E0).copy(alpha = .55f))), RoundedCornerShape(0.dp))
+        )
         if (canMinimize && (controlsVisible || !effectiveVideo)) IconButton(
             onClick = onMinimize,
             modifier = Modifier.align(Alignment.TopStart).windowInsetsPadding(WindowInsets.statusBars).padding(12.dp).background(Color.Black.copy(.42f), CircleShape)
         ) { Icon(Icons.Default.KeyboardArrowDown, "Minimize call", tint = Color.White, modifier = Modifier.size(30.dp)) }
+        if (!effectiveVideo) Row(
+            Modifier.align(Alignment.TopEnd).windowInsetsPadding(WindowInsets.statusBars).padding(14.dp)
+                .clip(RoundedCornerShape(18.dp)).background(Color.White.copy(alpha = .07f))
+                .border(1.dp, Brush.linearGradient(listOf(Color.White.copy(.4f), callPalette.accent.copy(.5f))), RoundedCornerShape(18.dp))
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(Icons.Default.Shield, null, tint = Color(0xFF39C8FF), modifier = Modifier.size(16.dp))
+            Spacer(Modifier.width(6.dp))
+            Text("Secure Call", color = Color.White, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+        }
         if (accepted) CallReactionsLayer(active = state.status == "connected" || state.status == "reconnecting")
         if (accepted && (controlsVisible || !effectiveVideo)) CallQualityPill(
             connected = state.status == "connected",
@@ -392,10 +453,16 @@ fun CallScreen(
             Spacer(Modifier.weight(if (effectiveVideo && accepted) .06f else .18f))
             AnimatedVisibility(visible = !effectiveVideo || !accepted) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    if (!accepted && incoming) { IncomingCallTypeChip(effectiveVideo, callPalette.accent); Spacer(Modifier.height(10.dp)) }
                     if (!accepted && incoming) IncomingCallerAvatar(remoteImage, remoteName, callPalette.accent)
                     else CallAvatarAura(remoteImage, remoteName, callPalette.accent, state.status, state.muted)
                     Spacer(Modifier.height(6.dp))
-                    Text(remoteName, color = Color.White, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.ExtraBold, textAlign = TextAlign.Center)
+                    val nameSize = if (remoteName.length > 13) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.headlineMedium
+                    Text(
+                        remoteName, color = Color.White, style = nameSize, fontWeight = FontWeight.ExtraBold,
+                        textAlign = TextAlign.Center, maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                        modifier = Modifier.fillMaxWidth(.92f)
+                    )
                 }
             }
             Surface(color = Color.Black.copy(alpha = if (effectiveVideo && accepted) .45f else 0f), shape = CircleShape) {
@@ -411,6 +478,11 @@ fun CallScreen(
                 }, color = Color.White.copy(.82f), textAlign = TextAlign.Center,
                 modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp)
             )
+            }
+            // Live voice waveform under the status (calm while muted or still connecting).
+            if (!effectiveVideo && (accepted || !incoming)) {
+                Spacer(Modifier.height(8.dp))
+                com.example.ui.LiquidWaveform(lines = true, active = state.status == "connected" && !state.muted)
             }
             Spacer(Modifier.weight(1f))
             if (!accepted && incoming) {
@@ -460,6 +532,11 @@ fun CallScreen(
                         val tiles = buildList<Triple<androidx.compose.ui.graphics.vector.ImageVector, String, () -> Unit>> {
                             add(Triple(if (state.speaker) Icons.Default.Hearing else Icons.Default.VolumeUp, if (state.speaker) "Earpiece" else "Speaker") { CallEngine.toggleSpeaker() })
                             add(Triple(Icons.Default.PersonAdd, "Add people") { onAddParticipant(); showMoreControls = false })
+                            if (!effectiveVideo && state.status == "connected") add(Triple(Icons.Default.Videocam, "Video call") {
+                                showMoreControls = false
+                                if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) CallEngine.upgradeToVideo()
+                                else videoUpgradeLauncher.launch(Manifest.permission.CAMERA)
+                            })
                             add(Triple(if (state.screenSharing) Icons.Default.StopScreenShare else Icons.Default.ScreenShare, if (state.screenSharing) "Stop share" else "Share screen") {
                                 if (state.screenSharing) CallEngine.stopScreenShare()
                                 else {
@@ -470,7 +547,7 @@ fun CallScreen(
                             })
                             if (effectiveVideo) {
                                 add(Triple(Icons.Default.Cameraswitch, "Flip camera") { if (!state.screenSharing) CallEngine.switchCamera() })
-                                add(Triple(if (state.cameraOff) Icons.Default.Videocam else Icons.Default.VideocamOff, if (state.cameraOff) "Camera on" else "Camera off") { CallEngine.toggleCamera() })
+                                add(Triple(if (state.cameraOff) Icons.Default.Videocam else Icons.Default.VideocamOff, if (state.cameraOff) "Camera on" else "Camera off") { toggleCameraSafely() })
                                 add(Triple(if (fillVideo) Icons.Default.FitScreen else Icons.Default.Fullscreen, if (fillVideo) "Fit video" else "Fill screen") { fillVideo = !fillVideo })
                                 add(Triple(if (showSelfView) Icons.Default.VisibilityOff else Icons.Default.Visibility, if (showSelfView) "Hide me" else "Show me") { showSelfView = !showSelfView })
                                 add(Triple(Icons.Default.AutoFixHigh, "Filters") { showFilters = !showFilters; showMoreControls = false })
@@ -512,16 +589,18 @@ fun CallScreen(
                     }
                     Row(
                         Modifier.fillMaxWidth()
-                            .clip(RoundedCornerShape(36.dp))
-                            .background(Brush.verticalGradient(listOf(Color.White.copy(.16f), Color.Black.copy(.28f))))
-                            .border(1.dp, Brush.verticalGradient(listOf(Color.White.copy(.45f), callPalette.accent.copy(.25f))), RoundedCornerShape(36.dp))
-                            .padding(horizontal = 4.dp, vertical = 12.dp),
+                            .liquidGlass(RoundedCornerShape(42.dp), callPalette.accent)
+                            .padding(horizontal = 4.dp, vertical = 14.dp),
                         horizontalArrangement = Arrangement.SpaceEvenly,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         GlassCallButton(if (state.muted) Icons.Default.MicOff else Icons.Default.Mic, if (state.muted) "Unmute" else "Mute", active = state.muted, accent = callPalette.accent) { CallEngine.toggleMute() }
                         GlassCallButton(if (state.speaker) Icons.Default.VolumeUp else Icons.Default.Hearing, if (state.speaker) "Speaker" else "Earpiece", active = state.speaker, accent = callPalette.accent) { CallEngine.toggleSpeaker() }
-                        if (effectiveVideo) GlassCallButton(if (state.cameraOff) Icons.Default.VideocamOff else Icons.Default.Videocam, "Camera", active = state.cameraOff, accent = callPalette.accent) { CallEngine.toggleCamera() }
+                        if (effectiveVideo) GlassCallButton(if (state.cameraOff) Icons.Default.VideocamOff else Icons.Default.Videocam, "Camera", active = state.cameraOff, accent = callPalette.accent) { toggleCameraSafely() }
+                        else if (state.status == "connected") GlassCallButton(Icons.Default.Videocam, "Video", accent = callPalette.accent) {
+                            if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) CallEngine.upgradeToVideo()
+                            else videoUpgradeLauncher.launch(Manifest.permission.CAMERA)
+                        }
                         GlassCallButton(Icons.Default.EmojiEmotions, "React", active = showReactions, accent = callPalette.accent) { showReactions = !showReactions }
                         GlassCallButton(Icons.Default.CallEnd, "End", danger = true, size = 56) { onEndCall(); onClose() }
                         GlassCallButton(if (showMoreControls) Icons.Default.Close else Icons.Default.GridView, "More", active = showMoreControls, accent = callPalette.accent) { showMoreControls = !showMoreControls }
@@ -529,7 +608,11 @@ fun CallScreen(
                 }
             }
             Spacer(Modifier.height(18.dp))
-            if (controlsVisible || !effectiveVideo) Row(verticalAlignment = Alignment.CenterVertically) {
+            if (controlsVisible || !effectiveVideo) Row(
+                Modifier.clip(CircleShape).background(Color.White.copy(alpha = .05f))
+                    .border(1.dp, callPalette.accent.copy(alpha = .35f), CircleShape).padding(horizontal = 14.dp, vertical = 7.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 Icon(Icons.Default.Lock, null, tint = callPalette.accent.copy(.7f), modifier = Modifier.size(12.dp))
                 Spacer(Modifier.width(5.dp))
                 Text("Encrypted media (WebRTC DTLS-SRTP) • Cloudflare TURN", color = callPalette.accent.copy(.6f), style = MaterialTheme.typography.labelSmall)

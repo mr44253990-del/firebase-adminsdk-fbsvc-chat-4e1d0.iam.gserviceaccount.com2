@@ -61,7 +61,10 @@ service cloud.firestore {
         && request.auth.uid in get(/databases/$(database)/documents/users/$(uid)).data.get('friends', []));
       allow create, update: if owner(uid)
         && request.resource.data.keys().hasAll(['note', 'noteAt'])
-        && request.resource.data.keys().hasOnly(['note', 'noteAt'])
+        && request.resource.data.keys().hasOnly(['note', 'noteAt', 'audioUrl', 'audioTitle', 'audioArtist'])
+        && request.resource.data.get('audioUrl', '') is string && request.resource.data.get('audioUrl', '').size() <= 600
+        && request.resource.data.get('audioTitle', '') is string && request.resource.data.get('audioTitle', '').size() <= 80
+        && request.resource.data.get('audioArtist', '') is string && request.resource.data.get('audioArtist', '').size() <= 80
         && request.resource.data.note is string
         && request.resource.data.note.size() <= 80
         && request.resource.data.noteAt is int
