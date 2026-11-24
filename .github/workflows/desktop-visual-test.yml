@@ -1,0 +1,170 @@
+name: Desktop Visual Test (install → run → screenshots)
+
+# Builds the desktop client, installs/runs it exactly like an end user would,
+# captures real screenshots on each OS and uploads them as artifacts.
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "vibe/**"
+
+permissions:
+  contents: read
+
+jobs:
+  linux-arm64:
+    name: Install & run on Linux arm64 (screenshots)
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install desktop dependencies & screenshot tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y \
+            xvfb imagemagick xdotool libfuse2 \
+            libgtk-3-0 libnotify4 libnss3 libxss1 libxtst6 \
+            xdg-utils libatspi2.0-0 libuuid1 libsecret-1-0
+          cd desktop
+          npm install --no-audit --no-fund
+
+      - name: Build arm64 AppImage
+        run: |
+          set -euo pipefail
+          cd desktop
+          npm run prepare-site
+          npx electron-builder --publish never --linux AppImage --arm64
+
+      - name: Install & launch app on a virtual display
+        run: |
+          set -euo pipefail
+          cd desktop
+          APPIMAGE="$(find dist -maxdepth 1 -name '*.AppImage' -print -quit)"
+          test -n "$APPIMAGE"
+          chmod +x "$APPIMAGE"
+          # Install-like run: AppImages run directly; run the exact bundle a user would download.
+          mkdir -p screenshots
+          Xvfb :99 -screen 0 1280x800x24 &
+          XVFB_PID=$!
+          export DISPLAY=:99
+          sleep 2
+          # Electron/Chromium needs --no-sandbox when running as the CI user without a login session.
+          # CI runners have no usable /dev/fuse, so run the extracted AppImage tree (standard FUSE-less path).
+          # The stock AppRun mis-resolves APPDIR when args are passed, so run the
+          # extracted app binary directly (standard FUSE-less CI path).
+          if ./"$APPIMAGE" --appimage-extract >/dev/null 2>&1; then
+            APP_RUN="squashfs-root/convo-chat-desktop"
+          else
+            APP_RUN="./$APPIMAGE"
+          fi
+          "$APP_RUN" --no-sandbox --disable-gpu --disable-dev-shm-usage &
+          APP_PID=$!
+          sleep 25
+
+          import -display :99 -window root screenshots/01-boot-login.png
+          sleep 5
+          import -display :99 -window root screenshots/02-running.png
+          sleep 10
+          import -display :99 -window root screenshots/03-after-40s.png
+          kill $APP_PID || true
+          kill $XVFB_PID || true
+
+      - name: Verify screenshots exist and are not blank
+        run: |
+          set -euo pipefail
+          cd desktop/screenshots
+          ls -lh *.png
+          for f in *.png; do
+            SIZE=$(stat -c%s "$f")
+            if [ "$SIZE" -lt 5000 ]; then
+              echo "::error::$f is suspiciously small ($SIZE bytes) — likely a blank screen"
+              exit 1
+            fi
+            identify "$f"
+          done
+
+      - name: Upload Linux arm64 screenshots
+        uses: actions/upload-artifact@v4
+        with:
+          name: Desktop-Screenshots-Linux-arm64
+          path: desktop/screenshots/*.png
+          if-no-files-found: error
+          retention-days: 30
+
+  windows-x64:
+    name: Install & run on Windows x64 (screenshots)
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v5
+        with:
+          node-version: "20"
+
+      - name: Install desktop dependencies
+        run: |
+          cd desktop
+          npm install --no-audit --no-fund
+
+      - name: Build x64 portable zip
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd desktop
+          npm run prepare-site
+          npx electron-builder --publish never --win zip --x64
+
+      - name: Extract, launch app and capture screenshots
+        shell: pwsh
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = "Stop"
+          $zip = Get-ChildItem desktop/dist -Filter *.zip | Select-Object -First 1
+          if (-not $zip) { throw "No portable zip produced" }
+          Expand-Archive -Path $zip.FullName -DestinationPath "desktop/portable" -Force
+          $exe = Get-ChildItem "desktop/portable" -Recurse -Filter "Convo Chat.exe" | Select-Object -First 1
+          if (-not $exe) { throw "Convo Chat.exe not found in portable bundle" }
+          New-Item -ItemType Directory -Force -Path "desktop/screenshots" | Out-Null
+          Add-Type -AssemblyName System.Windows.Forms
+          Add-Type -AssemblyName System.Drawing
+
+          # End-user install flow: launch the actual app binary.
+          $proc = Start-Process -FilePath $exe.FullName -PassThru
+          Start-Sleep -Seconds 30
+
+          function Save-Screen([string]$name) {
+            $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+            $bmp = New-Object System.Drawing.Bitmap($bounds.Width, $bounds.Height)
+            $g = [System.Drawing.Graphics]::FromImage($bmp)
+            $g.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size)
+            $g.Dispose()
+            $bmp.Save("desktop/screenshots/$name", [System.Drawing.Imaging.ImageFormat]::Png)
+            $bmp.Dispose()
+            Write-Host "Captured $name"
+          }
+
+          Save-Screen "01-boot-login.png"
+          Start-Sleep -Seconds 10
+          Save-Screen "02-after-40s.png"
+
+          if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force }
+          Get-ChildItem desktop/screenshots
+
+      - name: Upload Windows x64 screenshots
+        uses: actions/upload-artifact@v4
+        with:
+          name: Desktop-Screenshots-Windows-x64
+          path: desktop/screenshots/*.png
+          if-no-files-found: error
+          retention-days: 30

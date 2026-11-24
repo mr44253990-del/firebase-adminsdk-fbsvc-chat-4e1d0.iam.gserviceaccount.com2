@@ -1,0 +1,141 @@
+name: Desktop Release CI (Windows x64 + Linux arm64)
+
+on:
+  push:
+    branches:
+      - "**"
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate desktop client
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Syntax check
+        run: |
+          set -euo pipefail
+          cd desktop
+          node --check main.js
+          node --check preload.js
+          node --check desktop-map.js
+          node --check prepare-site.mjs
+
+      - name: Platform permission map test
+        run: |
+          set -euo pipefail
+          cd desktop
+          for platform in win32 linux darwin; do
+            node -e "
+              const m = require('./desktop-map');
+              const allowed = m.allowedPermissions('$platform');
+              const must = ['media', 'notifications', 'fullscreen', 'clipboard-read', 'openExternal'];
+              const missing = must.filter((p) => !allowed.includes(p));
+              if (missing.length) { console.error('$platform missing: ' + missing.join(',')); process.exit(1); }
+              if (allowed.includes('geolocation')) { console.error('$platform must not grant geolocation'); process.exit(1); }
+              console.log('$platform permissions OK:', allowed.join(','));
+            "
+          done
+
+      - name: Web bundle smoke test
+        run: |
+          set -euo pipefail
+          cd desktop
+          node prepare-site.mjs
+          test -f site/index.html
+          test -f site/app.js
+          for f in site/*.js; do node --check "$f"; done
+          echo "Site bundle OK"
+
+      - name: Loopback server binds 127.0.0.1 only
+        run: |
+          set -euo pipefail
+          grep -q '"127.0.0.1"' desktop/main.js
+          grep -q "server.listen(0, \"127.0.0.1\"" desktop/main.js
+          echo "Loopback bind OK"
+          ! grep -qE 'server.listen\(0, "0\.0\.0\.0"' desktop/main.js
+
+  build:
+    name: Build ${{ matrix.name }}
+    needs: validate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows x64
+            os: windows-latest
+            artifact: Convo-Chat-Desktop-Windows-x64
+          - name: Linux ARM64
+            os: ubuntu-24.04-arm
+            artifact: Convo-Chat-Desktop-Linux-arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: |
+          cd desktop
+          npm install --no-audit --no-fund
+
+      # electron-builder ships an x86-only fpm tool for .deb packaging; the
+      # arm64 runner needs a native system fpm instead.
+      - name: Install native fpm (Linux arm64)
+        if: matrix.os == 'ubuntu-24.04-arm'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ruby-full gcc 
+          sudo gem install fpm --no-document
+          fpm --version
+
+      - name: Build ${{ matrix.artifact }}
+        shell: bash
+        env:
+          USE_SYSTEM_FPM: ${{ matrix.os == 'ubuntu-24.04-arm' && 'true' || '' }}
+        run: |
+          cd desktop
+          npm run prepare-site
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            npm exec electron-builder -- --publish never --win --x64
+          else
+            npm exec electron-builder -- --publish never --linux --arm64
+          fi
+
+      - name: Checksum and collect artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd desktop/dist
+          ls -lh || true
+          shopt -s nullglob
+          files=( *.exe *.zip *.AppImage *.deb *.yml )
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No installers produced"
+            exit 1
+          fi
+          sha256sum "${files[@]}" > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Upload ${{ matrix.artifact }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: desktop/dist/
+          if-no-files-found: error
+          retention-days: 30
