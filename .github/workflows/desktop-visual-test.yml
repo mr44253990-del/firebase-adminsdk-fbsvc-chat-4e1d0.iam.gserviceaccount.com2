@@ -58,12 +58,14 @@ jobs:
           sleep 2
           # Electron/Chromium needs --no-sandbox when running as the CI user without a login session.
           # CI runners have no usable /dev/fuse, so run the extracted AppImage tree (standard FUSE-less path).
+          # The stock AppRun mis-resolves APPDIR when args are passed, so run the
+          # extracted app binary directly (standard FUSE-less CI path).
           if ./"$APPIMAGE" --appimage-extract >/dev/null 2>&1; then
-            APP_RUN="squashfs-root/AppRun"
+            APP_RUN="squashfs-root/convo-chat-desktop"
           else
             APP_RUN="./$APPIMAGE"
           fi
-          "$APP_RUN" --no-sandbox &
+          "$APP_RUN" --no-sandbox --disable-gpu --disable-dev-shm-usage &
           APP_PID=$!
           sleep 25
 
