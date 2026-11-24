@@ -30,7 +30,7 @@ jobs:
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y \
-            xvfb imagemagick xdotool \
+            xvfb imagemagick xdotool libfuse2 \
             libgtk-3-0 libnotify4 libnss3 libxss1 libxtst6 \
             xdg-utils libatspi2.0-0 libuuid1 libsecret-1-0
           cd desktop
@@ -57,7 +57,13 @@ jobs:
           export DISPLAY=:99
           sleep 2
           # Electron/Chromium needs --no-sandbox when running as the CI user without a login session.
-          ./"$APPIMAGE" --no-sandbox &
+          # CI runners have no usable /dev/fuse, so run the extracted AppImage tree (standard FUSE-less path).
+          if ./"$APPIMAGE" --appimage-extract >/dev/null 2>&1; then
+            APP_RUN="squashfs-root/AppRun"
+          else
+            APP_RUN="./$APPIMAGE"
+          fi
+          "$APP_RUN" --no-sandbox &
           APP_PID=$!
           sleep 25
 
