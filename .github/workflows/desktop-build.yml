@@ -12,13 +12,6 @@ on:
       - "desktop/**"
       - ".github/workflows/desktop-build.yml"
   workflow_dispatch:
-    inputs:
-      demo_email:
-        description: "Demo account email for the Windows login/screenshot tour"
-        required: true
-      demo_password:
-        description: "Demo account password for the Windows login/screenshot tour"
-        required: true
 
 permissions:
   contents: read
@@ -87,7 +80,7 @@ jobs:
 
   windows-demo-tour:
     name: Windows demo run (login + screenshot tour)
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: windows-latest
     timeout-minutes: 45
 
@@ -110,11 +103,12 @@ jobs:
         shell: bash
         working-directory: desktop
         env:
-          CONVO_DEMO_EMAIL: ${{ inputs.demo_email }}
-          CONVO_DEMO_PASSWORD: ${{ inputs.demo_password }}
           CONVO_SCREENSHOT_DIR: ${{ github.workspace }}/screenshots
         run: |
+          set -e
           mkdir -p "$GITHUB_WORKSPACE/screenshots"
+          export CONVO_DEMO_EMAIL="$(sed -n 1p .ci/demo-account.txt)"
+          export CONVO_DEMO_PASSWORD="$(sed -n 2p .ci/demo-account.txt)"
           ./gradlew run --no-daemon &
           APP_PID=$!
           # The in-app automation signs in, walks the screens and exits by itself.
