@@ -2,6 +2,7 @@ package com.ebchat.desktop
 
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
+import androidx.compose.ui.window.rememberWindowState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -26,10 +27,9 @@ fun main() = application {
     LaunchedEffect(Unit) { state.start { tick++ } }
 
     Window(
-        onCloseRequest = { exitApplication() },
-        title = "Convo Chat — Desktop (Windows & Linux)",
-        width = 1100.dp,
-        height = 720.dp
+        onCloseRequest = ::exitApplication,
+        state = rememberWindowState(width = 1100.dp, height = 720.dp),
+        title = "Convo Chat — Desktop (Windows & Linux)"
     ) {
         window.minimumSize = Dimension(960, 640)
         ConvoDesktopTheme(state.appearance) {
