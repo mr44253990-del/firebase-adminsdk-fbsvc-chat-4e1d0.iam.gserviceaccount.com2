@@ -1,0 +1,78 @@
+name: Desktop Build CI
+
+on:
+  push:
+    branches:
+      - "**"
+    paths:
+      - "desktop/**"
+      - ".github/workflows/desktop-build.yml"
+  pull_request:
+    paths:
+      - "desktop/**"
+      - ".github/workflows/desktop-build.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-desktop:
+    name: Convo Desktop (${{ matrix.os-name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            os-name: Windows x64
+            gradle-tasks: >-
+              build
+              packageDistributionForCurrentOS
+            artifact-name: convo-desktop-windows-x64
+            artifact-path: |
+              desktop/build/compose/binaries/main/*
+          - os: ubuntu-24.04-arm
+            os-name: Linux arm64
+            gradle-tasks: >-
+              build
+              packageDistributionForCurrentOS
+            artifact-name: convo-desktop-linux-arm64
+            artifact-path: |
+              desktop/build/compose/binaries/main/*
+          - os: ubuntu-latest
+            os-name: Linux x64
+            gradle-tasks: >-
+              build
+              packageDistributionForCurrentOS
+            artifact-name: convo-desktop-linux-x64
+            artifact-path: |
+              desktop/build/compose/binaries/main/*
+
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          build-root-directory: desktop
+
+      - name: Build desktop app
+        working-directory: desktop
+        run: ./gradlew ${{ matrix.gradle-tasks }} --no-daemon --stacktrace
+
+      - name: Upload distributables
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact-name }}
+          path: ${{ matrix.artifact-path }}
+          if-no-files-found: warn
