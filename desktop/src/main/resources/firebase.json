@@ -1,0 +1,6 @@
+{
+  "projectId": "chat-4e1d0",
+  "apiKey": "AIzaSyAw1P7TLWfkLXS1f0qjrLUSwkfVEOhLxfk",
+  "databaseUrl": "https://chat-4e1d0-default-rtdb.firebaseio.com",
+  "note": "Public Firebase web configuration, same public values the Android app ships in google-services.json. Never place private keys or service-account credentials here."
+}
