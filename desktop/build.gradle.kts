@@ -32,6 +32,13 @@ tasks.withType<Test> {
     useJUnitPlatform()
 }
 
+// Software rendering so the CI demo run can capture screenshots on GPU-less runners.
+if (System.getenv("CONVO_SCREENSHOT_DIR") != null) {
+    tasks.withType<JavaExec>().configureEach {
+        jvmArgs("-Dskiko.renderApi=SOFTWARE")
+    }
+}
+
 compose.desktop {
     application {
         mainClass = "com.ebchat.desktop.MainKt"
