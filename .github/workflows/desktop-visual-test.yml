@@ -70,16 +70,10 @@ jobs:
           sleep 25
 
           import -display :99 -window root screenshots/01-boot-login.png
-
-          # Focus the app window and test the desktop skin behaviour (fullscreen via F11).
-          WID="$(xdotool search --onlyvisible --name 'Convo Chat' | head -1 || true)"
-          if [ -n "${WID:-}" ]; then
-            xdotool windowactivate "$WID"
-            sleep 3
-            import -display :99 -window root screenshots/02-window-focused.png
-          fi
-          sleep 2
-          import -display :99 -window root screenshots/03-after-30s.png
+          sleep 5
+          import -display :99 -window root screenshots/02-running.png
+          sleep 10
+          import -display :99 -window root screenshots/03-after-40s.png
           kill $APP_PID || true
           kill $XVFB_PID || true
 
